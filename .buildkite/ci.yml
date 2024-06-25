@@ -94,7 +94,7 @@ steps:
           arch: "aarch64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
 
       - key: "darwin-aarch64-test-macos-13"
         label: ":darwin: 13 aarch64 - bun-test"
@@ -109,7 +109,7 @@ steps:
           arch: "aarch64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
 
       - key: "darwin-aarch64-test-macos-12"
         label: ":darwin: 12 aarch64 - bun-test"
@@ -124,7 +124,7 @@ steps:
           arch: "aarch64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
 
   # macOS x64
   - key: "darwin-x64"
@@ -213,7 +213,7 @@ steps:
           arch: "x64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
       - key: "darwin-x64-test-macos-13"
         label: ":darwin: 13 x64 - bun-test"
@@ -228,7 +228,7 @@ steps:
           arch: "x64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
       - key: "darwin-x64-test-macos-12"
         label: ":darwin: 12 x64 - bun-test"
@@ -243,7 +243,7 @@ steps:
           arch: "x64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
 
   # Linux aarch64
   - key: "linux-aarch64"
@@ -333,7 +333,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-debian-11"
         label: ":debian: 11 aarch64 - test-bun"
@@ -349,7 +349,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
@@ -365,7 +365,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 aarch64 - test-bun"
@@ -381,7 +381,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
   # Linux x64
   - key: "linux-x64"
@@ -471,7 +471,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-debian-11"
         label: ":debian: 11 x64 - test-bun"
@@ -487,7 +487,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
@@ -503,7 +503,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64 - test-bun"
@@ -519,7 +519,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
   # Linux x64-baseline
   - key: "linux-x64-baseline"
@@ -609,7 +609,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-debian-11"
         label: ":debian: 11 x64-baseline - test-bun"
@@ -625,7 +625,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
@@ -641,7 +641,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
@@ -657,7 +657,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
   # Windows x64
   - key: "windows-x64"
@@ -737,7 +737,7 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs bun-windows-x64-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
@@ -821,4 +821,4 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs bun-windows-x64-baseline-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun"

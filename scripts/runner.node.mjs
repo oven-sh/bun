@@ -63,7 +63,7 @@ const { values: options, positionals: filters } = parseArgs({
       type: "string",
       default: "bun",
     },
-    ["buildkite-step"]: {
+    ["step"]: {
       type: "string",
       default: undefined,
     },
@@ -125,8 +125,8 @@ async function printInfo() {
  */
 async function runTests() {
   let execPath;
-  if (options["buildkite-step"]) {
-    execPath = await getExecPathFromBuildKite(options["buildkite-step"]);
+  if (options["step"]) {
+    execPath = await getExecPathFromBuildKite(options["step"]);
   } else {
     execPath = getExecPath(options["exec-path"]);
   }

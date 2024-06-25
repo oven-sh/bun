@@ -106,6 +106,7 @@ jobs:
       cpu: nehalem
       canary: true
   linux-x64-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test linux-x64
     needs: linux-x64
     uses: ./.github/workflows/run-test.yml
@@ -117,6 +118,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   linux-x64-baseline-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test linux-x64-baseline
     needs: linux-x64-baseline
     uses: ./.github/workflows/run-test.yml
@@ -128,7 +130,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   linux-aarch64-test:
-    if: ${{ github.repository_owner == 'oven-sh'}}
+    if: ${{ github.repository_owner == 'oven-sh' && (inputs.github-id || inputs.buildkite-url || inputs.release-name || success()) }}
     name: Test linux-aarch64
     needs: linux-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -140,6 +142,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   darwin-x64-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test darwin-x64
     needs: darwin-x64
     uses: ./.github/workflows/run-test.yml
@@ -151,6 +154,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   darwin-aarch64-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test darwin-aarch64
     needs: darwin-aarch64
     uses: ./.github/workflows/run-test.yml
@@ -162,6 +166,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   windows-x64-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test windows-x64
     needs: windows-x64
     uses: ./.github/workflows/run-test.yml
@@ -173,6 +178,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   windows-x64-baseline-test:
+    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
     name: Test windows-x64-baseline
     needs: windows-x64-baseline
     uses: ./.github/workflows/run-test.yml

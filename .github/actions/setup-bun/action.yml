@@ -92,7 +92,7 @@ runs:
       run: |
         target="${{ steps.setup.outputs.target }}"
         release="${{ steps.setup.outputs.release }}"
-        mkdir -p ${release}
+        mkdir -p ${target}/${release}
         unzip ${target}.zip -d ${target}
         mv ${target}/${target}/* ${target}/${release}/
         rm -rf ${target}/${target}

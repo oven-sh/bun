@@ -2,211 +2,97 @@ name: CI
 
 permissions:
   contents: read
+  statuses: read
   actions: write
 
 concurrency:
-  group: ${{ github.workflow }}-${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
 on:
   workflow_dispatch:
-    inputs:
-      github-id:
-        type: string
-        description: If specified, builds are skipped and tests are run using the artifacts from the Github workflow ID.
-        required: false
-      buildkite-url:
-        type: string
-        description: If specified, builds are skipped and tests are run using the artifacts from the Buildkite build ID.
-        required: false
-      release-name:
-        type: string
-        description: If specified, builds are skipped and tests are run using the artifacts from the release.
-        required: false
+  pull_request:
+    paths-ignore:
+      - .vscode/**/*
+      - docs/**/*
+      - examples/**/*
+  push:
+    branches:
+      - main
+    paths-ignore:
+      - .vscode/**/*
+      - docs/**/*
+      - examples/**/*
 
 jobs:
-  linux-x64:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build linux-x64
-    uses: ./.github/workflows/build-linux.yml
-    secrets: inherit
-    with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
-      tag: linux-x64
-      arch: x64
-      cpu: haswell
-      canary: true
-      no-cache: true
-  linux-x64-baseline:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build linux-x64-baseline
-    uses: ./.github/workflows/build-linux.yml
-    secrets: inherit
-    with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
-      tag: linux-x64-baseline
-      arch: x64
-      cpu: nehalem
-      canary: true
-      no-cache: true
-  linux-aarch64:
-    if: ${{ github.repository_owner == 'oven-sh' && (!inputs.github-id && !inputs.buildkite-url && !inputs.release-name) }}
-    name: Build linux-aarch64
-    uses: ./.github/workflows/build-linux.yml
-    secrets: inherit
-    with:
-      runs-on: namespace-profile-bun-ci-linux-aarch64
-      tag: linux-aarch64
-      arch: aarch64
-      cpu: native
-      canary: true
-      no-cache: true
-  darwin-x64:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build darwin-x64
-    uses: ./.github/workflows/build-darwin.yml
-    secrets: inherit
-    with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
-      tag: darwin-x64
-      arch: x64
-      cpu: haswell
-      canary: true
-  darwin-aarch64:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build darwin-aarch64
-    uses: ./.github/workflows/build-darwin.yml
-    secrets: inherit
-    with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
-      tag: darwin-aarch64
-      arch: aarch64
-      cpu: native
-      canary: true
-  windows-x64:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build windows-x64
-    uses: ./.github/workflows/build-windows.yml
-    secrets: inherit
-    with:
-      runs-on: windows
-      tag: windows-x64
-      arch: x64
-      cpu: haswell
-      canary: true
-  windows-x64-baseline:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Build windows-x64-baseline
-    uses: ./.github/workflows/build-windows.yml
-    secrets: inherit
-    with:
-      runs-on: windows
-      tag: windows-x64-baseline
-      arch: x64
-      cpu: nehalem
-      canary: true
-  linux-x64-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test linux-x64
-    needs: linux-x64
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: ubuntu-latest
-      tag: linux-x64
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  linux-x64-baseline-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test linux-x64-baseline
-    needs: linux-x64-baseline
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: ubuntu-latest
-      tag: linux-x64-baseline
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  linux-aarch64-test:
-    if: ${{ github.repository_owner == 'oven-sh' && (inputs.github-id || inputs.buildkite-url || inputs.release-name || success()) }}
-    name: Test linux-aarch64
-    needs: linux-aarch64
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: namespace-profile-bun-ci-linux-aarch64
-      tag: linux-aarch64
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  darwin-x64-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test darwin-x64
-    needs: darwin-x64
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: macos-12
-      tag: darwin-x64
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  darwin-aarch64-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test darwin-aarch64
-    needs: darwin-aarch64
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: macos-12
-      tag: darwin-aarch64
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  windows-x64-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test windows-x64
-    needs: windows-x64
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: windows-latest
-      tag: windows-x64
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  windows-x64-baseline-test:
-    if: ${{ inputs.github-id || inputs.buildkite-url || inputs.release-name || success() }}
-    name: Test windows-x64-baseline
-    needs: windows-x64-baseline
-    uses: ./.github/workflows/run-test.yml
-    secrets: inherit
-    with:
-      runs-on: windows-latest
-      tag: windows-x64-baseline
-      github-id: ${{ inputs.github-id }}
-      buildkite-url: ${{ inputs.buildkite-url }}
-      release-name: ${{ inputs.release-name }}
-  cleanup:
-    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
-    name: Cleanup
-    needs:
-      - linux-x64
-      - linux-x64-baseline
-      - linux-aarch64
-      - darwin-x64
-      - darwin-aarch64
-      - windows-x64
-      - windows-x64-baseline
+  trigger:
+    name: CI
     runs-on: ubuntu-latest
     steps:
-      - name: Cleanup Artifacts
-        uses: geekyeggo/delete-artifact@v5
+      - id: ci
+        name: Start CI
+        uses: buildkite/trigger-pipeline-action@v2.2.0
         with:
-          name: |
-            bun-*-cpp
-            bun-*-zig
-            bun-*-deps
-            bun-*-codegen
+          buildkite_api_access_token: ${{ secrets.BUILDKITE_TOKEN }}
+          pipeline: "bun/bun"
+          send_pull_request: true
+
+      - name: Wait for CI
+        uses: EnricoMi/download-buildkite-artifact-action@v1
+        with:
+          buildkite_token: ${{ secrets.BUILDKITE_TOKEN }}
+          buildkite_build_url: ${{ steps.ci.outputs.url }}
+          ignore_build_states: blocked,canceled,skipped,not_run
+          ignore_job_states: timed_out,failed
+          output_path: artifacts
+
+      - name: Upload bun-linux-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-linux-x64
+          path: artifacts/bun-linux-x64.zip
+          if-no-files-found: error
+      - name: Upload bun-linux-x64-baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-linux-x64-baseline
+          path: artifacts/bun-linux-x64-baseline.zip
+          if-no-files-found: error
+      - name: Upload bun-linux-aarch64
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-linux-aarch64
+          path: artifacts/bun-linux-aarch64.zip
+          if-no-files-found: error
+
+      - name: Upload bun-darwin-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-darwin-x64
+          path: artifacts/bun-darwin-x64.zip
+          if-no-files-found: error
+      - name: Upload bun-darwin-x64-baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-darwin-x64-baseline
+          path: artifacts/bun-darwin-x64-baseline.zip
+          if-no-files-found: error
+      - name: Upload bun-darwin-aarch64
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-darwin-aarch64
+          path: artifacts/bun-darwin-aarch64.zip
+          if-no-files-found: error
+
+      - name: Upload bun-windows-x64
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-windows-x64
+          path: artifacts/bun-windows-x64.zip
+          if-no-files-found: error
+      - name: Upload bun-windows-x64-baseline
+        uses: actions/upload-artifact@v4
+        with:
+          name: bun-windows-x64-baseline
+          path: artifacts/bun-windows-x64-baseline.zip
+          if-no-files-found: error

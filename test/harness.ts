@@ -1101,7 +1101,7 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   if (!glibcVersion) {
     return false;
   }
-  return Bun.semver.satisfies(version, `>=${glibcVersion}`);
+  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
 }
 
 let macOSVersion: string | undefined;
@@ -1120,10 +1120,10 @@ export function getMacOSVersion(): string | undefined {
   }
 }
 
-export function isMacOSVersionAtLeast(version: string): boolean {
+export function isMacOSVersionAtLeast(minVersion: number): boolean {
   const macOSVersion = getMacOSVersion();
   if (!macOSVersion) {
     return false;
   }
-  return Bun.semver.satisfies(version, `>=${macOSVersion}`);
+  return parseFloat(macOSVersion) >= minVersion;
 }

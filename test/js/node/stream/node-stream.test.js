@@ -336,7 +336,7 @@ describe("process.stdin", () => {
   });
 });
 
-it.if(isMacOS || isGlibcVersionAtLeast("2.36"))("TTY streams", () => {
+it.if(isMacOS || isGlibcVersionAtLeast("2.36.0"))("TTY streams", () => {
   const { stdout, stderr, exitCode } = Bun.spawnSync({
     cmd: [bunExe(), "test", join(import.meta.dir, "tty-streams.fixture.js")],
     env: bunEnv,

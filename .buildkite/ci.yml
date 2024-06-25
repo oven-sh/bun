@@ -727,7 +727,7 @@ steps:
 
       - key: "bun-windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 1
         depends_on:
@@ -811,7 +811,7 @@ steps:
 
       - key: "bun-windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"
-        parallelism: 5
+        parallelism: 10
         soft_fail:
           - exit_status: 1
         depends_on:

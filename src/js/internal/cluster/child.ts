@@ -47,7 +47,7 @@ cluster._setupWorker = function () {
 
   function onmessage(message, handle) {
     if (message.act === "newconn") onconnection(message, handle);
-    else if (message.act === "disconnect") _disconnect.$apply(worker, [true]);
+    else if (message.act === "disconnect") worker._disconnect(true);
   }
 };
 
@@ -224,7 +224,17 @@ function send(message, cb?) {
   return sendHelper(process, message, null, cb);
 }
 
-function _disconnect(primaryInitiated?) {
+// Extend generic Worker with methods specific to worker processes.
+Worker.prototype.disconnect = function () {
+  if (this.state !== "disconnecting" && this.state !== "destroying") {
+    this.state = "disconnecting";
+    this._disconnect();
+  }
+
+  return this;
+};
+
+Worker.prototype._disconnect = function (this: typeof Worker, primaryInitiated?) {
   this.exitedAfterDisconnect = true;
   let waitingCount = 1;
 
@@ -253,16 +263,6 @@ function _disconnect(primaryInitiated?) {
 
   handles.clear();
   checkWaitingCount();
-}
-
-// Extend generic Worker with methods specific to worker processes.
-Worker.prototype.disconnect = function () {
-  if (this.state !== "disconnecting" && this.state !== "destroying") {
-    this.state = "disconnecting";
-    _disconnect.$apply(this, []);
-  }
-
-  return this;
 };
 
 Worker.prototype.destroy = function () {

@@ -39,6 +39,7 @@ jobs:
             bun.lockb
             test
             packages/bun-types
+            scripts
       - if: ${{ inputs.release-name }}
         name: Download Bun from Release
         run: |

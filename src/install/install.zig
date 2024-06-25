@@ -46,7 +46,7 @@ const HeaderBuilder = HTTP.HeaderBuilder;
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
-const Npm = @import("./npm.zig");
+pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
@@ -8464,8 +8464,7 @@ pub const PackageManager = struct {
         defer log.deinit();
         initializeStore();
         bun.ini.loadNpmrc(ctx.allocator, env, true, ctx, &log) catch {
-            const fmt = if (log.errors == 1) "Encountered an error while reading <b>.npmrc<r>:" else "Encountered errors while reading <b>.npmrc<r>:\n";
-            Output.pretty(fmt, .{});
+            if (log.errors == 1) Output.warn("Encountered an error while reading <b>.npmrc<r>:", .{}) else Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
             log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
         };
 

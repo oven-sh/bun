@@ -914,7 +914,45 @@ pub fn loadNpmrc(
     }
 
     // Process registry configuration
-    {
+    out: {
+        const count = brk: {
+            var count: usize = 0;
+            for (parser.out.data.e_object.properties.slice()) |prop| {
+                if (prop.key) |keyexpr| {
+                    if (keyexpr.asUtf8StringLiteral()) |key| {
+                        if (bun.strings.hasPrefixComptime(key, "//")) {
+                            count += 1;
+                        }
+                    }
+                }
+            }
+
+            break :brk count;
+        };
+
+        if (count == 0) break :out;
+
+        const default_registry_url: bun.URL = brk: {
+            if (install.default_registry) |dr|
+                break :brk bun.URL.parse(dr.url);
+
+            break :brk bun.URL.parse("https://registry.npmjs.org/");
+        };
+
+        var url_map = url_map: {
+            var url_map = std.StringArrayHashMap(bun.URL).init(parser.arena.allocator());
+            url_map.ensureTotalCapacity(registry_map.scopes.keys().len) catch bun.outOfMemory();
+
+            for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
+                const url = bun.URL.parse(v.url);
+                url_map.put(k.*, url) catch bun.outOfMemory();
+            }
+
+            break :url_map url_map;
+        };
+
+        defer url_map.deinit();
+
         var iter = bun.ini.ConfigIterator{
             .config = parser.out.data.e_object,
             .source = &source,
@@ -927,6 +965,7 @@ pub fn loadNpmrc(
             const prop = iter.config.properties.at(prop_idx);
             const loc = prop.key.?.loc;
             log.addErrorFmt(&source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
+            return error.ParserError;
         }) |val| {
             if (val.get()) |conf_item_| {
                 // `conf_item` will look like:
@@ -950,15 +989,38 @@ pub fn loadNpmrc(
                     },
                     else => {},
                 }
-                for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
-                    _ = k; // autofix
-                    const url_after_protocol = brk: {
-                        if (std.mem.indexOf(u8, v.url, "//")) |idx| {
-                            if (idx + 2 < v.url.len) break :brk v.url[idx + 2 ..];
-                        }
-                        break :brk v.url;
+                const conf_item_url = bun.URL.parse(conf_item.registry_url);
+
+                if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(default_registry_url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                    const v: *bun.Schema.Api.NpmRegistry = brk: {
+                        if (install.default_registry) |*r| break :brk r;
+                        install.default_registry = bun.Schema.Api.NpmRegistry{
+                            .password = "",
+                            .token = "",
+                            .username = "",
+                            .url = "https://registry.npmjs.org/",
+                        };
+                        break :brk &install.default_registry.?;
                     };
-                    if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url_after_protocol), bun.strings.withoutTrailingSlash(conf_item.registry_url))) {
+
+                    switch (conf_item.optname) {
+                        ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                        .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                        ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                        ._auth, .email, .certfile, .keyfile => unreachable,
+                    }
+                    continue;
+                }
+
+                for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
+                    const url = url_map.get(k.*) orelse unreachable;
+
+                    if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.host), bun.strings.withoutTrailingSlash(conf_item_url.host))) {
+                        if (conf_item_url.hostname.len > 0) {
+                            if (!std.mem.eql(u8, bun.strings.withoutTrailingSlash(url.hostname), bun.strings.withoutTrailingSlash(conf_item_url.hostname))) {
+                                continue;
+                            }
+                        }
                         switch (conf_item.optname) {
                             ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
@@ -982,5 +1044,20 @@ pub fn loadNpmrc(
 
     if (log.hasErrors()) {
         return error.ParserError;
+    }
+
+    if (!bun.Environment.isDebug) {
+        if (!@import("./bun.js/module_loader.zig").ModuleLoader.is_allowed_to_use_internal_testing_apis)
+            return;
+    }
+
+    if (bun.getenvTruthy("BUN_TEST_LOG_DEFAULT_REGISTRY")) {
+        if (install.default_registry) |reg| {
+            Output.print("Default registry url: {s}\n", .{reg.url});
+            Output.print("Default registry token: {s}\n", .{reg.token});
+            Output.print("Default registry username: {s}\n", .{reg.username});
+            Output.print("Default registry password: {s}\n", .{reg.password});
+            Output.flush();
+        }
     }
 }

@@ -813,6 +813,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
     return sliceTo(ptr, 0);
 }
 
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
+}
+
 pub const FDHashMapContext = struct {
     pub fn hash(_: @This(), fd: FileDescriptor) u64 {
         // a file descriptor is i32 on linux, u64 on windows

@@ -1,5 +1,9 @@
 import { it, expect, describe } from "bun:test";
 import util from "util";
+import { bunEnv, bunExe } from "harness";
+import { mkdirSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 
 it("prototype", () => {
   const prototypes = [
@@ -519,4 +523,40 @@ it("Bun.inspect array with non-indexed properties", () => {
   expect(Bun.inspect(a)).toBe(`[
   1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
 ]`);
+});
+
+it("console.logging function displays async and generator names", async () => {
+  const prefix = join(tmpdir(), "console-logging-function-async");
+
+  const cases = [
+    "console.log(function a() {});",
+    "console.log(async function b() {});",
+    "console.log(function* c() {});",
+    "console.log(async function* d() {});",
+  ];
+
+  const expected_logs = [
+    "[Function: a]\n",
+    "[AsyncFunction: b]\n",
+    "[GeneratorFunction: c]\n",
+    "[AsyncGeneratorFunction: d]\n",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    const inputPath = join(prefix, `case-${i}.js`);
+    try {
+      mkdirSync(prefix, { recursive: true });
+    } catch (e) {}
+    await Bun.write(inputPath, cases[i]);
+
+    const { stdout, exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), "run", inputPath],
+      stderr: "inherit",
+      env: bunEnv,
+      cwd: prefix,
+    });
+
+    expect(exitCode).toBe(0);
+    expect(stdout.toString()).toBe(expected_logs[i]);
+  }
 });

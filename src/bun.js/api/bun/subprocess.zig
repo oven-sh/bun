@@ -182,6 +182,7 @@ pub const Subprocess = struct {
 
     exit_promise: JSC.Strong = .{},
     on_exit_callback: JSC.Strong = .{},
+    on_disconnect_callback: JSC.Strong = .{},
 
     globalThis: *JSC.JSGlobalObject,
     observable_getters: std.enums.EnumSet(enum {
@@ -1546,6 +1547,7 @@ pub const Subprocess = struct {
 
         this.exit_promise.deinit();
         this.on_exit_callback.deinit();
+        this.on_disconnect_callback.deinit();
     }
 
     pub fn finalize(this: *Subprocess) callconv(.C) void {
@@ -1652,6 +1654,7 @@ pub const Subprocess = struct {
         }
         var lazy = false;
         var on_exit_callback = JSValue.zero;
+        var on_disconnect_callback = JSValue.zero;
         var PATH = jsc_vm.bundler.env.get("PATH") orelse "";
         var argv = std.ArrayList(?[*:0]const u8).init(allocator);
         var cmd_value = JSValue.zero;
@@ -1802,6 +1805,18 @@ pub const Subprocess = struct {
                             }
                         }
                     }
+                }
+
+                if (args.getTruthy(globalThis, "onDisconnect")) |onDisconnect_| {
+                    if (!onDisconnect_.isCell() or !onDisconnect_.isCallable(globalThis.vm())) {
+                        globalThis.throwInvalidArguments("onDisconnect must be a function or undefined", .{});
+                        return .zero;
+                    }
+
+                    on_disconnect_callback = if (comptime is_sync)
+                        onDisconnect_
+                    else
+                        onDisconnect_.withAsyncContextIfNeeded(globalThis);
                 }
 
                 if (args.getTruthy(globalThis, "cwd")) |cwd_| {
@@ -2104,6 +2119,7 @@ pub const Subprocess = struct {
             ),
             .stdio_pipes = spawned.extra_pipes.moveToUnmanaged(),
             .on_exit_callback = if (on_exit_callback != .zero) JSC.Strong.create(on_exit_callback, globalThis) else .{},
+            .on_disconnect_callback = if (on_disconnect_callback != .zero) JSC.Strong.create(on_disconnect_callback, globalThis) else .{},
             .ipc_data = if (!is_sync)
                 if (maybe_ipc_mode) |ipc_mode|
                     if (Environment.isWindows) .{
@@ -2275,11 +2291,29 @@ pub const Subprocess = struct {
     pub fn handleIPCClose(this: *Subprocess) void {
         this.ipc_data = null;
         this.updateHasPendingActivity();
+
+        const this_jsvalue = this.this_jsvalue;
+        this_jsvalue.ensureStillAlive();
+        if (this.on_disconnect_callback.trySwap()) |callback| {
+            _ = callback.call(this.globalThis, &.{
+                this_jsvalue,
+            });
+        }
     }
 
     pub fn ipc(this: *Subprocess) *IPC.IPCData {
         return &this.ipc_data.?;
     }
 
+    pub fn ipc_maybe(this: *Subprocess) ?*IPC.IPCData {
+        return &(this.ipc_data orelse return null);
+    }
+
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
+
+    pub fn getIpcFd(this: *Subprocess, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        _ = globalThis;
+        const ipc_data = this.ipc_maybe() orelse return .null;
+        return JSC.JSValue.jsNumber(ipc_data.socket.fd().cast());
+    }
 };

@@ -1248,7 +1248,6 @@ class ChildProcess extends EventEmitter {
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
-    this.#closesNeeded = 1;
 
     this.#handle = Bun.spawn({
       cmd: spawnargs,
@@ -1273,6 +1272,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      onDisconnect: () => this.disconnect(),
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1287,6 +1287,11 @@ class ChildProcess extends EventEmitter {
     if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+      this.#closesNeeded += 1;
+
+      const ipc = new Pipe(Pipe.constants.IPC, this.#handle.ipcFd, this);
+      ipc.unref();
+      setupChannel(this, ipc, serialization);
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1349,6 +1354,7 @@ class ChildProcess extends EventEmitter {
     }
     this.connected = false;
     this.#handle.disconnect();
+    this.#handleOnExit(0, null, null);
   }
 
   kill(sig?) {
@@ -1797,8 +1803,7 @@ function genericNodeError(message, options) {
 
 function _forkChild(fd, serializationMode) {
   // set process.send()
-  const p = new Pipe(Pipe.constants.IPC);
-  p.open(fd);
+  const p = new Pipe(Pipe.constants.IPC, fd, process);
   p.unref();
   const control = setupChannel(process, p, serializationMode);
   process.on("newListener", function onNewListener(name) {

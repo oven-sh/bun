@@ -117,6 +117,9 @@ export default [
       stdio: {
         getter: "getStdio",
       },
+      ipcFd: {
+        getter: "getIpcFd",
+      },
     },
   }),
 ];

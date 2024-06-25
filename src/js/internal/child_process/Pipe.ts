@@ -1,5 +1,6 @@
 const { BunFile } = require("bun");
 const fs = require("node:fs");
+let isPrimary;
 
 type SocketType = keyof typeof Pipe.constants;
 
@@ -13,9 +14,13 @@ export default class Pipe {
   #type: SocketType;
   #fd: number;
   #ref_count = 1;
+  #target;
 
-  constructor(type: SocketType) {
+  constructor(type: SocketType, fd, target) {
     this.#type = type;
+    isPrimary ??= require("node:cluster").isPrimary;
+    this.#fd = fd;
+    this.#target = target;
   }
 
   open(fd: number) {
@@ -35,11 +40,9 @@ export default class Pipe {
   }
 
   readStart() {
-    console.log("-- Pipe#readStart", [...arguments]);
   }
 
   writeUtf8String(req, string, handle) {
-    console.log("-- Pipe#writeUtf8String", [...arguments]);
     try {
       fs.writeFileSync(this.#fd, string);
       return 0;
@@ -49,12 +52,10 @@ export default class Pipe {
   }
 
   writeBuffer() {
-    console.log("-- Pipe#writeBuffer", [...arguments]);
   }
 
   close() {
-    console.log("-- Pipe#close", [...arguments]);
-    fs.closeSync(this.#fd);
+    if (!isPrimary) fs.closeSync(this.#fd);
     this.#fd = -1;
   }
 }

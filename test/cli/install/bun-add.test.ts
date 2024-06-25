@@ -202,11 +202,7 @@ it.each(["fileblah://"])("should reject invalid path without segfault: %s", asyn
   });
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
-  if (protocolPrefix === "file:///") {
-    expect(err).toContain("error: MissingPackageJSON");
-  } else {
-    expect(err).toContain(`error: unrecognised dependency format: ${dep.replace(/\\\\/g, "/")}`);
-  }
+  expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
 
   const out = await new Response(stdout).text();
   expect(out).toBe("");

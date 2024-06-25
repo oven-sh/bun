@@ -521,10 +521,6 @@ it("Bun.inspect array with non-indexed properties", () => {
 ]`);
 });
 
-// it("console.logging function displays async and generator names", async () => {
-//   it.each
-// });
-
 describe("console.logging function displays async and generator names", async () => {
   const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
 

@@ -24,6 +24,7 @@ import { tmpdir, hostname, userInfo, homedir } from "node:os";
 import { join, basename, dirname, relative } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
+import { parseArgs } from "node:util";
 
 const spawnTimeout = 30_000;
 const testTimeout = 3 * 60_000;
@@ -45,12 +46,6 @@ const isAWS =
   /^(?:ec2|ip)/i.test(getHostname());
 const isCloud = isAWS;
 
-const isInteractive = !isCI && process.argv.includes("-i") && process.stdout.isTTY;
-const isBail = process.argv.includes("--bail");
-
-const shardId = parseInt(process.env["BUILDKITE_PARALLEL_JOB"]) || 0;
-const maxShards = parseInt(process.env["BUILDKITE_PARALLEL_JOB_COUNT"]) || 1;
-
 const baseUrl = process.env["GITHUB_SERVER_URL"] || "https://github.com";
 const repository = process.env["GITHUB_REPOSITORY"] || "oven-sh/bun";
 const pullRequest = /^pull\/(\d+)$/.exec(process.env["GITHUB_REF"])?.[1];
@@ -60,6 +55,42 @@ const gitRef = getGitRef();
 const cwd = dirname(import.meta.dirname);
 const testsPath = join(cwd, "test");
 const tmpPath = getTmpdir();
+
+const { values: options, positionals: filters } = parseArgs({
+  allowPositionals: true,
+  options: {
+    ["exec-path"]: {
+      type: "string",
+      default: "bun",
+    },
+    ["buildkite-step"]: {
+      type: "string",
+      default: undefined,
+    },
+    ["bail"]: {
+      type: "string",
+      default: "1",
+    },
+    ["shard"]: {
+      type: "string",
+      default: process.env["BUILDKITE_PARALLEL_JOB"] || "0",
+    },
+    ["max-shards"]: {
+      type: "string",
+      default: process.env["BUILDKITE_PARALLEL_JOB_COUNT"] || "1",
+    },
+    ["include"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
+    ["exclude"]: {
+      type: "string",
+      multiple: true,
+      default: undefined,
+    },
+  },
+});
 
 async function printInfo() {
   console.log("Timestamp:", new Date());
@@ -75,7 +106,7 @@ async function printInfo() {
   }
   if (isCI) {
     console.log("CI:", getCI());
-    console.log("Shard:", shardId, "/", maxShards);
+    console.log("Shard:", options["shard"], "/", options["max-shards"]);
     console.log("Build URL:", getBuildUrl());
     console.log("Environment:", process.env);
   }
@@ -89,17 +120,15 @@ async function printInfo() {
 }
 
 /**
- * @param {string} target
- * @param {string[]} [filters]
+ *
+ * @returns {Promise<TestResult[]>}
  */
-async function runTests(target, filters) {
-  const isFileLike = existsSync(target) || /\/|\\|\./.test(target);
-
+async function runTests() {
   let execPath;
-  if (isBuildKite && !isFileLike) {
-    execPath = await getExecPathFromBuildKite(target);
+  if (options["buildkite-step"]) {
+    execPath = await getExecPathFromBuildKite(options["buildkite-step"]);
   } else {
-    execPath = getExecPath(target);
+    execPath = getExecPath(options["exec-path"]);
   }
   console.log("Bun:", execPath);
 
@@ -107,19 +136,57 @@ async function runTests(target, filters) {
   console.log("Revision:", revision);
 
   const tests = getTests(testsPath);
+  const availableTests = [];
   const filteredTests = [];
 
-  if (filters?.length) {
-    filteredTests.push(...tests.filter(testPath => filters.some(filter => testPath.includes(filter))));
-    console.log("Filtering tests:", filteredTests.length, "/", tests.length);
-  } else if (maxShards > 1) {
-    const firstTest = shardId * Math.ceil(tests.length / maxShards);
-    const lastTest = Math.min(firstTest + Math.ceil(tests.length / maxShards), tests.length);
-    filteredTests.push(...tests.slice(firstTest, lastTest));
-    console.log("Sharding tests:", firstTest, "...", lastTest, "/", tests.length);
+  const isMatch = (testPath, filter) => {
+    return testPath.replace(/\\/g, "/").includes(filter);
+  };
+
+  const getFilter = filter => {
+    return (
+      filter
+        ?.split(",")
+        .map(part => part.trim())
+        .filter(Boolean) ?? []
+    );
+  };
+
+  const includes = options["include"]?.flatMap(getFilter);
+  if (includes?.length) {
+    availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
+    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
   } else {
-    filteredTests.push(...tests);
-    console.log("Found tests:", filteredTests.length);
+    availableTests.push(...tests);
+  }
+
+  const excludes = options["exclude"]?.flatMap(getFilter);
+  if (excludes?.length) {
+    const excludedTests = availableTests.filter(testPath => excludes.some(filter => isMatch(testPath, filter)));
+    if (excludedTests.length) {
+      for (const testPath of excludedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const shardId = parseInt(options["shard"]);
+  const maxShards = parseInt(options["max-shards"]);
+  if (filters?.length) {
+    filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
+    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
+  } else if (maxShards > 1) {
+    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
+    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
+    filteredTests.push(...availableTests.slice(firstTest, lastTest));
+    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
+  } else {
+    filteredTests.push(...availableTests);
+    console.log("Found tests:", availableTests.length);
   }
 
   let i = 0;
@@ -160,7 +227,7 @@ async function runTests(target, filters) {
       appendFileSync("comment.md", shortMarkdown);
     }
 
-    if (isBail && !result.ok) {
+    if (options["bail"] && !result.ok) {
       process.exit(getExitCode("fail"));
     }
   };
@@ -320,6 +387,7 @@ async function spawnSafe({
   ) {
     const [, message] = error || [];
     error = message ? message.split("\n")[0].toLowerCase() : "crash";
+    error = error.indexOf("\\n") ? error.substring(0, error.indexOf("\\n")) : error;
   } else if (signalCode) {
     if (signalCode === "SIGTERM" && duration >= timeout) {
       error = "timeout";
@@ -1580,17 +1648,11 @@ async function onExit(signal) {
   });
 }
 
-const [target, ...filters] = process.argv.slice(2).filter(arg => !arg.startsWith("--"));
-if (!target) {
-  const filename = relative(cwd, import.meta.filename);
-  throw new Error(`Usage: ${process.argv0} ${filename} <target> [...filters]`);
-}
-
 for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"]) {
   process.on(signal, () => beforeExit(signal));
 }
 
 await runTask("Environment", printInfo);
-const results = await runTests(target, filters);
+const results = await runTests();
 const ok = results.every(({ ok }) => ok);
 process.exit(getExitCode(ok ? "pass" : "fail"));

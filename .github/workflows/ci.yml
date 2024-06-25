@@ -112,7 +112,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      runs-on: ubuntu-latest
       tag: linux-x64
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}
@@ -124,7 +124,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      runs-on: ubuntu-latest
       tag: linux-x64-baseline
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}
@@ -148,7 +148,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      runs-on: macos-12
       tag: darwin-x64
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}
@@ -160,7 +160,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
+      runs-on: macos-12
       tag: darwin-aarch64
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}
@@ -172,7 +172,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: windows
+      runs-on: windows-latest
       tag: windows-x64
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}
@@ -184,7 +184,7 @@ jobs:
     uses: ./.github/workflows/run-test.yml
     secrets: inherit
     with:
-      runs-on: windows
+      runs-on: windows-latest
       tag: windows-x64-baseline
       github-id: ${{ inputs.github-id }}
       buildkite-url: ${{ inputs.buildkite-url }}

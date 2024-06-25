@@ -736,6 +736,8 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
+extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
@@ -743,6 +745,19 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
+        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        if (bun.Environment.isLinux) {
+            // TODO: musl
+            const version = gnu_get_libc_version() orelse "";
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            if (platform.os == .wsl) {
+                try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            } else {
+                try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            }
+        } else if (bun.Environment.isMac) {
+            try writer.print("macOS v{s}\n", .{platform.version});
+        }
         try writer.print("Args: ", .{});
         var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {

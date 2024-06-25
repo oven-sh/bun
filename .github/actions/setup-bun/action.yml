@@ -46,6 +46,7 @@ runs:
       name: Setup Bun
       shell: bash
       run: |
+        set -x
         case "$(uname -s)" in
           Linux*)  os=linux;;
           Darwin*) os=darwin;;
@@ -84,12 +85,14 @@ runs:
       name: Download Bun from URL
       shell: bash
       run: |
+        set -x
         curl -LO ${{ inputs.download-url }}/${{ steps.setup.outputs.release }}/${{ steps.setup.outputs.target }}.zip
 
     - id: unpack
       name: Unpack Bun
       shell: bash
       run: |
+        set -x
         target="${{ steps.setup.outputs.target }}"
         release="${{ steps.setup.outputs.release }}"
         mkdir -p ${target}/${release}
@@ -97,7 +100,7 @@ runs:
         mv ${target}/${target}/* ${target}/${release}/
         rm -rf ${target}/${target}
         rm -f ${target}.zip
-        bin="$(pwd)/${release}/${target}"
+        bin="$(pwd)/${target}/${release}"
         path="${bin}/bun"
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           bin=$(cygpath -w ${bin})
@@ -111,4 +114,5 @@ runs:
       name: Add Bun to Path
       shell: bash
       run: |
+        set -x
         echo "${{ steps.unpack.outputs.bun-bin }}" >> ${GITHUB_PATH}

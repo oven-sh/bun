@@ -2,7 +2,7 @@ import { expect, it, describe } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { $, spawnSync } from "bun";
-import { BREAKING_CHANGES_BUN_1_2, bunExe, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
+import { BREAKING_CHANGES_BUN_1_2, bunExe, isMacOS, isMacOSVersionAtLeast, isWindows, tempDirWithFiles } from "harness";
 import { tmpdir } from "os";
 import path from "path";
 
@@ -931,12 +931,12 @@ it("syntax error sets the byteOffset", () => {
     db.query("SELECT * FROM foo!!").all();
     throw new Error("Expected error");
   } catch (error) {
-    if (isMacOSVersionAtLeast("13")) {
-      expect(error.byteOffset).toBe(17);
-    } else {
+    if (isMacOS && !isMacOSVersionAtLeast("13")) {
       // older versions of macOS don't have the function which returns the byteOffset
       // we internally use a polyfill, so we need to allow that.
       expect(error.byteOffset).toBe(-1);
+    } else {
+      expect(error.byteOffset).toBe(17);
     }
   }
 });

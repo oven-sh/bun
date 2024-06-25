@@ -1103,3 +1103,27 @@ export function isGlibcVersionAtLeast(version: string): boolean {
   }
   return Bun.semver.satisfies(version, `>=${glibcVersion}`);
 }
+
+let macOSVersion: string | undefined;
+
+export function getMacOSVersion(): string | undefined {
+  if (macOSVersion || !isMacOS) {
+    return macOSVersion;
+  }
+  try {
+    const { stdout } = Bun.spawnSync({
+      cmd: ["sw_vers", "-productVersion"],
+    });
+    return (macOSVersion = stdout.toString().trim());
+  } catch (error) {
+    console.warn("Failed to detect macOS version:", error);
+  }
+}
+
+export function isMacOSVersionAtLeast(version: string): boolean {
+  const macOSVersion = getMacOSVersion();
+  if (!macOSVersion) {
+    return false;
+  }
+  return Bun.semver.satisfies(version, `>=${macOSVersion}`);
+}

@@ -260,6 +260,24 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
+    pub fn hasPrefix(this: ZigString, needle: []const u8) bool {
+        if (this.len == 0)
+            return false;
+        if (this.length() < needle.len)
+            return false;
+
+        if (this.is16Bit()) {
+            for (this.utf16SliceAligned(), 0..) |cp, i| {
+                if (cp != needle[i]) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        return strings.hasPrefix(this.slice(), needle);
+    }
+
     pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16SliceMaybeGlobal(this.utf16SliceAligned()[start_index..end_index], this.isGloballyAllocated());

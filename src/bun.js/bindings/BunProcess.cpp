@@ -2792,6 +2792,19 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     }
 }
 
+extern "C" void Process__emitInternalMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+
+    auto ident = Identifier::fromString(vm, "internalMessage"_s);
+    if (process->wrapped().hasEventListeners(ident)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(ident, args);
+    }
+}
+
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
 {
     auto* process = static_cast<Process*>(global->processObject());

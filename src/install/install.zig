@@ -8462,8 +8462,10 @@ pub const PackageManager = struct {
 
         var log = logger.Log.init(ctx.allocator);
         defer log.deinit();
+        initializeStore();
         bun.ini.loadNpmrc(ctx.allocator, env, true, ctx, &log) catch {
-            Output.print("Several errors ocurred while reading .npmrc:\n", .{});
+            const fmt = if (log.errors == 1) "Encountered an error while reading <b>.npmrc<r>:" else "Encountered errors while reading <b>.npmrc<r>:\n";
+            Output.pretty(fmt, .{});
             log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
         };
 

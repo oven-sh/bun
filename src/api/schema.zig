@@ -2732,6 +2732,27 @@ pub const Api = struct {
         /// token
         token: []const u8,
 
+        pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
+            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+
+            var out: NpmRegistry = .{
+                .url = "",
+                .username = "",
+                .password = "",
+                .token = "",
+            };
+
+            var i: usize = 0;
+            inline for (std.meta.fields(NpmRegistry)) |field| {
+                const field_value = @field(this, field.name);
+                @memcpy(buf[i .. i + field_value.len], field_value);
+                @field(&out, field.name) = buf[i .. i + field_value.len];
+                i += field_value.len;
+            }
+
+            return out;
+        }
+
         pub fn decode(reader: anytype) anyerror!NpmRegistry {
             var this = std.mem.zeroes(NpmRegistry);
 
@@ -2771,8 +2792,12 @@ pub const Api = struct {
                 }
             }
 
-            fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
-                const url = bun.URL.parse(str.data);
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+                return try this.parseRegistryURLStringImpl(str.data);
+            }
+
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) !Api.NpmRegistry {
+                const url = bun.URL.parse(str);
                 var registry = std.mem.zeroes(Api.NpmRegistry);
 
                 // Token

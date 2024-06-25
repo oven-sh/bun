@@ -38,20 +38,6 @@ pub const Parser = struct {
         this.arena.deinit();
     }
 
-    // fn expandValueIfNeeded(string: []const u8, ctx: *bun.CLI.Command.ContextData, env: *bun.DotEnv.Loader) []const u8 {
-    //     if (std.mem.indexOf(u8, "${", needle: []const T)
-    // }
-
-    pub fn apply(this: *Parser, ctx: *bun.CLI.Command.ContextData, env: *bun.DotEnv.Loader) void {
-        _ = ctx; // autofix
-        _ = env; // autofix
-        if (this.out.asProperty("registry")) |prop| {
-            if (prop.expr.asUtf8StringLiteral()) |registry_url| {
-                _ = registry_url; // autofix
-            }
-        }
-    }
-
     pub fn parse(this: *Parser) !void {
         try this.parseImpl();
     }
@@ -474,22 +460,6 @@ pub const Parser = struct {
 
     fn nextDot(key: []const u8) ?usize {
         return std.mem.indexOfScalar(u8, key, '.');
-        // const dot_idx = std.mem.indexOfScalar(u8, key, '.') orelse return null;
-        // if (dot_idx == 0) return dot_idx;
-        // var i: usize = @intCast(dot_idx - 1);
-        // var count: u8 = 0;
-        // while(key[
-        // while (i >= 0) {
-        //     if (key[@intCast(i)] == '\\') {
-        //         count += 1;
-        //     }
-        //     i -= 1;
-        // }
-        // if (count % 2 == 1) return dot_idx;
-        // if (dot_idx + 1 < key.len) {
-        //     if (nextDot(key[dot_idx + 1 ..])) |val| return dot_idx + 1 + val;
-        // }
-        // return null;
     }
 
     fn commitRopePart(this: *Parser, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) void {
@@ -688,6 +658,10 @@ pub const ConfigIterator = struct {
             /// path to key file
             keyfile,
         };
+
+        pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
+        }
     };
 
     pub fn next(this: *ConfigIterator) error{ParserError}!?Option(Item) {
@@ -769,16 +743,18 @@ pub const ScopeIterator = struct {
                             .some = .{
                                 .scope = key[1 .. key.len - ":registry".len],
                                 .registry = brk: {
-                                    if (prop.value) |p| {
-                                        var parser = bun.Schema.Api.NpmRegistry.Parser{
-                                            .log = this.log,
-                                            .source = this.source,
-                                            .allocator = this.allocator,
-                                        };
-                                        break :brk parser.parseRegistry(p) catch |e| {
-                                            if (e == error.OutOfMemory) bun.outOfMemory();
-                                            return error.ParserError;
-                                        };
+                                    if (prop.value) |value| {
+                                        if (value.asUtf8StringLiteral()) |str| {
+                                            var parser = bun.Schema.Api.NpmRegistry.Parser{
+                                                .log = this.log,
+                                                .source = this.source,
+                                                .allocator = this.allocator,
+                                            };
+                                            break :brk parser.parseRegistryURLStringImpl(str) catch |e| {
+                                                if (e == error.OutOfMemory) bun.outOfMemory();
+                                                return error.ParserError;
+                                            };
+                                        }
                                     }
                                     return .none;
                                 },
@@ -829,16 +805,22 @@ pub fn loadNpmrc(
             Global.exit(1);
         },
     }
-    defer npmrc_contents.deinit();
     const source = bun.logger.Source.initPathString(".npmrc", npmrc_contents.items[0..]);
 
     var parser = bun.ini.Parser.init(allocator, ".npmrc", npmrc_contents.items[0..], env);
+    defer parser.deinit();
     parser.parse() catch |e| {
         if (e == error.ParserError) {
             parser.logger.printForLogLevel(Output.errorWriter()) catch unreachable;
             return e;
         }
-        // TODO: should this exit(1)?
+        if (auto_loaded) {
+            Output.warn("{}\nwhile reading .npmrc \"{s}\"", .{
+                e,
+                ".npmrc",
+            });
+            return;
+        }
         Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
             e,
             ".npmrc",
@@ -846,6 +828,10 @@ pub fn loadNpmrc(
         Global.exit(1);
     };
 
+    // Need to be very, very careful here with strings.
+    // They are allocated in the Parser's arena, which of course gets
+    // deinitialized at the end of the scope.
+    // We need to dupe all strings
     const out = parser.out;
 
     var install: *Api.BunInstall = ctx.install orelse brk: {
@@ -856,16 +842,32 @@ pub fn loadNpmrc(
     };
 
     if (out.asProperty("registry")) |query| {
-        if (query.expr.asUtf8StringLiteral() != null) {
+        if (query.expr.asUtf8StringLiteral()) |str| {
             var p = bun.Schema.Api.NpmRegistry.Parser{
                 .allocator = allocator,
                 .log = log,
                 .source = &source,
             };
-            install.default_registry = p.parseRegistry(query.expr) catch |e| {
+            install.default_registry = p.parseRegistryURLStringImpl(ctx.allocator.dupe(u8, str) catch bun.outOfMemory()) catch |e| {
                 if (e == error.OutOfMemory) bun.outOfMemory();
                 return error.ParserError;
             };
+        }
+    }
+
+    if (out.asProperty("cache")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.cache_directory = ctx.allocator.dupe(u8, str) catch bun.outOfMemory();
+        } else if (query.expr.asBool()) |b| {
+            install.disable_cache = !b;
+        }
+    }
+
+    if (out.asProperty("dry-run")) |query| {
+        if (query.expr.asUtf8StringLiteral()) |str| {
+            install.dry_run = bun.strings.eqlComptime(str, "true");
+        } else if (query.expr.asBool()) |b| {
+            install.dry_run = b;
         }
     }
 
@@ -901,8 +903,12 @@ pub fn loadNpmrc(
 
         while (iter.next() catch unreachable) |val| {
             if (val.get()) |result| {
-                const registry = result.registry;
-                registry_map.scopes.put(ctx.allocator, result.scope, registry) catch bun.outOfMemory();
+                const registry = result.registry.dupe(ctx.allocator);
+                registry_map.scopes.put(
+                    ctx.allocator,
+                    ctx.allocator.dupe(u8, result.scope) catch bun.outOfMemory(),
+                    registry,
+                ) catch bun.outOfMemory();
             }
         }
     }
@@ -917,27 +923,64 @@ pub fn loadNpmrc(
         };
 
         while_loop: while (iter.next() catch {
-            @panic("TODO zack handle this");
+            const prop_idx = iter.prop_idx -| 1;
+            const prop = iter.config.properties.at(prop_idx);
+            const loc = prop.key.?.loc;
+            log.addErrorFmt(&source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
         }) |val| {
             if (val.get()) |conf_item_| {
+                // `conf_item` will look like:
+                //
+                // - localhost:4873/
+                // - somewhere-else.com/myorg/
+                //
+                // Scoped registries are set like this:
+                // - @myorg:registry=https://somewhere-else.com/myorg
                 const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
+                switch (conf_item.optname) {
+                    ._auth, .email, .certfile, .keyfile => {
+                        Output.warn(
+                            "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
+                            .{
+                                conf_item,
+                                @tagName(conf_item.optname),
+                            },
+                        );
+                        continue;
+                    },
+                    else => {},
+                }
                 for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
                     _ = k; // autofix
-                    if (std.mem.eql(u8, v.url, conf_item.registry_url)) {
+                    const url_after_protocol = brk: {
+                        if (std.mem.indexOf(u8, v.url, "//")) |idx| {
+                            if (idx + 2 < v.url.len) break :brk v.url[idx + 2 ..];
+                        }
+                        break :brk v.url;
+                    };
+                    if (std.mem.eql(u8, bun.strings.withoutTrailingSlash(url_after_protocol), bun.strings.withoutTrailingSlash(conf_item.registry_url))) {
                         switch (conf_item.optname) {
-                            ._auth => @panic("TODO zack handle"),
                             ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            .email => @panic("TODO zack handle"),
-                            .certfile => @panic("TODO zack handle"),
-                            .keyfile => @panic("TODO zack handle"),
+                            ._auth, .email, .certfile, .keyfile => unreachable,
                         }
                         continue :while_loop;
                     }
                 }
-                @panic("TODO zack handle not found");
+
+                Output.warn(
+                    "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
+                    .{
+                        conf_item,
+                        conf_item.registry_url,
+                    },
+                );
             }
         }
+    }
+
+    if (log.hasErrors()) {
+        return error.ParserError;
     }
 }

@@ -17,7 +17,7 @@ import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 
@@ -49,12 +49,14 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => {
+afterAll(async () => {
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   verdaccioServer.kill();
 });
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -65,6 +67,117 @@ cache = false
 registry = "http://localhost:${port}/"
 `,
   );
+});
+
+/**
+ * Returns auth token
+ */
+async function generateRegistryUser(username: string, password: string): Promise<string> {
+  const url = `http://localhost:4873/-/user/org.couchdb.user:${username}`;
+  const user = {
+    name: username,
+    password: password,
+    email: `${username}@example.com`,
+  };
+
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(user),
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    console.log(`Token: ${data.token}`);
+    return data.token;
+  } else {
+    throw new Error("Failed to create user:", response.statusText);
+  }
+}
+
+describe("npmrc", () => {
+  it("works with empty file", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ ``;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {},
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets default registry", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry = http://localhost:${port}/
+`;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets scoped registry", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  function registryConfigOptionTest(optName: string, value: string | (() => Promise<string>)) {
+    it("sets auth token on scoped registry", async () => {
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      const actual_val = typeof value === "string" ? value : await value();
+
+      const ini = /* ini */ `
+@types:registry=http://localhost:${port}/
+//localhost:${port}/:${optName}=${actual_val}
+  `;
+
+      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+      await Bun.$`echo ${JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "@types/no-deps": "1.0.0",
+        },
+      })} > package.json`.cwd(packageDir);
+      await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+    });
+  }
+
+  registryConfigOptionTest("_authToken", async () => generateRegistryUser("bilbo_baggins", "verysecure"));
+  registryConfigOptionTest("username", async () => {
+    await generateRegistryUser("gandalf420", "verysecure");
+    return "gandalf420";
+  });
+  registryConfigOptionTest("password", async () => {
+    await generateRegistryUser("gandalf421", "verysecure");
+    return "verysecure";
+  });
 });
 
 describe("optionalDependencies", () => {

@@ -49,9 +49,9 @@ web:
   #  publicPath: http://somedomain.org/
 
 # https://verdaccio.org/docs/configuration#authentication
-# auth:
-# htpasswd:
-#   file: ./htpasswd
+auth:
+  htpasswd:
+    file: ./htpasswd
 # Maximum amount of users allowed to register, defaults to "+inf".
 # You can set this to -1 to disable registration.
 # max_users: 1000

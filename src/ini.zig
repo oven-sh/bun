@@ -939,6 +939,20 @@ pub fn loadNpmrc(
             break :brk bun.URL.parse("https://registry.npmjs.org/");
         };
 
+        // I don't like having to do this but we'll need a mapping of scope -> bun.URL
+        // Because we need to check different parts of the URL, for instance in this
+        // example .npmrc:
+        _ =
+            \\ @myorg:registry=https://somewhere-else.com/myorg
+            \\ @another:registry=https://somewhere-else.com/another
+            \\
+            \\ //somewhere-else.com/myorg/:_authToken=MYTOKEN1
+            \\
+            \\ //somewhere-else.com/:username=foobar
+            \\
+        ;
+        // The line that sets the auth token should only apply to the @myorg scope
+        // The line that sets the username would apply to both @myorg and @another
         var url_map = url_map: {
             var url_map = std.StringArrayHashMap(bun.URL).init(parser.arena.allocator());
             url_map.ensureTotalCapacity(registry_map.scopes.keys().len) catch bun.outOfMemory();
@@ -960,7 +974,7 @@ pub fn loadNpmrc(
             .allocator = allocator,
         };
 
-        while_loop: while (iter.next() catch {
+        while (iter.next() catch {
             const prop_idx = iter.prop_idx -| 1;
             const prop = iter.config.properties.at(prop_idx);
             const loc = prop.key.?.loc;
@@ -1012,6 +1026,7 @@ pub fn loadNpmrc(
                     continue;
                 }
 
+                var matched_at_least_one = false;
                 for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {
                     const url = url_map.get(k.*) orelse unreachable;
 
@@ -1021,23 +1036,27 @@ pub fn loadNpmrc(
                                 continue;
                             }
                         }
+                        matched_at_least_one = true;
                         switch (conf_item.optname) {
                             ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
                             ._auth, .email, .certfile, .keyfile => unreachable,
                         }
-                        continue :while_loop;
+                        // We have to keep going as it could match multiple scopes
+                        continue;
                     }
                 }
 
-                Output.warn(
-                    "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
-                    .{
-                        conf_item,
-                        conf_item.registry_url,
-                    },
-                );
+                if (!matched_at_least_one) {
+                    Output.warn(
+                        "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
+                        .{
+                            conf_item,
+                            conf_item.registry_url,
+                        },
+                    );
+                }
             }
         }
     }

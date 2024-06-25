@@ -4,10 +4,6 @@
 # Changes to this file must be manually edited here:
 # https://buildkite.com/bun/bun/settings/steps
 steps:
-  - block: ":eyes:"
-    prompt: ":rotating_light: Review the changes before approving this PR."
-    if: build.pull_request.repository.fork
-    blocked_state: running
   - label: ":pipeline:"
     command:
       - "buildkite-agent pipeline upload .buildkite/ci.yml"

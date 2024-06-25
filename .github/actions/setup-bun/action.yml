@@ -106,8 +106,7 @@ runs:
           bin=$(cygpath -w ${bin})
           path=$(cygpath -w ${path})
         fi
-        chmod +x ${bin}/*
-        echo "bun-bin=${path}" >> $GITHUB_OUTPUT
+        echo "bun-bin=${bin}" >> $GITHUB_OUTPUT
         echo "bun-path=${path}" >> ${GITHUB_OUTPUT}
 
     - if: ${{ inputs.add-to-path == 'true' }}

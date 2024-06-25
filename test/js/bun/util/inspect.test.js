@@ -1,9 +1,5 @@
 import { it, expect, describe } from "bun:test";
 import util from "util";
-import { bunEnv, bunExe } from "harness";
-import { mkdirSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 
 it("prototype", () => {
   const prototypes = [
@@ -525,38 +521,23 @@ it("Bun.inspect array with non-indexed properties", () => {
 ]`);
 });
 
-it("console.logging function displays async and generator names", async () => {
-  const prefix = join(tmpdir(), "console-logging-function-async");
+// it("console.logging function displays async and generator names", async () => {
+//   it.each
+// });
 
-  const cases = [
-    "console.log(function a() {});",
-    "console.log(async function b() {});",
-    "console.log(function* c() {});",
-    "console.log(async function* d() {});",
-  ];
+describe("console.logging function displays async and generator names", async () => {
+  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
 
   const expected_logs = [
-    "[Function: a]\n",
-    "[AsyncFunction: b]\n",
-    "[GeneratorFunction: c]\n",
-    "[AsyncGeneratorFunction: d]\n",
+    "[Function: a]",
+    "[AsyncFunction: b]",
+    "[GeneratorFunction: c]",
+    "[AsyncGeneratorFunction: d]",
   ];
 
   for (let i = 0; i < cases.length; i++) {
-    const inputPath = join(prefix, `case-${i}.js`);
-    try {
-      mkdirSync(prefix, { recursive: true });
-    } catch (e) {}
-    await Bun.write(inputPath, cases[i]);
-
-    const { stdout, exitCode } = Bun.spawnSync({
-      cmd: [bunExe(), "run", inputPath],
-      stderr: "inherit",
-      env: bunEnv,
-      cwd: prefix,
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
-
-    expect(exitCode).toBe(0);
-    expect(stdout.toString()).toBe(expected_logs[i]);
   }
 });

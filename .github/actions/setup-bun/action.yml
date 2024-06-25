@@ -44,10 +44,4 @@ runs:
         esac
         curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
         unzip ${target}.zip
-        ls
-        mkdir -p ${{ runner.temp }}/.bun/bin
-        ls ${{ runner.temp }}/.bun/bin
-        ls ${target}
-        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
-        chmod +x ${{ runner.temp }}/.bun/bin/*
-        echo "${{ runner.temp }}/.bun/bin" >> ${GITHUB_PATH}
+        echo $(pwd) >> ${GITHUB_PATH}

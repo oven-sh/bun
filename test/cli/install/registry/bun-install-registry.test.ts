@@ -7301,7 +7301,7 @@ test("doesn't error when the migration is out of sync", async () => {
         },
         "node_modules/no-deps": {
           "version": "1.0.0",
-          "resolved": "http://localhost:4873/no-deps/-/no-deps-1.0.0.tgz",
+          "resolved": `http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`,
           "integrity":
             "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
           "dev": true,

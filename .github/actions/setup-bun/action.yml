@@ -90,9 +90,14 @@ runs:
       name: Unpack Bun
       shell: bash
       run: |
-        mkdir -p ${{ steps.setup.outputs.release }}
-        unzip ${{ steps.setup.outputs.target }}.zip -d ${{ steps.setup.outputs.release }}
-        bin="${{ steps.setup.outputs.release }}/${{ steps.setup.outputs.target }}"
+        target="${{ steps.setup.outputs.target }}"
+        release="${{ steps.setup.outputs.release }}"
+        mkdir -p ${release}
+        unzip ${target}.zip -d ${target}
+        mv ${target}/${target}/* ${target}/${release}/
+        rm -rf ${target}/${target}
+        rm -f ${target}.zip
+        bin="$(pwd)/${release}/${target}"
         path="${bin}/bun"
         if [[ "${{ runner.os }}" == "Windows" ]]; then
           bin=$(cygpath -w ${bin})

@@ -65,14 +65,14 @@ jobs:
           ignore_build_states: blocked,canceled,skipped,not_run
           ignore_job_states: timed_out,failed
           output_path: bun
-      - if: ${{ runner.os != 'Windows' }}
+      - if: ${{ inputs.github-id && runner.os != 'Windows' }}
         name: Setup Bun
         shell: bash
         run: |
           unzip bun/bun-*.zip
           cd bun-*
           pwd >> $GITHUB_PATH
-      - if: ${{ runner.os == 'Windows' }}
+      - if: ${{ inputs.github-id && runner.os == 'Windows' }}
         name: Setup Bun (Windows)
         run: |
           unzip bun/bun-*.zip
@@ -96,7 +96,7 @@ jobs:
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
-          node scripts/runner.node.mjs $(which bun)
+          node scripts/runner.node.mjs bun
       - if: ${{ always() }}
         name: Upload Results
         uses: actions/upload-artifact@v4

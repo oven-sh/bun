@@ -608,8 +608,8 @@ pub const PackageManifest = struct {
                 alignment: usize,
             };
             var data: [fields.len]Data = undefined;
-            for (fields, 0..) |field_info, i| {
-                data[i] = .{
+            for (fields, &data) |field_info, *dat| {
+                dat.* = .{
                     .size = @sizeOf(field_info.type),
                     .name = field_info.name,
                     .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
@@ -623,9 +623,9 @@ pub const PackageManifest = struct {
             std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
-            for (data, 0..) |elem, i| {
-                sizes_bytes[i] = elem.size;
-                names[i] = elem.name;
+            for (data, &sizes_bytes, &names) |elem, *size_, *name_| {
+                size_.* = elem.size;
+                name_.* = elem.name;
             }
             break :blk .{
                 .bytes = sizes_bytes,
@@ -659,7 +659,11 @@ pub const PackageManifest = struct {
             }
 
             stream.pos += Aligner.skipAmount(Type, stream.pos);
-            const result_bytes = stream.buffer[stream.pos..][0..byte_len];
+            const remaining = stream.buffer[@min(stream.pos, stream.buffer.len)..];
+            if (remaining.len < byte_len) {
+                return error.BufferTooSmall;
+            }
+            const result_bytes = remaining[0..byte_len];
             const result = @as([*]const Type, @ptrCast(@alignCast(result_bytes.ptr)))[0 .. result_bytes.len / @sizeOf(Type)];
             stream.pos += result_bytes.len;
             return result;

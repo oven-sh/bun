@@ -2310,7 +2310,7 @@ pub const E = struct {
 
         pub fn slice(this: *String, allocator: std.mem.Allocator) []const u8 {
             this.resolveRopeIfNeeded(allocator);
-            return this.string(allocator) catch unreachable;
+            return this.string(allocator) catch bun.outOfMemory();
         }
 
         pub var empty = String{};
@@ -3551,11 +3551,10 @@ pub const Expr = struct {
     }
 
     pub fn extractNumericValues(left: Expr.Data, right: Expr.Data) ?[2]f64 {
-        if (!(@as(Expr.Tag, left) == .e_number and @as(Expr.Tag, right) == .e_number)) {
-            return null;
-        }
-
-        return [2]f64{ left.e_number.value, right.e_number.value };
+        return .{
+            left.extractNumericValue() orelse return null,
+            right.extractNumericValue() orelse return null,
+        };
     }
 
     pub var icount: usize = 0;
@@ -4952,6 +4951,9 @@ pub const Expr = struct {
                     else => {},
                 }
             },
+            .e_inlined_enum => |inlined| {
+                return maybeSimplifyNot(inlined.value, allocator);
+            },
 
             else => {},
         }
@@ -5525,6 +5527,9 @@ pub const Expr = struct {
 
                     else => PrimitiveType.unknown,
                 },
+
+                .e_inlined_enum => |inlined| inlined.value.data.knownPrimitive(),
+
                 else => PrimitiveType.unknown,
             };
         }
@@ -5546,6 +5551,10 @@ pub const Expr = struct {
                 .e_undefined => std.math.nan(f64),
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
+                .e_inlined_enum => |inlined| switch (inlined.value.data) {
+                    .e_number => |num| num.value,
+                    else => null,
+                },
                 else => null,
             };
         }
@@ -5557,6 +5566,30 @@ pub const Expr = struct {
                     data.e_number.value
                 else
                     null,
+                .e_inlined_enum => |inlined| switch (inlined.value.data) {
+                    .e_number => |num| if (std.math.isFinite(num.value))
+                        num.value
+                    else
+                        null,
+                    else => null,
+                },
+                else => null,
+            };
+        }
+
+        pub fn extractNumericValue(data: Expr.Data) ?f64 {
+            return switch (data) {
+                .e_number => if (std.math.isFinite(data.e_number.value))
+                    data.e_number.value
+                else
+                    null,
+                .e_inlined_enum => |inlined| switch (inlined.value.data) {
+                    .e_number => |num| if (std.math.isFinite(num.value))
+                        num.value
+                    else
+                        null,
+                    else => null,
+                },
                 else => null,
             };
         }
@@ -5581,6 +5614,8 @@ pub const Expr = struct {
         ) Equality {
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
+                .e_inlined_enum => |inlined| return inlined.value.data.eql(right, allocator, kind),
+
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
                         .e_null, .e_undefined => true,
@@ -5639,6 +5674,12 @@ pub const Expr = struct {
                                 .equal = l.value == r.value,
                             };
                         },
+                        .e_inlined_enum => |r| if (r.value.data == .e_number) {
+                            return .{
+                                .ok = true,
+                                .equal = l.value == r.value.data.e_number.value,
+                            };
+                        },
                         .e_boolean => |r| {
                             if (comptime kind == .loose) {
                                 return .{
@@ -5691,6 +5732,19 @@ pub const Expr = struct {
                                 .equal = r.eql(E.String, l),
                             };
                         },
+                        .e_inlined_enum => |inlined| {
+                            if (inlined.value.data == .e_string) {
+                                const r = inlined.value.data.e_string;
+
+                                r.resolveRopeIfNeeded(allocator);
+                                l.resolveRopeIfNeeded(allocator);
+
+                                return .{
+                                    .ok = true,
+                                    .equal = r.eql(E.String, l),
+                                };
+                            }
+                        },
                         .e_null, .e_undefined => {
                             return Equality.false;
                         },
@@ -5734,6 +5788,8 @@ pub const Expr = struct {
                     JSC.JSValue.false,
                 .e_number => |e| e.toJS(),
                 // .e_big_int => |e| e.toJS(ctx, exception),
+
+                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject),
 
                 .e_identifier,
                 .e_import_identifier,

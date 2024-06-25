@@ -26,7 +26,7 @@ on:
 
 jobs:
   linux-x64:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build linux-x64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -38,7 +38,7 @@ jobs:
       canary: true
       no-cache: true
   linux-x64-baseline:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build linux-x64-baseline
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -50,7 +50,7 @@ jobs:
       canary: true
       no-cache: true
   linux-aarch64:
-    if: ${{ github.repository_owner == 'oven-sh' && (!inputs.github-id || !inputs.buildkite-url || !inputs.release-name) }}
+    if: ${{ github.repository_owner == 'oven-sh' && (!inputs.github-id && !inputs.buildkite-url && !inputs.release-name) }}
     name: Build linux-aarch64
     uses: ./.github/workflows/build-linux.yml
     secrets: inherit
@@ -62,7 +62,7 @@ jobs:
       canary: true
       no-cache: true
   darwin-x64:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build darwin-x64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -73,7 +73,7 @@ jobs:
       cpu: haswell
       canary: true
   darwin-aarch64:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build darwin-aarch64
     uses: ./.github/workflows/build-darwin.yml
     secrets: inherit
@@ -84,7 +84,7 @@ jobs:
       cpu: native
       canary: true
   windows-x64:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build windows-x64
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -95,7 +95,7 @@ jobs:
       cpu: haswell
       canary: true
   windows-x64-baseline:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Build windows-x64-baseline
     uses: ./.github/workflows/build-windows.yml
     secrets: inherit
@@ -184,7 +184,7 @@ jobs:
       buildkite-url: ${{ inputs.buildkite-url }}
       release-name: ${{ inputs.release-name }}
   cleanup:
-    if: ${{ !inputs.github-id || !inputs.buildkite-url || !inputs.release-name }}
+    if: ${{ !inputs.github-id && !inputs.buildkite-url && !inputs.release-name }}
     name: Cleanup
     needs:
       - linux-x64

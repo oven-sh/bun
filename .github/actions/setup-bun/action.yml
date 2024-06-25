@@ -100,4 +100,4 @@ runs:
     - name: Add Bun to Path
       shell: bash
       run: |
-        echo "${{ steps.setup.outputs.bun-path }}" >> ${GITHUB_PATH}
+        echo "${{ steps.unpack.outputs.bun-path }}" >> ${GITHUB_PATH}

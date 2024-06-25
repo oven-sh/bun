@@ -10569,6 +10569,7 @@ pub const PackageManager = struct {
                 out_dir: if (bun.Environment.isWindows) []const u16 else void,
                 buf1: if (bun.Environment.isWindows) []u16 else void,
                 buf2: if (bun.Environment.isWindows) []u16 else void,
+                tmpdir_in_node_modules: if (bun.Environment.isWindows) std.fs.Dir else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
 
@@ -10583,10 +10584,10 @@ pub const PackageManager = struct {
                     const openFile = std.fs.Dir.openFile;
                     const createFile = std.fs.Dir.createFile;
 
-                    // - rename node_modules/$PKG/$FILE -> node_modules/$PKG/$TMPNAME
-                    // - create node_modules/$PKG/$FILE
-                    // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
-                    // - unlink: $TMPDIR/$FILE
+                    // 1. rename original file in node_modules to tmp_dir_in_node_modules
+                    // 2. create the file again
+                    // 3. copy cache flie to the newly re-created file
+                    // 4. profit
                     if (comptime bun.Environment.isWindows) {
                         var tmpbuf: [1024]u8 = undefined;
                         const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
@@ -10602,7 +10603,7 @@ pub const PackageManager = struct {
                         if (bun.sys.renameatConcurrently(
                             bun.toFD(destination_dir_.fd),
                             entrypathZ,
-                            bun.toFD(destination_dir_.fd),
+                            bun.toFD(tmpdir_in_node_modules.fd),
                             tmpname,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -10682,6 +10683,15 @@ pub const PackageManager = struct {
                 Global.crash();
             }
             out_dir = buf2[0..outlen];
+            var tmpbuf: [1024]u8 = undefined;
+            const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("tffbp", tmpbuf[0..], bun.fastRandom()) catch |e| {
+                Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
+                Global.crash();
+            });
+            const temp_folder_in_node_modules = try node_modules_folder.makeOpenPath(tmpname, .{});
+            defer {
+                node_modules_folder.deleteTree(tmpname) catch {};
+            }
             _ = try FileCopier.copy(
                 node_modules_folder,
                 &walker,
@@ -10689,11 +10699,13 @@ pub const PackageManager = struct {
                 out_dir,
                 &buf1,
                 &buf2,
+                temp_folder_in_node_modules,
             );
         } else if (Environment.isPosix) {
             _ = try FileCopier.copy(
                 node_modules_folder,
                 &walker,
+                {},
                 {},
                 {},
                 {},

@@ -1818,10 +1818,6 @@ pub fn renameatConcurrentlyWithoutFallback(
     to: [:0]const u8,
 ) Maybe(void) {
     var did_atomically_replace = false;
-    if (comptime Environment.isWindows) {
-        // Windows doesn't have an equivalent
-        return renameat(from_dir_fd, from, to_dir_fd, to);
-    }
 
     attempt_atomic_rename_and_fallback_to_racy_delete: {
         {
@@ -1834,26 +1830,29 @@ pub fn renameatConcurrentlyWithoutFallback(
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 
-            // Fallback path: the folder exists in the cache dir, it might be in a strange state
-            // let's attempt to atomically replace it with the temporary folder's version
-            if (switch (err.getErrno()) {
-                .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
-                else => false,
-            }) {
-                did_atomically_replace = true;
-                switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
-                    .exchange = true,
-                })) {
-                    .err => {},
-                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+            // Windows doesn't have any equivalent with renameat with swap
+            if (!bun.Environment.isWindows) {
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if (switch (err.getErrno()) {
+                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                    else => false,
+                }) {
+                    did_atomically_replace = true;
+                    switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                        .exchange = true,
+                    })) {
+                        .err => {},
+                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                    }
+                    did_atomically_replace = false;
                 }
-                did_atomically_replace = false;
             }
         }
 
         //  sad path: let's try to delete the folder and then rename it
         var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(from) catch {};
+        to_dir.deleteTree(to) catch {};
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };

@@ -82,11 +82,11 @@ describe("bun patch <pkg>", async () => {
             `To patch @types/ws, edit the following folder:\n\n  ${tempdir}/${path}\n`,
           );
 
-          await $`echo LOL > ${path}/index.js`.env(bunEnv).cwd(tempdir);
+          await $`echo LOL > ${path}/index.d.ts`.env(bunEnv).cwd(tempdir);
 
           expectNoError(await $`cd packages/eslint-config; ${bunExe()} patch --commit ${arg}`.env(bunEnv).cwd(tempdir));
 
-          expect(await $`cat ${path}/index.js`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
+          expect(await $`cat ${path}/index.d.ts`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
 
           expect(
             (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],

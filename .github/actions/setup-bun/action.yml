@@ -44,4 +44,7 @@ runs:
         esac
         curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
         unzip ${target}.zip
+        ls
         echo $(pwd) >> ${GITHUB_PATH}
+        echo $(pwd)/bun >> ${GITHUB_PATH}
+        echo $(pwd)/bin >> ${GITHUB_PATH}

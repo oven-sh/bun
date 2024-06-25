@@ -6,22 +6,44 @@ inputs:
     type: string
     description: "The version of bun to install: 'latest', 'canary', 'bun-v1.0.0', etc."
     default: latest
-    required: false
+  workflow-run-id:
+    type: string
+    description: "The workflow run ID where to download bun."
   baseline:
     type: boolean
     description: "Whether to use the baseline version of bun."
     default: false
-    required: false
+  add-to-path:
+    type: boolean
+    description: "Whether to add bun to PATH."
+    default: true
   download-url:
     type: string
     description: "The base URL to download bun from."
     default: "https://pub-5e11e972747a44bf9aaf9394f185a982.r2.dev/releases"
-    required: false
+
+outputs:
+  os:
+    description: "Operating system: 'darwin', 'linux', or 'windows'."
+    value: ${{ steps.setup.outputs.os }}
+  arch:
+    description: "Architecture: 'aarch64' or 'x64'."
+    value: ${{ steps.setup.outputs.arch }}
+  target:
+    description: "Target: 'bun-{os}-{arch}-[baseline]'."
+    value: ${{ steps.setup.outputs.target }}
+  release:
+    description: "Release: 'latest', 'canary', or 'bun-v1.x.x'."
+    value: ${{ steps.setup.outputs.release }}
+  bun-path:
+    description: "The path to Bun."
+    value: ${{ steps.unpack.outputs.bun-path }}
 
 runs:
   using: composite
   steps:
-    - name: Setup Bun
+    - id: setup
+      name: Setup Bun
       shell: bash
       run: |
         case "$(uname -s)" in
@@ -29,27 +51,53 @@ runs:
           Darwin*) os=darwin;;
           *)       os=windows;;
         esac
+        echo "os=${os}" >> $GITHUB_OUTPUT
         case "$(uname -m)" in
           arm64 | aarch64)  arch=aarch64;;
           *)                arch=x64;;
         esac
+        echo "arch=${arch}" >> $GITHUB_OUTPUT
         case "${{ inputs.baseline }}" in
           true | 1) target="bun-${os}-${arch}-baseline";;
           *)        target="bun-${os}-${arch}";;
         esac
+        echo "target=${target}" >> $GITHUB_OUTPUT
         case "${{ inputs.bun-version }}" in
           latest) release="latest";;
           canary) release="canary";;
           *)      release="bun-v${{ inputs.bun-version }}";;
         esac
+        echo "release=${release}" >> $GITHUB_OUTPUT
+
+    - if: ${{ inputs.workflow-run-id }}
+      name: Download Bun from Github Actions
+      uses: actions/download-artifact@v4
+      with:
+        github-token: ${{ github.token }}
+        run-id: ${{ inputs.workflow-run-id }}
+        name: ${{ outputs.setup.target }}
+
+    - if: ${{ !inputs.workflow-run-id }}
+      name: Download Bun from URL
+      shell: bash
+      run: |
         curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
-        unzip ${target}.zip
+
+    - id: unpack
+      name: Unpack Bun
+      shell: bash
+      run: |
+        unzip ${{ outputs.setup.target }}.zip
         mkdir -p ${{ runner.temp }}/.bun/bin
-        mv ${target}/bun* ${{ runner.temp }}/.bun/bin/
+        mv ${{ outputs.setup.target }}/bun* ${{ runner.temp }}/.bun/bin/
         chmod +x ${{ runner.temp }}/.bun/bin/*
         path="${{ runner.temp }}/.bun/bin"
-        if [[ "${os}" == "windows" ]]; then
-          echo $(cygpath -w ${path}) >> ${GITHUB_PATH}
-        else
-          echo ${path} >> ${GITHUB_PATH}
+        if [[ ${{ outputs.setup.os }} == "windows" ]]; then
+          path=$(cygpath -w ${path})
         fi
+        echo "bun-path=${path}" >> $GITHUB_OUTPUT
+
+    - name: Add Bun to Path
+      shell: bash
+      run: |
+        echo "${{ steps.setup.outputs.bun-path }}" >> ${GITHUB_PATH}

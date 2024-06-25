@@ -59,33 +59,26 @@ jobs:
             packages/bun-types
             scripts
             .github
-      - if: ${{ inputs.release-name }}
-        name: Download Bun from Release
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: latest
+      - id: setup-release
+        if: ${{ inputs.release-name }}
+        name: Setup Bun from Release
         uses: ./.github/actions/setup-bun
         with:
           bun-version: ${{ inputs.release-name }}
           baseline: ${{ contains(inputs.tag, '-baseline') }}
-      - if: ${{ inputs.github-id }}
-        name: Download Bun from Github
-        uses: actions/download-artifact@v4
+          add-to-path: false
+      - id: setup-github
+        if: ${{ inputs.github-id }}
+        name: Setup Bun from Github Actions
+        uses: ./.github/actions/setup-bun
         with:
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.github-id }}
-          name: bun-${{ inputs.tag }}
-          path: bun
-      - if: ${{ inputs.github-id && runner.os != 'Windows' }}
-        name: Setup Bun
-        shell: bash
-        run: |
-          unzip bun/bun-*.zip
-          cd bun-*
-          pwd >> $GITHUB_PATH
-      - if: ${{ inputs.github-id && runner.os == 'Windows' }}
-        name: Setup Bun (Windows)
-        run: |
-          unzip bun/bun-*.zip
-          cd bun-*
-          pwd >> $env:GITHUB_PATH
+          workflow-run-id: ${{ inputs.github-id }}
+          baseline: ${{ contains(inputs.tag, '-baseline') }}
+          add-to-path: false
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
@@ -101,7 +94,10 @@ jobs:
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
         run: |
-          node scripts/runner.node.mjs --include "${{ matrix.include }}" --exclude "${{ matrix.exclude }}"
+          node scripts/runner.node.mjs \
+            --exec-path "${{ steps.setup-github.outputs.bun-path || steps.setup-release.outputs.bun-path }}" \
+            --include "${{ matrix.include }}" \
+            --exclude "${{ matrix.exclude }}"
 
   # TODO: Enable when we start running the Node.js test suite
   # test-node:

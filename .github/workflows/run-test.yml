@@ -32,18 +32,16 @@ jobs:
             include: bundler/,transpiler/
           - label: CLI tests
             include: cli/
-          - label: Node.js tests
+          - label: Node tests
             include: js/node/
-          - label: Bun.js tests
+          - label: Bun tests
             include: js/bun/
           - label: Web tests
             include: js/web/
-          - label: Regression tests
-            include: regression/
           - label: Integration tests
             include: integration/,third_party/
           - label: Other tests
-            exclude: bundler/,transpiler/,cli/integration/,third_party/,js/node/,js/bun/,js/web/,regression/
+            exclude: bundler/,transpiler/,cli/,integration/,third_party/,js/node/,js/bun/,js/web/
     steps:
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Git
@@ -102,7 +100,7 @@ jobs:
           TEST_INFO_STRIPE: ${{ secrets.TEST_INFO_STRIPE }}
           TEST_INFO_AZURE_SERVICE_BUS: ${{ secrets.TEST_INFO_AZURE_SERVICE_BUS }}
         run: |
-          node scripts/runner.node.mjs bun --include "${{ matrix.include }}" --exclude "${{ matrix.exclude }}"
+          node scripts/runner.node.mjs --include "${{ matrix.include }}" --exclude "${{ matrix.exclude }}"
 
   # TODO: Enable when we start running the Node.js test suite
   # test-node:

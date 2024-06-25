@@ -68,8 +68,8 @@ const { values: options, positionals: filters } = parseArgs({
       default: undefined,
     },
     ["bail"]: {
-      type: "string",
-      default: "1",
+      type: "boolean",
+      default: false,
     },
     ["shard"]: {
       type: "string",

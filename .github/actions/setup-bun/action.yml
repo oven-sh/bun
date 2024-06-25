@@ -92,10 +92,10 @@ runs:
         mv ${{ steps.setup.outputs.target }}/bun* ${{ runner.temp }}/.bun/bin/
         chmod +x ${{ runner.temp }}/.bun/bin/*
         path="${{ runner.temp }}/.bun/bin"
-        if [[ ${{ steps.setup.outputs.os }} == "windows" ]]; then
+        if [[ "${{ steps.setup.outputs.os }}" == "windows" ]]; then
           path=$(cygpath -w ${path})
         fi
-        echo "bun-path=${path}" >> $GITHUB_OUTPUT
+        echo "bun-path=${path}" >> ${GITHUB_OUTPUT}
 
     - name: Add Bun to Path
       shell: bash

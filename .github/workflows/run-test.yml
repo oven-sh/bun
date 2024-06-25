@@ -63,6 +63,7 @@ jobs:
         uses: ./.github/actions/setup-bun
         with:
           bun-version: latest
+          baseline: ${{ contains(inputs.tag, '-baseline') }}
       - id: setup-release
         if: ${{ inputs.release-name }}
         name: Setup Bun from Release

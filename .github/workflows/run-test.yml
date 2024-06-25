@@ -42,12 +42,10 @@ jobs:
             scripts
       - if: ${{ inputs.release-name }}
         name: Download Bun from Release
-        run: |
-          npm install -g bun@${{ inputs.release-name }}
-      - if: ${{ inputs.release-name == 'canary' }}
-        name: Upgrade Bun to Canary
-        run: |
-          bun update --canary
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: ${{ inputs.release-name }}
+          baseline: ${{ contains(inputs.tag, '-baseline') }}
       - if: ${{ inputs.github-id }}
         name: Download Bun from Github
         uses: actions/download-artifact@v4
@@ -56,16 +54,6 @@ jobs:
           run-id: ${{ inputs.github-id }}
           name: bun-${{ inputs.tag }}
           path: bun
-      - if: ${{ inputs.buildkite-url }}
-        name: Download Bun from Buildkite
-        uses: EnricoMi/download-buildkite-artifact-action@v1
-        with:
-          github_token: ${{ github.token }}
-          buildkite_token: ${{ secrets.BUILDKITE_TOKEN }}
-          buildkite_build_url: ${{ inputs.buildkite-url }}
-          ignore_build_states: blocked,canceled,skipped,not_run
-          ignore_job_states: timed_out,failed
-          output_path: bun
       - if: ${{ inputs.github-id && runner.os != 'Windows' }}
         name: Setup Bun
         shell: bash
@@ -98,38 +86,6 @@ jobs:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           node scripts/runner.node.mjs bun
-      - if: ${{ always() }}
-        name: Upload Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-${{ inputs.tag }}-tests
-          path: |
-            test-report.*
-            comment.md
-            pr-number.txt
-          if-no-files-found: error
-          overwrite: true
-      - if: ${{ always() && steps.test.outputs.failing_tests != '' && github.event.pull_request && github.repository_owner == 'oven-sh' }}
-        name: Send Message
-        uses: sarisia/actions-status-discord@v1
-        with:
-          webhook: ${{ secrets.DISCORD_WEBHOOK }}
-          nodetail: true
-          color: "#FF0000"
-          title: ""
-          description: |
-            ### ❌ [${{ github.event.pull_request.title }}](${{ github.event.pull_request.html_url }})
-
-            @${{ github.actor }}, there are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}.
-
-            ${{ steps.test.outputs.failing_tests }}
-
-            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
-      - name: Fail
-        if: ${{ failure() || always() && steps.test.outputs.failing_tests != '' }}
-        run: |
-          echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
-          exit 1
 
   # TODO: Enable when we start running the Node.js test suite
   # test-node:

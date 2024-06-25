@@ -13,12 +13,12 @@ on:
       tag:
         type: string
         required: true
-      pr-number:
+      github-id:
         type: string
-        required: true
-      run-id:
+      release-name:
         type: string
-        default: ${{ github.run_id }}
+      buildkite-url:
+        type: string
 
 jobs:
   test:
@@ -28,8 +28,9 @@ jobs:
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Git
         run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
+          git config --system core.autocrlf false
+          git config --system core.eol lf
+          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -38,21 +39,32 @@ jobs:
             bun.lockb
             test
             packages/bun-types
-      - name: Setup Environment
-        shell: bash
+      - if: ${{ inputs.release-name }}
+        name: Download Bun from Release
         run: |
-          echo "${{ inputs.pr-number }}" > pr-number.txt
-      - name: Download Bun
+          npm install -g bun@${{ inputs.release-name }}
+      - if: ${{ inputs.release-name == 'canary' }}
+        name: Upgrade Bun to Canary
+        run: |
+          bun update --canary
+      - if: ${{ inputs.github-id }}
+        name: Download Bun from Github
         uses: actions/download-artifact@v4
         with:
+          github-token: ${{ github.token }}
+          run-id: ${{ inputs.github-id }}
           name: bun-${{ inputs.tag }}
           path: bun
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.run-id || github.run_id }}
-      - name: Download pnpm
-        uses: pnpm/action-setup@v4
+      - if: ${{ inputs.buildkite-url }}
+        name: Download Bun from Buildkite
+        uses: EnricoMi/download-buildkite-artifact-action@v1
         with:
-          version: 8
+          github_token: ${{ github.token }}
+          buildkite_token: ${{ secrets.BUILDKITE_TOKEN }}
+          buildkite_build_url: ${{ inputs.buildkite-url }}
+          ignore_build_states: blocked,canceled,skipped,not_run
+          ignore_job_states: timed_out,failed
+          output_path: bun
       - if: ${{ runner.os != 'Windows' }}
         name: Setup Bun
         shell: bash
@@ -60,11 +72,6 @@ jobs:
           unzip bun/bun-*.zip
           cd bun-*
           pwd >> $GITHUB_PATH
-      - if: ${{ runner.os == 'Windows' }}
-        name: Setup Cygwin
-        uses: secondlife/setup-cygwin@v3
-        with:
-          packages: bash
       - if: ${{ runner.os == 'Windows' }}
         name: Setup Bun (Windows)
         run: |
@@ -74,23 +81,10 @@ jobs:
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
-          node-version: 20
-      - name: Install Dependencies
-        timeout-minutes: 5
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          bun install
-      - name: Install Dependencies (test)
-        timeout-minutes: 5
-        run: |
-          bun install --cwd test
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          node-version: 22
       - name: Run Tests
         id: test
         timeout-minutes: 90
-        shell: bash
         env:
           TMPDIR: ${{ runner.temp }}
           BUN_TAG: ${{ inputs.tag }}
@@ -135,81 +129,82 @@ jobs:
         run: |
           echo "There are ${{ steps.test.outputs.failing_tests_count || 'some' }} failing tests on bun-${{ inputs.tag }}."
           exit 1
-  test-node:
-    name: Node.js Tests
-    # TODO: enable when we start paying attention to the results. In the meantime, this causes CI to queue jobs wasting developer time.
-    if: 0
-    runs-on: ${{ inputs.runs-on }}
-    steps:
-      - if: ${{ runner.os == 'Windows' }}
-        name: Setup Git
-        run: |
-          git config --global core.autocrlf false
-          git config --global core.eol lf
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          sparse-checkout: |
-            test/node.js
-      - name: Setup Environment
-        shell: bash
-        run: |
-          echo "${{ inputs.pr-number }}" > pr-number.txt
-      - name: Download Bun
-        uses: actions/download-artifact@v4
-        with:
-          name: bun-${{ inputs.tag }}
-          path: bun
-          github-token: ${{ github.token }}
-          run-id: ${{ inputs.run-id || github.run_id }}
-      - if: ${{ runner.os != 'Windows' }}
-        name: Setup Bun
-        shell: bash
-        run: |
-          unzip bun/bun-*.zip
-          cd bun-*
-          pwd >> $GITHUB_PATH
-      - if: ${{ runner.os == 'Windows' }}
-        name: Setup Cygwin
-        uses: secondlife/setup-cygwin@v3
-        with:
-          packages: bash
-      - if: ${{ runner.os == 'Windows' }}
-        name: Setup Bun (Windows)
-        run: |
-          unzip bun/bun-*.zip
-          cd bun-*
-          pwd >> $env:GITHUB_PATH
-      - name: Setup Node.js
-        uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Checkout Tests
-        shell: bash
-        working-directory: test/node.js
-        run: |
-          node runner.mjs --pull
-      - name: Install Dependencies
-        timeout-minutes: 5
-        shell: bash
-        working-directory: test/node.js
-        run: |
-          bun install
-      - name: Run Tests
-        timeout-minutes: 10 # Increase when more tests are added
-        shell: bash
-        working-directory: test/node.js
-        env:
-          TMPDIR: ${{ runner.temp }}
-          BUN_GARBAGE_COLLECTOR_LEVEL: "0"
-          BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
-        run: |
-          node runner.mjs
-      - name: Upload Results
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-${{ inputs.tag }}-node-tests
-          path: |
-            test/node.js/summary/*.json
-          if-no-files-found: error
-          overwrite: true
+
+  # TODO: Enable when we start running the Node.js test suite
+  # test-node:
+  #   name: Node.js Tests
+  #   runs-on: ${{ inputs.runs-on }}
+  #   steps:
+  #     - if: ${{ runner.os == 'Windows' }}
+  #       name: Setup Git
+  #       run: |
+  #         git config --global core.autocrlf false
+  #         git config --global core.eol lf
+  #         git config --system core.longpaths true
+  #     - name: Checkout
+  #       uses: actions/checkout@v4
+  #       with:
+  #         sparse-checkout: |
+  #           test/node.js
+  #     - name: Setup Environment
+  #       shell: bash
+  #       run: |
+  #         echo "${{ inputs.pr-number }}" > pr-number.txt
+  #     - name: Download Bun
+  #       uses: actions/download-artifact@v4
+  #       with:
+  #         name: bun-${{ inputs.tag }}
+  #         path: bun
+  #         github-token: ${{ github.token }}
+  #         run-id: ${{ inputs.run-id || github.run_id }}
+  #     - if: ${{ runner.os != 'Windows' }}
+  #       name: Setup Bun
+  #       shell: bash
+  #       run: |
+  #         unzip bun/bun-*.zip
+  #         cd bun-*
+  #         pwd >> $GITHUB_PATH
+  #     - if: ${{ runner.os == 'Windows' }}
+  #       name: Setup Cygwin
+  #       uses: secondlife/setup-cygwin@v3
+  #       with:
+  #         packages: bash
+  #     - if: ${{ runner.os == 'Windows' }}
+  #       name: Setup Bun (Windows)
+  #       run: |
+  #         unzip bun/bun-*.zip
+  #         cd bun-*
+  #         pwd >> $env:GITHUB_PATH
+  #     - name: Setup Node.js
+  #       uses: actions/setup-node@v4
+  #       with:
+  #         node-version: 20
+  #     - name: Checkout Tests
+  #       shell: bash
+  #       working-directory: test/node.js
+  #       run: |
+  #         node runner.mjs --pull
+  #     - name: Install Dependencies
+  #       timeout-minutes: 5
+  #       shell: bash
+  #       working-directory: test/node.js
+  #       run: |
+  #         bun install
+  #     - name: Run Tests
+  #       timeout-minutes: 10 # Increase when more tests are added
+  #       shell: bash
+  #       working-directory: test/node.js
+  #       env:
+  #         TMPDIR: ${{ runner.temp }}
+  #         BUN_GARBAGE_COLLECTOR_LEVEL: "0"
+  #         BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "true"
+  #       run: |
+  #         node runner.mjs
+  #     - name: Upload Results
+  #       uses: actions/upload-artifact@v4
+  #       with:
+  #         name: bun-${{ inputs.tag }}-node-tests
+  #         path: |
+  #           test/node.js/summary/*.json
+  #         if-no-files-found: error
+  #         overwrite: true

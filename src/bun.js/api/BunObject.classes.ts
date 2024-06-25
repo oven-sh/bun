@@ -62,6 +62,10 @@ export default [
         getter: "getStdout",
         cache: true,
       },
+      stderr: {
+        getter: "getStderr",
+        cache: true,
+      },
       writable: {
         getter: "getStdin",
         cache: "stdin",
@@ -69,10 +73,6 @@ export default [
       readable: {
         getter: "getStdout",
         cache: "stdout",
-      },
-      stderr: {
-        getter: "getStderr",
-        cache: true,
       },
 
       ref: {

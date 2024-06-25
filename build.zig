@@ -33,6 +33,8 @@ comptime {
     }
 }
 
+const default_reported_nodejs_version = "22.3.0";
+
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {
@@ -46,6 +48,7 @@ const BunBuildOptions = struct {
     sha: []const u8,
     enable_logs: bool = false,
     tracy_callstack_depth: u16,
+    reported_nodejs_version: []const u8 = default_reported_nodejs_version,
 
     generated_code_dir: []const u8,
 
@@ -70,6 +73,14 @@ const BunBuildOptions = struct {
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
+        opts.addOption([:0]const u8, "reported_nodejs_version", b.allocator.dupeZ(u8, this.reported_nodejs_version) catch @panic("OOM"));
+        if (this.reported_nodejs_version.len > 0 and this.reported_nodejs_version[0] == 'v') {
+            @panic("Node.js version should not start with 'v'");
+        }
+
+        if (this.reported_nodejs_version.len == 0) {
+            @panic("Node.js version should not be empty");
+        }
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -166,6 +177,8 @@ pub fn build(b: *Build) !void {
             const rev = b.option(u32, "canary", "Treat this as a canary build") orelse 0;
             break :canary if (rev == 0) null else rev;
         },
+
+        .reported_nodejs_version = b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse default_reported_nodejs_version,
 
         .sha = sha: {
             const sha = b.option([]const u8, "sha", "Force the git sha") orelse
@@ -265,6 +278,7 @@ pub fn build(b: *Build) !void {
                     .sha = build_options.sha,
                     .tracy_callstack_depth = build_options.tracy_callstack_depth,
                     .version = build_options.version,
+                    .reported_nodejs_version = build_options.reported_nodejs_version,
                     .generated_code_dir = build_options.generated_code_dir,
                 };
                 var obj = addBunObject(b, &options);

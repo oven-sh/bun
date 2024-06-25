@@ -1,3 +1,8 @@
+# Build and test Bun on macOS, Linux, and Windows.
+# https://buildkite.com/docs/pipelines/defining-steps
+#
+# If a step has the `robobun: true` label, robobun will listen
+# for a webhook from Buildkite and provision a VM to run the step.
 steps:
   # macOS aarch64
   - key: "darwin-aarch64"
@@ -118,7 +123,7 @@ steps:
         command:
           - "./scripts/runner.node.mjs darwin-aarch64-build-bun"
 
-  # # macOS x64
+  # macOS x64
   - key: "darwin-x64"
     group: ":darwin: x64"
     steps:
@@ -237,7 +242,7 @@ steps:
         command:
           - "./scripts/runner.node.mjs darwin-x64-build-bun"
 
-  # # Linux aarch64
+  # Linux aarch64
   - key: "linux-aarch64"
     group: ":linux: aarch64"
     steps:
@@ -375,7 +380,7 @@ steps:
         command:
           - "./scripts/runner.node.mjs linux-aarch64-build-bun"
 
-  # # Linux x64
+  # Linux x64
   - key: "linux-x64"
     group: ":linux: x64"
     steps:
@@ -513,7 +518,7 @@ steps:
         command:
           - "./scripts/runner.node.mjs linux-x64-build-bun"
 
-  # # Linux x64-baseline
+  # Linux x64-baseline
   - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:

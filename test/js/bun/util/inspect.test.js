@@ -520,3 +520,20 @@ it("Bun.inspect array with non-indexed properties", () => {
   1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
 ]`);
 });
+
+describe("console.logging function displays async and generator names", async () => {
+  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+
+  const expected_logs = [
+    "[Function: a]",
+    "[AsyncFunction: b]",
+    "[GeneratorFunction: c]",
+    "[AsyncGeneratorFunction: d]",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
+    });
+  }
+});

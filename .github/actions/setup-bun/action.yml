@@ -21,6 +21,10 @@ inputs:
 runs:
   using: composite
   steps:
+    - name: Setup upterm session
+      uses: lhotari/action-upterm@v1
+      with:
+        limit-access-to-actor: true
     - name: Setup Bun
       shell: bash
       run: |

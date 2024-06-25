@@ -58,6 +58,7 @@ jobs:
             test
             packages/bun-types
             scripts
+            .github
       - if: ${{ inputs.release-name }}
         name: Download Bun from Release
         uses: ./.github/actions/setup-bun

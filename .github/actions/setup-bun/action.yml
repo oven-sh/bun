@@ -82,11 +82,13 @@ runs:
       shell: bash
       run: |
         curl -LO "${{ inputs.download-url }}/${release}/${target}.zip"
+        ls
 
     - id: unpack
       name: Unpack Bun
       shell: bash
       run: |
+        ls
         unzip ${{ steps.setup.outputs.target }}.zip
         mkdir -p ${{ runner.temp }}/.bun/bin
         mv ${{ steps.setup.outputs.target }}/bun* ${{ runner.temp }}/.bun/bin/

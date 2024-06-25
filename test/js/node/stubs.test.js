@@ -98,3 +98,16 @@ test("you can import bun:test", async () => {
   const bunTest1 = await import("bun:test" + String(""));
   const bunTest2 = require("bun:test" + String(""));
 });
+
+test("v8 getHeapStatistics is somewhat plausible", () => {
+  const stats = require("v8").getHeapStatistics();
+
+  for (let key in stats) {
+    if (key === "does_zap_garbage") {
+      expect(stats[key]).toBe(0);
+      continue;
+    }
+
+    expect(stats[key]).toBePositive();
+  }
+});

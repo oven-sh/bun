@@ -40,7 +40,7 @@ if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
 ls
 if ($UseLto -eq "OFF") {
-  $Tag = "$Tag-no-lto"
+  $Tag = "$Tag-nolto"
 }
 
 Set-Location ..

@@ -6,6 +6,62 @@
 import { writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
 
+const pipelinePath = join(import.meta.dirname, "ci.yml");
+const pipeline = {
+  steps: [
+    getBuildStep({
+      os: "darwin",
+      arch: "aarch64",
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "darwin",
+      arch: "x64",
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "linux",
+      arch: "aarch64",
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "linux",
+      arch: "x64",
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "linux",
+      arch: "x64",
+      baseline: true,
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "windows",
+      arch: "x64",
+      noLto: true,
+    }),
+    getBuildStep({
+      os: "windows",
+      arch: "x64",
+      baseline: true,
+      noLto: true,
+    }),
+  ],
+};
+
+const pipelineContent = `# Build and test Bun on macOS, Linux, and Windows.
+# https://buildkite.com/docs/pipelines/defining-steps
+
+${toYaml(pipeline)}
+`;
+
+if (process.env["BUILDKITE"] === "true") {
+  writeFileSync(pipelinePath, pipelineContent);
+  console.log("Wrote pipeline:", relative(process.cwd(), pipelinePath));
+}
+
+console.log(pipelineContent);
+
 /**
  * @typedef BuildOptions
  * @property {"darwin" | "linux" | "windows"} os
@@ -104,7 +160,7 @@ function getBuildStep(options) {
       noLto && {
         key: `${target}-build-bun-nolto`,
         label: `${label} - build-bun (no-lto)`,
-        artifact_paths: [`${target}-nolto.zip`, `${target}-nolto-profile.zip`],
+        artifact_paths: [`bun-${target}-nolto.zip`, `bun-${target}-nolto-profile.zip`],
         command: toCommand("./scripts/buildkite-link-bun.sh", `--tag=${target}`, baseline && "--baseline", "--fast"),
         depends_on: [`${target}-build-deps`, `${target}-build-zig`, `${target}-build-cpp`],
         agents,
@@ -113,7 +169,7 @@ function getBuildStep(options) {
       {
         key: `${target}-build-bun`,
         label: `${label} - build-bun`,
-        artifact_paths: [`${target}.zip`, `${target}-profile.zip`],
+        artifact_paths: [`bun-${target}.zip`, `bun-${target}-profile.zip`],
         command: toCommand("./scripts/buildkite-link-bun.sh", `--tag=${target}`, baseline && "--baseline"),
         depends_on: noLto
           ? [`${target}-build-bun-nolto`]
@@ -244,48 +300,3 @@ function toYaml(object, level = 0) {
     })
     .join("\n");
 }
-
-const pipelinePath = join(import.meta.dirname, "ci.yml");
-const pipeline = {
-  steps: [
-    getBuildStep({
-      os: "darwin",
-      arch: "aarch64",
-      noLto: true,
-    }),
-    getBuildStep({
-      os: "darwin",
-      arch: "x64",
-      noLto: true,
-    }),
-    getBuildStep({
-      os: "linux",
-      arch: "aarch64",
-      noLto: true,
-    }),
-    getBuildStep({
-      os: "linux",
-      arch: "x64",
-      noLto: true,
-    }),
-    getBuildStep({
-      os: "linux",
-      arch: "x64",
-      baseline: true,
-      noLto: true,
-    }),
-  ],
-};
-
-const pipelineContent = `# Build and test Bun on macOS, Linux, and Windows.
-# https://buildkite.com/docs/pipelines/defining-steps
-
-${toYaml(pipeline)}
-`;
-
-if (process.env["BUILDKITE"] === "true") {
-  writeFileSync(pipelinePath, pipelineContent);
-  console.log("Wrote pipeline:", relative(process.cwd(), pipelinePath));
-}
-
-console.log(pipelineContent);

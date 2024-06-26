@@ -38,6 +38,7 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 ninja -v
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
+ls
 if ($UseLto -eq "OFF") {
   $Tag = "$Tag-no-lto"
 }

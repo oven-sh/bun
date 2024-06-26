@@ -1040,7 +1040,7 @@ steps:
   - key: "windows-x64"
     group: ":windows: x64"
     steps:
-      - key: "bun-windows-x64-build-deps"
+      - key: "windows-x64-build-deps"
         label: ":windows: x64 - build-deps"
         agents:
           queue: "build-windows"
@@ -1055,7 +1055,7 @@ steps:
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
-      - key: "bun-windows-x64-build-zig"
+      - key: "windows-x64-build-zig"
         label: ":windows: x64 - build-zig"
         agents:
           queue: "build-darwin"
@@ -1070,7 +1070,7 @@ steps:
         command:
           - "./scripts/build-bun-zig.sh windows x64"
 
-      - key: "bun-windows-x64-build-cpp"
+      - key: "windows-x64-build-cpp"
         label: ":windows: x64 - build-cpp"
         agents:
           queue: "build-windows"
@@ -1081,7 +1081,7 @@ steps:
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
 
-      - key: "bun-windows-x64-build-bun-nolto"
+      - key: "windows-x64-build-bun-nolto"
         label: ":windows: x64 - build-bun (no-lto)"
         depends_on:
           - "bun-windows-x64-build-deps"
@@ -1102,7 +1102,7 @@ steps:
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
 
-      - key: "bun-windows-x64-build-bun"
+      - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
           - "bun-windows-x64-build-bun-nolto"
@@ -1121,7 +1121,7 @@ steps:
         command:
           - ".\\scripts\\buildkite-link-bun.ps1"
 
-      - key: "bun-windows-x64-test-bun"
+      - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
         parallelism: 10
         soft_fail:
@@ -1133,9 +1133,9 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun-nolto"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun-nolto"
 
-      - key: "bun-windows-x64-test-bun-smoke"
+      - key: "windows-x64-test-bun-smoke"
         label: ":windows: x64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
@@ -1147,13 +1147,13 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun --smoke 0.05"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun --smoke 0.05"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
-      - key: "bun-windows-x64-baseline-build-deps"
+      - key: "windows-x64-baseline-build-deps"
         label: ":windows: x64-baseline - build-deps"
         agents:
           queue: "build-windows"
@@ -1168,7 +1168,7 @@ steps:
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
-      - key: "bun-windows-x64-baseline-build-zig"
+      - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
         agents:
           queue: "build-darwin"
@@ -1183,7 +1183,7 @@ steps:
         command:
           - "./scripts/build-bun-zig.sh windows x64"
 
-      - key: "bun-windows-x64-baseline-build-cpp"
+      - key: "windows-x64-baseline-build-cpp"
         label: ":windows: x64-baseline - build-cpp"
         agents:
           queue: "build-windows"
@@ -1198,7 +1198,7 @@ steps:
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True"
 
-      - key: "bun-windows-x64-baseline-build-bun-nolto"
+      - key: "windows-x64-baseline-build-bun-nolto"
         label: ":windows: x64-baseline - build-bun (no-lto)"
         depends_on:
           - "bun-windows-x64-baseline-build-deps"
@@ -1219,7 +1219,7 @@ steps:
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
 
-      - key: "bun-windows-x64-baseline-build-bun"
+      - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         depends_on:
           - "bun-windows-x64-baseline-build-bun-nolto"
@@ -1238,7 +1238,7 @@ steps:
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
 
-      - key: "bun-windows-x64-baseline-test-bun"
+      - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"
         parallelism: 10
         soft_fail:
@@ -1250,9 +1250,9 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun-nolto"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun-nolto"
 
-      - key: "bun-windows-x64-baseline-test-bun-smoke"
+      - key: "windows-x64-baseline-test-bun-smoke"
         label: ":windows: x64-baseline - test-bun (smoke)"
         parallelism: 1
         soft_fail:
@@ -1264,4 +1264,4 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun --smoke 0.05"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun --smoke 0.05"

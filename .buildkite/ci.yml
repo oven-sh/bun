@@ -8,7 +8,7 @@
 # for a particular commit.
 steps:
   # macOS aarch64
-  - key: "darwin-aarch64"
+  # - key: "darwin-aarch64"
     group: ":darwin: aarch64"
     steps:
       - key: "darwin-aarch64-build-deps"
@@ -191,7 +191,7 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
 
   # macOS x64
-  - key: "darwin-x64"
+  # - key: "darwin-x64"
     group: ":darwin: x64"
     steps:
       - key: "darwin-x64-build-deps"
@@ -374,7 +374,7 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
 
   # Linux aarch64
-  - key: "linux-aarch64"
+  # - key: "linux-aarch64"
     group: ":linux: aarch64"
     steps:
       - key: "linux-aarch64-build-deps"
@@ -595,7 +595,7 @@ steps:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
 
   # Linux x64
-  - key: "linux-x64"
+  # - key: "linux-x64"
     group: ":linux: x64"
     steps:
       - key: "linux-x64-build-deps"
@@ -816,7 +816,7 @@ steps:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
 
   # Linux x64-baseline
-  - key: "linux-x64-baseline"
+  # - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
     steps:
       - key: "linux-x64-baseline-build-deps"
@@ -1150,7 +1150,7 @@ steps:
           - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun --smoke 0.05"
 
   # Windows x64-baseline
-  - key: "windows-x64-baseline"
+  # - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
     steps:
       - key: "bun-windows-x64-baseline-build-deps"

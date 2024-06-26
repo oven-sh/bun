@@ -466,10 +466,12 @@ if(USE_UNIFIED_SOURCES)
 endif()
 
 # CCache
-find_program(CCACHE_PROGRAM sccache)
-find_program(CCACHE_PROGRAM ccache)
+find_program(CCACHE_PROGRAM buildcache) # https://gitlab.com/bits-n-bites/buildcache
+find_program(CCACHE_PROGRAM sccache) # https://github.com/mozilla/sccache
+find_program(CCACHE_PROGRAM ccache) # https://ccache.dev/
 
 if(CCACHE_PROGRAM)
+    set_property(GLOBAL PROPERTY RULE_LAUNCH_COMPILE "${CCACHE_PROGRAM}")
     set(CMAKE_CXX_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     set(CMAKE_C_COMPILER_LAUNCHER "${CCACHE_PROGRAM}")
     message(STATUS "Using ccache: ${CCACHE_PROGRAM}")

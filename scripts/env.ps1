@@ -52,9 +52,9 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Proces
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /Zi'
+$CFLAGS = '/O2'
 # $CFLAGS = '/O2 /Z7 /MT'
-$CXXFLAGS = '/O2 /Zi'
+$CXXFLAGS = '/O2'
 # $CXXFLAGS = '/O2 /Z7 /MT'
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
@@ -81,14 +81,23 @@ if ($Baseline) {
   $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
 }
 
-if (Get-Command sccache -ErrorAction SilentlyContinue) {
-  # Continue with local compiler if sccache has an error
-  $env:SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+$ccache=""
 
-  $CMAKE_FLAGS += "-DCMAKE_C_COMPILER_LAUNCHER=sccache"
-  $CMAKE_FLAGS += "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
-  $CMAKE_FLAGS += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
-  $CMAKE_FLAGS += "-DCMAKE_POLICY_CMP0141=NEW"
+# if (Get-Command sccache -ErrorAction SilentlyContinue) {
+#   $ccache="sccache"
+#   $CMAKE_FLAGS += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
+#   $CMAKE_FLAGS += "-DCMAKE_POLICY_CMP0141=NEW"
+#   # Continue with local compiler if sccache has an error
+#   $env:SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+# }
+
+if (Get-Command buildcache -ErrorAction SilentlyContinue) {
+  $ccache="buildcache"
+}
+
+if ($ccache) {
+  $CMAKE_FLAGS += "-DCMAKE_C_COMPILER_LAUNCHER=$ccache"
+  $CMAKE_FLAGS += "-DCMAKE_CXX_COMPILER_LAUNCHER=$ccache"
 }
 
 $null = New-Item -ItemType Directory -Force -Path $BUN_DEPS_OUT_DIR

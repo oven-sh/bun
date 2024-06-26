@@ -5568,19 +5568,53 @@ const Buffers = struct {
 
         var reader = stream.reader();
         const start_pos = try reader.readInt(u64, .little);
+
+        // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
+        if (start_pos == 0xDEADBEEF) {
+            return error.CorruptLockfile;
+        }
+
+        // These are absolute numbers, it shouldn't be zero.
+        // There's a prefix before any of the arrays, so it can never be zero here.
+        if (start_pos == 0) {
+            return error.CorruptLockfile;
+        }
+
+        // We shouldn't be going backwards.
+        if (start_pos < (stream.pos -| @sizeOf(u64))) {
+            return error.CorruptLockfile;
+        }
+
         const end_pos = try reader.readInt(u64, .little);
 
-        stream.pos = end_pos;
+        // If its 0xDEADBEEF, then that means the value was never written in the lockfile.
+        // That shouldn't happen.
+        if (end_pos == 0xDEADBEEF) {
+            return error.CorruptLockfile;
+        }
+
+        // These are absolute numbers, it shouldn't be zero.
+        if (end_pos == 0) {
+            return error.CorruptLockfile;
+        }
+
+        // Prevent integer overflow.
+        if (start_pos > end_pos) {
+            return error.CorruptLockfile;
+        }
+
+        // Prevent buffer overflow.
+        if (end_pos > stream.buffer.len) {
+            return error.CorruptLockfile;
+        }
+
         const byte_len = end_pos - start_pos;
+        stream.pos = end_pos;
 
         if (byte_len == 0) return ArrayList{
             .items = &[_]PointerType{},
             .capacity = 0,
         };
-
-        if (stream.pos > stream.buffer.len) {
-            return error.BufferOverflow;
-        }
 
         const misaligned = std.mem.bytesAsSlice(PointerType, stream.buffer[start_pos..end_pos]);
 

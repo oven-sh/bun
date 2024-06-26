@@ -194,6 +194,7 @@ pub const Tag = enum(u8) {
     mkdir,
     mkdtemp,
     fnctl,
+    memfd_create,
     mmap,
     munmap,
     open,
@@ -1804,9 +1805,36 @@ pub const RenameAt2Flags = packed struct {
     }
 };
 
-// NOTE: that this _does not_ handle moving across filesystems. For that, check if the return error is XDEV and then use `bun.C.moveFileZWithHandle`
-pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8, to_dir_fd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+pub fn renameatConcurrently(
+    from_dir_fd: bun.FileDescriptor,
+    from: [:0]const u8,
+    to_dir_fd: bun.FileDescriptor,
+    to: [:0]const u8,
+    comptime opts: struct { move_fallback: bool = false },
+) Maybe(void) {
+    switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
+        .result => return Maybe(void).success,
+        .err => |e| {
+            if (opts.move_fallback and e.getErrno() == bun.C.E.XDEV) {
+                bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
+                return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
+            }
+            return .{ .err = e };
+        },
+    }
+}
+
+pub fn renameatConcurrentlyWithoutFallback(
+    from_dir_fd: bun.FileDescriptor,
+    from: [:0]const u8,
+    to_dir_fd: bun.FileDescriptor,
+    to: [:0]const u8,
+) Maybe(void) {
     var did_atomically_replace = false;
+    if (comptime Environment.isWindows) {
+        // Windows doesn't have an equivalent
+        return renameat(from_dir_fd, from, to_dir_fd, to);
+    }
 
     attempt_atomic_rename_and_fallback_to_racy_delete: {
         {
@@ -1821,11 +1849,8 @@ pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8,
 
             // Fallback path: the folder exists in the cache dir, it might be in a strange state
             // let's attempt to atomically replace it with the temporary folder's version
-            if (if (comptime bun.Environment.isPosix) switch (err.getErrno()) {
+            if (switch (err.getErrno()) {
                 .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
-                else => false,
-            } else switch (err.getErrno()) {
-                .EXIST, .NOTEMPTY => true,
                 else => false,
             }) {
                 did_atomically_replace = true;
@@ -2226,6 +2251,17 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
     if (Maybe(void).errnoSys(system.munmap(memory.ptr, memory.len), .munmap)) |err| {
         return err;
     } else return Maybe(void).success;
+}
+
+pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+    if (comptime !Environment.isLinux) @compileError("linux only!");
+
+    const rc = std.os.linux.memfd_create(name, flags);
+
+    log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
+
+    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
+        .{ .result = bun.toFD(@as(c_int, @intCast(rc))) };
 }
 
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {

@@ -1029,6 +1029,7 @@ pub fn U32HashMap(comptime Type: type) type {
 }
 
 const CopyFile = @import("./copy_file.zig");
+pub const copyFileErrnoConvert = CopyFile.copyFileErrorConvert;
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
 pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;

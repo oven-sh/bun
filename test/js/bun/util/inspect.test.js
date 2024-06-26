@@ -174,7 +174,32 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent with no data set", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
+}`,
+  );
+});
+
+it("MessageEvent with deleted data", () => {
+  const event = new MessageEvent("message");
+  Object.defineProperty(event, "data", {
+    value: 123,
+    writable: true,
+    configurable: true,
+  });
+  delete event.data;
+  expect(Bun.inspect(event)).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });
@@ -494,4 +519,21 @@ it("Bun.inspect array with non-indexed properties", () => {
   expect(Bun.inspect(a)).toBe(`[
   1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
 ]`);
+});
+
+describe("console.logging function displays async and generator names", async () => {
+  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+
+  const expected_logs = [
+    "[Function: a]",
+    "[AsyncFunction: b]",
+    "[GeneratorFunction: c]",
+    "[AsyncGeneratorFunction: d]",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
+    });
+  }
 });

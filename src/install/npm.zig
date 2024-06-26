@@ -274,6 +274,7 @@ pub const Registry = struct {
 
         if (try PackageManifest.parse(
             allocator,
+            scope,
             log,
             body,
             package_name,
@@ -607,8 +608,8 @@ pub const PackageManifest = struct {
                 alignment: usize,
             };
             var data: [fields.len]Data = undefined;
-            for (fields, 0..) |field_info, i| {
-                data[i] = .{
+            for (fields, &data) |field_info, *dat| {
+                dat.* = .{
                     .size = @sizeOf(field_info.type),
                     .name = field_info.name,
                     .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
@@ -622,9 +623,9 @@ pub const PackageManifest = struct {
             std.sort.pdq(Data, &data, {}, Sort.lessThan);
             var sizes_bytes: [fields.len]usize = undefined;
             var names: [fields.len][]const u8 = undefined;
-            for (data, 0..) |elem, i| {
-                sizes_bytes[i] = elem.size;
-                names[i] = elem.name;
+            for (data, &sizes_bytes, &names) |elem, *size_, *name_| {
+                size_.* = elem.size;
+                name_.* = elem.name;
             }
             break :blk .{
                 .bytes = sizes_bytes,
@@ -658,7 +659,11 @@ pub const PackageManifest = struct {
             }
 
             stream.pos += Aligner.skipAmount(Type, stream.pos);
-            const result_bytes = stream.buffer[stream.pos..][0..byte_len];
+            const remaining = stream.buffer[@min(stream.pos, stream.buffer.len)..];
+            if (remaining.len < byte_len) {
+                return error.BufferTooSmall;
+            }
+            const result_bytes = remaining[0..byte_len];
             const result = @as([*]const Type, @ptrCast(@alignCast(result_bytes.ptr)))[0 .. result_bytes.len / @sizeOf(Type)];
             stream.pos += result_bytes.len;
             return result;
@@ -1078,8 +1083,9 @@ pub const PackageManifest = struct {
     const ExternalStringMapDeduper = std.HashMap(u64, ExternalStringList, IdentityContext(u64), 80);
 
     /// This parses [Abbreviated metadata](https://github.com/npm/registry/blob/master/docs/responses/package-metadata.md#abbreviated-metadata-format)
-    pub fn parse(
+    fn parse(
         allocator: std.mem.Allocator,
+        scope: *const Registry.Scope,
         log: *logger.Log,
         json_buffer: []const u8,
         expected_name: []const u8,
@@ -1123,59 +1129,10 @@ pub const PackageManifest = struct {
         if (json.asProperty("name")) |name_q| {
             const received_name = name_q.expr.asString(allocator) orelse return null;
 
-            // This is intentionally a case insensitive comparision. If the registry is running on a system
-            // with a case insensitive filesystem, you'll be able to install dependencies with casing that doesn't match.
-            //
-            // e.g.
-            // {
-            //   "dependencies": {
-            //     // will install successfully, even though the package name in the registry is `jquery`
-            //     "jQuery": "3.7.1"
-            //   }
-            // }
-            //
-            // https://github.com/oven-sh/bun/issues/5189
-            const equal = if (expected_name.len == 0 or expected_name[0] != '@')
-                // Unscoped package, just normal case insensitive comparison
-                strings.eqlCaseInsensitiveASCII(expected_name, received_name, true)
-            else brk: {
-                // Scoped package. The registry might url encode the package name changing either or both `@` and `/` into `%40` and `%2F`.
-                // e.g. "name": "@std%2fsemver" // real world example from crash report
-
-                // Expected name `@` exists, check received has either `@` or `%40`
-                var received_remain = received_name;
-                if (received_remain.len > 0 and received_remain[0] == '@') {
-                    received_remain = received_remain[1..];
-                } else if (received_remain.len > 2 and strings.eqlComptime(received_remain[0..3], "%40")) {
-                    received_remain = received_remain[3..];
-                } else {
-                    break :brk false;
-                }
-
-                var expected_remain = expected_name[1..];
-
-                // orelse is invalid because scoped package is missing `/`, but we allow just in case
-                const slash_index = strings.indexOfChar(expected_remain, '/') orelse break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
-
-                if (slash_index >= received_remain.len) break :brk false;
-
-                if (!strings.eqlCaseInsensitiveASCIIIgnoreLength(expected_remain[0..slash_index], received_remain[0..slash_index])) break :brk false;
-                expected_remain = expected_remain[slash_index + 1 ..];
-
-                // Expected name `/` exists, check that received is either `/`, `%2f`, or `%2F`
-                received_remain = received_remain[slash_index..];
-                if (received_remain.len > 0 and received_remain[0] == '/') {
-                    received_remain = received_remain[1..];
-                } else if (received_remain.len > 2 and strings.eqlCaseInsensitiveASCIIIgnoreLength(received_remain[0..3], "%2f")) {
-                    received_remain = received_remain[3..];
-                } else {
-                    break :brk false;
-                }
-
-                break :brk strings.eqlCaseInsensitiveASCII(expected_remain, received_remain, true);
-            };
-
-            if (!equal) {
+            // If this manifest is coming from the default registry, make sure it's the expected one. If it's not
+            // from the default registry we don't check because the registry might have a different name in the manifest.
+            // https://githun.com/oven-sh/bun/issues/4925
+            if (scope.url_hash == Registry.default_url_hash and !strings.eqlLong(expected_name, received_name, true)) {
                 Output.panic("<r>internal: <red>Package name mismatch.<r> Expected <b>\"{s}\"<r> but received <red>\"{s}\"<r>", .{ expected_name, received_name });
                 return null;
             }
@@ -1374,9 +1331,8 @@ pub const PackageManifest = struct {
             string_buf = ptr[0..string_builder.cap];
         }
 
-        // Using `expected_name` instead of the name from the manifest. We've already
-        // checked that they are equal above, but `expected_name` will not have `@`
-        // or `/` changed to `%40` or `%2f`, ensuring lookups will work later
+        // Using `expected_name` instead of the name from the manifest. Custom registries might
+        // have a different name than the dependency name in package.json.
         result.pkg.name = string_builder.append(ExternalString, expected_name);
 
         get_versions: {

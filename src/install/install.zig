@@ -756,7 +756,16 @@ pub const Task = struct {
                 const url = this.request.git_clone.url.slice();
                 var attempt: u8 = 1;
                 const dir = brk: {
-                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, https, attempt) catch |err| {
+                    if (Repository.tryHTTPS(url)) |https| break :brk Repository.download(
+                        manager.allocator,
+                        this.request.git_clone.env,
+                        manager.log,
+                        manager.getCacheDirectory(),
+                        this.id,
+                        name,
+                        https,
+                        attempt,
+                    ) catch |err| {
                         // Exit early if git checked and could
                         // not find the repository, skip ssh
                         if (err == error.RepositoryNotFound) {
@@ -771,7 +780,16 @@ pub const Task = struct {
                         break :brk null;
                     };
                     break :brk null;
-                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(manager.allocator, manager.env, manager.log, manager.getCacheDirectory(), this.id, name, ssh, attempt) catch |err| {
+                } orelse if (Repository.trySSH(url)) |ssh| Repository.download(
+                    manager.allocator,
+                    this.request.git_clone.env,
+                    manager.log,
+                    manager.getCacheDirectory(),
+                    this.id,
+                    name,
+                    ssh,
+                    attempt,
+                ) catch |err| {
                     this.err = err;
                     this.status = Status.fail;
                     this.data = .{ .git_clone = bun.invalid_fd };
@@ -780,8 +798,6 @@ pub const Task = struct {
                 } else {
                     return;
                 };
-
-                manager.git_repositories.put(manager.allocator, this.id, bun.toFD(dir.fd)) catch unreachable;
 
                 this.data = .{
                     .git_clone = bun.toFD(dir.fd),
@@ -792,7 +808,7 @@ pub const Task = struct {
                 const git_checkout = &this.request.git_checkout;
                 const data = Repository.checkout(
                     manager.allocator,
-                    manager.env,
+                    this.request.git_checkout.env,
                     manager.log,
                     manager.getCacheDirectory(),
                     git_checkout.repo_dir.asDir(),
@@ -873,6 +889,7 @@ pub const Task = struct {
         git_clone: struct {
             name: strings.StringOrTinyString,
             url: strings.StringOrTinyString,
+            env: DotEnv.Map,
         },
         git_checkout: struct {
             repo_dir: bun.FileDescriptor,
@@ -881,6 +898,7 @@ pub const Task = struct {
             url: strings.StringOrTinyString,
             resolved: strings.StringOrTinyString,
             resolution: Resolution,
+            env: DotEnv.Map,
         },
         local_tarball: struct {
             tarball: ExtractTarball,
@@ -1606,7 +1624,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
                                 _ = C.fchmod(outfile.handle, @intCast(stat.mode));
                             }
 
-                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                            bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                                 if (do_progress) {
                                     progress_.root.end();
                                     progress_.refresh();
@@ -4709,6 +4727,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .id = task_id,
@@ -4764,6 +4783,7 @@ pub const PackageManager = struct {
                         *FileSystem.FilenameStore,
                         &FileSystem.FilenameStore.instance,
                     ) catch unreachable,
+                    .env = Repository.shared_env.get(this.allocator, this.env),
                 },
             },
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
@@ -6626,6 +6646,8 @@ pub const PackageManager = struct {
                     const clone = &task.request.git_clone;
                     const name = clone.name.slice();
                     const url = clone.url.slice();
+
+                    manager.git_repositories.put(manager.allocator, task.id, task.data.git_clone) catch unreachable;
 
                     if (task.status == .fail) {
                         const err = task.err orelse error.Failed;
@@ -9541,7 +9563,7 @@ pub const PackageManager = struct {
             // add
             // remove
             outer: for (positionals) |positional| {
-                var input: []u8 = @constCast(std.mem.trim(u8, positional, " \n\r\t"));
+                var input: []u8 = bun.default_allocator.dupe(u8, std.mem.trim(u8, positional, " \n\r\t")) catch bun.outOfMemory();
                 {
                     var temp: [2048]u8 = undefined;
                     const len = std.mem.replace(u8, input, "\\\\", "/", &temp);
@@ -10464,6 +10486,7 @@ pub const PackageManager = struct {
                             entrypathZ,
                             bun.toFD(destination_dir_.fd),
                             tmpname,
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.prettyError("<r><red>error<r>: copying file {}", .{e});
                             Global.crash();
@@ -10478,7 +10501,7 @@ pub const PackageManager = struct {
                         const infile_path = bun.path.joinStringBufWZ(buf1, &[_][]const u16{ in_dir, entry.path }, .auto);
                         const outfile_path = bun.path.joinStringBufWZ(buf2, &[_][]const u16{ out_dir, entry.path }, .auto);
 
-                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(infile_path, outfile_path, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10503,7 +10526,7 @@ pub const PackageManager = struct {
                         const stat = in_file.stat() catch continue;
                         _ = C.fchmod(outfile.handle, @intCast(stat.mode));
 
-                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state) catch |err| {
+                        bun.copyFileWithState(in_file.handle, outfile.handle, &copy_file_state).unwrap() catch |err| {
                             Output.prettyError("<r><red>{s}<r>: copying file {}", .{ @errorName(err), bun.fmt.fmtOSPath(entry.path, .{}) });
                             Global.crash();
                         };
@@ -10818,6 +10841,7 @@ pub const PackageManager = struct {
                     "node_modules",
                     bun.toFD(root_node_modules.fd),
                     random_tempdir,
+                    .{ .move_fallback = true },
                 ).asErr()) |_| break :has_nested_node_modules false;
 
                 break :has_nested_node_modules true;
@@ -10858,6 +10882,7 @@ pub const PackageManager = struct {
                     patch_tag,
                     bun.toFD(root_node_modules.fd),
                     patch_tag_tmpname,
+                    .{ .move_fallback = true },
                 ).asErr()) |e| {
                     Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                     break :has_bun_patch_tag null;
@@ -10881,6 +10906,7 @@ pub const PackageManager = struct {
                             random_tempdir,
                             bun.toFD(new_folder_handle.fd),
                             "node_modules",
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming nested node_modules folder, this may cause issues: {}", .{e});
                         }
@@ -10892,6 +10918,7 @@ pub const PackageManager = struct {
                             patch_tag_tmpname,
                             bun.toFD(new_folder_handle.fd),
                             patch_tag,
+                            .{ .move_fallback = true },
                         ).asErr()) |e| {
                             Output.warn("failed renaming the bun patch tag, this may cause issues: {}", .{e});
                         }
@@ -11048,6 +11075,7 @@ pub const PackageManager = struct {
             tempfile_name,
             bun.FD.cwd(),
             path_in_patches_dir,
+            .{ .move_fallback = true },
         ).asErr()) |e| {
             Output.prettyError(
                 "<r><red>error<r>: failed renaming patch file to patches dir {}<r>\n",

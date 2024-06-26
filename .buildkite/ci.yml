@@ -923,8 +923,8 @@ steps:
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
 
-      - key: "bun-windows-x64-baseline-build-bun-no-lto"
-        label: ":windows: x64-baseline - build-bun (no-lto)"
+      - key: "bun-windows-x64-baseline-build-bun"
+        label: ":windows: x64-baseline - build-bun"
         depends_on:
           - "bun-windows-x64-baseline-build-bun-no-lto"
         agents:

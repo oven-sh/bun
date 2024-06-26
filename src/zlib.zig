@@ -923,17 +923,17 @@ fn HasherFn(comptime function: anytype) type {
             return this.state;
         }
 
-        pub fn hash(data: []const u8) uLong {
+        pub fn hash(data: []const u8) u32 {
             var hasher = @This(){};
             hasher.init();
             hasher.update(data);
-            return hasher.finish();
+            return @intCast(hasher.finish());
         }
 
-        pub fn hashWithSeed(data: []const u8, seed: uLong) uLong {
+        pub fn hashWithSeed(data: []const u8, seed: uLong) u32 {
             var hasher = @This(){ .state = seed };
             hasher.update(data);
-            return hasher.finish();
+            return @intCast(hasher.finish());
         }
     };
 }

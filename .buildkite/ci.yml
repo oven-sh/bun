@@ -1105,7 +1105,7 @@ steps:
       - key: "bun-windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
-          - "bun-windows-x64-build-no-lto"
+          - "bun-windows-x64-build-bun-no-lto"
         agents:
           queue: "build-windows"
           os: "windows"

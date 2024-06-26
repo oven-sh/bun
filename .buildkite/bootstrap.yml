@@ -6,7 +6,6 @@
 steps:
   - label: ":pipeline:"
     command:
-      - "node .buildkite/generate-ci.mjs"
       - "buildkite-agent pipeline upload .buildkite/ci.yml"
     agents:
       queue: "build-linux"

@@ -5,7 +5,8 @@ param (
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
-$Tag = If ($Baseline) { "bun-windows-x64-baseline" } Else { "bun-windows-x64" }
+$Target = If ($Baseline) { "windows-x64-baseline" } Else { "windows-x64" }
+$Tag = "bun-$Target"
 $TagSuffix = If ($Baseline) { "-Baseline" } Else { "" }
 $UseBaselineBuild = If ($Baseline) { "ON" } Else { "OFF" }
 $UseLto = If ($Fast) { "OFF" } Else { "ON" }
@@ -13,9 +14,9 @@ $UseLto = If ($Fast) { "OFF" } Else { "ON" }
 .\scripts\env.ps1 $TagSuffix
 
 mkdir -Force build
-buildkite-agent artifact download "**" build --step "${Tag}-build-zig"
-buildkite-agent artifact download "**" build --step "${Tag}-build-cpp"
-buildkite-agent artifact download "**" build --step "${Tag}-build-deps"
+buildkite-agent artifact download "**" build --step "${Target}-build-zig"
+buildkite-agent artifact download "**" build --step "${Target}-build-cpp"
+buildkite-agent artifact download "**" build --step "${Target}-build-deps"
 mv -Force -ErrorAction SilentlyContinue build\build\bun-deps\* build\bun-deps
 mv -Force -ErrorAction SilentlyContinue build\build\* build
 

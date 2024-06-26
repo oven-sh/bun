@@ -65,7 +65,7 @@ cmake .. \
 ninja -v
 
 if [[ "${USE_LTO}" == "OFF" ]]; then
-  TAG="${TAG}-no-lto"
+  TAG="${TAG}-nolto"
 fi
 
 chmod +x bun-profile bun

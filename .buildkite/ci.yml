@@ -101,10 +101,23 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64"
 
       - key: "darwin-aarch64-test-macos-14"
-        label: ":darwin: 14 aarch64 - bun-test"
+        label: ":darwin: 14 aarch64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
+
         depends_on:
           - "darwin-aarch64-build-bun-nolto"
         agents:
@@ -116,10 +129,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-nolto"
 
       - key: "darwin-aarch64-test-macos-13"
-        label: ":darwin: 13 aarch64 - bun-test"
+        label: ":darwin: 13 aarch64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-aarch64-build-bun-nolto"
         agents:
@@ -131,10 +156,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-nolto"
 
       - key: "darwin-aarch64-test-macos-12"
-        label: ":darwin: 12 aarch64 - bun-test"
+        label: ":darwin: 12 aarch64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-aarch64-build-bun-nolto"
         agents:
@@ -146,10 +183,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-nolto"
 
       - key: "darwin-aarch64-test-macos-14-smoke"
-        label: ":darwin: 14 aarch64 - bun-test (smoke)"
+        label: ":darwin: 14 aarch64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
         agents:
@@ -161,10 +210,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
 
       - key: "darwin-aarch64-test-macos-13-smoke"
-        label: ":darwin: 13 aarch64 - bun-test (smoke)"
+        label: ":darwin: 13 aarch64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
         agents:
@@ -176,10 +237,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
 
       - key: "darwin-aarch64-test-macos-12-smoke"
-        label: ":darwin: 12 aarch64 - bun-test (smoke)"
+        label: ":darwin: 12 aarch64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
         agents:
@@ -284,10 +357,22 @@ steps:
           - "./scripts/buildkite-link-bun.sh --tag darwin-x64"
 
       - key: "darwin-x64-test-macos-14"
-        label: ":darwin: 14 x64 - bun-test"
+        label: ":darwin: 14 x64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
         agents:
@@ -299,10 +384,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun-nolto"
 
       - key: "darwin-x64-test-macos-13"
-        label: ":darwin: 13 x64 - bun-test"
+        label: ":darwin: 13 x64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
         agents:
@@ -314,10 +411,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun-nolto"
 
       - key: "darwin-x64-test-macos-12"
-        label: ":darwin: 12 x64 - bun-test"
+        label: ":darwin: 12 x64 - test-bun"
         parallelism: 2
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
         agents:
@@ -329,10 +438,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun-nolto"
 
       - key: "darwin-x64-test-macos-14-smoke"
-        label: ":darwin: 14 x64 - bun-test (smoke)"
+        label: ":darwin: 14 x64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun"
         agents:
@@ -344,10 +465,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
 
       - key: "darwin-x64-test-macos-13-smoke"
-        label: ":darwin: 13 x64 - bun-test (smoke)"
+        label: ":darwin: 13 x64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
         agents:
@@ -359,10 +492,22 @@ steps:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
 
       - key: "darwin-x64-test-macos-12-smoke"
-        label: ":darwin: 12 x64 - bun-test (smoke)"
+        label: ":darwin: 12 x64 - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "darwin-x64-build-bun"
         agents:
@@ -471,6 +616,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
         agents:
@@ -487,6 +644,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
         agents:
@@ -503,6 +672,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
         agents:
@@ -519,6 +700,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
         agents:
@@ -535,6 +728,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
         agents:
@@ -551,6 +756,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
         agents:
@@ -567,6 +784,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
         agents:
@@ -583,6 +812,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
         agents:
@@ -692,6 +933,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
         agents:
@@ -708,6 +961,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
         agents:
@@ -724,6 +989,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
         agents:
@@ -740,6 +1017,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
         agents:
@@ -756,6 +1045,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun"
         agents:
@@ -772,6 +1073,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun"
         agents:
@@ -788,6 +1101,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun"
         agents:
@@ -804,6 +1129,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-build-bun"
         agents:
@@ -913,6 +1250,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
         agents:
@@ -929,6 +1278,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
         agents:
@@ -945,6 +1306,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
         agents:
@@ -961,6 +1334,18 @@ steps:
         parallelism: 5
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
         agents:
@@ -977,6 +1362,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
         agents:
@@ -986,13 +1383,25 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
 
       - key: "linux-x64-baseline-test-debian-11-smoke"
         label: ":debian: 11 x64-baseline - test-bun (smoke)"
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
         agents:
@@ -1009,6 +1418,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
         agents:
@@ -1025,6 +1446,18 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal_reason: SIGTERM
+              limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
         agents:
@@ -1092,8 +1525,8 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-windows-x64.zip"
-          - "bun-windows-x64-profile.zip"
+          - "bun-windows-x64-nolto.zip"
+          - "bun-windows-x64-nolto-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "haswell"

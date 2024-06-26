@@ -162,7 +162,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-13-smoke"
         label: ":darwin: 13 aarch64 - bun-test (smoke)"
-        parallelism: 2
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         depends_on:
@@ -177,7 +177,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-12-smoke"
         label: ":darwin: 12 aarch64 - bun-test (smoke)"
-        parallelism: 2
+        parallelism: 1
         soft_fail:
           - exit_status: 2
         depends_on:

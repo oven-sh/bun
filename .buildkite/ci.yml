@@ -1084,16 +1084,16 @@ steps:
       - key: "windows-x64-build-bun-nolto"
         label: ":windows: x64 - build-bun (no-lto)"
         depends_on:
-          - "bun-windows-x64-build-deps"
-          - "bun-windows-x64-build-zig"
-          - "bun-windows-x64-build-cpp"
+          - "windows-x64-build-deps"
+          - "windows-x64-build-zig"
+          - "windows-x64-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-windows-x64-nolto.zip"
-          - "bun-windows-x64-nolto-profile.zip"
+          - "windows-x64-nolto.zip"
+          - "windows-x64-nolto-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "haswell"
@@ -1105,14 +1105,14 @@ steps:
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
-          - "bun-windows-x64-build-bun-nolto"
+          - "windows-x64-build-bun-nolto"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-windows-x64.zip"
-          - "bun-windows-x64-profile.zip"
+          - "windows-x64.zip"
+          - "windows-x64-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "haswell"
@@ -1127,7 +1127,7 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-build-bun-nolto"
+          - "windows-x64-build-bun-nolto"
         agents:
           robobun: "true"
           os: "windows"
@@ -1141,7 +1141,7 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-build-bun"
+          - "windows-x64-build-bun"
         agents:
           robobun: "true"
           os: "windows"
@@ -1201,16 +1201,16 @@ steps:
       - key: "windows-x64-baseline-build-bun-nolto"
         label: ":windows: x64-baseline - build-bun (no-lto)"
         depends_on:
-          - "bun-windows-x64-baseline-build-deps"
-          - "bun-windows-x64-baseline-build-zig"
-          - "bun-windows-x64-baseline-build-cpp"
+          - "windows-x64-baseline-build-deps"
+          - "windows-x64-baseline-build-zig"
+          - "windows-x64-baseline-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-windows-x64-baseline-nolto.zip"
-          - "bun-windows-x64-baseline-nolto-profile.zip"
+          - "windows-x64-baseline-nolto.zip"
+          - "windows-x64-baseline-nolto-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "nehalem"
@@ -1222,14 +1222,14 @@ steps:
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         depends_on:
-          - "bun-windows-x64-baseline-build-bun-nolto"
+          - "windows-x64-baseline-build-bun-nolto"
         agents:
           queue: "build-windows"
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "bun-windows-x64-baseline.zip"
-          - "bun-windows-x64-baseline-profile.zip"
+          - "windows-x64-baseline.zip"
+          - "windows-x64-baseline-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "nehalem"
@@ -1244,7 +1244,7 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-baseline-build-bun-nolto"
+          - "windows-x64-baseline-build-bun-nolto"
         agents:
           robobun: "true"
           os: "windows"
@@ -1258,7 +1258,7 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-baseline-build-bun"
+          - "windows-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "windows"

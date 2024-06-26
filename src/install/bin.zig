@@ -326,7 +326,7 @@ pub const Bin = extern struct {
             }
         }
 
-        fn linkBin(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn linkBinOrCreateShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             if (comptime Environment.isWindows)
                 this.createWindowsShim(abs_target, abs_dest, global)
             else
@@ -481,7 +481,7 @@ pub const Bin = extern struct {
                     const abs_dest_len = @intFromPtr(abs_dest_buf_remain.ptr) - @intFromPtr(this.abs_dest_buf.ptr);
                     const abs_dest: [:0]const u8 = this.abs_dest_buf[0..abs_dest_len :0];
 
-                    this.createSymlink(abs_target, abs_dest, global);
+                    this.linkBinOrCreateShim(abs_target, abs_dest, global);
                 },
                 .named_file => {
                     const name = this.bin.value.named_file[0].slice(this.string_buf);
@@ -498,7 +498,7 @@ pub const Bin = extern struct {
                     const abs_dest_len = @intFromPtr(abs_dest_buf_remain.ptr) - @intFromPtr(this.abs_dest_buf.ptr);
                     const abs_dest: [:0]const u8 = this.abs_dest_buf[0..abs_dest_len :0];
 
-                    this.linkBin(abs_target, abs_dest, global);
+                    this.linkBinOrCreateShim(abs_target, abs_dest, global);
                 },
                 .map => {
                     var i: usize = 0;
@@ -521,7 +521,7 @@ pub const Bin = extern struct {
                         const abs_dest_len = @intFromPtr(abs_dest_buf_remain.ptr) - @intFromPtr(this.abs_dest_buf.ptr);
                         const abs_dest: [:0]const u8 = this.abs_dest_buf[0..abs_dest_len :0];
 
-                        this.createSymlink(abs_target, abs_dest, global);
+                        this.linkBinOrCreateShim(abs_target, abs_dest, global);
                     }
                 },
                 .dir => {
@@ -553,7 +553,7 @@ pub const Bin = extern struct {
                                 const abs_dest_len = @intFromPtr(abs_dest_buf_remain.ptr) - @intFromPtr(this.abs_dest_buf.ptr);
                                 const abs_dest: [:0]const u8 = this.abs_dest_buf[0..abs_dest_len :0];
 
-                                this.createSymlink(abs_target, abs_dest, global);
+                                this.linkBinOrCreateShim(abs_target, abs_dest, global);
                             },
                             else => {},
                         }

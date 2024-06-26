@@ -12,17 +12,7 @@ concurrency:
 on:
   workflow_dispatch:
   pull_request:
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
   push:
-    branches:
-      - main
-    paths-ignore:
-      - .vscode/**/*
-      - docs/**/*
-      - examples/**/*
 
 jobs:
   trigger:
@@ -34,65 +24,5 @@ jobs:
         uses: buildkite/trigger-pipeline-action@v2.2.0
         with:
           buildkite_api_access_token: ${{ secrets.BUILDKITE_TOKEN }}
-          pipeline: "bun/bun"
+          pipeline: "bun/sandbox"
           send_pull_request: true
-
-      - name: Wait for CI
-        uses: EnricoMi/download-buildkite-artifact-action@v1
-        with:
-          buildkite_token: ${{ secrets.BUILDKITE_TOKEN }}
-          buildkite_build_url: ${{ steps.ci.outputs.url }}
-          ignore_build_states: blocked,canceled,skipped,not_run
-          ignore_job_states: timed_out,failed
-          output_path: artifacts
-
-      - name: Upload bun-linux-x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-linux-x64
-          path: artifacts/bun-linux-x64.zip
-          if-no-files-found: error
-      - name: Upload bun-linux-x64-baseline
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-linux-x64-baseline
-          path: artifacts/bun-linux-x64-baseline.zip
-          if-no-files-found: error
-      - name: Upload bun-linux-aarch64
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-linux-aarch64
-          path: artifacts/bun-linux-aarch64.zip
-          if-no-files-found: error
-
-      - name: Upload bun-darwin-x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-darwin-x64
-          path: artifacts/bun-darwin-x64.zip
-          if-no-files-found: error
-      - name: Upload bun-darwin-x64-baseline
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-darwin-x64-baseline
-          path: artifacts/bun-darwin-x64-baseline.zip
-          if-no-files-found: error
-      - name: Upload bun-darwin-aarch64
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-darwin-aarch64
-          path: artifacts/bun-darwin-aarch64.zip
-          if-no-files-found: error
-
-      - name: Upload bun-windows-x64
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-windows-x64
-          path: artifacts/bun-windows-x64.zip
-          if-no-files-found: error
-      - name: Upload bun-windows-x64-baseline
-        uses: actions/upload-artifact@v4
-        with:
-          name: bun-windows-x64-baseline
-          path: artifacts/bun-windows-x64-baseline.zip
-          if-no-files-found: error

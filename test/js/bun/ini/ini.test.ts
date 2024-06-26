@@ -4,6 +4,26 @@ import { expect, test, describe, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 
 describe("parse ini", () => {
+  test("really long input", () => {
+    const ini = /* ini */ `
+[${Array(1024).fill("a").join("")}.lol.this.be.long]
+wow = 'hi'
+`;
+
+    expect(parse(ini)).toEqual({
+      [`${Array(1024).fill("a").join("")}`]: {
+        lol: {
+          this: {
+            be: {
+              long: {
+                wow: "hi",
+              },
+            },
+          },
+        },
+      },
+    });
+  });
   describe("env vars", () => {
     envVarTest({
       name: "basic",

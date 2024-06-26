@@ -1092,8 +1092,8 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "windows-x64-nolto.zip"
-          - "windows-x64-nolto-profile.zip"
+          - "bun-windows-x64.zip"
+          - "bun-windows-x64-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "haswell"
@@ -1111,8 +1111,8 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "windows-x64.zip"
-          - "windows-x64-profile.zip"
+          - "bun-windows-x64.zip"
+          - "bun-windows-x64-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "haswell"

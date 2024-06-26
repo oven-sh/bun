@@ -71,8 +71,8 @@ steps:
           os: "darwin"
           arch: "aarch64"
         artifact_paths:
-          - "release/bun-darwin-aarch64.zip"
-          - "release/bun-darwin-aarch64-profile.zip"
+          - "bun-darwin-aarch64.zip"
+          - "bun-darwin-aarch64-profile.zip"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -190,8 +190,8 @@ steps:
           os: "darwin"
           arch: "x64"
         artifact_paths:
-          - "release/bun-darwin-x64.zip"
-          - "release/bun-darwin-x64-profile.zip"
+          - "bun-darwin-x64.zip"
+          - "bun-darwin-x64-profile.zip"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -309,8 +309,8 @@ steps:
           os: "linux"
           arch: "aarch64"
         artifact_paths:
-          - "release/bun-linux-aarch64.zip"
-          - "release/bun-linux-aarch64-profile.zip"
+          - "bun-linux-aarch64.zip"
+          - "bun-linux-aarch64-profile.zip"
         env:
           CPU_TARGET: "native"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -447,8 +447,8 @@ steps:
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "release/bun-linux-x64.zip"
-          - "release/bun-linux-x64-profile.zip"
+          - "bun-linux-x64.zip"
+          - "bun-linux-x64-profile.zip"
         env:
           CPU_TARGET: "haswell"
           CCACHE_DIR: "$$HOME/.cache/ccache"
@@ -585,8 +585,8 @@ steps:
           os: "linux"
           arch: "x64"
         artifact_paths:
-          - "release/bun-linux-x64-baseline.zip"
-          - "release/bun-linux-x64-baseline-profile.zip"
+          - "bun-linux-x64-baseline.zip"
+          - "bun-linux-x64-baseline-profile.zip"
         env:
           CPU_TARGET: "nehalem"
           CCACHE_DIR: "$$HOME/.cache/ccache"

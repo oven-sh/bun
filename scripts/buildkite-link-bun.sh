@@ -64,6 +64,10 @@ cmake .. \
   -DNO_CONFIGURE_DEPENDS=1
 ninja -v
 
+if [[ "${USE_LTO}" == "OFF" ]]; then
+  TAG="${TAG}-no-lto"
+fi
+
 chmod +x bun-profile bun
 mkdir -p bun-$TAG-profile/ bun-$TAG/
 mv bun-profile bun-$TAG-profile/bun-profile

@@ -89,6 +89,10 @@ const { values: options, positionals: filters } = parseArgs({
       multiple: true,
       default: undefined,
     },
+    ["smoke"]: {
+      type: "string",
+      default: undefined,
+    },
   },
 });
 
@@ -135,62 +139,11 @@ async function runTests() {
   const revision = getRevision(execPath);
   console.log("Revision:", revision);
 
-  const tests = getTests(testsPath);
-  const availableTests = [];
-  const filteredTests = [];
-
-  const isMatch = (testPath, filter) => {
-    return testPath.replace(/\\/g, "/").includes(filter);
-  };
-
-  const getFilter = filter => {
-    return (
-      filter
-        ?.split(",")
-        .map(part => part.trim())
-        .filter(Boolean) ?? []
-    );
-  };
-
-  const includes = options["include"]?.flatMap(getFilter);
-  if (includes?.length) {
-    availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
-    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
-  } else {
-    availableTests.push(...tests);
-  }
-
-  const excludes = options["exclude"]?.flatMap(getFilter);
-  if (excludes?.length) {
-    const excludedTests = availableTests.filter(testPath => excludes.some(filter => isMatch(testPath, filter)));
-    if (excludedTests.length) {
-      for (const testPath of excludedTests) {
-        const index = availableTests.indexOf(testPath);
-        if (index !== -1) {
-          availableTests.splice(index, 1);
-        }
-      }
-      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
-    }
-  }
-
-  const shardId = parseInt(options["shard"]);
-  const maxShards = parseInt(options["max-shards"]);
-  if (filters?.length) {
-    filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
-    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
-  } else if (maxShards > 1) {
-    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
-    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
-    filteredTests.push(...availableTests.slice(firstTest, lastTest));
-    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
-  } else {
-    filteredTests.push(...availableTests);
-    console.log("Found tests:", availableTests.length);
-  }
+  const tests = getRelevantTests(testsPath);
+  console.log("Running tests:", tests.length);
 
   let i = 0;
-  let total = filteredTests.length + 2;
+  let total = tests.length + 2;
   const results = [];
 
   /**
@@ -238,7 +191,7 @@ async function runTests() {
   }
 
   if (results.every(({ ok }) => ok)) {
-    for (const testPath of filteredTests) {
+    for (const testPath of tests) {
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -849,6 +802,76 @@ function getTests(cwd) {
     }
   }
   return [...getFiles(cwd, "")].sort();
+}
+
+/**
+ * @param {string} cwd
+ * @returns {string[]}
+ */
+function getRelevantTests(cwd) {
+  const tests = getTests(cwd);
+  const availableTests = [];
+  const filteredTests = [];
+
+  const isMatch = (testPath, filter) => {
+    return testPath.replace(/\\/g, "/").includes(filter);
+  };
+
+  const getFilter = filter => {
+    return (
+      filter
+        ?.split(",")
+        .map(part => part.trim())
+        .filter(Boolean) ?? []
+    );
+  };
+
+  const includes = options["include"]?.flatMap(getFilter);
+  if (includes?.length) {
+    availableTests.push(...tests.filter(testPath => includes.some(filter => isMatch(testPath, filter))));
+    console.log("Including tests:", includes, availableTests.length, "/", tests.length);
+  } else {
+    availableTests.push(...tests);
+  }
+
+  const excludes = options["exclude"]?.flatMap(getFilter);
+  if (excludes?.length) {
+    const excludedTests = availableTests.filter(testPath => excludes.some(filter => isMatch(testPath, filter)));
+    if (excludedTests.length) {
+      for (const testPath of excludedTests) {
+        const index = availableTests.indexOf(testPath);
+        if (index !== -1) {
+          availableTests.splice(index, 1);
+        }
+      }
+      console.log("Excluding tests:", excludes, excludedTests.length, "/", availableTests.length);
+    }
+  }
+
+  const shardId = parseInt(options["shard"]);
+  const maxShards = parseInt(options["max-shards"]);
+  if (filters?.length) {
+    filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
+    console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
+  } else if (options["smoke"] !== undefined) {
+    const smokeCount = parseInt(options["smoke"]) || Math.ceil(availableTests.length * 0.01);
+    const smokeTests = new Set();
+    for (let i = 0; i < smokeCount; i++) {
+      const randomIndex = Math.floor(Math.random() * availableTests.length);
+      smokeTests.add(availableTests[randomIndex]);
+    }
+    filteredTests.push(...Array.from(smokeTests));
+    console.log("Smoking tests:", filteredTests.length, "/", availableTests.length);
+  } else if (maxShards > 1) {
+    const firstTest = shardId * Math.ceil(availableTests.length / maxShards);
+    const lastTest = Math.min(firstTest + Math.ceil(availableTests.length / maxShards), availableTests.length);
+    filteredTests.push(...availableTests.slice(firstTest, lastTest));
+    console.log("Sharding tests:", firstTest, "...", lastTest, "/", availableTests.length);
+  } else {
+    filteredTests.push(...availableTests);
+  }
+
+  return filteredTests;
 }
 
 let ntStatus;

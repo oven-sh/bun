@@ -38,6 +38,10 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 ninja -v
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
+if ($UseLto -eq "OFF") {
+  $Tag = "$Tag-no-lto"
+}
+
 Set-Location ..
 $Dist = mkdir -Force "${Tag}"
 cp -r build\bun.exe "$Dist\bun.exe"

@@ -11287,7 +11287,6 @@ pub const PackageManager = struct {
         bins: []const Bin,
         resolutions: []Resolution,
         node: *Progress.Node,
-        global_bin_dir: std.fs.Dir,
         destination_dir_subpath_buf: bun.PathBuffer = undefined,
         folder_path_buf: bun.PathBuffer = undefined,
         successfully_installed: Bitset,
@@ -12761,7 +12760,6 @@ pub const PackageManager = struct {
                     .skip_verify_installed_version_number = skip_verify_installed_version_number,
                     .skip_delete = skip_delete,
                     .summary = &summary,
-                    .global_bin_dir = this.options.global_bin_dir,
                     .force_install = options.enable.force_install,
                     .successfully_installed = try Bitset.initEmpty(
                         this.allocator,

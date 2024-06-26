@@ -1189,92 +1189,23 @@ describe("binaries", () => {
   });
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
-      // await Promise.all([
-      //   write(
-      //     join(packageDir, "package.json"),
-      //     JSON.stringify({
-      //       name: "root",
-      //       workspaces: ["packages/*"],
-      //     }),
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-file-bin", "package.json"),
-      //     JSON.stringify({
-      //       name: "dep-with-file-bin",
-      //       bin: "./file-bin",
-      //     }),
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-file-bin", "file-bin"),
-      //     "#!/usr/bin/env bun\nconsole.log('file-bin!')",
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-single-entry-map-bin", "package.json"),
-      //     JSON.stringify({
-      //       name: "dep-with-single-entry-map-bin",
-      //       bin: {
-      //         "single-entry-map-bin": "./single-entry-map-bin",
-      //       },
-      //     }),
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-single-entry-map-bin", "single-entry-map-bin"),
-      //     "#!/usr/bin/env bun\nconsole.log('single-entry-map-bin!')",
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-directory-bins", "package.json"),
-      //     JSON.stringify({
-      //       name: "dep-with-directory-bins",
-      //       directories: {
-      //         bin: "./bins",
-      //       },
-      //     }),
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-directory-bins", "bins", "directory-bin-1"),
-      //     "#!/usr/bin/env bun\nconsole.log('directory-bin-1!')",
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-directory-bins", "bins", "directory-bin-2"),
-      //     "#!/usr/bin/env bun\nconsole.log('directory-bin-2!')",
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-map-bins", "package.json"),
-      //     JSON.stringify({
-      //       name: "dep-with-map-bins",
-      //       bin: {
-      //         "map-bin-1": "./map-bin-1",
-      //         "map-bin-2": "./map-bin-2",
-      //       },
-      //     }),
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-map-bins", "map-bin-1"),
-      //     "#!/usr/bin/env bun\nconsole.log('map-bin-1!')",
-      //   ),
-      //   write(
-      //     join(packageDir, "packages", "dep-with-map-bins", "map-bin-2"),
-      //     "#!/usr/bin/env bun\nconsole.log('map-bin-2!')",
-      //   ),
-      // ]);
-
-      await write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-        }),
-      );
-
       if (global) {
         await writeFile(
           join(packageDir, "bunfig.toml"),
           `
-[install]
-cache = false
-registry = "http://localhost:${port}/"
-globalBinDir = "${join(packageDir, "global-bin-dir")}"
-globalDir = "${packageDir}"
-`,
+          [install]
+          cache = false
+          registry = "http://localhost:${port}/"
+          globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
+          globalDir = "${packageDir.replace(/\\/g, "\\\\")}"
+          `,
+        );
+      } else {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+          }),
         );
       }
 
@@ -1315,7 +1246,7 @@ globalDir = "${packageDir}"
   }
 
   async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
-    const args = [bunExe(), ...(global ? ["run"] : []), `${global ? "./" : ""}${binName}`];
+    const args = [bunExe(), ...(global ? ["run"] : []), binName];
     const result = Bun.spawn({
       cmd: args,
       stdout: "pipe",

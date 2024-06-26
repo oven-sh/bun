@@ -350,7 +350,7 @@ pub const Bin = extern struct {
             });
 
             if (this.seen) |seen| {
-                // skip seen destinations
+                // Skip seen destinations for this tree
                 // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L30
                 const entry = seen.getOrPut(abs_dest) catch bun.outOfMemory();
                 if (entry.found_existing) {
@@ -359,14 +359,8 @@ pub const Bin = extern struct {
                 entry.key_ptr.* = seen.allocator.dupe(u8, abs_dest) catch bun.outOfMemory();
             }
 
-            // Slightly modified from npm's bin-links
-            // https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/bin-links/lib/link-gently.js#L1-L5
-            // 1. if the thing isn't there, skip
-            // 2. if there's a non-symlink there already, if global return error, else clobber and create symlink
-            // 3. if there's a symlink already, pointing to another package, return error if global, else clobber and create symlink
-            // 4. if there's a symlink pointing into the current package, update the symlink if necessary.
-
-            // 1
+            // Skip if the target does not exist. This is important because placing a dangling
+            // symlink in path might break a postinstall
             if (!bun.sys.exists(abs_target)) {
                 return;
             }
@@ -393,6 +387,11 @@ pub const Bin = extern struct {
 
                     // ENOENT means `.bin` hasn't been created yet. Should only happen if this isn't global
                     if (err.getErrno() == .NOENT) {
+                        if (global) {
+                            this.err = err.toZigErr();
+                            return;
+                        }
+
                         bun.makePath(this.node_modules.asDir(), ".bin") catch {};
                         switch (bun.sys.symlink(rel_target, abs_dest)) {
                             .err => |real_error| {
@@ -410,18 +409,14 @@ pub const Bin = extern struct {
                 .result => return,
             }
 
-            if (!global) {
-                std.fs.deleteTreeAbsolute(abs_dest) catch {};
-                switch (bun.sys.symlink(rel_target, abs_dest)) {
-                    .err => |err| {
-                        this.err = err.toZigErr();
-                    },
-                    .result => {},
-                }
-                return;
+            // delete and try again
+            std.fs.deleteTreeAbsolute(abs_dest) catch {};
+            switch (bun.sys.symlink(rel_target, abs_dest)) {
+                .err => |err| {
+                    this.err = err.toZigErr();
+                },
+                .result => {},
             }
-
-            // TODO: non global symlink fixing
         }
 
         /// uses `this.abs_target_buf`

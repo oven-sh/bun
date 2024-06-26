@@ -2970,6 +2970,13 @@ pub const File = struct {
         };
     }
 
+    pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
+            .result => |fd| .{ .result = .{ .handle = fd } },
+            .err => |err| .{ .err = err },
+        };
+    }
+
     pub fn from(other: anytype) File {
         const T = @TypeOf(other);
 
@@ -3031,6 +3038,23 @@ pub const File = struct {
             }
         }
 
+        return .{ .result = {} };
+    }
+
+    pub fn writeFile(
+        relative_dir_or_cwd: anytype,
+        path: bun.OSPathSliceZ,
+        data: []const u8,
+    ) Maybe(void) {
+        const file = switch (File.openatOSPath(relative_dir_or_cwd, path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .err => |err| return .{ .err = err },
+            .result => |fd| fd,
+        };
+        defer file.close();
+        switch (file.writeAll(data)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
         return .{ .result = {} };
     }
 

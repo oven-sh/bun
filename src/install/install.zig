@@ -11366,8 +11366,6 @@ pub const PackageManager = struct {
                         bun.assertWithLocation(bin.tag != .none, @src());
                         const alias = this.lockfile.buffers.dependencies.items[dep_id].name.slice(this.lockfile.buffers.string_bytes.items);
 
-                        std.debug.print("linking path: {s}\n", .{this.node_modules.path.items});
-
                         var bin_linker: Bin.Linker = .{
                             .bin = bin,
                             .global_bin_path = this.options.bin_path,

@@ -5,7 +5,7 @@ steps:
   - key: "darwin-aarch64-build"
     label: ":darwin: aarch64"
     steps:
-      -     key: "darwin-aarch64-build-deps"
+      - key: "darwin-aarch64-build-deps"
         label: ":darwin: aarch64 - build-deps"
         artifact_paths: "build/bun-deps/**/*"
         command: "./scripts/all-dependencies.sh"
@@ -19,7 +19,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
-      -     key: "darwin-aarch64-build-zig"
+      - key: "darwin-aarch64-build-zig"
         label: ":darwin: aarch64 - build-zig"
         artifact_paths:
           - "build/bun-zig.o"
@@ -37,7 +37,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
-      -     key: "darwin-aarch64-build-cpp"
+      - key: "darwin-aarch64-build-cpp"
         label: ":darwin: aarch64 - build-cpp"
         artifact_paths: "build/bun-cpp-objects.a"
         command: "./scripts/build-bun-cpp.sh --fast"
@@ -51,7 +51,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
-      -     key: "darwin-aarch64-build-bun-nolto"
+      - key: "darwin-aarch64-build-bun-nolto"
         label: ":darwin: aarch64 - build-bun (no-lto)"
         artifact_paths:
           - "darwin-aarch64-nolto.zip"
@@ -71,7 +71,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
           BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps"
-      -     key: "darwin-aarch64-build-bun"
+      - key: "darwin-aarch64-build-bun"
         label: ":darwin: aarch64 - build-bun"
         artifact_paths:
           - "darwin-aarch64.zip"

@@ -224,7 +224,7 @@ function toYaml(object, level = 0) {
       .map(item => {
         const value = toYaml(item, level + 1);
         if (typeof item === "object") {
-          return indent + "- " + value.substring(2 + 2);
+          return indent + "- " + value.substring(2 + indent.length);
         }
         return indent + "- " + value;
       })
@@ -247,17 +247,15 @@ function toYaml(object, level = 0) {
     .join("\n");
 }
 
-const steps = [
-  getBuildStep({
-    os: "darwin",
-    arch: "aarch64",
-    noLto: true,
-  }),
-];
-
 const pipelinePath = join(import.meta.dirname, "ci.yml");
 const pipeline = {
-  steps,
+  steps: [
+    getBuildStep({
+      os: "darwin",
+      arch: "aarch64",
+      noLto: true,
+    }),
+  ],
 };
 
 const pipelineContent = `# Build and test Bun on macOS, Linux, and Windows.
@@ -268,3 +266,4 @@ ${toYaml(pipeline)}
 writeFileSync(pipelinePath, pipelineContent);
 
 console.log("Wrote pipeline:", relative(process.cwd(), pipelinePath));
+console.log(pipelineContent);

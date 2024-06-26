@@ -27,15 +27,16 @@ async function tempDirToBuildIn() {
   cpSync(join(root, "src/Counter1.txt"), join(dir, "src/Counter.tsx"));
   cpSync(join(root, "tsconfig_for_build.json"), join(dir, "tsconfig.json"));
 
-  const install = Bun.spawn([bunExe(), "i"], {
+  const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: dir,
     env: bunEnv,
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",
   });
-  if ((await install.exited) !== 0) {
-    throw new Error("Failed to install dependencies");
+  if (!install.success) {
+    const reason = install.signalCode || `code ${install.exitCode}`;
+    throw new Error(`Failed to install dependencies: ${reason}`);
   }
 
   return dir;

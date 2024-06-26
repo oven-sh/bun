@@ -564,7 +564,8 @@ function expectBundled(
         cwd: root,
       });
       if (!installProcess.success) {
-        throw new Error("Failed to install dependencies");
+        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+        throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
     for (const [file, contents] of Object.entries(files)) {

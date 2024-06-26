@@ -70,3 +70,7 @@ mv bun-profile bun-$TAG-profile/bun-profile
 mv bun bun-$TAG/bun
 zip -r bun-$TAG-profile.zip bun-$TAG-profile
 zip -r bun-$TAG.zip bun-$TAG
+
+cd ..
+mv release/bun-$TAG.zip bun-$TAG.zip
+mv release/bun-$TAG-profile.zip bun-$TAG-profile.zip

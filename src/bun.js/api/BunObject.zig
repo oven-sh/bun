@@ -3613,11 +3613,10 @@ pub fn getHashObject(
 ) callconv(.C) JSC.JSValue {
     return HashObject.create(globalThis);
 }
-
 const HashObject = struct {
     pub const wyhash = hashWrap(std.hash.Wyhash).hash;
-    pub const adler32 = hashWrap(std.hash.Adler32).hash;
-    pub const crc32 = hashWrap(std.hash.Crc32).hash;
+    pub const adler32 = hashWrap(bun.zlib.Adler32).hash;
+    pub const crc32 = hashWrap(bun.zlib.Crc32).hash;
     pub const cityHash32 = hashWrap(std.hash.CityHash32).hash;
     pub const cityHash64 = hashWrap(std.hash.CityHash64).hash;
     pub const murmur32v2 = hashWrap(std.hash.murmur.Murmur2_32).hash;

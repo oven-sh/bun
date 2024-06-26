@@ -901,3 +901,42 @@ pub const ZlibCompressorArrayList = struct {
         }
     }
 };
+
+pub const adler32 = @import("zlib-internal").adler32;
+pub const crc32 = @import("zlib-internal").crc32;
+
+fn HasherFn(comptime function: anytype) type {
+    return struct {
+        state: uLong = 0,
+
+        const Hasher = @This();
+
+        pub fn init(this: *Hasher) void {
+            this.state = function(0, null, 0);
+        }
+
+        pub fn update(this: *Hasher, data: []const u8) void {
+            this.state = function(this.state, data.ptr, @intCast(data.len));
+        }
+
+        pub fn finish(this: *Hasher) uLong {
+            return this.state;
+        }
+
+        pub fn hash(data: []const u8) uLong {
+            var hasher = @This(){};
+            hasher.init();
+            hasher.update(data);
+            return hasher.finish();
+        }
+
+        pub fn hashWithSeed(data: []const u8, seed: uLong) uLong {
+            var hasher = @This(){ .state = seed };
+            hasher.update(data);
+            return hasher.finish();
+        }
+    };
+}
+
+pub const Adler32 = HasherFn(adler32);
+pub const Crc32 = HasherFn(crc32);

@@ -2,8 +2,6 @@
 
 // Build and test Bun on macOS, Linux, and Windows.
 // https://buildkite.com/docs/pipelines/defining-steps
-// - https://buildkite.com/docs/pipelines/command-step
-// - https://buildkite.com/docs/pipelines/block-step
 
 import { writeFileSync } from "node:fs";
 import { join, relative } from "node:path";
@@ -60,7 +58,7 @@ function getBuildStep(options) {
     }
     return args
       .filter(Boolean)
-      .flatMap(arg => (arg.includes("=") ? arg.split("=") : arg))
+      .flatMap(arg => (arg.includes("=") ? arg.split("=") : [arg]))
       .join(" ");
   };
   /**
@@ -263,7 +261,10 @@ const pipelineContent = `# Build and test Bun on macOS, Linux, and Windows.
 
 ${toYaml(pipeline)}
 `;
-writeFileSync(pipelinePath, pipelineContent);
 
-console.log("Wrote pipeline:", relative(process.cwd(), pipelinePath));
+if (process.env["BUILDKITE"] === "true") {
+  writeFileSync(pipelinePath, pipelineContent);
+  console.log("Wrote pipeline:", relative(process.cwd(), pipelinePath));
+}
+
 console.log(pipelineContent);

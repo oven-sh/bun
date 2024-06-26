@@ -876,7 +876,11 @@ pub fn loadNpmrc(
         const scope_count = brk: {
             var count: usize = 0;
             while (iter.next() catch {
-                @panic("TODO ZACK handle error");
+                const prop_idx = iter.prop_idx -| 1;
+                const prop = iter.config.properties.at(prop_idx);
+                const loc = prop.key.?.loc;
+                log.addErrorFmt(&source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
+                return error.ParserError;
             }) |o| {
                 if (o == .some) {
                     count += 1;

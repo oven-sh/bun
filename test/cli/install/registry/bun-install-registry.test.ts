@@ -1190,14 +1190,12 @@ describe("binaries", () => {
   for (const global of [false, true]) {
     test(`bin types${global ? " (global)" : ""}`, async () => {
       if (global) {
-        await writeFile(
+        await write(
           join(packageDir, "bunfig.toml"),
           `
           [install]
-          cache = false
           registry = "http://localhost:${port}/"
           globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
-          globalDir = "${packageDir.replace(/\\/g, "\\\\")}"
           `,
         );
       } else {
@@ -1219,13 +1217,12 @@ describe("binaries", () => {
         "dep-with-directory-bins",
         "dep-with-map-bins",
       ];
-
       const { stdout, stderr, exited } = spawn({
         cmd: args,
         cwd: packageDir,
         stdout: "pipe",
         stderr: "pipe",
-        env,
+        env: global ? { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") } : env,
       });
 
       const err = await Bun.readableStreamToText(stderr);
@@ -1246,7 +1243,7 @@ describe("binaries", () => {
   }
 
   async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
-    const args = [bunExe(), ...(global ? ["run"] : []), binName];
+    const args = [bunExe(), ...(global ? ["run"] : []), `${!isWindows && global ? "./" : ""}${binName}`];
     const result = Bun.spawn({
       cmd: args,
       stdout: "pipe",

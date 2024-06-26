@@ -8190,8 +8190,6 @@ pub const PackageManager = struct {
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
 
-        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
-
         if (cli.global) {
             var explicit_global_dir: string = "";
             if (ctx.install) |opts| {
@@ -8386,6 +8384,7 @@ pub const PackageManager = struct {
         };
 
         try bun.sys.chdir(fs.top_level_dir).unwrap();
+        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
         cwd_buf[fs.top_level_dir.len + 1] = 0;
@@ -11307,6 +11306,7 @@ pub const PackageManager = struct {
 
         trusted_dependencies_from_update_requests: std.AutoArrayHashMapUnmanaged(TruncatedPackageNameHash, void),
 
+        // uses same ids as lockfile.trees
         trees: []TreeContext,
 
         seen_bin_links: bun.StringHashMap(void),
@@ -11357,42 +11357,7 @@ pub const PackageManager = struct {
                     var link_target_buf: bun.PathBuffer = undefined;
                     var link_dest_buf: bun.PathBuffer = undefined;
                     var link_rel_buf: bun.PathBuffer = undefined;
-                    while (tree.binaries.removeOrNull()) |dep_id| {
-                        bun.assertWithLocation(dep_id < this.lockfile.buffers.dependencies.items.len, @src());
-                        const package_id = this.lockfile.buffers.resolutions.items[dep_id];
-                        bun.assertWithLocation(package_id != invalid_package_id, @src());
-                        const bin = this.bins[package_id];
-                        bun.assertWithLocation(bin.tag != .none, @src());
-                        const alias = this.lockfile.buffers.dependencies.items[dep_id].name.slice(this.lockfile.buffers.string_bytes.items);
-
-                        var bin_linker: Bin.Linker = .{
-                            .bin = bin,
-                            .global_bin_path = this.options.bin_path,
-                            .global_bin_dir = this.options.global_bin_dir,
-                            .package_name = strings.StringOrTinyString.init(alias),
-                            .string_buf = this.lockfile.buffers.string_bytes.items,
-                            .extern_string_buf = this.lockfile.buffers.extern_strings.items,
-                            .seen = &this.seen_bin_links,
-                            .node_modules_path = this.node_modules.path.items,
-                            .node_modules = bun.toFD(destination_dir),
-                            .abs_target_buf = &link_target_buf,
-                            .abs_dest_buf = &link_dest_buf,
-                            .rel_buf = &link_rel_buf,
-                        };
-
-                        bin_linker.link(this.manager.options.global);
-                        if (bin_linker.err) |err| {
-                            this.manager.log.addErrorFmtNoLoc(
-                                this.manager.allocator,
-                                "Failed to link <b>{s}<r>: {s}",
-                                .{ alias, @errorName(err) },
-                            ) catch bun.outOfMemory();
-
-                            if (this.manager.options.enable.fail_early) {
-                                this.manager.crash();
-                            }
-                        }
-                    }
+                    this.linkTreeBins(tree, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
                 }
             }
 
@@ -11401,6 +11366,97 @@ pub const PackageManager = struct {
                 this.installAvailablePackages(log_level, force);
             }
             this.runAvailableScripts(log_level);
+        }
+
+        pub fn linkTreeBins(
+            this: *PackageInstaller,
+            tree: *TreeContext,
+            destination_dir: std.fs.Dir,
+            link_target_buf: []u8,
+            link_dest_buf: []u8,
+            link_rel_buf: []u8,
+            log_level: Options.LogLevel,
+        ) void {
+            const lockfile = this.lockfile;
+            const string_buf = lockfile.buffers.string_bytes.items;
+            while (tree.binaries.removeOrNull()) |dep_id| {
+                bun.assertWithLocation(dep_id < lockfile.buffers.dependencies.items.len, @src());
+                const package_id = lockfile.buffers.resolutions.items[dep_id];
+                bun.assertWithLocation(package_id != invalid_package_id, @src());
+                const bin = this.bins[package_id];
+                bun.assertWithLocation(bin.tag != .none, @src());
+
+                const alias = lockfile.buffers.dependencies.items[dep_id].name.slice(string_buf);
+
+                var bin_linker: Bin.Linker = .{
+                    .bin = bin,
+                    .global_bin_path = this.options.bin_path,
+                    .global_bin_dir = this.options.global_bin_dir,
+                    .package_name = strings.StringOrTinyString.init(alias),
+                    .string_buf = string_buf,
+                    .extern_string_buf = lockfile.buffers.extern_strings.items,
+                    .seen = &this.seen_bin_links,
+                    .node_modules_path = this.node_modules.path.items,
+                    .node_modules = bun.toFD(destination_dir),
+                    .abs_target_buf = link_target_buf,
+                    .abs_dest_buf = link_dest_buf,
+                    .rel_buf = link_rel_buf,
+                };
+
+                bin_linker.link(this.manager.options.global);
+                if (bin_linker.err) |err| {
+                    if (log_level != .silent) {
+                        this.manager.log.addErrorFmtNoLoc(
+                            this.manager.allocator,
+                            "Failed to link <b>{s}<r>: {s}",
+                            .{ alias, @errorName(err) },
+                        ) catch bun.outOfMemory();
+                    }
+
+                    if (this.options.enable.fail_early) {
+                        this.manager.crash();
+                    }
+                }
+            }
+        }
+
+        pub fn linkRemainingBins(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
+            var depth_buf: Lockfile.Tree.Iterator.DepthBuf = undefined;
+            var node_modules_rel_path_buf: bun.PathBuffer = undefined;
+            @memcpy(node_modules_rel_path_buf[0.."node_modules".len], "node_modules");
+
+            var link_target_buf: bun.PathBuffer = undefined;
+            var link_dest_buf: bun.PathBuffer = undefined;
+            var link_rel_buf: bun.PathBuffer = undefined;
+            const lockfile = this.lockfile;
+
+            for (this.trees, 0..) |*tree, tree_id| {
+                if (tree.binaries.count() > 0) {
+                    this.seen_bin_links.clearRetainingCapacity();
+                    this.node_modules.path.items.len = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir).len + 1;
+                    const rel_path, _ = Lockfile.Tree.relativePathAndDepth(
+                        lockfile,
+                        @intCast(tree_id),
+                        &node_modules_rel_path_buf,
+                        &depth_buf,
+                    );
+
+                    this.node_modules.path.appendSlice(rel_path) catch bun.outOfMemory();
+
+                    var destination_dir = this.node_modules.openDir(this.root_node_modules_folder) catch |err| {
+                        if (log_level != .silent) {
+                            Output.err(err, "Failed to open node_modules folder at {s}", .{
+                                bun.fmt.fmtPath(u8, this.node_modules.path.items, .{}),
+                            });
+                        }
+
+                        continue;
+                    };
+                    defer destination_dir.close();
+
+                    this.linkTreeBins(tree, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                }
+            }
         }
 
         pub fn runAvailableScripts(this: *PackageInstaller, comptime log_level: Options.LogLevel) void {
@@ -12923,6 +12979,9 @@ pub const PackageManager = struct {
 
             summary.successfully_installed = installer.successfully_installed;
 
+            // need to make sure bins are linked before completing any remaining scripts.
+            // this can happen if a package fails to download
+            installer.linkRemainingBins(log_level);
             installer.completeRemainingScripts(log_level);
 
             while (this.pending_lifecycle_script_tasks.load(.monotonic) > 0) {

@@ -357,37 +357,27 @@ pub const Tree = struct {
     pub const max_depth = (bun.MAX_PATH_BYTES / "node_modules".len) + 1;
 
     pub const Iterator = struct {
-        trees: []const Tree,
-        dependency_ids: []const DependencyID,
-        dependencies: []const Dependency,
-        resolutions: []const PackageID,
         tree_id: Id,
         path_buf: bun.PathBuffer = undefined,
-        path_buf_len: usize = 0,
         last_parent: Id = invalid_id,
-        string_buf: string,
 
-        depth_stack: [max_depth]Id = undefined,
+        lockfile: *const Lockfile,
+
+        depth_stack: DepthBuf = undefined,
+
+        pub const DepthBuf = [max_depth]Id;
 
         pub fn init(lockfile: *const Lockfile) Iterator {
             var iter = Iterator{
-                .trees = lockfile.buffers.trees.items,
                 .tree_id = 0,
-                .dependency_ids = lockfile.buffers.hoisted_dependencies.items,
-                .dependencies = lockfile.buffers.dependencies.items,
-                .resolutions = lockfile.buffers.resolutions.items,
-                .string_buf = lockfile.buffers.string_bytes.items,
+                .lockfile = lockfile,
             };
             @memcpy(iter.path_buf[0.."node_modules".len], "node_modules");
             return iter;
         }
 
         pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
-            this.trees = lockfile.buffers.trees.items;
-            this.dependency_ids = lockfile.buffers.hoisted_dependencies.items;
-            this.dependencies = lockfile.buffers.dependencies.items;
-            this.resolutions = lockfile.buffers.resolutions.items;
-            this.string_buf = lockfile.buffers.string_bytes.items;
+            this.lockfile = lockfile;
         }
 
         pub fn reset(this: *Iterator) void {
@@ -395,33 +385,35 @@ pub const Tree = struct {
         }
 
         pub fn nextNodeModulesFolder(this: *Iterator, completed_trees: ?*Bitset) ?NodeModulesFolder {
-            if (this.tree_id >= this.trees.len) return null;
+            const trees = this.lockfile.buffers.trees.items;
 
-            while (this.trees[this.tree_id].dependencies.len == 0) {
+            if (this.tree_id >= trees.len) return null;
+
+            while (trees[this.tree_id].dependencies.len == 0) {
                 if (completed_trees) |_completed_trees| {
                     _completed_trees.set(this.tree_id);
                 }
                 this.tree_id += 1;
-                if (this.tree_id >= this.trees.len) return null;
+                if (this.tree_id >= trees.len) return null;
             }
 
-            const tree = this.trees[this.tree_id];
+            const current_tree_id = this.tree_id;
+            const tree = trees[current_tree_id];
+            const tree_dependencies = tree.dependencies.get(this.lockfile.buffers.hoisted_dependencies.items);
 
-            const relative_path, const depth = tree.relativePathAndDepth(
-                this.trees,
-                this.dependencies,
-                this.string_buf,
+            const relative_path, const depth = relativePathAndDepth(
+                this.lockfile,
+                current_tree_id,
                 &this.path_buf,
                 &this.depth_stack,
             );
 
             this.tree_id += 1;
-            this.path_buf_len = relative_path.len;
 
             return .{
                 .relative_path = relative_path,
-                .dependencies = tree.dependencies.get(this.dependency_ids),
-                .tree_id = tree.id,
+                .dependencies = tree_dependencies,
+                .tree_id = current_tree_id,
                 .depth = depth,
             };
         }
@@ -429,14 +421,15 @@ pub const Tree = struct {
 
     /// Returns relative path and the depth of the tree
     pub fn relativePathAndDepth(
-        tree: *const Tree,
-        trees: []const Tree,
-        dependencies: []const Dependency,
-        string_buf: string,
+        lockfile: *const Lockfile,
+        tree_id: Id,
         path_buf: *bun.PathBuffer,
-        depth_buf: *[max_depth]Id,
+        depth_buf: *Iterator.DepthBuf,
     ) struct { stringZ, usize } {
+        const trees = lockfile.buffers.trees.items;
         var depth: usize = 0;
+
+        const tree = trees[tree_id];
 
         var parent_id = tree.id;
         var path_written: usize = "node_modules".len;
@@ -444,20 +437,25 @@ pub const Tree = struct {
         depth_buf[0] = 0;
 
         if (tree.id > 0) {
+            const dependencies = lockfile.buffers.dependencies.items;
+            const buf = lockfile.buffers.string_bytes.items;
             var depth_buf_len: usize = 1;
+
             while (parent_id > 0 and parent_id < trees.len) {
                 depth_buf[depth_buf_len] = parent_id;
                 parent_id = trees[parent_id].parent;
                 depth_buf_len += 1;
             }
+
             depth_buf_len -= 1;
+
             depth = depth_buf_len;
             while (depth_buf_len > 0) : (depth_buf_len -= 1) {
                 path_buf[path_written] = std.fs.path.sep;
                 path_written += 1;
 
                 const id = depth_buf[depth_buf_len];
-                const name = dependencies[trees[id].dependency_id].name.slice(string_buf);
+                const name = dependencies[trees[id].dependency_id].name.slice(buf);
                 @memcpy(path_buf[path_written..][0..name.len], name);
                 path_written += name.len;
 
@@ -6662,12 +6660,10 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
         try w.beginArray();
         defer w.endArray() catch {};
 
-        const trees = this.buffers.trees.items;
-        const string_buf = this.buffers.string_bytes.items;
         const dependencies = this.buffers.dependencies.items;
         const hoisted_deps = this.buffers.hoisted_dependencies.items;
         const resolutions = this.buffers.resolutions.items;
-        var depth_buf: [Tree.max_depth]Tree.Id = undefined;
+        var depth_buf: Tree.Iterator.DepthBuf = undefined;
         var path_buf: bun.PathBuffer = undefined;
         @memcpy(path_buf[0.."node_modules".len], "node_modules");
 
@@ -6680,10 +6676,9 @@ pub fn jsonStringify(this: *const Lockfile, w: anytype) !void {
             try w.objectField("id");
             try w.write(tree_id);
 
-            const relative_path, const depth = tree.relativePathAndDepth(
-                trees,
-                dependencies,
-                string_buf,
+            const relative_path, const depth = Lockfile.Tree.relativePathAndDepth(
+                this,
+                @intCast(tree_id),
                 &path_buf,
                 &depth_buf,
             );

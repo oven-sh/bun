@@ -115,7 +115,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
 
         depends_on:
@@ -143,7 +143,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-aarch64-build-bun-nolto"
@@ -170,7 +170,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-aarch64-build-bun-nolto"
@@ -197,7 +197,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
@@ -224,7 +224,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
@@ -251,7 +251,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-aarch64-build-bun"
@@ -371,7 +371,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
@@ -398,7 +398,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
@@ -425,7 +425,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
@@ -452,7 +452,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun"
@@ -479,7 +479,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun-nolto"
@@ -506,7 +506,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "darwin-x64-build-bun"
@@ -626,7 +626,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
@@ -654,7 +654,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
@@ -682,7 +682,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
@@ -710,7 +710,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun-nolto"
@@ -738,7 +738,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
@@ -766,7 +766,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
@@ -794,7 +794,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
@@ -822,7 +822,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-aarch64-build-bun"
@@ -943,7 +943,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
@@ -971,7 +971,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
@@ -999,7 +999,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
@@ -1027,7 +1027,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun-nolto"
@@ -1055,7 +1055,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun"
@@ -1083,7 +1083,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun"
@@ -1111,7 +1111,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun"
@@ -1139,7 +1139,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-build-bun"
@@ -1260,7 +1260,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
@@ -1288,7 +1288,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
@@ -1316,7 +1316,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
@@ -1344,7 +1344,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun-nolto"
@@ -1372,7 +1372,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
@@ -1400,7 +1400,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
@@ -1428,7 +1428,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"
@@ -1456,7 +1456,7 @@ steps:
               limit: 3
             - signal_reason: agent_stop
               limit: 3
-            - signal_reason: SIGTERM
+            - signal: SIGTERM
               limit: 3
         depends_on:
           - "linux-x64-baseline-build-bun"

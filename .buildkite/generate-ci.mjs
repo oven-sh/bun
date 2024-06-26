@@ -13,38 +13,65 @@ const pipeline = {
       os: "darwin",
       arch: "aarch64",
       noLto: true,
+      tests: [
+        { distro: "macos", release: "14" },
+        { distro: "macos", release: "13" },
+        { distro: "macos", release: "12" },
+      ],
     }),
     getBuildStep({
       os: "darwin",
       arch: "x64",
       noLto: true,
+      tests: [
+        { distro: "macos", release: "14" },
+        { distro: "macos", release: "13" },
+        { distro: "macos", release: "12" },
+      ],
     }),
     getBuildStep({
       os: "linux",
       arch: "aarch64",
       noLto: true,
+      tests: [
+        { distro: "debian", release: "12" },
+        { distro: "debian", release: "11" },
+        { distro: "debian", release: "10" },
+      ],
     }),
     getBuildStep({
       os: "linux",
       arch: "x64",
       noLto: true,
+      tests: [
+        { distro: "debian", release: "12" },
+        { distro: "debian", release: "11" },
+        { distro: "debian", release: "10" },
+      ],
     }),
     getBuildStep({
       os: "linux",
       arch: "x64",
       baseline: true,
       noLto: true,
+      tests: [
+        { distro: "debian", release: "12" },
+        { distro: "debian", release: "11" },
+        { distro: "debian", release: "10" },
+      ],
     }),
     getBuildStep({
       os: "windows",
       arch: "x64",
       noLto: true,
+      tests: [{ distro: "windows", release: "2019" }],
     }),
     getBuildStep({
       os: "windows",
       arch: "x64",
       baseline: true,
       noLto: true,
+      tests: [{ distro: "windows", release: "2019" }],
     }),
   ],
 };
@@ -63,29 +90,37 @@ if (process.env["BUILDKITE"] === "true") {
 console.log(pipelineContent);
 
 /**
- * @typedef BuildOptions
+ * @typedef Options
  * @property {"darwin" | "linux" | "windows"} os
  * @property {"aarch64" | "x64"} arch
  * @property {boolean} baseline
  * @property {boolean} [noLto]
+ * @property {TestOptions[]} [tests]
  */
 
 /**
- * @param {BuildOptions} options
+ * @typedef TestOptions
+ * @property {string} distro
+ * @property {string} release
+ * @property {number} [smoke]
+ */
+
+/**
+ * @param {Options} options
  * @returns {GroupStep}
  */
 function getBuildStep(options) {
-  const { os, arch, baseline, noLto } = options;
+  const { os, arch, baseline, noLto, tests = [] } = options;
   const target = getTarget(options); // "{os}-{arch}-[baseline]"
   const label = getLabel(options); // "{emoji} {arch}"
-  const env = {
+  const buildEnv = {
     CPU_TARGET: getCpuTarget(options),
     CCACHE_DIR: "$$HOME/.cache/ccache",
     SCCACHE_DIR: "$$HOME/.cache/sccache",
     ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache",
     BUN_DEPS_CACHE_DIR: "$$HOME/.cache/bun-deps",
   };
-  const agents = {
+  const buildAgent = {
     queue: `build-${os}`,
     os,
     arch,
@@ -124,6 +159,7 @@ function getBuildStep(options) {
   const toPath = path => {
     return os === "windows" ? path.replace(/\//g, "\\") : path;
   };
+  const smokeTests = noLto ? tests.map(test => ({ ...test, smoke: 0.05 })) : [];
   return {
     key: target,
     group: label,
@@ -133,8 +169,8 @@ function getBuildStep(options) {
         label: `${label} - build-deps`,
         artifact_paths: toPath("build/bun-deps/**/*"),
         command: toCommand("./scripts/all-dependencies.sh"),
-        agents,
-        env,
+        agents: buildAgent,
+        env: buildEnv,
       },
       {
         key: `${target}-build-zig`,
@@ -147,15 +183,15 @@ function getBuildStep(options) {
           os: "darwin",
           arch: "aarch64",
         },
-        env,
+        env: buildEnv,
       },
       {
         key: `${target}-build-cpp`,
         label: `${label} - build-cpp`,
         artifact_paths: toPath("build/bun-cpp-objects.a"),
-        command: toCommand("./scripts/build-bun-cpp.sh", baseline && "--baseline", noLto && "--fast"),
-        agents,
-        env,
+        command: toCommand("./scripts/build-bun-cpp.sh", baseline && "--baseline"),
+        agents: buildAgent,
+        env: buildEnv,
       },
       noLto && {
         key: `${target}-build-bun-nolto`,
@@ -163,8 +199,8 @@ function getBuildStep(options) {
         artifact_paths: [`bun-${target}-nolto.zip`, `bun-${target}-nolto-profile.zip`],
         command: toCommand("./scripts/buildkite-link-bun.sh", `--tag=${target}`, baseline && "--baseline", "--fast"),
         depends_on: [`${target}-build-deps`, `${target}-build-zig`, `${target}-build-cpp`],
-        agents,
-        env,
+        agents: buildAgent,
+        env: buildEnv,
       },
       {
         key: `${target}-build-bun`,
@@ -174,9 +210,52 @@ function getBuildStep(options) {
         depends_on: noLto
           ? [`${target}-build-bun-nolto`]
           : [`${target}-build-deps`, `${target}-build-zig`, `${target}-build-cpp`],
-        agents,
-        env,
+        agents: buildAgent,
+        env: buildEnv,
       },
+      ...tests.map(({ distro, release }) => {
+        const buildStep = noLto ? `${target}-build-bun-nolto` : `${target}-build-bun`;
+        const testAgent = {
+          os,
+          arch,
+          distro,
+          release,
+        };
+        // MacOS has dedicated runners that are not auto-provisioned.
+        if (os === "darwin") {
+          testAgent["queue"] = "test-darwin";
+        } else {
+          testAgent["robobun"] = "true";
+        }
+        return {
+          key: `${target}-test-bun-${distro}-${release}`,
+          label: `${getEmoji(distro)} ${release} - test-bun`,
+          command: `node ./scripts/runner.node.mjs --step ${buildStep}`,
+          depends_on: buildStep,
+          agents: testAgent,
+        };
+      }),
+      ...smokeTests.map(({ distro, release, smoke }) => {
+        const testAgent = {
+          os,
+          arch,
+          distro,
+          release,
+        };
+        // MacOS has dedicated runners that are not auto-provisioned.
+        if (os === "darwin") {
+          testAgent["queue"] = "test-darwin";
+        } else {
+          testAgent["robobun"] = "true";
+        }
+        return {
+          key: `${target}-bun-${distro}-${release}-smoke`,
+          label: `${getEmoji(distro)} ${release} - test-bun (smoke)`,
+          command: `node ./scripts/runner.node.mjs --step ${target}-build-bun --smoke ${smoke}`,
+          depends_on: `${target}-build-bun`,
+          agents: testAgent,
+        };
+      }),
     ],
   };
 }
@@ -199,9 +278,27 @@ function getTarget(options) {
  */
 function getLabel(options) {
   const { os, arch, baseline } = options;
-  const emoji = `:${os}:`;
+  const emoji = getEmoji(os);
   const label = baseline ? "x64-baseline" : arch;
   return `${emoji} ${label}`;
+}
+
+/**
+ * @param {string} label
+ * @returns {string}
+ */
+function getEmoji(label) {
+  switch (label) {
+    case "darwin":
+    case "linux":
+    case "windows":
+    case "ubuntu":
+    case "debian":
+      return `:${label}:`;
+    case "amazonlinux":
+      return ":aws:";
+  }
+  return label;
 }
 
 /**

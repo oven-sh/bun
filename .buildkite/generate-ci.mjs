@@ -140,7 +140,7 @@ function getBuildStep(options) {
         key: `${target}-build-zig`,
         label: `${label} - build-zig`,
         artifact_paths: ["build/bun-zig.o"],
-        command: toCommand("./scripts/build-bun-zig.sh", os, arch),
+        command: `./scripts/build-bun-zig.sh ${os} ${arch}`,
         // `zig build` is much faster on macOS aarch64 than on Linux or Windows.
         agents: {
           queue: "build-darwin",

@@ -58,14 +58,33 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --fast"
+          - "./scripts/build-bun-cpp.sh"
 
-      - key: "darwin-aarch64-build-bun"
-        label: ":darwin: aarch64 - build-bun"
+      - key: "darwin-aarch64-build-bun-no-lto"
+        label: ":darwin: aarch64 - build-bun (no-lto)"
         depends_on:
           - "darwin-aarch64-build-deps"
           - "darwin-aarch64-build-zig"
           - "darwin-aarch64-build-cpp"
+        agents:
+          queue: "build-darwin"
+          os: "darwin"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-darwin-aarch64-no-lto.zip"
+          - "bun-darwin-aarch64-no-lto-profile.zip"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64 --fast"
+
+      - key: "darwin-aarch64-build-bun"
+        label: ":darwin: aarch64 - build-bun"
+        depends_on:
+          - "darwin-aarch64-build-bun-no-lto"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -79,52 +98,52 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64 --fast"
+          - "./scripts/buildkite-link-bun.sh --tag darwin-aarch64"
 
       - key: "darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-aarch64-build-bun"
+          - "darwin-aarch64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "aarch64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-no-lto"
 
       - key: "darwin-aarch64-test-macos-13"
         label: ":darwin: 13 aarch64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-aarch64-build-bun"
+          - "darwin-aarch64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "aarch64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-no-lto"
 
       - key: "darwin-aarch64-test-macos-12"
         label: ":darwin: 12 aarch64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-aarch64-build-bun"
+          - "darwin-aarch64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "aarch64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-no-lto"
 
   # macOS x64
   - key: "darwin-x64"
@@ -177,14 +196,33 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --fast"
+          - "./scripts/build-bun-cpp.sh"
 
-      - key: "darwin-x64-build-bun"
-        label: ":darwin: x64 - build-bun"
+      - key: "darwin-x64-build-bun-no-lto"
+        label: ":darwin: x64 - build-bun (no-lto)"
         depends_on:
           - "darwin-x64-build-deps"
           - "darwin-x64-build-zig"
           - "darwin-x64-build-cpp"
+        agents:
+          queue: "build-darwin"
+          os: "darwin"
+          arch: "x64"
+        artifact_paths:
+          - "bun-darwin-x64-no-lto.zip"
+          - "bun-darwin-x64-no-lto-profile.zip"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/buildkite-link-bun.sh --tag darwin-x64 --fast"
+
+      - key: "darwin-x64-build-bun"
+        label: ":darwin: x64 - build-bun"
+        depends_on:
+          - "darwin-x64-build-bun-no-lto"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -198,52 +236,52 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag darwin-x64 --fast"
+          - "./scripts/buildkite-link-bun.sh --tag darwin-x64"
 
       - key: "darwin-x64-test-macos-14"
         label: ":darwin: 14 x64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-x64-build-bun"
+          - "darwin-x64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "x64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun-no-lto"
 
       - key: "darwin-x64-test-macos-13"
         label: ":darwin: 13 x64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-x64-build-bun"
+          - "darwin-x64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "x64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun-no-lto"
 
       - key: "darwin-x64-test-macos-12"
         label: ":darwin: 12 x64 - bun-test"
-        parallelism: 1
+        parallelism: 2
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "darwin-x64-build-bun"
+          - "darwin-x64-build-bun-no-lto"
         agents:
           queue: "test-darwin"
           os: "darwin"
           arch: "x64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun-no-lto"
 
   # Linux aarch64
   - key: "linux-aarch64"
@@ -296,14 +334,33 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --fast"
+          - "./scripts/build-bun-cpp.sh"
 
-      - key: "linux-aarch64-build-bun"
-        label: ":linux: aarch64 - build-bun"
+      - key: "linux-aarch64-build-bun-no-lto"
+        label: ":linux: aarch64 - build-bun (no-lto)"
         depends_on:
           - "linux-aarch64-build-deps"
           - "linux-aarch64-build-zig"
           - "linux-aarch64-build-cpp"
+        agents:
+          queue: "build-linux"
+          os: "linux"
+          arch: "aarch64"
+        artifact_paths:
+          - "bun-linux-aarch64-no-lto.zip"
+          - "bun-linux-aarch64-no-lto-profile.zip"
+        env:
+          CPU_TARGET: "native"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/buildkite-link-bun.sh --tag linux-aarch64 --fast"
+
+      - key: "linux-aarch64-build-bun"
+        label: ":linux: aarch64 - build-bun"
+        depends_on:
+          - "linux-aarch64-build-bun-no-lto"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -317,7 +374,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag linux-aarch64 --fast"
+          - "./scripts/buildkite-link-bun.sh --tag linux-aarch64"
 
       - key: "linux-aarch64-test-debian-12"
         label: ":debian: 12 aarch64 - test-bun"
@@ -325,7 +382,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "linux-aarch64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -333,7 +390,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-no-lto"
 
       - key: "linux-aarch64-test-debian-11"
         label: ":debian: 11 aarch64 - test-bun"
@@ -341,7 +398,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "linux-aarch64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -349,7 +406,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-no-lto"
 
       - key: "linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
@@ -357,7 +414,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "linux-aarch64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -365,7 +422,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-no-lto"
 
       - key: "linux-aarch64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 aarch64 - test-bun"
@@ -373,7 +430,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-aarch64-build-bun"
+          - "linux-aarch64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -381,7 +438,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-no-lto"
 
   # Linux x64
   - key: "linux-x64"
@@ -434,14 +491,33 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --fast"
+          - "./scripts/build-bun-cpp.sh"
 
-      - key: "linux-x64-build-bun"
-        label: ":linux: x64 - build-bun"
+      - key: "linux-x64-build-bun-no-lto"
+        label: ":linux: x64 - build-bun (no-lto)"
         depends_on:
           - "linux-x64-build-deps"
           - "linux-x64-build-zig"
           - "linux-x64-build-cpp"
+        agents:
+          queue: "build-linux"
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-linux-x64-no-lto.zip"
+          - "bun-linux-x64-no-lto-profile.zip"
+        env:
+          CPU_TARGET: "haswell"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/buildkite-link-bun.sh --tag linux-x64 --fast"
+
+      - key: "linux-x64-build-bun"
+        label: ":linux: x64 - build-bun"
+        depends_on:
+          - "linux-x64-build-bun-no-lto"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -455,7 +531,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag linux-x64 --fast"
+          - "./scripts/buildkite-link-bun.sh --tag linux-x64"
 
       - key: "linux-x64-test-debian-12"
         label: ":debian: 12 x64 - test-bun"
@@ -463,7 +539,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-build-bun"
+          - "linux-x64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -471,7 +547,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun-no-lto"
 
       - key: "linux-x64-test-debian-11"
         label: ":debian: 11 x64 - test-bun"
@@ -479,7 +555,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-build-bun"
+          - "linux-x64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -487,7 +563,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun-no-lto"
 
       - key: "linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
@@ -495,7 +571,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-build-bun"
+          - "linux-x64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -503,7 +579,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun-no-lto"
 
       - key: "linux-x64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64 - test-bun"
@@ -511,7 +587,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-build-bun"
+          - "linux-x64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -519,7 +595,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun-no-lto"
 
   # Linux x64-baseline
   - key: "linux-x64-baseline"
@@ -572,14 +648,33 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/build-bun-cpp.sh --fast"
+          - "./scripts/build-bun-cpp.sh"
 
-      - key: "linux-x64-baseline-build-bun"
-        label: ":linux: x64-baseline - build-bun"
+      - key: "linux-x64-baseline-build-bun-no-lto"
+        label: ":linux: x64-baseline - build-bun (no-lto)"
         depends_on:
           - "linux-x64-baseline-build-deps"
           - "linux-x64-baseline-build-zig"
           - "linux-x64-baseline-build-cpp"
+        agents:
+          queue: "build-linux"
+          os: "linux"
+          arch: "x64"
+        artifact_paths:
+          - "bun-linux-x64-baseline-no-lto.zip"
+          - "bun-linux-x64-baseline-no-lto-profile.zip"
+        env:
+          CPU_TARGET: "nehalem"
+          CCACHE_DIR: "$$HOME/.cache/ccache"
+          SCCACHE_DIR: "$$HOME/.cache/sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
+        command:
+          - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline --fast"
+
+      - key: "linux-x64-baseline-build-bun"
+        label: ":linux: x64-baseline - build-bun"
+        depends_on:
+          - "linux-x64-baseline-build-bun-no-lto"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -593,7 +688,7 @@ steps:
           SCCACHE_DIR: "$$HOME/.cache/sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME/.cache/zig-cache"
         command:
-          - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline --fast"
+          - "./scripts/buildkite-link-bun.sh --tag linux-x64-baseline"
 
       - key: "linux-x64-baseline-test-debian-12"
         label: ":debian: 12 x64-baseline - test-bun"
@@ -601,7 +696,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-x64-baseline-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -609,7 +704,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-no-lto"
 
       - key: "linux-x64-baseline-test-debian-11"
         label: ":debian: 11 x64-baseline - test-bun"
@@ -617,7 +712,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-x64-baseline-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -625,7 +720,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-no-lto"
 
       - key: "linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
@@ -633,7 +728,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-x64-baseline-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -641,7 +736,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-no-lto"
 
       - key: "linux-x64-baseline-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
@@ -649,7 +744,7 @@ steps:
         soft_fail:
           - exit_status: 2
         depends_on:
-          - "linux-x64-baseline-build-bun"
+          - "linux-x64-baseline-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "linux"
@@ -657,7 +752,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-no-lto"
 
   # Windows x64
   - key: "windows-x64"
@@ -704,12 +799,31 @@ steps:
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
 
-      - key: "bun-windows-x64-build-bun"
-        label: ":windows: x64 - build-bun"
+      - key: "bun-windows-x64-build-bun-no-lto"
+        label: ":windows: x64 - build-bun (no-lto)"
         depends_on:
           - "bun-windows-x64-build-deps"
           - "bun-windows-x64-build-zig"
           - "bun-windows-x64-build-cpp"
+        agents:
+          queue: "build-windows"
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-windows-x64-no-lto.zip"
+          - "bun-windows-x64-no-lto-profile.zip"
+          - "features.json"
+        env:
+          CPU_TARGET: "haswell"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+        command:
+          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
+
+      - key: "bun-windows-x64-build-bun"
+        label: ":windows: x64 - build-bun"
+        depends_on:
+          - "bun-windows-x64-build-no-lto"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -723,7 +837,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
+          - ".\\scripts\\buildkite-link-bun.ps1"
 
       - key: "bun-windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -731,13 +845,13 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-build-bun"
+          - "bun-windows-x64-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-build-bun-no-lto"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
@@ -786,14 +900,33 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True -Fast $$True"
+          - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True"
 
-      - key: "bun-windows-x64-baseline-build-bun"
-        label: ":windows: x64-baseline - build-bun"
+      - key: "bun-windows-x64-baseline-build-bun-no-lto"
+        label: ":windows: x64-baseline - build-bun (no-lto)"
         depends_on:
           - "bun-windows-x64-baseline-build-deps"
           - "bun-windows-x64-baseline-build-zig"
           - "bun-windows-x64-baseline-build-cpp"
+        agents:
+          queue: "build-windows"
+          os: "windows"
+          arch: "x64"
+        artifact_paths:
+          - "bun-windows-x64-baseline-no-lto.zip"
+          - "bun-windows-x64-baseline-profile-no-lto.zip"
+          - "features.json"
+        env:
+          CPU_TARGET: "nehalem"
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+        command:
+          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
+
+      - key: "bun-windows-x64-baseline-build-bun-no-lto"
+        label: ":windows: x64-baseline - build-bun (no-lto)"
+        depends_on:
+          - "bun-windows-x64-baseline-build-bun-no-lto"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -807,7 +940,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
+          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
 
       - key: "bun-windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"
@@ -815,10 +948,10 @@ steps:
         soft_fail:
           - exit_status: 1
         depends_on:
-          - "bun-windows-x64-baseline-build-bun"
+          - "bun-windows-x64-baseline-build-bun-no-lto"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun"
+          - "node .\\scripts\\runner.node.mjs --step bun-windows-x64-baseline-build-bun-no-lto"

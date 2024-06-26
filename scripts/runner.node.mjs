@@ -854,7 +854,8 @@ function getRelevantTests(cwd) {
     filteredTests.push(...availableTests.filter(testPath => filters.some(filter => isMatch(testPath, filter))));
     console.log("Filtering tests:", filteredTests.length, "/", availableTests.length);
   } else if (options["smoke"] !== undefined) {
-    const smokeCount = parseInt(options["smoke"]) || Math.ceil(availableTests.length * 0.01);
+    const smokePercent = parseFloat(options["smoke"]) || 0.01;
+    const smokeCount = Math.ceil(availableTests.length * smokePercent);
     const smokeTests = new Set();
     for (let i = 0; i < smokeCount; i++) {
       const randomIndex = Math.floor(Math.random() * availableTests.length);

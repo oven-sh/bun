@@ -972,24 +972,29 @@ test("--production without a lockfile will install and not save lockfile", async
 });
 
 describe("binaries", () => {
-  test("existing non-symlink", async () => {
-    await Promise.all([
-      write(
-        join(packageDir, "package.json"),
-        JSON.stringify({
-          name: "foo",
-          dependencies: {
-            "what-bin": "1.0.0",
-          },
-        }),
-      ),
-      write(join(packageDir, "node_modules", ".bin", "what-bin"), "hi"),
-    ]);
+  for (const global of [false, true]) {
+    describe(`existing destinations${global ? " (global)" : ""}`, () => {
+      test("existing non-symlink", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "what-bin": "1.0.0",
+              },
+            }),
+          ),
+          write(join(packageDir, "node_modules", ".bin", "what-bin"), "hi"),
+        ]);
 
-    // should replace
-    await runBunInstall(env, packageDir);
-    expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(join("..", "what-bin", "what-bin.js"));
-  });
+        await runBunInstall(env, packageDir);
+        expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+          join("..", "what-bin", "what-bin.js"),
+        );
+      });
+    });
+  }
   test("it should correctly link binaries after deleting node_modules", async () => {
     const json: any = {
       name: "foo",
@@ -1181,6 +1186,149 @@ describe("binaries", () => {
     expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
     expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
   });
+  for (const global of [false, true]) {
+    test(`bin types${global ? " (global)" : ""}`, async () => {
+      // await Promise.all([
+      //   write(
+      //     join(packageDir, "package.json"),
+      //     JSON.stringify({
+      //       name: "root",
+      //       workspaces: ["packages/*"],
+      //     }),
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-file-bin", "package.json"),
+      //     JSON.stringify({
+      //       name: "dep-with-file-bin",
+      //       bin: "./file-bin",
+      //     }),
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-file-bin", "file-bin"),
+      //     "#!/usr/bin/env bun\nconsole.log('file-bin!')",
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-single-entry-map-bin", "package.json"),
+      //     JSON.stringify({
+      //       name: "dep-with-single-entry-map-bin",
+      //       bin: {
+      //         "single-entry-map-bin": "./single-entry-map-bin",
+      //       },
+      //     }),
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-single-entry-map-bin", "single-entry-map-bin"),
+      //     "#!/usr/bin/env bun\nconsole.log('single-entry-map-bin!')",
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-directory-bins", "package.json"),
+      //     JSON.stringify({
+      //       name: "dep-with-directory-bins",
+      //       directories: {
+      //         bin: "./bins",
+      //       },
+      //     }),
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-directory-bins", "bins", "directory-bin-1"),
+      //     "#!/usr/bin/env bun\nconsole.log('directory-bin-1!')",
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-directory-bins", "bins", "directory-bin-2"),
+      //     "#!/usr/bin/env bun\nconsole.log('directory-bin-2!')",
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-map-bins", "package.json"),
+      //     JSON.stringify({
+      //       name: "dep-with-map-bins",
+      //       bin: {
+      //         "map-bin-1": "./map-bin-1",
+      //         "map-bin-2": "./map-bin-2",
+      //       },
+      //     }),
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-map-bins", "map-bin-1"),
+      //     "#!/usr/bin/env bun\nconsole.log('map-bin-1!')",
+      //   ),
+      //   write(
+      //     join(packageDir, "packages", "dep-with-map-bins", "map-bin-2"),
+      //     "#!/usr/bin/env bun\nconsole.log('map-bin-2!')",
+      //   ),
+      // ]);
+
+      await write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+        }),
+      );
+
+      if (global) {
+        await writeFile(
+          join(packageDir, "bunfig.toml"),
+          `
+[install]
+cache = false
+registry = "http://localhost:${port}/"
+globalBinDir = "${join(packageDir, "global-bin-dir")}"
+globalDir = "${packageDir}"
+`,
+        );
+      }
+
+      const args = [
+        bunExe(),
+        "install",
+        ...(global ? ["-g"] : []),
+        ...(global ? [`--config=${join(packageDir, "bunfig.toml")}`] : []),
+        "dep-with-file-bin",
+        "dep-with-single-entry-map-bin",
+        "dep-with-directory-bins",
+        "dep-with-map-bins",
+      ];
+
+      const { stdout, stderr, exited } = spawn({
+        cmd: args,
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+
+      const out = await Bun.readableStreamToText(stdout);
+      expect(await exited).toBe(0);
+
+      const cwd = global ? join(packageDir, "global-bin-dir") : packageDir;
+
+      await runBin("dep-with-file-bin", "file-bin\n", cwd, global);
+      await runBin("single-entry-map-bin", "single-entry-map-bin\n", cwd, global);
+      await runBin("directory-bin-1", "directory-bin-1\n", cwd, global);
+      await runBin("directory-bin-2", "directory-bin-2\n", cwd, global);
+      await runBin("map-bin-1", "map-bin-1\n", cwd, global);
+      await runBin("map-bin-2", "map-bin-2\n", cwd, global);
+    });
+  }
+
+  async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
+    const args = [bunExe(), ...(global ? ["run"] : []), `${global ? "./" : ""}${binName}`];
+    const result = Bun.spawn({
+      cmd: args,
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd,
+      env,
+    });
+
+    const out = await Bun.readableStreamToText(result.stdout);
+    expect(out).toEqual(expected);
+    const err = await Bun.readableStreamToText(result.stderr);
+    expect(err).toBeEmpty();
+    expect(await result.exited).toBe(0);
+  }
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {

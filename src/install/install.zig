@@ -8168,6 +8168,8 @@ pub const PackageManager = struct {
         // assume that spawning a thread will take a lil so we do that asap
         try HTTP.HTTPThread.init();
 
+        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
+
         if (cli.global) {
             var explicit_global_dir: string = "";
             if (ctx.install) |opts| {
@@ -8271,7 +8273,7 @@ pub const PackageManager = struct {
                 return error.MissingPackageJSON;
             };
 
-            bun.assert(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true));
+            bun.assertWithLocation(strings.eqlLong(original_package_json_path_buf.items[0..this_cwd.len], this_cwd, true), @src());
             original_package_json_path_buf.items.len = this_cwd.len;
             original_package_json_path_buf.appendSliceAssumeCapacity(std.fs.path.sep_str ++ "package.json");
             original_package_json_path_buf.appendAssumeCapacity(0);
@@ -8362,7 +8364,6 @@ pub const PackageManager = struct {
         };
 
         try bun.sys.chdir(fs.top_level_dir).unwrap();
-        try BunArguments.loadConfig(ctx.allocator, cli.config, ctx, .InstallCommand);
         bun.copy(u8, &cwd_buf, fs.top_level_dir);
         cwd_buf[fs.top_level_dir.len] = std.fs.path.sep;
         cwd_buf[fs.top_level_dir.len + 1] = 0;
@@ -8793,19 +8794,30 @@ pub const PackageManager = struct {
 
             // Step 3b. Link any global bins
             if (package.bin.tag != .none) {
+                var link_target_buf: bun.PathBuffer = undefined;
+                var link_dest_buf: bun.PathBuffer = undefined;
+                var link_rel_buf: bun.PathBuffer = undefined;
+                var node_modules_path_buf: bun.PathBuffer = undefined;
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .destination_node_modules = bun.toFD(node_modules.fd),
+                    .node_modules = bun.toFD(node_modules.fd),
+                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                        if (manager.options.log_level != .silent) {
+                            Output.err(err, "failed to link binary", .{});
+                        }
+                        Global.crash();
+                    },
                     .global_bin_path = manager.options.bin_path,
                     .global_bin_dir = manager.options.global_bin_dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = bun.toFD(node_modules.fd),
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
                     .seen = null,
-                    .clobber = false,
+                    .abs_target_buf = &link_target_buf,
+                    .abs_dest_buf = &link_dest_buf,
+                    .rel_buf = &link_rel_buf,
                 };
                 bin_linker.link(true);
 
@@ -8926,19 +8938,29 @@ pub const PackageManager = struct {
 
             // Step 3b. Link any global bins
             if (package.bin.tag != .none) {
+                var link_target_buf: bun.PathBuffer = undefined;
+                var link_dest_buf: bun.PathBuffer = undefined;
+                var link_rel_buf: bun.PathBuffer = undefined;
+                var node_modules_path_buf: bun.PathBuffer = undefined;
+
                 var bin_linker = Bin.Linker{
                     .bin = package.bin,
-                    .destination_node_modules = bun.toFD(node_modules.fd),
+                    .node_modules = bun.toFD(node_modules.fd),
+                    .node_modules_path = bun.getFdPath(node_modules, &node_modules_path_buf) catch |err| {
+                        if (manager.options.log_level != .silent) {
+                            Output.err(err, "failed to link binary", .{});
+                        }
+                        Global.crash();
+                    },
                     .global_bin_path = manager.options.bin_path,
                     .global_bin_dir = manager.options.global_bin_dir,
-
-                    // .destination_dir_subpath = destination_dir_subpath,
-                    .root_node_modules_folder = bun.toFD(node_modules.fd),
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
                     .seen = null,
-                    .clobber = false,
+                    .abs_target_buf = &link_target_buf,
+                    .abs_dest_buf = &link_dest_buf,
+                    .rel_buf = &link_rel_buf,
                 };
                 bin_linker.unlink(true);
             }
@@ -11272,13 +11294,12 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
         ) void {
             if (comptime Environment.allow_assert) {
-                bun.assert(tree_id != Lockfile.Tree.invalid_id);
+                bun.assertWithLocation(tree_id != Lockfile.Tree.invalid_id, @src());
             }
 
             const tree = &this.trees[tree_id];
             const current_count = tree.install_count;
-            const lockfile_trees = this.lockfile.buffers.trees.items;
-            const max = lockfile_trees[tree_id].dependencies.len;
+            const max = this.lockfile.buffers.trees.items[tree_id].dependencies.len;
 
             if (current_count == std.math.maxInt(usize)) {
                 if (comptime Environment.allow_assert)
@@ -11305,37 +11326,46 @@ pub const PackageManager = struct {
 
                 this.seen_bin_links.clearRetainingCapacity();
 
-                while (tree.binaries.removeOrNull()) |dep_id| {
-                    bun.assertWithLocation(dep_id < this.lockfile.buffers.dependencies.items.len, @src());
-                    const package_id = this.lockfile.buffers.resolutions.items[dep_id];
-                    bun.assertWithLocation(package_id != invalid_package_id, @src());
-                    const bin = this.bins[package_id];
-                    bun.assertWithLocation(bin.tag != .none, @src());
-                    const alias = this.lockfile.buffers.dependencies.items[dep_id].name.slice(this.lockfile.buffers.string_bytes.items);
+                if (tree.binaries.count() > 0) {
+                    var link_target_buf: bun.PathBuffer = undefined;
+                    var link_dest_buf: bun.PathBuffer = undefined;
+                    var link_rel_buf: bun.PathBuffer = undefined;
+                    while (tree.binaries.removeOrNull()) |dep_id| {
+                        bun.assertWithLocation(dep_id < this.lockfile.buffers.dependencies.items.len, @src());
+                        const package_id = this.lockfile.buffers.resolutions.items[dep_id];
+                        bun.assertWithLocation(package_id != invalid_package_id, @src());
+                        const bin = this.bins[package_id];
+                        bun.assertWithLocation(bin.tag != .none, @src());
+                        const alias = this.lockfile.buffers.dependencies.items[dep_id].name.slice(this.lockfile.buffers.string_bytes.items);
 
-                    var bin_linker: Bin.Linker = .{
-                        .bin = bin,
-                        .destination_node_modules = bun.toFD(destination_dir),
-                        .global_bin_path = this.options.bin_path,
-                        .global_bin_dir = this.options.global_bin_dir,
-                        .root_node_modules_folder = bun.toFD(this.root_node_modules_folder),
-                        .package_name = strings.StringOrTinyString.init(alias),
-                        .string_buf = this.lockfile.buffers.string_bytes.items,
-                        .extern_string_buf = this.lockfile.buffers.extern_strings.items,
-                        .seen = &this.seen_bin_links,
-                        .clobber = !this.options.global,
-                    };
+                        std.debug.print("linking path: {s}\n", .{this.node_modules.path.items});
 
-                    bin_linker.link(this.manager.options.global);
-                    if (bin_linker.err) |err| {
-                        this.manager.log.addErrorFmtNoLoc(
-                            this.manager.allocator,
-                            "Failed to link <b>{s}<r>: {s}",
-                            .{ alias, @errorName(err) },
-                        ) catch bun.outOfMemory();
+                        var bin_linker: Bin.Linker = .{
+                            .bin = bin,
+                            .global_bin_path = this.options.bin_path,
+                            .global_bin_dir = this.options.global_bin_dir,
+                            .package_name = strings.StringOrTinyString.init(alias),
+                            .string_buf = this.lockfile.buffers.string_bytes.items,
+                            .extern_string_buf = this.lockfile.buffers.extern_strings.items,
+                            .seen = &this.seen_bin_links,
+                            .node_modules_path = this.node_modules.path.items,
+                            .node_modules = bun.toFD(destination_dir),
+                            .abs_target_buf = &link_target_buf,
+                            .abs_dest_buf = &link_dest_buf,
+                            .rel_buf = &link_rel_buf,
+                        };
 
-                        if (this.manager.options.enable.fail_early) {
-                            this.manager.crash();
+                        bin_linker.link(this.manager.options.global);
+                        if (bin_linker.err) |err| {
+                            this.manager.log.addErrorFmtNoLoc(
+                                this.manager.allocator,
+                                "Failed to link <b>{s}<r>: {s}",
+                                .{ alias, @errorName(err) },
+                            ) catch bun.outOfMemory();
+
+                            if (this.manager.options.enable.fail_early) {
+                                this.manager.crash();
+                            }
                         }
                     }
                 }
@@ -11609,8 +11639,8 @@ pub const PackageManager = struct {
             comptime log_level: Options.LogLevel,
         ) usize {
             if (comptime Environment.allow_assert) {
-                bun.assert(resolution_tag != .root);
-                bun.assert(package_id != 0);
+                bun.assertWithLocation(resolution_tag != .root, @src());
+                bun.assertWithLocation(package_id != 0, @src());
             }
             var count: usize = 0;
             const scripts = brk: {
@@ -11646,7 +11676,7 @@ pub const PackageManager = struct {
             };
 
             if (comptime Environment.allow_assert) {
-                bun.assert(scripts.filled);
+                bun.assertWithLocation(scripts.filled, @src());
             }
 
             switch (resolution_tag) {
@@ -11902,7 +11932,7 @@ pub const PackageManager = struct {
             if (needs_install) {
                 if (!remove_patch and resolution.tag.canEnqueueInstallTask() and installer.packageMissingFromCache(this.manager, package_id)) {
                     if (comptime Environment.allow_assert) {
-                        bun.assert(resolution.canEnqueueInstallTask());
+                        bun.assertWithLocation(resolution.canEnqueueInstallTask(), @src());
                     }
 
                     const context: TaskCallbackContext = .{
@@ -12903,10 +12933,8 @@ pub const PackageManager = struct {
     pub fn setupGlobalDir(manager: *PackageManager, ctx: Command.Context) !void {
         manager.options.global_bin_dir = try Options.openGlobalBinDir(ctx.install);
         var out_buffer: bun.PathBuffer = undefined;
-        const result = try bun.getFdPath(manager.options.global_bin_dir.fd, &out_buffer);
-        out_buffer[result.len] = 0;
-        const result_: [:0]u8 = out_buffer[0..result.len :0];
-        manager.options.bin_path = bun.cstring(try FileSystem.instance.dirname_store.append([:0]u8, result_));
+        const result = try bun.getFdPathZ(manager.options.global_bin_dir.fd, &out_buffer);
+        manager.options.bin_path = bun.cstring(try FileSystem.instance.dirname_store.append([:0]u8, result));
     }
 
     pub fn startProgressBarIfNone(manager: *PackageManager) void {

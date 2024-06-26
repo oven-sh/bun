@@ -488,6 +488,15 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
         Maybe(void).success;
 }
 
+pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.chmod(path, mode);
+    }
+
+    return Maybe(void).errnoSysP(C.chmod(path.ptr, mode), .chmod, path) orelse
+        Maybe(void).success;
+}
+
 pub fn chdirOSPath(destination: bun.OSPathSliceZ) Maybe(void) {
     assertIsValidWindowsPath(bun.OSPathChar, destination);
 

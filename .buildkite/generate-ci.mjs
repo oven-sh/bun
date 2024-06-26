@@ -71,8 +71,8 @@ function getBuildStep(options) {
     return os === "windows" ? path.replace(/\//g, "\\") : path;
   };
   return {
-    key: `${target}-build`,
-    label,
+    key: target,
+    group: label,
     steps: [
       {
         key: `${target}-build-deps`,
@@ -154,7 +154,7 @@ function getLabel(options) {
  * @link https://buildkite.com/docs/pipelines/group-step
  * @typedef GroupStep
  * @property {string} key
- * @property {string} label
+ * @property {string} group
  * @property {string | string[]} [depends_on]
  * @property {boolean | string} [skip]
  * @property {CommandStep[]} steps

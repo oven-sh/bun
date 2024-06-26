@@ -48,16 +48,6 @@ pub const Parser = struct {
             line[0] == ';' or
             line[0] == '#') return true;
 
-        // starts with anything other than whitespace then don't skip
-        if (switch (line[0]) {
-            ' ',
-            '\t',
-            '\n',
-            '\r',
-            => false,
-            else => true,
-        }) return false;
-
         // check the rest is whitespace
         for (line) |c| {
             switch (c) {

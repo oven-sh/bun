@@ -1194,6 +1194,7 @@ describe("binaries", () => {
           join(packageDir, "bunfig.toml"),
           `
           [install]
+          cache = false
           registry = "http://localhost:${port}/"
           globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
           `,

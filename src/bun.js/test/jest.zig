@@ -1540,6 +1540,15 @@ pub const TestRunnerTask = struct {
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
+                var scopes_stack = std.BoundedArray(*DescribeScope, 64).init(0) catch unreachable;
+                var parent_: ?*DescribeScope = describe;
+                while (parent_) |scope| {
+                    scopes_stack.append(scope) catch break;
+                    parent_ = scope.parent;
+                }
+                const scopes: []*DescribeScope = scopes_stack.slice();
+                for (1..scopes.len) |_|
+                    Output.prettyError("  ", .{});
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
                     test_id,

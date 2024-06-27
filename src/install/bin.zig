@@ -598,7 +598,7 @@ pub const Bin = extern struct {
                     this.linkBinOrCreateShim(abs_target, abs_dest, global);
                 },
                 .map => {
-                    var i: usize = 0;
+                    var i = this.bin.value.map.begin();
                     const end = this.bin.value.map.end();
 
                     const abs_dest_dir_end = abs_dest_buf_remain;

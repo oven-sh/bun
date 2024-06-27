@@ -601,6 +601,34 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
 
+      - key: "linux-aarch64-test-amazonlinux-2023"
+        label: ":aws: 2023 aarch64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-aarch64-build-bun-nolto"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "amazonlinux"
+          release: "2023"
+        command:
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
+
       - key: "linux-aarch64-test-debian-12-smoke"
         label: ":debian: 12 aarch64 - test-bun-smoke"
         parallelism: 1
@@ -681,6 +709,34 @@ steps:
           os: "linux"
           arch: "aarch64"
           distro: "ubuntu"
+          release: "20.04"
+        command:
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
+
+      - key: "linux-aarch64-test-amazonlinux-2023-smoke"
+        label: ":aws: 2023 aarch64 - test-bun (smoke)"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-aarch64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "aarch64"
+          distro: "amazonlinux"
           release: "20.04"
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
@@ -864,6 +920,34 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
 
+      - key: "linux-x64-test-amazonlinux-2023"
+        label: ":aws: 2023 x64 - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-build-bun-nolto"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "amazonlinux"
+          release: "2023"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
+
       - key: "linux-x64-test-debian-12-smoke"
         label: ":debian: 12 x64 - test-bun (smoke)"
         parallelism: 1
@@ -945,6 +1029,34 @@ steps:
           arch: "x64"
           distro: "ubuntu"
           release: "20.04"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
+
+      - key: "linux-x64-test-amazonlinux-2023-smoke"
+        label: ":aws: 2023 x64 - test-bun (smoke)"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "amazonlinux"
+          release: "2023"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
 
@@ -1127,6 +1239,34 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
 
+      - key: "linux-x64-baseline-test-amazonlinux-2023"
+        label: ":aws: 2023 x64-baseline - test-bun"
+        parallelism: 5
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-baseline-build-bun-nolto"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "amazonlinux"
+          release: "2023"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
+
       - key: "linux-x64-baseline-test-debian-12-smoke"
         label: ":debian: 12 x64-baseline - test-bun (smoke)"
         parallelism: 1
@@ -1208,6 +1348,34 @@ steps:
           arch: "x64"
           distro: "ubuntu"
           release: "20.04"
+        command:
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
+
+      - key: "linux-x64-baseline-test-amazonlinux-2023-smoke"
+        label: ":aws: 2023 x64-baseline - test-bun (smoke)"
+        parallelism: 1
+        soft_fail:
+          - exit_status: 2
+        retry:
+          automatic:
+            - exit_status: 1
+              limit: 1
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
+        depends_on:
+          - "linux-x64-baseline-build-bun"
+        agents:
+          robobun: "true"
+          os: "linux"
+          arch: "x64"
+          distro: "amazonlinux"
+          release: "2023"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
 

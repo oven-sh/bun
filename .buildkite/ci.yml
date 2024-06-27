@@ -545,34 +545,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
 
-      - key: "linux-aarch64-test-debian-11"
-        label: ":debian: 11 aarch64 - test-bun"
-        parallelism: 5
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-aarch64-build-bun-nolto"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "debian"
-          release: "11"
-        command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
-
       - key: "linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
         parallelism: 5
@@ -654,34 +626,6 @@ steps:
           arch: "aarch64"
           distro: "debian"
           release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
-
-      - key: "linux-aarch64-test-debian-11-smoke"
-        label: ":debian: 11 aarch64 - test-bun (smoke)"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-aarch64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "debian"
-          release: "11"
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
 
@@ -864,34 +808,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
 
-      - key: "linux-x64-test-debian-11"
-        label: ":debian: 11 x64 - test-bun"
-        parallelism: 5
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-build-bun-nolto"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "debian"
-          release: "11"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
-
       - key: "linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
         parallelism: 5
@@ -973,34 +889,6 @@ steps:
           arch: "x64"
           distro: "debian"
           release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
-
-      - key: "linux-x64-test-debian-11-smoke"
-        label: ":debian: 11 x64 - test-bun (smoke)"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "debian"
-          release: "11"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
 
@@ -1183,34 +1071,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
 
-      - key: "linux-x64-baseline-test-debian-11"
-        label: ":debian: 11 x64-baseline - test-bun"
-        parallelism: 5
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-baseline-build-bun-nolto"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "debian"
-          release: "11"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
-
       - key: "linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
         parallelism: 5
@@ -1292,34 +1152,6 @@ steps:
           arch: "x64"
           distro: "debian"
           release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
-
-      - key: "linux-x64-baseline-test-debian-11-smoke"
-        label: ":debian: 11 x64-baseline - test-bun (smoke)"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-x64-baseline-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "x64"
-          distro: "debian"
-          release: "11"
         command:
           - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
 

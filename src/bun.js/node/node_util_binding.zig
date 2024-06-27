@@ -81,3 +81,22 @@ fn uv_guess_handle(file: uv.uv_file) uv.uv_handle_type {
 
     return .unknown;
 }
+
+pub fn internalErrorName(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    const S = struct {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            const arguments = callframe.arguments(1).slice();
+            if (arguments.len < 1) {
+                globalThis.throwNotEnoughArguments("internalErrorName", 1, arguments.len);
+                return .zero;
+            }
+            const err_value = arguments[0];
+            const err_int = err_value.toInt32();
+            const err_i: isize = err_int;
+            const err_e: std.c.E = @enumFromInt(-err_i);
+            // Refactor this when https://github.com/ziglang/zig/issues/12845 lands.
+            return bun.String.init(@tagName(err_e)).toJS(globalThis);
+        }
+    };
+    return JSC.JSFunction.create(global, "internalErrorName", S.cb, 1, .{});
+}

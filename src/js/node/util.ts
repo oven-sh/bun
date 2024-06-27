@@ -3,6 +3,11 @@ const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
 
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const internalErrorName = $zig("node_util_binding.zig", "internalErrorName");
+
+const NumberIsSafeInteger = Number.isSafeInteger;
+
 var cjs_exports = {};
 
 function isBuffer(value) {
@@ -280,6 +285,13 @@ function styleText(format, text) {
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
+function getSystemErrorName(err: any) {
+  if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err))
+    throw new RangeError(`The value of "err" is out of range. It must be a negative integer. Received ${err}`);
+  return internalErrorName(err);
+}
+
 export default Object.assign(cjs_exports, {
   format,
   formatWithOptions,
@@ -315,4 +327,5 @@ export default Object.assign(cjs_exports, {
   TextEncoder,
   parseArgs,
   styleText,
+  getSystemErrorName,
 });

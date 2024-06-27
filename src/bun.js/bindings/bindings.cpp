@@ -2811,6 +2811,11 @@ VirtualMachine* JSC__JSGlobalObject__bunVM(JSC__JSGlobalObject* arg0)
 
 JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
+    if (arg0->len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+    ASSERT_WITH_MESSAGE(arg0->ptr != nullptr, "ZigString::toValueGC() called on a string with a nullptr");
+
     return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(arg1->vm(), Zig::toStringCopy(*arg0))));
 }
 
@@ -2845,8 +2850,12 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
 
 JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
 {
-    ZigString str
-        = *arg0;
+    if (arg0->len == 0) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(arg1->vm()));
+    }
+    ASSERT_WITH_MESSAGE(arg0->ptr != nullptr, "ZigString::external() called on a string with a nullptr");
+
+    ZigString str = *arg0;
     if (Zig::isTaggedUTF16Ptr(str.ptr)) {
         return JSC::JSValue::encode(JSC::JSValue(JSC::jsString(
             arg1->vm(),

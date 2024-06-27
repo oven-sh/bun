@@ -1683,6 +1683,8 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
+          - "ls"
+          - "sleep 300"
 
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
@@ -1704,6 +1706,8 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
+          - "ls"
+          - "sleep 300"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

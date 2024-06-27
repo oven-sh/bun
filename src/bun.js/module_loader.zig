@@ -924,7 +924,6 @@ pub const ModuleLoader = struct {
                             .onPackageDownloadError = onPackageDownloadError,
                             .progress_bar = true,
                         },
-                        true,
                         PackageManager.Options.LogLevel.default,
                     ) catch unreachable;
                 } else {
@@ -937,7 +936,6 @@ pub const ModuleLoader = struct {
                             .onPackageManifestError = onPackageManifestError,
                             .onPackageDownloadError = onPackageDownloadError,
                         },
-                        true,
                         PackageManager.Options.LogLevel.default_no_progress,
                     ) catch unreachable;
                 }

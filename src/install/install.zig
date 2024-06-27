@@ -2659,8 +2659,6 @@ pub const PackageManager = struct {
     onWake: WakeHandler = .{},
     ci_mode: bun.LazyBool(computeIsContinuousIntegration, @This(), "ci_mode") = .{},
 
-    peer_dependencies: std.fifo.LinearFifo(DependencyID, .Dynamic) = std.fifo.LinearFifo(DependencyID, .Dynamic).init(default_allocator),
-
     // name hash from alias package name -> aliased package dependency version info
     known_npm_aliases: NpmAliasMap = .{},
 
@@ -3068,7 +3066,6 @@ pub const PackageManager = struct {
                 dep_id,
                 &this.lockfile.buffers.dependencies.items[dep_id],
                 invalid_package_id,
-                false,
                 assignRootResolution,
                 failRootResolution,
             ) catch |err| {
@@ -3100,7 +3097,6 @@ pub const PackageManager = struct {
                                                     .onPackageManifestError = {},
                                                     .onPackageDownloadError = {},
                                                 },
-                                                false,
                                                 log_level,
                                             ) catch |err| {
                                                 closure.err = err;
@@ -4084,9 +4080,9 @@ pub const PackageManager = struct {
         behavior: Behavior,
         manifest: *const Npm.PackageManifest,
         find_result: Npm.PackageManifest.FindResult,
-        install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
+        _ = behavior;
         const should_update = this.to_update and
             // If updating, only update packages in the current workspace
             this.lockfile.isRootDependency(this, dependency_id) and
@@ -4113,8 +4109,6 @@ pub const PackageManager = struct {
                 .package = this.lockfile.packages.get(id),
                 .is_first_time = false,
             };
-        } else if (behavior.isPeer() and !install_peer) {
-            return null;
         }
 
         // appendPackage sets the PackageID on the package
@@ -4356,87 +4350,8 @@ pub const PackageManager = struct {
         behavior: Behavior,
         dependency_id: DependencyID,
         resolution: PackageID,
-        install_peer: bool,
         comptime successFn: SuccessFn,
     ) !?ResolvedPackageResult {
-        if (install_peer and behavior.isPeer()) {
-            if (this.lockfile.package_index.get(name_hash)) |index| {
-                const resolutions: []Resolution = this.lockfile.packages.items(.resolution);
-                switch (index) {
-                    .PackageID => |existing_id| {
-                        if (existing_id < resolutions.len) {
-                            const existing_resolution = resolutions[existing_id];
-                            if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
-                                successFn(this, dependency_id, existing_id);
-                                return .{
-                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                    .package = this.lockfile.packages.get(existing_id),
-                                };
-                            }
-
-                            const res_tag = resolutions[existing_id].tag;
-                            const ver_tag = version.tag;
-                            if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                                const existing_package = this.lockfile.packages.get(existing_id);
-                                this.log.addWarningFmt(
-                                    null,
-                                    logger.Loc.Empty,
-                                    this.allocator,
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    .{
-                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                    },
-                                ) catch unreachable;
-                                successFn(this, dependency_id, existing_id);
-                                return .{
-                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                    .package = this.lockfile.packages.get(existing_id),
-                                };
-                            }
-                        }
-                    },
-                    .PackageIDMultiple => |list| {
-                        for (list.items) |existing_id| {
-                            if (existing_id < resolutions.len) {
-                                const existing_resolution = resolutions[existing_id];
-                                if (this.resolutionSatisfiesDependency(existing_resolution, version)) {
-                                    successFn(this, dependency_id, existing_id);
-                                    return .{
-                                        .package = this.lockfile.packages.get(existing_id),
-                                    };
-                                }
-                            }
-                        }
-
-                        if (list.items[0] < resolutions.len) {
-                            const res_tag = resolutions[list.items[0]].tag;
-                            const ver_tag = version.tag;
-                            if ((res_tag == .npm and ver_tag == .npm) or (res_tag == .git and ver_tag == .git) or (res_tag == .github and ver_tag == .github)) {
-                                const existing_package_id = list.items[0];
-                                const existing_package = this.lockfile.packages.get(existing_package_id);
-                                this.log.addWarningFmt(
-                                    null,
-                                    logger.Loc.Empty,
-                                    this.allocator,
-                                    "incorrect peer dependency \"{}@{}\"",
-                                    .{
-                                        existing_package.name.fmt(this.lockfile.buffers.string_bytes.items),
-                                        existing_package.resolution.fmt(this.lockfile.buffers.string_bytes.items, .auto),
-                                    },
-                                ) catch unreachable;
-                                successFn(this, dependency_id, list.items[0]);
-                                return .{
-                                    // we must fetch it from the packages array again, incase the package array mutates the value in the `successFn`
-                                    .package = this.lockfile.packages.get(existing_package_id),
-                                };
-                            }
-                        }
-                    },
-                }
-            }
-        }
-
         if (resolution < this.lockfile.packages.len) {
             return .{ .package = this.lockfile.packages.get(resolution) };
         }
@@ -4524,7 +4439,6 @@ pub const PackageManager = struct {
                     behavior,
                     manifest,
                     find_result,
-                    install_peer,
                     successFn,
                 );
             },
@@ -4901,13 +4815,11 @@ pub const PackageManager = struct {
         /// This must be a *const to prevent UB
         dependency: *const Dependency,
         resolution: PackageID,
-        install_peer: bool,
     ) !void {
         return this.enqueueDependencyWithMainAndSuccessFn(
             id,
             dependency,
             resolution,
-            install_peer,
             assignResolution,
             null,
         );
@@ -4923,7 +4835,6 @@ pub const PackageManager = struct {
         /// This must be a *const to prevent UB
         dependency: *const Dependency,
         resolution: PackageID,
-        install_peer: bool,
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
@@ -4985,6 +4896,8 @@ pub const PackageManager = struct {
         };
         var loaded_manifest: ?Npm.PackageManifest = null;
 
+        if (dependency.behavior.isOptionalPeer() or (!this.options.do.install_peer_dependencies and dependency.behavior.isPeer())) return;
+
         switch (version.tag) {
             .dist_tag, .folder, .npm => {
                 retry_from_manifests_ptr: while (true) {
@@ -4996,7 +4909,6 @@ pub const PackageManager = struct {
                         dependency.behavior,
                         id,
                         resolution,
-                        install_peer,
                         successFn,
                     );
 
@@ -5136,69 +5048,61 @@ pub const PackageManager = struct {
                                     },
                                 );
 
-                            if (!dependency.behavior.isPeer() or install_peer) {
-                                if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
-                                    if (this.options.enable.manifest_cache) {
-                                        var expired = false;
-                                        if (this.manifests.byNameHashAllowExpired(this.scopeForPackageName(name_str), name_hash, &expired)) |manifest| {
-                                            loaded_manifest = manifest.*;
+                            if (!this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) {
+                                if (this.options.enable.manifest_cache) {
+                                    var expired = false;
+                                    if (this.manifests.byNameHashAllowExpired(this.scopeForPackageName(name_str), name_hash, &expired)) |manifest| {
+                                        loaded_manifest = manifest.*;
 
-                                            // If it's an exact package version already living in the cache
-                                            // We can skip the network request, even if it's beyond the caching period
-                                            if (version.tag == .npm and version.value.npm.version.isExact()) {
-                                                if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
-                                                    if (this.getOrPutResolvedPackageWithFindResult(
-                                                        name_hash,
-                                                        name,
-                                                        dependency,
-                                                        version,
-                                                        id,
-                                                        dependency.behavior,
-                                                        &loaded_manifest.?,
-                                                        find_result,
-                                                        install_peer,
-                                                        successFn,
-                                                    ) catch null) |new_resolve_result| {
-                                                        resolve_result_ = new_resolve_result;
-                                                        _ = this.network_dedupe_map.remove(task_id);
-                                                        continue :retry_with_new_resolve_result;
-                                                    }
+                                        // If it's an exact package version already living in the cache
+                                        // We can skip the network request, even if it's beyond the caching period
+                                        if (version.tag == .npm and version.value.npm.version.isExact()) {
+                                            if (loaded_manifest.?.findByVersion(version.value.npm.version.head.head.range.left.version)) |find_result| {
+                                                if (this.getOrPutResolvedPackageWithFindResult(
+                                                    name_hash,
+                                                    name,
+                                                    dependency,
+                                                    version,
+                                                    id,
+                                                    dependency.behavior,
+                                                    &loaded_manifest.?,
+                                                    find_result,
+                                                    successFn,
+                                                ) catch null) |new_resolve_result| {
+                                                    resolve_result_ = new_resolve_result;
+                                                    _ = this.network_dedupe_map.remove(task_id);
+                                                    continue :retry_with_new_resolve_result;
                                                 }
                                             }
+                                        }
 
-                                            // Was it recent enough to just load it without the network call?
-                                            if (this.options.enable.manifest_cache_control and !expired) {
-                                                _ = this.network_dedupe_map.remove(task_id);
-                                                continue :retry_from_manifests_ptr;
-                                            }
+                                        // Was it recent enough to just load it without the network call?
+                                        if (this.options.enable.manifest_cache_control and !expired) {
+                                            _ = this.network_dedupe_map.remove(task_id);
+                                            continue :retry_from_manifests_ptr;
                                         }
                                     }
-
-                                    if (PackageManager.verbose_install) {
-                                        Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
-                                    }
-
-                                    var network_task = this.getNetworkTask();
-                                    network_task.* = .{
-                                        .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
-                                        .callback = undefined,
-                                        .task_id = task_id,
-                                        .allocator = this.allocator,
-                                    };
-                                    try network_task.forManifest(
-                                        name_str,
-                                        this.allocator,
-                                        this.scopeForPackageName(name_str),
-                                        if (loaded_manifest) |*manifest| manifest else null,
-                                        dependency.behavior.isOptional() or !this.options.do.install_peer_dependencies,
-                                    );
-                                    this.enqueueNetworkTask(network_task);
                                 }
-                            } else {
-                                if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                                    try this.peer_dependencies.writeItem(id);
-                                    return;
+
+                                if (PackageManager.verbose_install) {
+                                    Output.prettyErrorln("Enqueue package manifest for download: {s}", .{name_str});
                                 }
+
+                                var network_task = this.getNetworkTask();
+                                network_task.* = .{
+                                    .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
+                                    .callback = undefined,
+                                    .task_id = task_id,
+                                    .allocator = this.allocator,
+                                };
+                                try network_task.forManifest(
+                                    name_str,
+                                    this.allocator,
+                                    this.scopeForPackageName(name_str),
+                                    if (loaded_manifest) |*manifest| manifest else null,
+                                    dependency.behavior.isOptional(),
+                                );
+                                this.enqueueNetworkTask(network_task);
                             }
 
                             var manifest_entry_parse = try this.task_queue.getOrPutContext(this.allocator, task_id, .{});
@@ -5268,15 +5172,6 @@ pub const PackageManager = struct {
                         try entry.value_ptr.append(this.allocator, ctx);
                     }
 
-                    if (dependency.behavior.isPeer()) {
-                        if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                                try this.peer_dependencies.writeItem(id);
-                            }
-                            return;
-                        }
-                    }
-
                     if (this.hasCreatedNetworkTask(checkout_id, dependency.behavior.isRequired())) return;
 
                     this.task_batch.push(ThreadPool.Batch.from(this.enqueueGitCheckout(
@@ -5292,15 +5187,6 @@ pub const PackageManager = struct {
                     var entry = this.task_queue.getOrPutContext(this.allocator, clone_id, .{}) catch unreachable;
                     if (!entry.found_existing) entry.value_ptr.* = .{};
                     try entry.value_ptr.append(this.allocator, ctx);
-
-                    if (dependency.behavior.isPeer()) {
-                        if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                                try this.peer_dependencies.writeItem(id);
-                            }
-                            return;
-                        }
-                    }
 
                     if (this.hasCreatedNetworkTask(clone_id, dependency.behavior.isRequired())) return;
 
@@ -5345,15 +5231,6 @@ pub const PackageManager = struct {
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
-                if (dependency.behavior.isPeer()) {
-                    if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                            try this.peer_dependencies.writeItem(id);
-                        }
-                        return;
-                    }
-                }
-
                 if (try this.generateNetworkTaskForTarball(
                     task_id,
                     url,
@@ -5378,7 +5255,6 @@ pub const PackageManager = struct {
                     dependency.behavior,
                     id,
                     resolution,
-                    install_peer,
                     successFn,
                 ) catch |err| brk: {
                     if (err == error.MissingPackageJSON) {
@@ -5533,15 +5409,6 @@ pub const PackageManager = struct {
                 const callback_tag = comptime if (successFn == assignRootResolution) "root_dependency" else "dependency";
                 try entry.value_ptr.append(this.allocator, @unionInit(TaskCallbackContext, callback_tag, id));
 
-                if (dependency.behavior.isPeer()) {
-                    if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
-                            try this.peer_dependencies.writeItem(id);
-                        }
-                        return;
-                    }
-                }
-
                 switch (version.value.tarball.uri) {
                     .local => {
                         if (this.hasCreatedNetworkTask(task_id, dependency.behavior.isRequired())) return;
@@ -5605,7 +5472,6 @@ pub const PackageManager = struct {
                     i,
                     &dependency,
                     lockfile.buffers.resolutions.items[i],
-                    false,
                 ) catch {};
             }
         }
@@ -5687,7 +5553,6 @@ pub const PackageManager = struct {
                 i,
                 &dependency,
                 resolution,
-                false,
             ) catch |err| {
                 const note = .{
                     .fmt = "error occured while resolving {}",
@@ -5725,7 +5590,6 @@ pub const PackageManager = struct {
         this: *PackageManager,
         item: TaskCallbackContext,
         any_root: ?*bool,
-        install_peer: bool,
     ) !void {
         switch (item) {
             .dependency => |dependency_id| {
@@ -5736,7 +5600,6 @@ pub const PackageManager = struct {
                     dependency_id,
                     &dependency,
                     resolution,
-                    install_peer,
                 );
             },
             .root_dependency => |dependency_id| {
@@ -5747,7 +5610,6 @@ pub const PackageManager = struct {
                     dependency_id,
                     &dependency,
                     resolution,
-                    install_peer,
                     assignRootResolution,
                     failRootResolution,
                 );
@@ -5762,35 +5624,18 @@ pub const PackageManager = struct {
         }
     }
 
-    fn processPeerDependencyList(
-        this: *PackageManager,
-    ) !void {
-        while (this.peer_dependencies.readItem()) |peer_dependency_id| {
-            const dependency = this.lockfile.buffers.dependencies.items[peer_dependency_id];
-            const resolution = this.lockfile.buffers.resolutions.items[peer_dependency_id];
-
-            try this.enqueueDependencyWithMain(
-                peer_dependency_id,
-                &dependency,
-                resolution,
-                true,
-            );
-        }
-    }
-
     fn processDependencyList(
         this: *PackageManager,
         dep_list: TaskCallbackList,
         comptime Context: type,
         ctx: Context,
         comptime callbacks: anytype,
-        install_peer: bool,
     ) !void {
         if (dep_list.items.len > 0) {
             var dependency_list = dep_list;
             var any_root = false;
             for (dependency_list.items) |item| {
-                try this.processDependencyListItem(item, &any_root, install_peer);
+                try this.processDependencyListItem(item, &any_root);
             }
 
             if (comptime @TypeOf(callbacks) != void and @TypeOf(callbacks.onResolve) != void) {
@@ -6054,7 +5899,6 @@ pub const PackageManager = struct {
         comptime ExtractCompletionContext: type,
         extract_ctx: ExtractCompletionContext,
         comptime callbacks: anytype,
-        install_peer: bool,
         comptime log_level: Options.LogLevel,
     ) anyerror!void {
         var has_updated_this_run = false;
@@ -6277,7 +6121,6 @@ pub const PackageManager = struct {
                                 ExtractCompletionContext,
                                 extract_ctx,
                                 callbacks,
-                                install_peer,
                             );
 
                             continue;
@@ -6505,7 +6348,7 @@ pub const PackageManager = struct {
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks);
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -6598,7 +6441,7 @@ pub const PackageManager = struct {
                                         },
                                         else => unreachable,
                                     }
-                                    try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                    try manager.processDependencyListItem(dep, &any_root);
                                 },
                                 else => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -6613,7 +6456,7 @@ pub const PackageManager = struct {
                         const dependency_list = dependency_list_entry.value_ptr.*;
                         dependency_list_entry.value_ptr.* = .{};
 
-                        try manager.processDependencyList(dependency_list, void, {}, {}, install_peer);
+                        try manager.processDependencyList(dependency_list, void, {}, {});
                     }
 
                     manager.setPreinstallState(package_id, manager.lockfile, .done);
@@ -6671,7 +6514,7 @@ pub const PackageManager = struct {
                     const dependency_list = dependency_list_entry.value_ptr.*;
                     dependency_list_entry.value_ptr.* = .{};
 
-                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks, install_peer);
+                    try manager.processDependencyList(dependency_list, ExtractCompletionContext, extract_ctx, callbacks);
 
                     if (comptime log_level.showProgress()) {
                         if (!has_updated_this_run) {
@@ -6730,7 +6573,7 @@ pub const PackageManager = struct {
                                     var repo = &manager.lockfile.buffers.dependencies.items[id].version.value.git;
                                     repo.resolved = pkg.resolution.value.git.resolved;
                                     repo.package_name = pkg.name;
-                                    try manager.processDependencyListItem(dep, &any_root, install_peer);
+                                    try manager.processDependencyListItem(dep, &any_root);
                                 },
                                 else => {
                                     // if it's a node_module folder to install, handle that after we process all the dependencies within the onExtract callback.
@@ -12820,7 +12663,6 @@ pub const PackageManager = struct {
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
                             },
-                            true,
                             log_level,
                         );
                         if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -12843,7 +12685,6 @@ pub const PackageManager = struct {
                         .onPackageManifestError = {},
                         .onPackageDownloadError = {},
                     },
-                    true,
                     log_level,
                 );
                 if (!installer.options.do.install_packages) return error.InstallFailed;
@@ -12868,7 +12709,6 @@ pub const PackageManager = struct {
                                 .onPackageManifestError = {},
                                 .onPackageDownloadError = {},
                             },
-                            true,
                             log_level,
                         ) catch |err| {
                             closure.err = err;
@@ -13342,7 +13182,6 @@ pub const PackageManager = struct {
                                         @truncate(dependency_i),
                                         dependency,
                                         manager.lockfile.buffers.resolutions.items[dependency_i],
-                                        false,
                                     );
                                 }
                             }
@@ -13364,7 +13203,6 @@ pub const PackageManager = struct {
                                         dependency_i,
                                         &dependency,
                                         manager.lockfile.buffers.resolutions.items[dependency_i],
-                                        false,
                                     );
                                 }
                             }
@@ -13418,7 +13256,7 @@ pub const PackageManager = struct {
             manager.drainDependencyList();
         }
 
-        if (manager.pendingTaskCount() > 0 or manager.peer_dependencies.readableLength() > 0) {
+        if (manager.pendingTaskCount() > 0) {
             if (root.dependencies.len > 0) {
                 _ = manager.getCacheDirectory();
                 _ = manager.getTemporaryDirectory();
@@ -13432,17 +13270,12 @@ pub const PackageManager = struct {
             }
 
             const runAndWaitFn = struct {
-                pub fn runAndWaitFn(comptime check_peers: bool, comptime only_pre_patch: bool) *const fn (*PackageManager) anyerror!void {
+                pub fn runAndWaitFn(comptime only_pre_patch: bool) *const fn (*PackageManager) anyerror!void {
                     return struct {
                         manager: *PackageManager,
                         err: ?anyerror = null,
                         pub fn isDone(closure: *@This()) bool {
                             var this = closure.manager;
-                            if (comptime check_peers)
-                                this.processPeerDependencyList() catch |err| {
-                                    closure.err = err;
-                                    return true;
-                                };
 
                             this.drainDependencyList();
 
@@ -13457,18 +13290,11 @@ pub const PackageManager = struct {
                                     .onPackageDownloadError = {},
                                     .progress_bar = true,
                                 },
-                                check_peers,
                                 log_level,
                             ) catch |err| {
                                 closure.err = err;
                                 return true;
                             };
-
-                            if (comptime check_peers) {
-                                if (this.peer_dependencies.readableLength() > 0) {
-                                    return false;
-                                }
-                            }
 
                             if (comptime only_pre_patch) {
                                 const pending_patch = this.pending_pre_calc_hashes.load(.monotonic);
@@ -13499,9 +13325,8 @@ pub const PackageManager = struct {
                 }
             }.runAndWaitFn;
 
-            const waitForCalcingPatchHashes = runAndWaitFn(false, true);
-            const waitForEverythingExceptPeers = runAndWaitFn(false, false);
-            const waitForPeers = runAndWaitFn(true, false);
+            const waitForCalcingPatchHashes = runAndWaitFn(true);
+            const waitForEverythingExceptPeers = runAndWaitFn(false);
 
             if (manager.lockfile.patched_dependencies.entries.len > 0) {
                 try waitForCalcingPatchHashes(manager);
@@ -13509,10 +13334,6 @@ pub const PackageManager = struct {
 
             if (manager.pendingTaskCount() > 0) {
                 try waitForEverythingExceptPeers(manager);
-            }
-
-            if (manager.options.do.install_peer_dependencies) {
-                try waitForPeers(manager);
             }
 
             if (comptime log_level.showProgress()) {

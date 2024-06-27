@@ -591,7 +591,7 @@ pub const Tree = struct {
             switch (destination) {
                 Tree.dependency_loop, Tree.hoisted => continue,
                 else => {
-                    dependency_lists[destination].append(builder.allocator, dep_id) catch unreachable;
+                    dependency_lists[destination].append(builder.allocator, dep_id) catch bun.outOfMemory();
                     trees[destination].dependencies.len += 1;
                     if (builder.resolution_lists[pid].len > 0) {
                         try builder.queue.writeItem(.{

@@ -43,6 +43,7 @@ jobs:
       zig-optimize: ${{ inputs.zig-optimize }}
       canary: ${{ inputs.canary }}
       no-cache: ${{ inputs.no-cache }}
+
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure

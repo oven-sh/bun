@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeAll, afterAll } from "bun:test";
-import { gcTick, tls } from "harness";
-import path from "path";
+import { gcTick, tls, tmpdirSync } from "harness";
+import path, { join } from "path";
 import fs from "fs";
 var setTimeoutAsync = (fn, delay) => {
   return new Promise((resolve, reject) => {
@@ -81,8 +81,9 @@ describe("HTMLRewriter", () => {
         element.setInnerContent("<blink>it worked!</blink>", { html: true });
       },
     });
-    await Bun.write("/tmp/html-rewriter.txt.js", "<div>hello</div>");
-    var output = rewriter.transform(new Response(Bun.file("/tmp/html-rewriter.txt.js")));
+    const filePath = join(tmpdirSync(), "html-rewriter.txt.js");
+    await Bun.write(filePath, "<div>hello</div>");
+    var output = rewriter.transform(new Response(Bun.file(filePath)));
     expect(await output.text()).toBe("<div><blink>it worked!</blink></div>");
   });
 

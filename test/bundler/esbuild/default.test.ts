@@ -1,9 +1,8 @@
 import assert from "assert";
-import dedent from "dedent";
-
-import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { ESBUILD_PATH, itBundled, dedent } from "../expectBundled";
 import { osSlashes } from "harness";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe, expect } from "bun:test";
+
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 

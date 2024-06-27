@@ -1,11 +1,10 @@
 {
   "name": "test",
   "devDependencies": {
-    "@types/dedent": "0.7.0",
-    "@types/utf-8-validate": "5.0.0",
     "@types/react": "18.0.28",
     "@types/react-dom": "18.0.11",
-    "@types/supertest": "2.0.12"
+    "@types/supertest": "2.0.12",
+    "@types/utf-8-validate": "5.0.0"
   },
   "dependencies": {
     "@grpc/grpc-js": "1.9.9",
@@ -18,7 +17,6 @@
     "axios": "1.6.8",
     "body-parser": "1.20.2",
     "comlink": "4.4.1",
-    "dedent": "0.7.0",
     "es-module-lexer": "1.3.0",
     "esbuild": "0.18.6",
     "express": "4.18.2",

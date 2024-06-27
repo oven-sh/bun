@@ -376,10 +376,6 @@ pub const Tree = struct {
             return iter;
         }
 
-        pub fn reload(this: *Iterator, lockfile: *const Lockfile) void {
-            this.lockfile = lockfile;
-        }
-
         pub fn reset(this: *Iterator) void {
             this.tree_id = 0;
         }

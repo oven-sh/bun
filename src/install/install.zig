@@ -11634,7 +11634,6 @@ pub const PackageManager = struct {
             this.names = packages.items(.name);
             this.bins = packages.items(.bin);
             this.resolutions = packages.items(.resolution);
-            this.tree_iterator.reload(this.lockfile);
         }
 
         /// Install versions of a package which are waiting on a network request
@@ -12829,7 +12828,10 @@ pub const PackageManager = struct {
                         const trees = this.allocator.alloc(TreeContext, this.lockfile.buffers.trees.items.len) catch bun.outOfMemory();
                         for (0..this.lockfile.buffers.trees.items.len) |i| {
                             trees[i] = .{
-                                .binaries = Bin.PriorityQueue.init(this.allocator, .{ .lockfile = this.lockfile }),
+                                .binaries = Bin.PriorityQueue.init(this.allocator, .{
+                                    .dependencies = &this.lockfile.buffers.dependencies,
+                                    .string_buf = &this.lockfile.buffers.string_bytes,
+                                }),
                             };
                         }
                         break :trees trees;

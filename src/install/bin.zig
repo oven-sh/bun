@@ -269,12 +269,14 @@ pub const Bin = extern struct {
     };
 
     pub const PriorityQueueContext = struct {
-        lockfile: *const Install.Lockfile,
+        dependencies: *const std.ArrayListUnmanaged(Dependency),
+        string_buf: *const std.ArrayListUnmanaged(u8),
 
         pub fn lessThan(this: PriorityQueueContext, a: Install.DependencyID, b: Install.DependencyID) std.math.Order {
-            const buf = this.lockfile.buffers.string_bytes.items;
-            const a_name = this.lockfile.buffers.dependencies.items[a].name.slice(buf);
-            const b_name = this.lockfile.buffers.dependencies.items[b].name.slice(buf);
+            const deps = this.dependencies.items;
+            const buf = this.string_buf.items;
+            const a_name = deps[a].name.slice(buf);
+            const b_name = deps[b].name.slice(buf);
             return strings.order(a_name, b_name);
         }
     };

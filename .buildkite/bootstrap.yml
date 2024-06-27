@@ -10,14 +10,14 @@ steps:
     blocked_state: "running"
 
   - label: ":pipeline:"
-    command: buildkite-agent pipeline upload .buildkite/ci.yml"
+    command: "buildkite-agent pipeline upload .buildkite/ci.yml"
     agents:
-      os: "linux"
+      queue: "build-linux"
 
   - if: "build.branch == 'main' && !build.pull_request.repository.fork"
     label: ":github:"
     agents:
-      os: "darwin"
+      queue: "test-darwin"
     depends_on:
       - "darwin-aarch64-build-bun"
       - "darwin-x64-build-bun"

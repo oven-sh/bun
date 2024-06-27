@@ -1427,8 +1427,8 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "windows-x64-baseline.zip"
-          - "windows-x64-baseline-profile.zip"
+          - "bun-windows-x64-baseline.zip"
+          - "bun-windows-x64-baseline-profile.zip"
           - "features.json"
         env:
           CPU_TARGET: "nehalem"

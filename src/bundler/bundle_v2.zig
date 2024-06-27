@@ -3744,13 +3744,12 @@ const LinkerGraph = struct {
                 count += ts_enums.count();
             }
             if (count > 0) {
-                std.debug.panic("buh {d}", .{count});
-                //     try this.ts_enums.ensureTotalCapacity(this.allocator, count);
-                //     for (this.ast.items(.ts_enums)) |ts_enums| {
-                //         for (ts_enums.items) |enum_index| {
-
-                //         }
-                //     }
+                try this.ts_enums.ensureTotalCapacity(this.allocator, count);
+                for (this.ast.items(.ts_enums)) |ts_enums| {
+                    for (ts_enums.keys(), ts_enums.values()) |key, value| {
+                        this.ts_enums.putAssumeCapacityNoClobber(key, value);
+                    }
+                }
             }
         }
 
@@ -8928,6 +8927,8 @@ const LinkerContext = struct {
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
             .const_values = c.graph.const_values,
+            .ts_enums = c.graph.ts_enums,
+
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
             .module_type = c.options.output_format,

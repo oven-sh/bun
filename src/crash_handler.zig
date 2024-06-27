@@ -288,7 +288,7 @@ pub fn crashHandler(
                 });
                 Output.flush();
 
-                comptime std.debug.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
+                comptime bun.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
                 bun.reloadProcess(bun.default_allocator, false, true);
             }
         },

@@ -837,7 +837,7 @@ pub const G = struct {
         //   class Foo { a = 1 }
         //
         initializer: ?ExprNodeIndex = null,
-        kind: Kind = Kind.normal,
+        kind: Kind = .normal,
         flags: Flags.Property.Set = Flags.Property.None,
 
         class_static_block: ?*ClassStaticBlock = null,
@@ -1396,6 +1396,7 @@ pub const Symbol = struct {
             }
         }
 
+        /// Equivalent to followSymbols in esbuild
         pub fn follow(symbols: *const Map, ref: Ref) Ref {
             var symbol = symbols.get(ref) orelse return ref;
             if (!symbol.hasLink()) {
@@ -1433,13 +1434,12 @@ pub const Symbol = struct {
 };
 
 pub const OptionalChain = enum(u1) {
-
-    // "a?.b"
+    /// "a?.b"
     start,
 
-    // "a?.b.c" => ".c" is OptionalChainContinue
-    // "(a?.b).c" => ".c" is OptionalChain null
-    ccontinue,
+    /// "a?.b.c" => ".c" is .continuation
+    /// "(a?.b).c" => ".c" is null
+    continuation,
 
     pub fn jsonStringify(self: @This(), writer: anytype) !void {
         return try writer.write(@tagName(self));
@@ -1786,28 +1786,26 @@ pub const E = struct {
         const neg_double_digit = [_]string{ "-0", "-1", "-2", "-3", "-4", "-5", "-6", "-7", "-8", "-9", "-10", "-11", "-12", "-13", "-14", "-15", "-16", "-17", "-18", "-19", "-20", "-21", "-22", "-23", "-24", "-25", "-26", "-27", "-28", "-29", "-30", "-31", "-32", "-33", "-34", "-35", "-36", "-37", "-38", "-39", "-40", "-41", "-42", "-43", "-44", "-45", "-46", "-47", "-48", "-49", "-50", "-51", "-52", "-53", "-54", "-55", "-56", "-57", "-58", "-59", "-60", "-61", "-62", "-63", "-64", "-65", "-66", "-67", "-68", "-69", "-70", "-71", "-72", "-73", "-74", "-75", "-76", "-77", "-78", "-79", "-80", "-81", "-82", "-83", "-84", "-85", "-86", "-87", "-88", "-89", "-90", "-91", "-92", "-93", "-94", "-95", "-96", "-97", "-98", "-99", "-100" };
 
         /// String concatenation with numbers is required by the TypeScript compiler for
-        /// "constant expression" handling in enums. However, we don't want to introduce
-        /// correctness bugs by accidentally stringifying a number differently than how
-        /// a real JavaScript VM would do it. So we are conservative and we only do this
-        /// when we know it'll be the same result.
+        /// "constant expression" handling in enums. We can match the behavior of a JS VM
+        /// by calling out to the APIs in WebKit which are responsible for this operation.
         pub fn toStringSafely(this: Number, allocator: std.mem.Allocator) ?string {
             return toStringFromF64Safe(this.value, allocator);
         }
 
         pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
-            if (comptime !Environment.isWasm) {
-                if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
-                    const int_value = @as(i64, @intFromFloat(value));
-                    const abs = @as(u64, @intCast(@abs(int_value)));
-                    if (abs < double_digit.len) {
-                        return if (int_value < 0)
-                            neg_double_digit[abs]
-                        else
-                            double_digit[abs];
-                    }
+            if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
+                const int_value = @as(i64, @intFromFloat(value));
+                const abs = @as(u64, @intCast(@abs(int_value)));
 
-                    return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
+                // do not allocate for a small set of constant numbers: -100 through 100
+                if (abs < double_digit.len) {
+                    return if (int_value < 0)
+                        neg_double_digit[abs]
+                    else
+                        double_digit[abs];
                 }
+
+                return std.fmt.allocPrint(allocator, "{d}", .{@as(i32, @intCast(int_value))}) catch return null;
             }
 
             if (std.math.isNan(value)) {
@@ -1820,6 +1818,13 @@ pub const E = struct {
 
             if (std.math.isInf(value)) {
                 return "Infinity";
+            }
+
+            if (Environment.isNative) {
+                var buf: [124]u8 = undefined;
+                return allocator.dupe(u8, bun.fmt.FormatDouble.dtoa(&buf, value)) catch bun.outOfMemory();
+            } else {
+                // do not attempt to implement the spec here, it would be error prone.
             }
 
             return null;
@@ -1889,9 +1894,7 @@ pub const E = struct {
                 }
 
                 const rope = try allocator.create(Rope);
-                rope.* = .{
-                    .head = expr,
-                };
+                rope.* = .{ .head = expr };
                 this.next = rope;
                 return rope;
             }
@@ -2246,17 +2249,18 @@ pub const E = struct {
             return bun.js_lexer.isIdentifier(this.slice(allocator));
         }
 
-        pub var class = E.String{ .data = "class" };
+        pub const class = E.String{ .data = "class" };
+
         pub fn push(this: *String, other: *String) void {
             bun.assert(this.isUTF8());
             bun.assert(other.isUTF8());
 
             if (other.rope_len == 0) {
-                other.rope_len = @as(u32, @truncate(other.data.len));
+                other.rope_len = @truncate(other.data.len);
             }
 
             if (this.rope_len == 0) {
-                this.rope_len = @as(u32, @truncate(this.data.len));
+                this.rope_len = @truncate(this.data.len);
             }
 
             this.rope_len += other.rope_len;
@@ -2269,6 +2273,26 @@ pub const E = struct {
                 end.next = other;
                 this.end = other;
             }
+        }
+
+        pub fn cloneRopeNodes(s: String) String {
+            var root = s;
+
+            if (root.next != null) {
+                var current: ?*String = &root;
+                while (true) {
+                    const node = current.?;
+                    if (node.next) |next| {
+                        node.next = Expr.Data.Store.append(String, next.*);
+                        current = node.next;
+                    } else {
+                        root.end = node;
+                        break;
+                    }
+                }
+            }
+
+            return root;
         }
 
         pub fn toUTF8(this: *String, allocator: std.mem.Allocator) !void {
@@ -2296,13 +2320,13 @@ pub const E = struct {
 
         pub fn resolveRopeIfNeeded(this: *String, allocator: std.mem.Allocator) void {
             if (this.next == null or !this.isUTF8()) return;
-            var str = this.next;
-            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch unreachable;
+            var bytes = std.ArrayList(u8).initCapacity(allocator, this.rope_len) catch bun.outOfMemory();
 
             bytes.appendSliceAssumeCapacity(this.data);
-            while (str) |strin| {
-                bytes.appendSlice(strin.data) catch unreachable;
-                str = strin.next;
+            var str = this.next;
+            while (str) |part| {
+                bytes.appendSlice(part.data) catch bun.outOfMemory();
+                str = part.next;
             }
             this.data = bytes.items;
             this.next = null;
@@ -2417,7 +2441,7 @@ pub const E = struct {
             }
         }
 
-        pub fn eqlComptime(s: *const String, comptime value: anytype) bool {
+        pub fn eqlComptime(s: *const String, comptime value: []const u8) bool {
             return if (s.isUTF8())
                 strings.eqlComptime(s.data, value)
             else
@@ -2505,6 +2529,34 @@ pub const E = struct {
             }
         }
 
+        pub fn format(s: String, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            comptime bun.assert(fmt.len == 0);
+
+            try writer.writeAll("E.String");
+            if (s.next == null) {
+                try writer.writeAll("(");
+                if (s.isUTF8()) {
+                    try writer.print("\"{s}\"", .{s.data});
+                } else {
+                    try writer.print("\"{}\"", .{bun.fmt.utf16(s.slice16())});
+                }
+                try writer.writeAll(")");
+            } else {
+                try writer.writeAll("(rope: [");
+                var it: ?*const String = &s;
+                while (it) |part| {
+                    if (part.isUTF8()) {
+                        try writer.print("\"{s}\"", .{part.data});
+                    } else {
+                        try writer.print("\"{}\"", .{bun.fmt.utf16(part.slice16())});
+                    }
+                    it = part.next;
+                    if (it != null) try writer.writeAll(" ");
+                }
+                try writer.writeAll("])");
+            }
+        }
+
         pub fn jsonStringify(s: *const String, writer: anytype) !void {
             var buf = [_]u8{0} ** 4096;
             var i: usize = 0;
@@ -2551,9 +2603,7 @@ pub const E = struct {
             if (this.tag != null or (this.head == .cooked and !this.head.cooked.isUTF8())) {
                 // we only fold utf-8/ascii for now
                 return Expr{
-                    .data = .{
-                        .e_template = this,
-                    },
+                    .data = .{ .e_template = this },
                     .loc = loc,
                 };
             }
@@ -2566,9 +2616,11 @@ pub const E = struct {
 
             var parts = std.ArrayList(TemplatePart).initCapacity(allocator, this.parts.len) catch unreachable;
             var head = Expr.init(E.String, this.head.cooked, loc);
-            for (this.parts) |part_| {
-                var part = part_;
+            for (this.parts) |part_src| {
+                var part = part_src;
                 bun.assert(part.tail == .cooked);
+
+                part.value = part.value.unwrapInlined();
 
                 switch (part.value.data) {
                     .e_number => {
@@ -2629,15 +2681,11 @@ pub const E = struct {
                 return head;
             }
 
-            return Expr.init(
-                E.Template,
-                E.Template{
-                    .tag = null,
-                    .parts = parts.items,
-                    .head = .{ .cooked = head.data.e_string.* },
-                },
-                loc,
-            );
+            return Expr.init(E.Template, .{
+                .tag = null,
+                .parts = parts.items,
+                .head = .{ .cooked = head.data.e_string.* },
+            }, loc);
         }
     };
 
@@ -3204,6 +3252,11 @@ pub const Expr = struct {
     }
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
+    }
+
+    pub fn unwrapInlined(expr: Expr) Expr {
+        if (expr.data.as(.e_inlined_enum)) |inlined| return inlined.value;
+        return expr;
     }
 
     pub fn fromBlob(
@@ -4961,6 +5014,34 @@ pub const Expr = struct {
         return null;
     }
 
+    pub fn toStringExprWithoutSideEffects(expr: Expr, allocator: std.mem.Allocator) ?Expr {
+        const unwrapped = expr.unwrapInlined();
+        const slice = switch (unwrapped.data) {
+            .e_null => "null",
+            .e_string => return expr,
+            .e_undefined => "undefined",
+            .e_boolean => |data| if (data.value) "true" else "false",
+            .e_number => |num| if (num.toStringSafely(allocator)) |str|
+                str
+            else
+                null,
+            .e_reg_exp => |regexp| regexp.value,
+            .e_dot => |dot| @as(?[]const u8, brk: {
+                // This is dumb but some JavaScript obfuscators use this to generate string literals
+                if (bun.strings.eqlComptime(dot.name, "constructor")) {
+                    break :brk switch (dot.target.data) {
+                        .e_string => "function String() { [native code] }",
+                        .e_reg_exp => "function RegExp() { [native code] }",
+                        else => null,
+                    };
+                }
+                break :brk null;
+            }),
+            else => null,
+        };
+        return if (slice) |s| Expr.init(E.String, E.String.init(s), expr.loc) else null;
+    }
+
     pub fn isOptionalChain(self: *const @This()) bool {
         return switch (self.data) {
             .e_dot => self.data.e_dot.optional_chain != null,
@@ -5067,6 +5148,10 @@ pub const Expr = struct {
         // This type should not exist outside of MacroContext
         // If it ends up in JSParser or JSPrinter, it is a bug.
         inline_identifier: i32,
+
+        pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
+            return if (data == tag) @field(data, @tagName(tag)) else null;
+        }
 
         pub fn clone(this: Expr.Data, allocator: std.mem.Allocator) !Data {
             return switch (this) {
@@ -5549,10 +5634,22 @@ pub const Expr = struct {
             return switch (data) {
                 .e_null => 0,
                 .e_undefined => std.math.nan(f64),
+                .e_string => |str| {
+                    if (str.next != null) return null;
+
+                    // +'1' => 1
+                    return stringToEquivalentNumberValue(str.data);
+                },
                 .e_boolean => @as(f64, if (data.e_boolean.value) 1.0 else 0.0),
                 .e_number => data.e_number.value,
                 .e_inlined_enum => |inlined| switch (inlined.value.data) {
                     .e_number => |num| num.value,
+                    .e_string => |str| {
+                        if (str.next != null) return null;
+
+                        // +'1' => 1
+                        return stringToEquivalentNumberValue(str.data);
+                    },
                     else => null,
                 },
                 else => null,
@@ -5877,7 +5974,7 @@ pub const Expr = struct {
                 }
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
+            pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
                 if (memory_allocator) |allocator| {
                     return allocator.append(ValueType, value);
                 }
@@ -6485,8 +6582,8 @@ pub const Ast = struct {
 
     /// Only populated when bundling
     target: bun.options.Target = .browser,
-    const_values: ConstValuesMap = .{}, // <-- crash here
-    // ts_enums: TsEnumsMap = .{},
+    const_values: ConstValuesMap = .{},
+    ts_enums: TsEnumsMap = .{},
 
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
@@ -6502,8 +6599,8 @@ pub const Ast = struct {
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
-    pub const ConstValuesMap = std.HashMapUnmanaged(Ref, Expr, RefHashCtx, false);
-    pub const TsEnumsMap = std.HashMapUnmanaged(Ref, std.StringHashMapUnmanaged(InlinedEnumValue), Ref.HashCtx, 80);
+    pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
+    pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, std.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
 
     pub fn fromParts(parts: []Part) Ast {
         return Ast{
@@ -6589,7 +6686,7 @@ pub const BundledAst = struct {
     target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
-    // ts_enums: Ast.TsEnumsMap = .{},
+    ts_enums: Ast.TsEnumsMap = .{},
 
     flags: BundledAst.Flags = .{},
 
@@ -6666,6 +6763,7 @@ pub const BundledAst = struct {
             .target = this.target,
 
             .const_values = this.const_values,
+            .ts_enums = this.ts_enums,
 
             .uses_exports_ref = this.flags.uses_exports_ref,
             .uses_module_ref = this.flags.uses_module_ref,
@@ -7273,6 +7371,7 @@ pub const Scope = struct {
         become_private_get_set_pair,
         become_private_static_get_set_pair,
     };
+
     pub fn canMergeSymbols(
         scope: *Scope,
         existing: Symbol.Kind,
@@ -8176,6 +8275,16 @@ pub const GlobalStoreHandle = struct {
         Expr.Data.Store.memory_allocator = handle;
     }
 };
+
+extern fn JSC__jsToNumber(latin1_ptr: [*]const u8, len: usize) f64;
+
+fn stringToEquivalentNumberValue(str: []const u8) f64 {
+    // +"" -> 0
+    if (str.len == 0) return 0;
+    if (!bun.strings.isAllASCII(str))
+        return std.math.nan(f64);
+    return JSC__jsToNumber(str.ptr, str.len);
+}
 
 // test "Binding.init" {
 //     var binding = Binding.alloc(

@@ -206,31 +206,111 @@ const Substitution = union(enum) {
     continue_: Expr,
 };
 
-fn foldStringAddition(lhs: Expr, rhs: Expr) ?Expr {
+/// Transforming the left operand into a string is not safe if it comes from a
+/// nested AST node.
+const FoldStringAdditionKind = enum {
+    // "x" + "y" -> "xy"
+    // 1 + "y" -> "1y"
+    normal,
+    // a + "x" + "y" -> a + "xy"
+    // a + 1 + "y" -> a + 1 + y
+    nested_left,
+};
+
+// NOTE: unlike esbuild's js_ast_helpers.FoldStringAddition, this does mutate
+// the input AST in the case of rope strings
+fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: FoldStringAdditionKind) ?Expr {
+    // "See through" inline enum constants
+    // TODO: implement foldAdditionPreProcess to fold some more things
+    var lhs = l.unwrapInlined();
+    var rhs = r.unwrapInlined();
+
+    if (kind != .nested_left) {
+        switch (rhs.data) {
+            .e_string, .e_template => {
+                if (lhs.toStringExprWithoutSideEffects(allocator)) |str| {
+                    lhs = str;
+                }
+            },
+            else => {},
+        }
+    }
+
     switch (lhs.data) {
+        // "bar" + "baz" => "barbaz"
         .e_string => |left| {
-            if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
-                var orig = lhs.data.e_string.*;
-                const rhs_clone = Expr.init(E.String, rhs.data.e_string.*, rhs.loc);
-                orig.push(
-                    rhs_clone.data.e_string,
-                );
-
-                orig.prefer_template = orig.prefer_template or rhs_clone.data.e_string.prefer_template;
-
-                return Expr.init(E.String, orig, lhs.loc);
+            if (rhs.toStringExprWithoutSideEffects(allocator)) |str| {
+                rhs = str;
             }
-        },
-        .e_binary => |bin| {
 
-            // 123 + "bar" + "baz"
+            if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
+                const has_inlined_enum_poison =
+                    l.data == .e_inlined_enum or
+                    r.data == .e_inlined_enum;
+
+                var new = if (has_inlined_enum_poison)
+                    // Inlined enums can be shared by multiple call sites. In
+                    // this case, we need to ensure that the ENTIRE rope is
+                    // cloned. In other situations, the lhs doesn't have any
+                    // other owner, so it is fine to mutate `lhs.data.end.next`.
+                    //
+                    // Consider the following case:
+                    //   const enum A {
+                    //     B = "a" + "b",
+                    //     D = B + "d",
+                    //   };
+                    //   console.log(A.B, A.D);
+                    //
+                    lhs.data.e_string.cloneRopeNodes()
+                else
+                    lhs.data.e_string.*;
+
+                // Similarly, the right side has to be cloned for an enum rope too.
+                // Consider the following case:
+                //   const enum A {
+                //     B = "1" + "2",
+                //     C = ("3" + B) + "4",
+                //   };
+                //   console.log(A.B, A.C);
+                //
+                const rhs_clone = Expr.Data.Store.append(E.String, if (has_inlined_enum_poison)
+                    rhs.data.e_string.cloneRopeNodes()
+                else
+                    rhs.data.e_string.*);
+
+                new.push(rhs_clone);
+                new.prefer_template = new.prefer_template or rhs_clone.prefer_template;
+
+                return Expr.init(E.String, new, lhs.loc);
+            }
+
+            if (left.len() == 0 and rhs.knownPrimitive() == .string) {
+                return rhs;
+            }
+
+            return null;
+        },
+        // .e_template => {},
+
+        .e_binary => |bin| {
             if (bin.op == .bin_add) {
-                if (foldStringAddition(bin.right, rhs)) |out| {
-                    return Expr.init(E.Binary, E.Binary{ .op = bin.op, .left = bin.left, .right = out }, lhs.loc);
+                if (foldStringAddition(bin.left, bin.right, allocator, .nested_left)) |nested| {
+                    return Expr.init(E.Binary, .{
+                        .left = nested,
+                        .right = r, // un-unwrap this
+                        .op = .bin_add,
+                    }, lhs.loc);
                 }
             }
         },
+
         else => {},
+    }
+
+    if (rhs.data.as(.e_string)) |right| {
+        if (right.len() == 0 and lhs.knownPrimitive() == .string) {
+            return lhs;
+        }
     }
 
     return null;
@@ -5845,8 +5925,6 @@ fn NewParser_(
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
-            std.debug.print("handleIdentifier ref={any} {?s}\n", .{ ident.ref, original_name });
-
             if (p.options.features.inlining) {
                 if (p.const_values.get(ref)) |replacement| {
                     p.ignoreUsage(ref);
@@ -7364,7 +7442,8 @@ fn NewParser_(
                             }
                         }
 
-                        if (foldStringAddition(e_.left, e_.right)) |res| {
+                        // "'abc' + 'xyz'" => "'abcxyz'"
+                        if (foldStringAddition(e_.left, e_.right, p.allocator, .normal)) |res| {
                             return res;
                         }
                     },
@@ -11741,9 +11820,7 @@ fn NewParser_(
         pub fn getOrCreateExportedNamespaceMembers(p: *P, name: []const u8, is_export: bool) *js_ast.TSNamespaceMemberMap {
             // Merge with a sibling namespace from the same scope
             if (p.current_scope.members.get(name)) |existing_member| {
-                std.debug.print("WOW {s}\n", .{name});
                 if (p.ref_to_ts_namespace_member.get(existing_member.ref)) |member_data| {
-                    std.debug.print("inner {s}\n", .{@tagName(member_data)});
                     if (member_data == .namespace)
                         return member_data.namespace;
                 }
@@ -11758,8 +11835,6 @@ fn NewParser_(
                     }
                 }
             }
-
-            std.debug.print("make new {s}\n", .{name});
 
             // Otherwise, generate a new namespace object
             return bun.create(p.allocator, js_ast.TSNamespaceMemberMap, .{});
@@ -13847,8 +13922,8 @@ fn NewParser_(
                         }
 
                         // Only continue if we have started
-                        if ((optional_start orelse .ccontinue) == .start) {
-                            optional_chain = .ccontinue;
+                        if ((optional_start orelse .continuation) == .start) {
+                            optional_chain = .continuation;
                         }
                     },
                     .t_no_substitution_template_literal => {
@@ -16619,8 +16694,7 @@ fn NewParser_(
                     }
 
                     const target = p.visitExprInOut(e_.target, ExprIn{
-                        // this is awkward due to a zig compiler bug
-                        .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == js_ast.OptionalChain.ccontinue,
+                        .has_chain_parent = e_.optional_chain == .continuation,
                     });
                     e_.target = target;
                     switch (e_.index.data) {
@@ -16776,7 +16850,6 @@ fn NewParser_(
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
 
                             // Post-process the unary expression
-
                             switch (e_.op) {
                                 .un_not => {
                                     if (p.options.features.minify_syntax)
@@ -17146,7 +17219,7 @@ fn NewParser_(
 
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
                     e_.target = p.visitExprInOut(e_.target, ExprIn{
-                        .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .ccontinue,
+                        .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .continuation,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -22315,7 +22388,7 @@ fn NewParser_(
             for (p.top_level_enums.items) |item| {
                 const namespace = values[item].namespace;
                 var inner_map: std.StringHashMapUnmanaged(InlinedEnumValue) = .{};
-                try inner_map.ensureTotalCapacity(allocator, namespace.count());
+                try inner_map.ensureTotalCapacity(allocator, @intCast(namespace.count()));
                 for (namespace.keys(), namespace.values()) |key, val| {
                     switch (val.data) {
                         .enum_number => |num| inner_map.putAssumeCapacityNoClobber(

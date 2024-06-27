@@ -1171,6 +1171,26 @@ describe("bundler", () => {
       expect(count, "should only emit two constructors: " + content).toBe(2);
     },
   });
+  itBundled("edgecase/EnumInliningRopeStringPoison", {
+    files: {
+      "/entry.ts": `
+        const enum A1 {
+          B = "1" + "2",
+          C = "3" + B,
+        };
+        console.log(A1.B, A1.C);
+
+        const enum A2 {
+          B = "1" + "2",
+          C = ("3" + B) + "4",
+        };
+        console.log(A2.B, A2.C);
+      `,
+    },
+    run: {
+      stdout: "12 312\n12 3124",
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

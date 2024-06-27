@@ -1043,7 +1043,10 @@ const PatchLinesParser = struct {
         if (b_part_start >= line.len) return null;
         const lmao_bro = line[b_part_start..];
         std.mem.doNotOptimizeAway(lmao_bro);
-        const b_part_end = if (std.mem.indexOfAny(u8, line[b_part_start..], " \n\r\t")) |pos| pos + b_part_start else line.len;
+        const b_part_end = if (bun.strings.indexAny(u8, line[b_part_start..], " \n\r\t")) |pos|
+            pos + b_part_start
+        else
+            line.len;
 
         const b_part = line[b_part_start..b_part_end];
         for (a_part) |c| if (!VALID_CHARS.isSet(c)) return null;

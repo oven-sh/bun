@@ -544,7 +544,8 @@ pub const Options = struct {
     module_type: options.OutputFormat = .preserve,
 
     /// Used for cross-module inlining of import items when bundling
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    const_values: Ast.ConstValuesMap = .{},
+    ts_enums: Ast.TsEnumsMap = .{},
 
     // TODO: remove this
     // The reason for this is:
@@ -2549,13 +2550,17 @@ fn NewPrinter(
                     }
                 },
                 .e_dot => |e| {
-                    // Ironic Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
-                    // https://github.com/ziglang/zig/issues/6059
-                    const isOptionalChain = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+                    const isOptionalChain = e.optional_chain == .start;
 
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
+
+                        // Inline cross-module TypeScript enum references here
+                        if (p.tryToGetImportedEnumValue(e.target, e.name)) |inlined| {
+                            p.printInlinedEnum(inlined, e.name, level);
+                            return;
+                        }
                     } else {
                         if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
@@ -2621,7 +2626,7 @@ fn NewPrinter(
 
                     // Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
                     // https://github.com/ziglang/zig/issues/6059
-                    const is_optional_chain_start = (e.optional_chain orelse js_ast.OptionalChain.ccontinue) == js_ast.OptionalChain.start;
+                    const is_optional_chain_start = (e.optional_chain orelse js_ast.OptionalChain.continuation) == js_ast.OptionalChain.start;
 
                     if (is_optional_chain_start) {
                         p.print("?.");
@@ -2949,75 +2954,8 @@ fn NewPrinter(
                     p.print('n');
                 },
                 .e_number => |e| {
-                    const value = e.value;
                     p.addSourceMapping(expr.loc);
-
-                    const absValue = @abs(value);
-
-                    if (std.math.isNan(value)) {
-                        p.printSpaceBeforeIdentifier();
-
-                        p.print("NaN");
-                    } else if (std.math.isPositiveInf(value) or std.math.isNegativeInf(value)) {
-                        const wrap = ((!p.options.has_run_symbol_renamer or p.options.minify_syntax) and level.gte(.multiply)) or
-                            (std.math.isNegativeInf(value) and level.gte(.prefix));
-
-                        if (wrap) {
-                            p.print("(");
-                        }
-
-                        if (std.math.isNegativeInf(value)) {
-                            p.printSpaceBeforeOperator(.un_neg);
-                            p.print("-");
-                        } else {
-                            p.printSpaceBeforeIdentifier();
-                        }
-
-                        // If we are not running the symbol renamer, we must not print "Infinity".
-                        // Some code may assign `Infinity` to another idenitifier.
-                        //
-                        // We do not want:
-                        //
-                        //   const Infinity = 1 / 0
-                        //
-                        // to be transformed into:
-                        //
-                        //   const Infinity = Infinity
-                        //
-                        if (is_json or (!p.options.minify_syntax and p.options.has_run_symbol_renamer)) {
-                            p.print("Infinity");
-                        } else if (p.options.minify_whitespace) {
-                            p.print("1/0");
-                        } else {
-                            p.print("1 / 0");
-                        }
-
-                        if (wrap) {
-                            p.print(")");
-                        }
-                    } else if (!std.math.signbit(value)) {
-                        p.printSpaceBeforeIdentifier();
-
-                        p.printNonNegativeFloat(absValue);
-
-                        // Remember the end of the latest number
-                        p.prev_num_end = p.writer.written;
-                    } else if (level.gte(.prefix)) {
-                        // Expressions such as "(-1).toString" need to wrap negative numbers.
-                        // Instead of testing for "value < 0" we test for "signbit(value)" and
-                        // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
-                        // is false.
-                        p.print("(-");
-                        p.printNonNegativeFloat(absValue);
-                        p.print(")");
-                    } else {
-                        p.printSpaceBeforeOperator(Op.Code.un_neg);
-                        p.print("-");
-                        p.printNonNegativeFloat(absValue);
-
-                        // Remember the end of the latest number
-                        p.prev_num_end = p.writer.written;
-                    }
+                    p.printNumber(e.value, level);
                 },
                 .e_identifier => |e| {
                     const name = p.renamer.nameForSymbol(e.ref);
@@ -3472,7 +3410,8 @@ fn NewPrinter(
             p.prev_reg_exp_end = p.writer.written;
         }
 
-        pub fn printProperty(p: *Printer, item: G.Property) void {
+        pub fn printProperty(p: *Printer, item_in: G.Property) void {
+            var item = item_in;
             if (comptime !is_json) {
                 if (item.kind == .spread) {
                     if (comptime is_json and Environment.allow_assert)
@@ -3480,6 +3419,28 @@ fn NewPrinter(
                     p.print("...");
                     p.printExpr(item.value.?, .comma, ExprFlag.None());
                     return;
+                }
+
+                // Handle key syntax compression for cross-module constant inlining of enums
+                if (p.options.minify_syntax and item.flags.contains(.is_computed)) {
+                    if (item.key.?.data.as(.e_dot)) |dot| {
+                        if (p.tryToGetImportedEnumValue(dot.target, dot.name)) |value| {
+                            switch (value) {
+                                .string => |str| {
+                                    item.key.?.data = .{ .e_string = str };
+
+                                    // Problematic key names must stay computed for correctness
+                                    if (!str.eqlComptime("__proto__") and !str.eqlComptime("constructor") and !str.eqlComptime("prototype")) {
+                                        item.flags.setPresent(.is_computed, false);
+                                    }
+                                },
+                                .number => |num| {
+                                    item.key.?.data = .{ .e_number = .{ .value = num } };
+                                    item.flags.setPresent(.is_computed, false);
+                                },
+                            }
+                        }
+                    }
                 }
 
                 if (item.flags.contains(.is_static)) {
@@ -3543,11 +3504,7 @@ fn NewPrinter(
 
             const _key = item.key.?;
 
-            if (item.flags.contains(.is_computed)) {
-                if (comptime is_json) {
-                    unreachable;
-                }
-
+            if (!is_json and item.flags.contains(.is_computed)) {
                 p.print("[");
                 p.printExpr(_key, .comma, ExprFlag.None());
                 p.print("]");
@@ -5277,6 +5234,44 @@ fn NewPrinter(
             }
         }
 
+        pub fn tryToGetImportedEnumValue(p: *Printer, target: Expr, name: []const u8) ?js_ast.InlinedEnumValue.Decoded {
+            if (target.data.as(.e_import_identifier)) |id| {
+                const ref = p.symbols().follow(id.ref);
+                if (p.symbols().get(ref)) |symbol| {
+                    if (symbol.kind == .ts_enum) {
+                        if (p.options.ts_enums.get(ref)) |enum_value| {
+                            if (enum_value.get(name)) |value|
+                                return value.decode();
+                        }
+                    }
+                }
+            }
+            return null;
+        }
+
+        pub fn printInlinedEnum(
+            p: *Printer,
+            inlined: js_ast.InlinedEnumValue.Decoded,
+            comment: []const u8,
+            level: Level,
+        ) void {
+            switch (inlined) {
+                .number => |num| p.printNumber(num, level),
+
+                // TODO: extract printString
+                .string => |str| p.printExpr(.{
+                    .data = .{ .e_string = str },
+                    .loc = logger.Loc.Empty,
+                }, level, .{}),
+            }
+
+            if (!p.options.minify_whitespace and p.options.minify_identifiers) {
+                p.print(" /* ");
+                p.print(comment);
+                p.print(" */");
+            }
+        }
+
         pub fn printDeclStmt(p: *Printer, is_export: bool, comptime keyword: string, decls: []G.Decl) void {
             p.printIndent();
             p.printSpaceBeforeIdentifier();
@@ -5418,6 +5413,73 @@ fn NewPrinter(
                     var buf_ptr = p.writer.reserve(4) catch unreachable;
                     p.writer.advance(strings.encodeWTF8RuneT(buf_ptr[0..4], CodeUnitType, c));
                 }
+            }
+        }
+
+        pub fn printNumber(p: *Printer, value: f64, level: Level) void {
+            const absValue = @abs(value);
+            if (std.math.isNan(value)) {
+                p.printSpaceBeforeIdentifier();
+                p.print("NaN");
+            } else if (std.math.isPositiveInf(value) or std.math.isNegativeInf(value)) {
+                const wrap = ((!p.options.has_run_symbol_renamer or p.options.minify_syntax) and level.gte(.multiply)) or
+                    (std.math.isNegativeInf(value) and level.gte(.prefix));
+
+                if (wrap) {
+                    p.print("(");
+                }
+
+                if (std.math.isNegativeInf(value)) {
+                    p.printSpaceBeforeOperator(.un_neg);
+                    p.print("-");
+                } else {
+                    p.printSpaceBeforeIdentifier();
+                }
+
+                // If we are not running the symbol renamer, we must not print "Infinity".
+                // Some code may assign `Infinity` to another idenitifier.
+                //
+                // We do not want:
+                //
+                //   const Infinity = 1 / 0
+                //
+                // to be transformed into:
+                //
+                //   const Infinity = Infinity
+                //
+                if (is_json or (!p.options.minify_syntax and p.options.has_run_symbol_renamer)) {
+                    p.print("Infinity");
+                } else if (p.options.minify_whitespace) {
+                    p.print("1/0");
+                } else {
+                    p.print("1 / 0");
+                }
+
+                if (wrap) {
+                    p.print(")");
+                }
+            } else if (!std.math.signbit(value)) {
+                p.printSpaceBeforeIdentifier();
+
+                p.printNonNegativeFloat(absValue);
+
+                // Remember the end of the latest number
+                p.prev_num_end = p.writer.written;
+            } else if (level.gte(.prefix)) {
+                // Expressions such as "(-1).toString" need to wrap negative numbers.
+                // Instead of testing for "value < 0" we test for "signbit(value)" and
+                // "!isNaN(value)" because we need this to be true for "-0" and "-0 < 0"
+                // is false.
+                p.print("(-");
+                p.printNonNegativeFloat(absValue);
+                p.print(")");
+            } else {
+                p.printSpaceBeforeOperator(Op.Code.un_neg);
+                p.print("-");
+                p.printNonNegativeFloat(absValue);
+
+                // Remember the end of the latest number
+                p.prev_num_end = p.writer.written;
             }
         }
 

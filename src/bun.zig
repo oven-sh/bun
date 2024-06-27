@@ -2578,7 +2578,7 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         var buf: [literal.len:0]u8 = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;
@@ -2593,7 +2593,7 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
         var buf: [literal.len:0]OSPathChar = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;

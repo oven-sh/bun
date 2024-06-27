@@ -21,17 +21,17 @@ const pathRel = fs.path.relative;
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
 const recommended_zig_version = "0.13.0";
 
-comptime {
-    if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
-        @compileError(
-            "" ++
-                "Bun requires Zig version " ++ recommended_zig_version ++ ". This is" ++
-                "automatically configured via Bun's CMake setup. You likely meant to run" ++
-                "`bun setup`. If you are trying to upgrade the Zig compiler," ++
-                "run `./scripts/download-zig.sh master` or comment this message out.",
-        );
-    }
-}
+// comptime {
+//     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
+//         @compileError(
+//             "" ++
+//                 "Bun requires Zig version " ++ recommended_zig_version ++ ". This is" ++
+//                 "automatically configured via Bun's CMake setup. You likely meant to run" ++
+//                 "`bun setup`. If you are trying to upgrade the Zig compiler," ++
+//                 "run `./scripts/download-zig.sh master` or comment this message out.",
+//         );
+//     }
+// }
 
 const default_reported_nodejs_version = "22.3.0";
 
@@ -123,7 +123,7 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 }
 
 pub fn build(b: *Build) !void {
-    std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
+    std.io.getStdErr().writer().print("zig build v{s}\n", .{builtin.zig_version_string});
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 

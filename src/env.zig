@@ -1,5 +1,6 @@
 const std = @import("std");
 const builtin = @import("builtin");
+const bun = @import("root").bun;
 
 pub const BuildTarget = enum { native, wasm, wasi };
 pub const build_target: BuildTarget = brk: {
@@ -63,7 +64,7 @@ pub const OperatingSystem = enum {
     // wAsM is nOt aN oPeRaTiNg SyStEm
     wasm,
 
-    pub const names = @import("root").bun.ComptimeStringMap(
+    pub const names = bun.ComptimeStringMap(
         OperatingSystem,
         &.{
             .{ "windows", OperatingSystem.windows },
@@ -135,13 +136,13 @@ else if (isWasm)
 else
     @compileError("Please add your OS to the OperatingSystem enum");
 
-pub const Archictecture = enum {
+pub const Architecture = enum {
     x64,
     arm64,
     wasm,
 
     /// npm package name, `@oven-sh/bun-{os}-{arch}`
-    pub fn npmName(this: Archictecture) []const u8 {
+    pub fn npmName(this: Architecture) []const u8 {
         return switch (this) {
             .x64 => "x64",
             .arm64 => "aarch64",
@@ -149,22 +150,22 @@ pub const Archictecture = enum {
         };
     }
 
-    pub const names = @import("root").bun.ComptimeStringMap(
-        Archictecture,
+    pub const names = bun.ComptimeStringMap(
+        Architecture,
         &.{
-            .{ "x86_64", Archictecture.x64 },
-            .{ "x64", Archictecture.x64 },
-            .{ "amd64", Archictecture.x64 },
-            .{ "aarch64", Archictecture.arm64 },
-            .{ "arm64", Archictecture.arm64 },
-            .{ "wasm", Archictecture.wasm },
+            .{ "x86_64", Architecture.x64 },
+            .{ "x64", Architecture.x64 },
+            .{ "amd64", Architecture.x64 },
+            .{ "aarch64", Architecture.arm64 },
+            .{ "arm64", Architecture.arm64 },
+            .{ "wasm", Architecture.wasm },
         },
     );
 };
 
 pub const arch = if (isX64)
-    Archictecture.x64
+    Architecture.x64
 else if (isAarch64)
-    Archictecture.arm64
+    Architecture.arm64
 else
-    @compileError("Please add your architecture to the Archictecture enum");
+    @compileError("Please add your architecture to the Architecture enum");

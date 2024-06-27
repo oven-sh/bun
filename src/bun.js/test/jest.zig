@@ -834,6 +834,7 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
+    has_printed: bool = false,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;

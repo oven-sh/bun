@@ -84,7 +84,9 @@ steps:
       - key: "darwin-aarch64-build-bun"
         label: ":darwin: aarch64 - build-bun"
         depends_on:
-          - "darwin-aarch64-build-bun-nolto"
+          - "darwin-aarch64-build-deps"
+          - "darwin-aarch64-build-zig"
+          - "darwin-aarch64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -340,7 +342,9 @@ steps:
       - key: "darwin-x64-build-bun"
         label: ":darwin: x64 - build-bun"
         depends_on:
-          - "darwin-x64-build-bun-nolto"
+          - "darwin-x64-build-deps"
+          - "darwin-x64-build-zig"
+          - "darwin-x64-build-cpp"
         agents:
           queue: "build-darwin"
           os: "darwin"
@@ -595,7 +599,9 @@ steps:
       - key: "linux-aarch64-build-bun"
         label: ":linux: aarch64 - build-bun"
         depends_on:
-          - "linux-aarch64-build-bun-nolto"
+          - "linux-aarch64-build-deps"
+          - "linux-aarch64-build-zig"
+          - "linux-aarch64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -912,7 +918,9 @@ steps:
       - key: "linux-x64-build-bun"
         label: ":linux: x64 - build-bun"
         depends_on:
-          - "linux-x64-build-bun-nolto"
+          - "linux-x64-build-deps"
+          - "linux-x64-build-zig"
+          - "linux-x64-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"
@@ -1229,7 +1237,9 @@ steps:
       - key: "linux-x64-baseline-build-bun"
         label: ":linux: x64-baseline - build-bun"
         depends_on:
-          - "linux-x64-baseline-build-bun-nolto"
+          - "linux-x64-baseline-build-deps"
+          - "linux-x64-baseline-build-zig"
+          - "linux-x64-baseline-build-cpp"
         agents:
           queue: "build-linux"
           os: "linux"

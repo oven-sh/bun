@@ -6,7 +6,7 @@
 steps:
   - if: "build.pull_request.repository.fork"
     block: ":eyes:"
-    prompt: ":rotating_light: Did you review the PR?"
+    prompt: "Did you review the PR?"
     blocked_state: "running"
 
   - label: ":pipeline:"

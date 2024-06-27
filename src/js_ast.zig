@@ -3435,7 +3435,7 @@ pub const Expr = struct {
     }
 
     // The goal of this function is to "rotate" the AST if it's possible to use the
-    // left-associative property of the operator to avoid unnecessary parentheses.
+    // left-associative property of the operator to avoid unnecessary parenthesess.
     //
     // When using this, make absolutely sure that the operator is actually
     // associative. For example, the "-" operator is not associative for
@@ -6485,8 +6485,8 @@ pub const Ast = struct {
 
     /// Only populated when bundling
     target: bun.options.Target = .browser,
-
-    const_values: ConstValuesMap = .{},
+    const_values: ConstValuesMap = .{}, // <-- crash here
+    // ts_enums: TsEnumsMap = .{},
 
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
@@ -6502,7 +6502,8 @@ pub const Ast = struct {
 
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
-    pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
+    pub const ConstValuesMap = std.HashMapUnmanaged(Ref, Expr, RefHashCtx, false);
+    pub const TsEnumsMap = std.HashMapUnmanaged(Ref, std.StringHashMapUnmanaged(InlinedEnumValue), Ref.HashCtx, 80);
 
     pub fn fromParts(parts: []Part) Ast {
         return Ast{
@@ -6588,6 +6589,7 @@ pub const BundledAst = struct {
     target: bun.options.Target = .browser,
 
     const_values: ConstValuesMap = .{},
+    // ts_enums: Ast.TsEnumsMap = .{},
 
     flags: BundledAst.Flags = .{},
 
@@ -6714,6 +6716,7 @@ pub const BundledAst = struct {
             .target = ast.target,
 
             .const_values = ast.const_values,
+            .ts_enums = ast.ts_enums,
 
             .flags = .{
                 .uses_exports_ref = ast.uses_exports_ref,
@@ -6765,6 +6768,19 @@ pub const Span = struct {
 // to search sibling scopes in addition to parent scopes. This is accomplished
 // by sharing the map of exported members between all matching sibling scopes.
 pub const TSNamespaceScope = struct {
+    // This is specific to this namespace block. It's the argument of the
+    // immediately-invoked function expression that the namespace block is
+    // compiled into:
+    //
+    //   var ns;
+    //   (function (ns2) {
+    //     ns2.x = 123;
+    //   })(ns || (ns = {}));
+    //
+    // This variable is "ns2" in the above example. It's the symbol to use when
+    // generating property accesses off of this namespace when it's in scope.
+    arg_ref: Ref,
+
     // This is shared between all sibling namespace blocks
     exported_members: *TSNamespaceMemberMap,
 
@@ -6852,10 +6868,47 @@ pub const TSNamespaceMember = struct {
         enum_string: *E.String,
         /// "enum ns { it = something() }"
         enum_property: void,
+
+        pub fn isEnum(data: Data) bool {
+            return switch (data) {
+                inline else => |_, tag| comptime std.mem.startsWith(u8, @tagName(tag), "enum_"),
+            };
+        }
     };
 };
 
-pub const TSEnumValue = union(enum) {};
+/// Inlined enum values can only be numbers and strings
+/// This type special cases an encoding similar to JSCJSValue, where nan-boxing is used
+/// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
+pub const InlinedEnumValue = packed struct {
+    raw_data: u64,
+
+    pub const Decoded = union(enum) {
+        string: *E.String,
+        number: f64,
+    };
+
+    const double_encode_offset_bit = 1 << 49;
+    const pure_nan: f64 = @bitCast(@as(u64, 0x7ff8000000000000));
+
+    pub fn encode(decoded: Decoded) InlinedEnumValue {
+        return .{ .raw_data = switch (decoded) {
+            .string => |ptr| @as(u48, @truncate(@intFromPtr(ptr))),
+            .number => |num| if (std.math.isNan(num))
+                comptime @as(u64, @bitCast(pure_nan)) + double_encode_offset_bit
+            else
+                @as(u64, @bitCast(num)) + double_encode_offset_bit,
+        } };
+    }
+
+    pub fn decode(encoded: InlinedEnumValue) Decoded {
+        if ((encoded.raw_data & double_encode_offset_bit) == 0) {
+            return .{ .string = @ptrFromInt(encoded.raw_data) };
+        } else {
+            return .{ .number = @bitCast(encoded.raw_data - double_encode_offset_bit) };
+        }
+    }
+};
 
 pub const ExportsKind = enum {
     // This file doesn't have any kind of export, so it's impossible to say what

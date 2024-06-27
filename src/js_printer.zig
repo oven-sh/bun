@@ -833,7 +833,7 @@ fn NewPrinter(
                 }
 
                 switch (e.op) {
-                    // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
+                    // "??" can't directly contain "||" or "&&" without being wrapped in parenthesess
                     .bin_nullish_coalescing => {
                         switch (e.left.data) {
                             .e_binary => {
@@ -3112,15 +3112,13 @@ fn NewPrinter(
                                 p.print(")");
                             }
                         }
-                    } else if (p.options.const_values.count() > 0) {
-                        if (p.options.const_values.get(ref)) |const_value| {
-                            p.printSpaceBeforeIdentifier();
-                            // TODO: addSourceMappingForName
-                            // p.addSourceMappingForName(renamer.nameForSymbol(e.ref));
-                            p.addSourceMapping(expr.loc);
-                            p.printExpr(const_value, level, flags);
-                            didPrint = true;
-                        }
+                    } else if (p.options.const_values.get(ref)) |const_value| {
+                        p.printSpaceBeforeIdentifier();
+                        // TODO: addSourceMappingForName
+                        // p.addSourceMappingForName(renamer.nameForSymbol(e.ref));
+                        p.addSourceMapping(expr.loc);
+                        p.printExpr(const_value, level, flags);
+                        didPrint = true;
                     }
 
                     if (!didPrint) {
@@ -3246,17 +3244,17 @@ fn NewPrinter(
                         last.visitRightAndFinish(p);
                     }
                 },
-                .e_inlined_enum =>  |e| {
+                .e_inlined_enum => |e| {
                     p.printExpr(e.value, level, flags);
-                    if(!p.options.minify_whitespace and !p.options.minify_identifiers) {
+                    if (!p.options.minify_whitespace and !p.options.minify_identifiers) {
                         p.print(" /* ");
                         p.print(e.comment);
                         p.print(" */");
                     }
                 },
                 else => {
-                    if(Environment.isDebug)
-                    Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
+                    if (Environment.isDebug)
+                        Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },
             }
         }

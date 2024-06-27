@@ -298,7 +298,7 @@ pub fn ExpressionTransposer(
             }
         }
 
-        pub fn tranposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
+        pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
             return Expr.init(
                 E.If,
                 E.If{
@@ -2439,7 +2439,7 @@ const ExprIn = struct {
     //   a?.b?.()  // ECall
     //
     // Also note that this is false if our parent is a node with a OptionalChain
-    // value of OptionalChainNone. That means it's outside parentheses, which
+    // value of OptionalChainNone. That means it's outside parenthesess, which
     // means it's no longer part of the chain.
     //
     // Some examples:
@@ -2561,7 +2561,7 @@ const InvalidLoc = struct {
 
     pub const Tag = enum {
         spread,
-        parenthese,
+        parentheses,
         getter,
         setter,
         method,
@@ -2572,7 +2572,7 @@ const InvalidLoc = struct {
         @setCold(true);
         const text = switch (loc.kind) {
             .spread => "Unexpected trailing comma after rest element",
-            .parenthese => "Unexpected parentheses in binding pattern",
+            .parentheses => "Unexpected parenthesess in binding pattern",
             .getter => "Unexpected getter in binding pattern",
             .setter => "Unexpected setter in binding pattern",
             .method => "Unexpected method in binding pattern",
@@ -3311,12 +3311,14 @@ pub const Parser = struct {
             if (p.scopes_in_order_for_enum.count() > 0) {
                 for (stmts) |*stmt| {
                     if (stmt.data == .s_enum) {
-                        // const old_scopes_in_order = p.scopes_in_order;
-                        // defer p.scopes_in_order = old_scopes_in_order;
+                        const old_scopes_in_order = p.scopes_in_order;
+                        defer p.scopes_in_order = old_scopes_in_order;
 
-                        // p.scopes_in_order.items = p.scopes_in_order_for_enum.get(
-                        //     stmt.loc,
-                        // ) orelse @panic("Enum Visit Failed: No entry");
+                        const scopes_in_order = p.scopes_in_order_for_enum.get(stmt.loc) orelse @panic("Enum Visit Failed: No entry");
+                        p.scopes_in_order = .{
+                            .items = scopes_in_order,
+                            .capacity = scopes_in_order.len,
+                        };
 
                         var enum_parts = ListManaged(js_ast.Part).init(p.allocator);
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
@@ -5028,6 +5030,8 @@ fn NewParser_(
         /// will be set to the most recently visited node (as a way to mark that this
         /// node has metadata) and "tsNamespaceMemberData" will be set to the metadata.
         ts_namespace: RecentlyVisitedTSNamespace = .{},
+        /// This array contains indexes into `ref_to_ts_namespace_member`
+        top_level_enums: std.ArrayListUnmanaged(u32) = .{},
 
         scopes_in_order_for_enum: std.AutoArrayHashMapUnmanaged(logger.Loc, []?ScopeOrder) = .{},
 
@@ -5645,11 +5649,11 @@ fn NewParser_(
             const allocator = p.allocator;
 
             const ref: Ref = brk: {
-                var _scope: ?*Scope = p.current_scope;
+                var current: ?*Scope = p.current_scope;
 
-                var did_forbid_argumen = false;
+                var did_forbid_arguments = false;
 
-                while (_scope) |scope| : (_scope = _scope.?.parent) {
+                while (current) |scope| : (current = current.?.parent) {
 
                     // Track if we're inside a "with" statement body
                     if (scope.kind == .with) {
@@ -5657,16 +5661,38 @@ fn NewParser_(
                     }
 
                     // Forbid referencing "arguments" inside class bodies
-                    if (scope.forbid_arguments and !did_forbid_argumen and strings.eqlComptime(name, "arguments")) {
+                    if (scope.forbid_arguments and !did_forbid_arguments and strings.eqlComptime(name, "arguments")) {
                         const r = js_lexer.rangeOfIdentifier(p.source, loc);
                         p.log.addRangeErrorFmt(p.source, r, allocator, "Cannot access \"{s}\" here", .{name}) catch unreachable;
-                        did_forbid_argumen = true;
+                        did_forbid_arguments = true;
                     }
 
                     // Is the symbol a member of this scope?
                     if (scope.getMemberWithHash(name, hash)) |member| {
                         declare_loc = member.loc;
                         break :brk member.ref;
+                    }
+
+                    // Is the symbol a member of this scope's TypeScript namespace?
+                    if (scope.ts_namespace) |ts_namespace| {
+                        if (ts_namespace.exported_members.get(name)) |member| {
+                            if (member.data.isEnum() == ts_namespace.is_enum_scope) {
+                                // If this is an identifier from a sibling TypeScript namespace, then we're
+                                // going to have to generate a property access instead of a simple reference.
+                                // Lazily-generate an identifier that represents this property access.
+                                const gop = try ts_namespace.property_accesses.getOrPut(p.allocator, name);
+                                if (!gop.found_existing) {
+                                    const ref = try p.newSymbol(.other, name);
+                                    gop.value_ptr.* = ref;
+                                    p.symbols.items[ref.inner_index].namespace_alias = .{
+                                        .namespace_ref = ts_namespace.arg_ref,
+                                        .alias = name,
+                                    };
+                                    declare_loc = member.loc;
+                                    break :brk ref;
+                                }
+                            }
+                        }
                     }
                 }
 
@@ -5819,6 +5845,8 @@ fn NewParser_(
         pub fn handleIdentifier(p: *P, loc: logger.Loc, ident: E.Identifier, original_name: ?string, opts: IdentifierOpts) Expr {
             const ref = ident.ref;
 
+            std.debug.print("handleIdentifier ref={any} {?s}\n", .{ ident.ref, original_name });
+
             if (p.options.features.inlining) {
                 if (p.const_values.get(ref)) |replacement| {
                     p.ignoreUsage(ref);
@@ -5840,9 +5868,33 @@ fn NewParser_(
                 if (symbol.namespace_alias) |ns_alias| {
                     if (p.ref_to_ts_namespace_member.get(ns_alias.namespace_ref)) |ts_member_data| {
                         if (ts_member_data == .namespace) {
-                            std.debug.panic("TODO:", .{});
-                            // if (ts_member_data.namespace.get(ns_alias.alias)) |member| {
-                            // }
+                            if (ts_member_data.namespace.get(ns_alias.alias)) |member| {
+                                switch (member.data) {
+                                    .enum_number => |num| return p.wrapInlinedEnum(
+                                        .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
+                                        p.symbols.items[ref.inner_index].original_name,
+                                    ),
+
+                                    .enum_string => |str| return p.wrapInlinedEnum(
+                                        .{ .loc = loc, .data = .{ .e_string = str } },
+                                        p.symbols.items[ref.inner_index].original_name,
+                                    ),
+
+                                    .namespace => |data| {
+                                        p.ts_namespace = .{
+                                            .ref = ref,
+                                            .data = data,
+                                        };
+                                        return p.newExpr(E.Dot{
+                                            .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
+                                            .name = ns_alias.alias,
+                                            .name_loc = loc,
+                                        }, loc);
+                                    },
+
+                                    else => {},
+                                }
+                            }
                         }
                     }
                 }
@@ -7007,7 +7059,7 @@ fn NewParser_(
                     if (ex.is_parenthesized) {
                         invalid_loc.append(.{
                             .loc = p.source.rangeOfOperatorBefore(expr.loc, "(").loc,
-                            .kind = .parenthese,
+                            .kind = .parentheses,
                         }) catch unreachable;
                     }
 
@@ -7044,7 +7096,7 @@ fn NewParser_(
                     }
 
                     if (ex.is_parenthesized) {
-                        invalid_loc.append(.{ .loc = p.source.rangeOfOperatorBefore(expr.loc, "(").loc, .kind = .parenthese }) catch unreachable;
+                        invalid_loc.append(.{ .loc = p.source.rangeOfOperatorBefore(expr.loc, "(").loc, .kind = .parentheses }) catch unreachable;
                     }
                     // p.markSyntaxFeature(compat.Destructuring, p.source.RangeOfOperatorAfter(expr.Loc, "{"))
 
@@ -10121,7 +10173,7 @@ fn NewParser_(
                     // Detect for-of loops
                     if (p.lexer.isContextualKeyword("of") or isForAwait) {
                         if (bad_let_range) |r| {
-                            try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parentheses to be used as an expression here");
+                            try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parenthesess to be used as an expression here");
                             return error.SyntaxError;
                         }
 
@@ -11545,22 +11597,22 @@ fn NewParser_(
             var name = LocRef{ .loc = name_loc, .ref = Ref.None };
 
             // Generate the namespace object
+            var arg_ref: Ref = undefined;
             const exported_members = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export);
-            std.debug.print("map: {x} - {d}\n", .{ @intFromPtr(exported_members), exported_members.count() });
             const ts_namespace = bun.create(p.allocator, js_ast.TSNamespaceScope, .{
                 .exported_members = exported_members,
                 .is_enum_scope = true,
+                .arg_ref = Ref.None,
             });
             const enum_member_data = js_ast.TSNamespaceMember.Data{ .namespace = exported_members };
 
             // Declare the enum and create the scope
             const scope_index = p.scopes_in_order.items.len;
-            var arg_ref = Ref.None;
             if (!opts.is_typescript_declare) {
                 name.ref = try p.declareSymbol(.ts_enum, name_loc, name_text);
                 _ = try p.pushScopeForParsePass(.entry, loc);
                 p.current_scope.ts_namespace = ts_namespace;
-                p.ref_to_ts_namespace_member.put(p.allocator, name.ref.?, enum_member_data) catch bun.outOfMemory();
+                p.ref_to_ts_namespace_member.putNoClobber(p.allocator, name.ref.?, enum_member_data) catch bun.outOfMemory();
             }
 
             try p.lexer.expect(.t_open_brace);
@@ -11640,7 +11692,6 @@ fn NewParser_(
                 //   (function (foo) {
                 //     foo[foo["bar"] = foo] = "bar";
                 //   })(foo || (foo = {}));
-                //
                 if (p.current_scope.members.contains(name_text)) {
                     // Add a "_" to make tests easier to read, since non-bundler tests don't
                     // run the renamer. For external-facing things the renamer will avoid
@@ -11651,6 +11702,7 @@ fn NewParser_(
                     arg_ref = p.declareSymbol(.hoisted, name_loc, name_text) catch unreachable;
                 }
                 p.ref_to_ts_namespace_member.put(p.allocator, arg_ref, enum_member_data) catch bun.outOfMemory();
+                ts_namespace.arg_ref = arg_ref;
 
                 p.popScope();
             }
@@ -14476,7 +14528,7 @@ fn NewParser_(
 
                     // Arrow functions aren't allowed in the middle of expressions
                     if (level.gt(.assign)) {
-                        // Allow "in" inside parentheses
+                        // Allow "in" inside parenthesess
                         const oldAllowIn = p.allow_in;
                         p.allow_in = true;
 
@@ -14584,7 +14636,7 @@ fn NewParser_(
                                         p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
                                     } else {
                                         if (level.gt(.assign)) {
-                                            p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
+                                            p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parenthesess") catch unreachable;
                                         }
 
                                         if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
@@ -15163,7 +15215,7 @@ fn NewParser_(
 
             if (level.gt(.call)) {
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parentheses") catch unreachable;
+                p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parenthesess") catch unreachable;
             }
 
             // allow "in" inside call arguments;
@@ -16500,7 +16552,7 @@ fn NewParser_(
                         // node. We only care about deeply-nested left nodes because most binary
                         // operators in JavaScript are left-associative and the problematic edge
                         // cases we're trying to avoid crashing on have lots of left-associative
-                        // binary operators chained together without parentheses (e.g. "1+2+...").
+                        // binary operators chained together without parenthesess (e.g. "1+2+...").
                         const left = v.e.left;
                         const left_in = v.left_in;
 
@@ -17175,7 +17227,7 @@ fn NewParser_(
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.tranposeKnownToBeIf(first, state);
+                                    return p.require_transposer.transposeKnownToBeIf(first, state);
                                 },
                                 else => {},
                             }
@@ -17221,7 +17273,7 @@ fn NewParser_(
                                     //  =>
                                     // FOO ? require.resolve('123') : require.resolve('456')
                                     // This makes static analysis later easier
-                                    return p.require_resolve_transposer.tranposeKnownToBeIf(first, e_.target);
+                                    return p.require_resolve_transposer.transposeKnownToBeIf(first, e_.target);
                                 },
                                 else => {},
                             }
@@ -19596,11 +19648,17 @@ fn NewParser_(
                     // that scope. We don't want that to cause the const local prefix to end.
                     p.current_scope.is_after_const_local_prefix = was_after_after_const_local_prefix;
 
-                    // Track cross-module enum constants during bundling
-                    const top_level_enum_values: @TypeOf(null) = null;
+                    // Track cross-module enum constants during bundling. This
+                    // part of the code is different from esbuilt in that we are
+                    // only storing a list of enum indexes. At the time of
+                    // referencing, `esbuild` builds a separate hash map of hash
+                    // maps. We are avoiding that to reduce memory usage, since
+                    // enum inlining already uses alot of hash maps.
                     if (p.current_scope == p.module_scope and p.options.bundle) {
-                        // TODO:
-                        // top_level_enum_values = null;
+                        try p.top_level_enums.append(
+                            p.allocator,
+                            @intCast(p.ref_to_ts_namespace_member.getIndex(data.name.ref.?).?),
+                        );
                     }
 
                     p.recordDeclaredSymbol(data.name.ref.?) catch bun.outOfMemory();
@@ -19656,10 +19714,6 @@ fn NewParser_(
 
                             switch (underlying_value.data) {
                                 .e_number => |num| {
-                                    if (top_level_enum_values) |tlev| {
-                                        tlev.put(name.data, .{ .enum_number = num.value });
-                                    }
-
                                     const name_str = name.string(allocator) catch bun.outOfMemory();
                                     exported_members.getPtr(name_str).?.data = .{ .enum_number = num.value };
 
@@ -19673,10 +19727,6 @@ fn NewParser_(
                                 },
                                 .e_string => |str| {
                                     has_string_value = true;
-
-                                    if (top_level_enum_values) |tlev| {
-                                        tlev.put(name.data, .{ .enum_string = 1 });
-                                    }
 
                                     const name_str = name.string(allocator) catch bun.outOfMemory();
                                     exported_members.getPtr(name_str).?.data = .{ .enum_string = str };
@@ -22023,7 +22073,7 @@ fn NewParser_(
             // scope of the arrow function itself.
             const scope_index = try p.pushScopeForParsePass(.function_args, loc);
 
-            // Allow "in" inside parentheses
+            // Allow "in" inside parenthesess
             const oldAllowIn = p.allow_in;
             p.allow_in = true;
 
@@ -22254,6 +22304,34 @@ fn NewParser_(
             scope.generated.append(p.allocator, &.{ref}) catch bun.outOfMemory();
 
             return ref;
+        }
+
+        pub fn computeTsEnumsMap(p: *const P, allocator: Allocator) !js_ast.Ast.TsEnumsMap {
+            const InlinedEnumValue = js_ast.InlinedEnumValue;
+            var map: js_ast.Ast.TsEnumsMap = .{};
+            try map.ensureTotalCapacity(allocator, @intCast(p.top_level_enums.items.len));
+            const keys = p.ref_to_ts_namespace_member.keys();
+            const values = p.ref_to_ts_namespace_member.values();
+            for (p.top_level_enums.items) |item| {
+                const namespace = values[item].namespace;
+                var inner_map: std.StringHashMapUnmanaged(InlinedEnumValue) = .{};
+                try inner_map.ensureTotalCapacity(allocator, namespace.count());
+                for (namespace.keys(), namespace.values()) |key, val| {
+                    switch (val.data) {
+                        .enum_number => |num| inner_map.putAssumeCapacityNoClobber(
+                            key,
+                            InlinedEnumValue.encode(.{ .number = num }),
+                        ),
+                        .enum_string => |str| inner_map.putAssumeCapacityNoClobber(
+                            key,
+                            InlinedEnumValue.encode(.{ .string = str }),
+                        ),
+                        else => continue,
+                    }
+                }
+                map.putAssumeCapacity(keys[item], inner_map);
+            }
+            return map;
         }
 
         fn shouldLowerUsingDeclarations(p: *const P, stmts: []Stmt) bool {
@@ -23315,8 +23393,8 @@ fn NewParser_(
 
                 .hashbang = hashbang,
 
-                // TODO:
-                // .const_values = p.const_values,
+                .const_values = p.const_values,
+                .ts_enums = try p.computeTsEnumsMap(allocator),
 
                 .import_meta_ref = p.import_meta_ref,
             };

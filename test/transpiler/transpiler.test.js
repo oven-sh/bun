@@ -2021,8 +2021,8 @@ console.log(resolve.length)
       expectParseError("({}) = {}", "Invalid assignment target");
       expectParseError("[([])] = [[]]", "Invalid assignment target");
       expectParseError("({x: ({})} = {x: {}})", "Invalid assignment target");
-      expectParseError("(([]) = []) => {}", "Unexpected parentheses in binding pattern");
-      expectParseError("(({}) = {}) => {}", "Unexpected parentheses in binding pattern");
+      expectParseError("(([]) = []) => {}", "Unexpected parenthesess in binding pattern");
+      expectParseError("(({}) = {}) => {}", "Unexpected parenthesess in binding pattern");
       expectParseError("function f(([]) = []) {}", "Parse error");
       expectParseError(
         "function f(({}) = {}) {}",

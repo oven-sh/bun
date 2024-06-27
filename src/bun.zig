@@ -1955,10 +1955,10 @@ pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
+
 pub inline fn assertComptime() void {
-    if (comptime !@inComptime()) {
-        @compileError("This function can only be called in comptime.");
-    }
+    var x = 0; // if you hit an error on this line, you are not in a comptime context
+    _ = &x;
 }
 
 const TODO_LOG = Output.scoped(.TODO, false);
@@ -1989,7 +1989,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         }).encode();
     } else {
         // TODO: remove intCast. we should not be casting u32 -> i32
-        // even though file descriptors are always positive, linux/mac repesents them as signed integers
+        // even though file descriptors are always positive, linux/mac represents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
             sys.File => fd.handle,

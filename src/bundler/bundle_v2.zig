@@ -1370,7 +1370,7 @@ pub const BundleV2 = struct {
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
 
-                // An error ocurred, prevent spinning the event loop forever
+                // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
@@ -1389,7 +1389,7 @@ pub const BundleV2 = struct {
                 log.errors += @as(usize, @intFromBool(err.kind == .err));
                 log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
-                // An error ocurred, prevent spinning the event loop forever
+                // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .pending, .consumed => unreachable,
@@ -3315,6 +3315,13 @@ const LinkerGraph = struct {
     ast: MultiArrayList(JSAst) = .{},
     meta: MultiArrayList(JSMeta) = .{},
 
+    /// We should avoid traversing all files in the bundle, because the linker
+    /// should be able to run a linking operation on a large bundle where only
+    /// a few files are needed (e.g. an incremental compilation scenario). This
+    /// holds all files that could possibly be reached through the entry points.
+    /// If you need to iterate over all files in the linking operation, iterate
+    /// over this array. This array is also sorted in a deterministic ordering
+    /// to help ensure deterministic builds (source indices are random).
     reachable_files: []Index = &[_]Index{},
 
     stable_source_indices: []const u32 = &[_]u32{},
@@ -3324,7 +3331,10 @@ const LinkerGraph = struct {
     has_client_components: bool = false,
     has_server_components: bool = false,
 
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    // This is for cross-module inlining of detected inlinable constants
+    const_values: js_ast.Ast.ConstValuesMap = .{},
+    // This is for cross-module inlining of TypeScript enum constants
+    ts_enums: js_ast.Ast.TsEnumsMap = .{},
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
         return LinkerGraph{
@@ -3717,7 +3727,7 @@ const LinkerGraph = struct {
             }
 
             if (count > 0) {
-                try const_values.ensureTotalCapacity(this.allocator, @as(u32, @truncate(count)));
+                try const_values.ensureTotalCapacity(this.allocator, count);
                 for (this.ast.items(.const_values)) |const_value| {
                     for (const_value.keys(), const_value.values()) |key, value| {
                         const_values.putAssumeCapacityNoClobber(key, value);
@@ -3726,6 +3736,22 @@ const LinkerGraph = struct {
             }
 
             this.const_values = const_values;
+        }
+
+        {
+            var count: usize = 0;
+            for (this.ast.items(.ts_enums)) |ts_enums| {
+                count += ts_enums.count();
+            }
+            if (count > 0) {
+                std.debug.panic("buh {d}", .{count});
+                //     try this.ts_enums.ensureTotalCapacity(this.allocator, count);
+                //     for (this.ast.items(.ts_enums)) |ts_enums| {
+                //         for (ts_enums.items) |enum_index| {
+
+                //         }
+                //     }
+            }
         }
 
         const in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
@@ -7068,12 +7094,12 @@ const LinkerContext = struct {
             \\  "sourcesContent": [
         );
 
-        const source_indicies_for_contents = source_id_map.keys();
-        if (source_indicies_for_contents.len > 0) {
+        const source_indices_for_contents = source_id_map.keys();
+        if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indicies_for_contents[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
 
-            for (source_indicies_for_contents[1..]) |index| {
+            for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
                 j.pushStatic(quoted_source_map_contents[index]);
             }
@@ -7950,7 +7976,7 @@ const LinkerContext = struct {
 
         for (part_stmts) |stmt_| {
             var stmt = stmt_;
-            proccess_stmt: {
+            process_stmt: {
                 switch (stmt.data) {
                     .s_import => |s| {
                         // "import * as ns from 'path'"
@@ -8005,12 +8031,12 @@ const LinkerContext = struct {
                                 continue;
                             }
 
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         // "export * from 'path'"
                         if (!shouldStripExports) {
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         const record = ast.import_records.at(s.import_record_index);
@@ -11427,7 +11453,7 @@ pub const Chunk = struct {
     };
 
     pub const OutputPiece = struct {
-        // layed out like this so it takes up the same amount of space as a []const u8
+        // laid out like this so it takes up the same amount of space as a []const u8
         data_ptr: [*]const u8 = undefined,
         data_len: u32 = 0,
 

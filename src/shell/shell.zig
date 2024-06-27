@@ -4023,7 +4023,7 @@ const SPECIAL_CHARS_TABLE: std.bit_set.IntegerBitSet(256) = brk: {
     break :brk table;
 };
 pub fn assertSpecialChar(c: u8) void {
-    comptime bun.assert(@inComptime());
+    bun.assertComptime();
     bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
 }
 /// Characters that need to be backslashed inside double quotes

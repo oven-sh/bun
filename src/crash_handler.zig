@@ -621,7 +621,7 @@ else
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun {s}v{s} {s} {s}{s}\n",
     .{
-        if (bun.Environment.is_canary) "Canary " else "",
+        if (bun.Environment.isDebug) "Debug" else if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,

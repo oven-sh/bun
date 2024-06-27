@@ -4,6 +4,15 @@ import { expect, test, describe, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 
 describe("parse ini", () => {
+  test("weird section", () => {
+    const ini = /* ini */ `
+[foo\\]]
+lol = true
+`;
+
+    expect(parse(ini)).toEqual({ "[foo\\]]": true, "lol": true });
+  });
+
   test("really long input", () => {
     const ini = /* ini */ `
 [${Array(1024).fill("a").join("")}.lol.this.be.long]
@@ -26,12 +35,35 @@ wow = 'hi'
   });
   describe("env vars", () => {
     envVarTest({
+      name: "escaped",
+      ini: "hi = \\${NODE_ENV}",
+      env: { NODE_ENV: "production" },
+      expected: { hi: "${NODE_ENV}" },
+    });
+
+    envVarTest({
+      name: "escaped2",
+      ini: "hi = \\\\${NODE_ENV}",
+      env: { NODE_ENV: "production" },
+      expected: { hi: "\\production" },
+    });
+
+    envVarTest({
       name: "basic",
       ini: /* ini */ `
 hello = \${LOL}
       `,
       env: { LOL: "hi" },
       expected: { hello: "hi" },
+    });
+
+    envVarTest({
+      name: "no val",
+      ini: /* ini */ `
+hello = \${oooooooooooooooogaboga}
+      `,
+      env: {},
+      expected: { hello: "" },
     });
 
     envVarTest({

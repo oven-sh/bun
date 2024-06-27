@@ -8,6 +8,7 @@ const js_ast = bun.JSAst;
 const Rope = js_ast.E.Object.Rope;
 const Output = bun.Output;
 const Global = bun.Global;
+const Registry = bun.install.Npm.Registry;
 
 pub const Parser = struct {
     opts: Options = .{},
@@ -38,8 +39,8 @@ pub const Parser = struct {
         this.arena.deinit();
     }
 
-    pub fn parse(this: *Parser) !void {
-        try this.parseImpl();
+    pub fn parse(this: *Parser, arena_allocator: Allocator) !void {
+        try this.parseImpl(arena_allocator);
     }
 
     inline fn shouldSkipLine(line: []const u8) bool {
@@ -59,24 +60,25 @@ pub const Parser = struct {
         return true;
     }
 
-    fn parseImpl(this: *Parser) !void {
+    fn parseImpl(this: *Parser, arena_allocator: Allocator) !void {
         var iter = std.mem.splitScalar(u8, this.src, '\n');
         var head: *E.Object = this.out.data.e_object;
 
         // var duplicates = std.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
 
-        var stack = std.heap.stackFallback(@sizeOf(Rope) * 6, this.arena.allocator());
-        const ropealloc = stack.get();
+        var rope_stack = std.heap.stackFallback(@sizeOf(Rope) * 6, arena_allocator);
+        const ropealloc = rope_stack.get();
 
         var skip_until_next_section: bool = false;
 
-        while (iter.next()) |line| {
+        while (iter.next()) |line_| {
+            const line = if (line_.len > 0 and line_[line_.len - 1] == '\r') line_[0 .. line_.len - 1] else line_;
             if (shouldSkipLine(line)) continue;
 
             // Section
             // [foo]
-            if (line[0] == '[') {
+            if (line[0] == '[') treat_as_key: {
                 skip_until_next_section = false;
                 const close_bracket_idx = std.mem.indexOfScalar(u8, line[0..], ']') orelse continue;
                 // Make sure the rest is just whitespace
@@ -84,11 +86,11 @@ pub const Parser = struct {
                     for (line[close_bracket_idx + 1 ..]) |c| if (switch (c) {
                         ' ', '\t' => false,
                         else => true,
-                    }) continue;
+                    }) break :treat_as_key;
                 }
-                const section: *Rope = try this.prepareStr(ropealloc, line[1..close_bracket_idx], @as(i32, @intCast(@intFromPtr(line.ptr) - @intFromPtr(this.src.ptr))) + 1, .section);
-                defer stack.fixed_buffer_allocator.reset();
-                const parent_object = this.out.data.e_object.getOrPutObject(section, this.arena.allocator()) catch |e| switch (e) {
+                const section: *Rope = try this.prepareStr(arena_allocator, ropealloc, line[1..close_bracket_idx], @as(i32, @intCast(@intFromPtr(line.ptr) - @intFromPtr(this.src.ptr))) + 1, .section);
+                defer rope_stack.fixed_buffer_allocator.reset();
+                const parent_object = this.out.data.e_object.getOrPutObject(section, arena_allocator) catch |e| switch (e) {
                     error.OutOfMemory => bun.outOfMemory(),
                     error.Clobber => {
                         // We're in here if key exists but it is not an object
@@ -137,18 +139,21 @@ pub const Parser = struct {
 
             const maybe_eq_sign_idx = std.mem.indexOfScalar(u8, line, '=');
 
-            const key_raw: []const u8 = try this.prepareStr(ropealloc, line[0 .. maybe_eq_sign_idx orelse line.len], line_offset, .key);
+            const key_raw: []const u8 = try this.prepareStr(arena_allocator, ropealloc, line[0 .. maybe_eq_sign_idx orelse line.len], line_offset, .key);
             const is_array: bool = brk: {
-                if (this.opts.bracked_array) {
-                    break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
-                } else {
-                    // const gop = try duplicates.getOrPut(allocator, key_raw);
-                    // if (gop.found_existing) {
-                    //     gop.value_ptr.* = 1;
-                    // } else gop.value_ptr.* += 1;
-                    // break :brk gop.value_ptr.* > 1;
-                    @panic("We don't support this right now");
-                }
+                break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
+                // Commenting out because options are not supported but we might
+                // support them.
+                // if (this.opts.bracked_array) {
+                //     break :brk key_raw.len > 2 and bun.strings.endsWith(key_raw, "[]");
+                // } else {
+                //     // const gop = try duplicates.getOrPut(allocator, key_raw);
+                //     // if (gop.found_existing) {
+                //     //     gop.value_ptr.* = 1;
+                //     // } else gop.value_ptr.* += 1;
+                //     // break :brk gop.value_ptr.* > 1;
+                //     @panic("We don't support this right now");
+                // }
             };
 
             const key = if (is_array and bun.strings.endsWith(key_raw, "[]"))
@@ -161,6 +166,7 @@ pub const Parser = struct {
             const value_raw: Expr = brk: {
                 if (maybe_eq_sign_idx) |eq_sign_idx| {
                     if (eq_sign_idx + 1 < line.len) break :brk try this.prepareStr(
+                        arena_allocator,
                         ropealloc,
                         line[eq_sign_idx + 1 ..],
                         @intCast(line_offset + @as(i32, @intCast(eq_sign_idx)) + 1),
@@ -187,11 +193,11 @@ pub const Parser = struct {
                 if (head.get(key)) |val| {
                     if (val.data != .e_array) {
                         var arr = E.Array{};
-                        arr.push(this.arena.allocator(), val) catch bun.outOfMemory();
-                        head.put(this.arena.allocator(), key, Expr.init(E.Array, arr, Loc.Empty)) catch bun.outOfMemory();
+                        arr.push(arena_allocator, val) catch bun.outOfMemory();
+                        head.put(arena_allocator, key, Expr.init(E.Array, arr, Loc.Empty)) catch bun.outOfMemory();
                     }
                 } else {
-                    head.put(this.arena.allocator(), key, Expr.init(E.Array, E.Array{}, Loc.Empty)) catch bun.outOfMemory();
+                    head.put(arena_allocator, key, Expr.init(E.Array, E.Array{}, Loc.Empty)) catch bun.outOfMemory();
                 }
             }
 
@@ -201,18 +207,19 @@ pub const Parser = struct {
             if (head.get(key)) |val| {
                 if (val.data == .e_array) {
                     was_already_array = true;
-                    val.data.e_array.push(this.arena.allocator(), value) catch bun.outOfMemory();
-                    head.put(this.arena.allocator(), key, val) catch bun.outOfMemory();
+                    val.data.e_array.push(arena_allocator, value) catch bun.outOfMemory();
+                    head.put(arena_allocator, key, val) catch bun.outOfMemory();
                 }
             }
             if (!was_already_array) {
-                head.put(this.arena.allocator(), key, value) catch bun.outOfMemory();
+                head.put(arena_allocator, key, value) catch bun.outOfMemory();
             }
         }
     }
 
     fn prepareStr(
         this: *Parser,
+        arena_allocator: Allocator,
         ropealloc: Allocator,
         val_: []const u8,
         offset_: i32,
@@ -231,15 +238,15 @@ pub const Parser = struct {
                 val = if (val.len > 1) val[1 .. val.len - 1] else val[1..];
                 offset += 1;
             }
-            const src = bun.logger.Source.initPathString("<unknown>", val);
-            var log = bun.logger.Log.init(this.arena.allocator());
+            const src = bun.logger.Source.initPathString(this.source.path.text, val);
+            var log = bun.logger.Log.init(arena_allocator);
             defer log.deinit();
             // Try to parse it and it if fails will just treat it as a string
-            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, this.arena.allocator(), true) catch {
+            const json_val: Expr = bun.JSON.ParseJSONUTF8Impl(&src, &log, arena_allocator, true) catch {
                 break :out;
             };
 
-            if (json_val.asString(this.arena.allocator())) |str| {
+            if (json_val.asString(arena_allocator)) |str| {
                 if (comptime usage == .value) return Expr.init(E.String, E.String.init(str), Loc{ .start = @intCast(offset) });
                 if (comptime usage == .section) return strToRope(ropealloc, str);
                 return str;
@@ -261,8 +268,8 @@ pub const Parser = struct {
                     return "[Object object]";
                 },
                 else => {
-                    const str = std.fmt.allocPrint(this.arena.allocator(), "{}", .{toStringFormatter{ .d = json_val.data }}) catch |e| {
-                        this.logger.addErrorFmt(&this.source, Loc{ .start = offset }, this.arena.allocator(), "failed to stringify value: {s}", .{@errorName(e)}) catch bun.outOfMemory();
+                    const str = std.fmt.allocPrint(arena_allocator, "{}", .{toStringFormatter{ .d = json_val.data }}) catch |e| {
+                        this.logger.addErrorFmt(&this.source, Loc{ .start = offset }, arena_allocator, "failed to stringify value: {s}", .{@errorName(e)}) catch bun.outOfMemory();
                         return error.ParserError;
                     };
                     if (comptime usage == .section) return singleStrRope(ropealloc, str);
@@ -274,7 +281,7 @@ pub const Parser = struct {
             // walk the val to find the first non-escaped comment character (; or #)
             var did_any_escape: bool = false;
             var esc = false;
-            var sfb = std.heap.stackFallback(STACK_BUF_SIZE, this.arena.allocator());
+            var sfb = std.heap.stackFallback(STACK_BUF_SIZE, arena_allocator);
             var unesc = try std.ArrayList(u8).initCapacity(sfb.get(), STACK_BUF_SIZE);
 
             const RopeT = if (comptime usage == .section) *Rope else struct {};
@@ -285,7 +292,8 @@ pub const Parser = struct {
                 const c = val[i];
                 if (esc) {
                     switch (c) {
-                        '\\', ';', '#' => try unesc.append(c),
+                        '\\' => try unesc.appendSlice(&[_]u8{ '\\', '\\' }),
+                        ';', '#', '$' => try unesc.append(c),
                         '.' => {
                             if (comptime usage == .section) {
                                 try unesc.append('.');
@@ -340,7 +348,7 @@ pub const Parser = struct {
                     },
                     '.' => {
                         if (comptime usage == .section) {
-                            this.commitRopePart(ropealloc, &unesc, &rope);
+                            this.commitRopePart(arena_allocator, ropealloc, &unesc, &rope);
                         } else {
                             try unesc.append('.');
                         }
@@ -372,22 +380,22 @@ pub const Parser = struct {
 
             switch (usage) {
                 .section => {
-                    this.commitRopePart(ropealloc, &unesc, &rope);
+                    this.commitRopePart(arena_allocator, ropealloc, &unesc, &rope);
                     return rope.?;
                 },
                 .value => {
                     if (!did_any_escape) return Expr.init(E.String, E.String.init(val[0..]), Loc{ .start = offset });
                     if (unesc.items.len <= STACK_BUF_SIZE) return Expr.init(
                         E.String,
-                        E.String.init(try this.arena.allocator().dupe(u8, unesc.items[0..])),
+                        E.String.init(try arena_allocator.dupe(u8, unesc.items[0..])),
                         Loc{ .start = offset },
                     );
                     return Expr.init(E.String, E.String.init(unesc.items[0..]), Loc{ .start = offset });
                 },
                 .key => {
                     const thestr: []const u8 = thestr: {
-                        if (!did_any_escape) break :thestr try this.arena.allocator().dupe(u8, val[0..]);
-                        if (unesc.items.len <= STACK_BUF_SIZE) break :thestr try this.arena.allocator().dupe(u8, unesc.items[0..]);
+                        if (!did_any_escape) break :thestr try arena_allocator.dupe(u8, val[0..]);
+                        if (unesc.items.len <= STACK_BUF_SIZE) break :thestr try arena_allocator.dupe(u8, unesc.items[0..]);
                         break :thestr unesc.items[0..];
                     };
                     return thestr;
@@ -402,17 +410,20 @@ pub const Parser = struct {
     /// Returns index to skip or null if not an env substitution
     /// Invariants:
     /// - `i` must be an index into `val` that points to a '$' char
+    ///
+    /// npm/ini uses a regex pattern that will select the inner most ${...}
     fn parseEnvSubstitution(this: *Parser, val: []const u8, start: usize, i: usize, unesc: *std.ArrayList(u8)) ?usize {
-        if (i + 1 < val.len and val[i + 1] == '{') {
-            if (i + 2 >= val.len) return null;
-
+        bun.debugAssert(val[i] == '$');
+        var esc = false;
+        if (i + "{}".len < val.len and val[i + 1] == '{') {
             var found_closing = false;
             var j = i + 2;
             while (j < val.len) : (j += 1) {
                 switch (val[j]) {
-                    '$' => return this.parseEnvSubstitution(val, start, j, unesc),
-                    '{' => return null,
-                    '}' => {
+                    '\\' => esc = !esc,
+                    '$' => if (!esc) return this.parseEnvSubstitution(val, start, j, unesc),
+                    '{' => if (!esc) return null,
+                    '}' => if (!esc) {
                         found_closing = true;
                         break;
                     },
@@ -452,8 +463,9 @@ pub const Parser = struct {
         return std.mem.indexOfScalar(u8, key, '.');
     }
 
-    fn commitRopePart(this: *Parser, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) void {
-        const slice = this.arena.allocator().dupe(u8, unesc.items[0..]) catch bun.outOfMemory();
+    fn commitRopePart(this: *Parser, arena_allocator: Allocator, ropealloc: Allocator, unesc: *std.ArrayList(u8), existing_rope: *?*Rope) void {
+        _ = this; // autofix
+        const slice = arena_allocator.dupe(u8, unesc.items[0..]) catch bun.outOfMemory();
         const expr = Expr.init(E.String, E.String{ .data = slice }, Loc.Empty);
         if (existing_rope.*) |_r| {
             const r: *Rope = _r;
@@ -522,14 +534,14 @@ pub const IniTestingAPIs = struct {
         var parser = Parser.init(bun.default_allocator, "<src>", utf8str.slice(), globalThis.bunVM().bundler.env);
         defer parser.deinit();
 
-        parser.parse() catch |e| {
+        parser.parse(parser.arena.allocator()) catch |e| {
             if (parser.logger.errors > 0) {
                 parser.logger.printForLogLevel(bun.Output.writer()) catch bun.outOfMemory();
             } else globalThis.throwError(e, "failed to parse");
             return .undefined;
         };
 
-        return parser.out.toJS(bun.default_allocator, globalThis) catch |e| {
+        return parser.out.toJS(bun.default_allocator, globalThis, .{ .decode_escape_sequences = true }) catch |e| {
             globalThis.throwError(e, "failed to turn AST into JS");
             return .undefined;
         };
@@ -799,7 +811,7 @@ pub fn loadNpmrc(
 
     var parser = bun.ini.Parser.init(allocator, ".npmrc", npmrc_contents.items[0..], env);
     defer parser.deinit();
-    parser.parse() catch |e| {
+    parser.parse(parser.arena.allocator()) catch |e| {
         if (e == error.ParserError) {
             parser.logger.printForLogLevel(Output.errorWriter()) catch unreachable;
             return e;
@@ -930,7 +942,7 @@ pub fn loadNpmrc(
             if (install.default_registry) |dr|
                 break :brk bun.URL.parse(dr.url);
 
-            break :brk bun.URL.parse("https://registry.npmjs.org/");
+            break :brk bun.URL.parse(Registry.default_url);
         };
 
         // I don't like having to do this but we'll need a mapping of scope -> bun.URL
@@ -986,13 +998,16 @@ pub fn loadNpmrc(
                 const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
                 switch (conf_item.optname) {
                     ._auth, .email, .certfile, .keyfile => {
-                        Output.warn(
+                        log.addWarningFmt(
+                            &source,
+                            iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
+                            allocator,
                             "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
                             .{
                                 conf_item,
                                 @tagName(conf_item.optname),
                             },
-                        );
+                        ) catch bun.outOfMemory();
                         continue;
                     },
                     else => {},
@@ -1006,7 +1021,7 @@ pub fn loadNpmrc(
                             .password = "",
                             .token = "",
                             .username = "",
-                            .url = "https://registry.npmjs.org/",
+                            .url = Registry.default_url,
                         };
                         break :brk &install.default_registry.?;
                     };
@@ -1043,19 +1058,24 @@ pub fn loadNpmrc(
                 }
 
                 if (!matched_at_least_one) {
-                    Output.warn(
+                    log.addWarningFmt(
+                        &source,
+                        iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
+                        allocator,
                         "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
                         .{
                             conf_item,
                             conf_item.registry_url,
                         },
-                    );
+                    ) catch bun.outOfMemory();
                 }
             }
         }
     }
 
-    if (log.hasErrors()) {
+    const had_errors = log.hasErrors();
+    log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
+    if (had_errors) {
         return error.ParserError;
     }
 

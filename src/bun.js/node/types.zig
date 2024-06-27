@@ -932,9 +932,13 @@ pub const PathLike = union(enum) {
 };
 
 pub const Valid = struct {
-    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) bool {
+    pub fn fileDescriptor(fd: i64, ctx: JSC.C.JSContextRef, syscall: ?Syscall.Tag, exception: JSC.C.ExceptionRef) bool {
         if (fd < 0) {
-            JSC.throwInvalidArguments("Invalid file descriptor, must not be negative number", .{}, ctx, exception);
+            const te = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, "Invalid file descriptor, must not be negative number", .{}, ctx);
+            te.put(ctx, JSC.ZigString.static("errno"), JSC.JSValue.jsNumber(-9));
+            te.put(ctx, JSC.ZigString.static("code"), JSC.ZigString.static("EBADF").toJS(ctx));
+            if (syscall) |tag| te.put(ctx, JSC.ZigString.static("syscall"), JSC.ZigString.init(@tagName(tag)).toJS(ctx));
+            exception.* = te.asObjectRef();
             return false;
         }
 
@@ -1122,8 +1126,8 @@ pub const ArgumentsSlice = struct {
     }
 };
 
-pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
-    return if (bun.FDImpl.fromJSValidated(value, ctx, exception) catch null) |fd|
+pub fn fileDescriptorFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, syscall: Syscall.Tag, exception: JSC.C.ExceptionRef) ?bun.FileDescriptor {
+    return if (bun.FDImpl.fromJSValidated(value, ctx, syscall, exception) catch null) |fd|
         fd.encode()
     else
         null;
@@ -1252,10 +1256,10 @@ pub const PathOrFileDescriptor = union(Tag) {
         }
     }
 
-    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
+    pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, allocator: std.mem.Allocator, syscall: ?Syscall.Tag, exception: JSC.C.ExceptionRef) ?JSC.Node.PathOrFileDescriptor {
         const first = arguments.next() orelse return null;
 
-        if (bun.FDImpl.fromJSValidated(first, ctx, exception) catch return null) |fd| {
+        if (bun.FDImpl.fromJSValidated(first, ctx, syscall, exception) catch return null) |fd| {
             arguments.eat();
             return JSC.Node.PathOrFileDescriptor{ .fd = fd.encode() };
         }

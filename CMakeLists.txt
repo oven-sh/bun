@@ -768,7 +768,6 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
-        "${BUN_SRC}/js/internal/child_process/*.ts"
         "${BUN_SRC}/js/internal/cluster/*.ts"
         "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/internal/util/*.ts"

@@ -2,17 +2,22 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
+const FsModule = require("node:fs");
 
-const { setupChannel } = require("internal/child_process");
-const Pipe = require("internal/child_process/Pipe");
+const { ErrnoException } = require("internal/errors");
 
 const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const ERR_IPC_CHANNEL_CLOSED = $zig("node_error_binding.zig", "ERR_IPC_CHANNEL_CLOSED");
+const ERR_INVALID_HANDLE_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_HANDLE_TYPE");
+const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
+const ERR_MISSING_ARGS = $zig("node_error_binding.zig", "ERR_MISSING_ARGS");
 
 var NetModule;
 
+const JSONStringify = JSON.stringify;
+
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
-var ObjectDefineProperty = Object.defineProperty;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
@@ -26,7 +31,6 @@ var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
 
-// var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
@@ -109,17 +113,6 @@ var ReadableFromWeb;
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-function spawnTimeoutFunction(child, timeoutHolder) {
-  var timeoutId = timeoutHolder.timeoutId;
-  if (timeoutId > -1) {
-    try {
-      child.kill(killSignal);
-    } catch (err) {
-      child.emit("error", err);
-    }
-    timeoutHolder.timeoutId = -1;
-  }
-}
 /**
  * Spawns a new process using the given `file`.
  * @param {string} file
@@ -154,7 +147,7 @@ function spawn(file, args, options) {
 
   const timeout = options.timeout;
   if (timeout && timeout > 0) {
-    let timeoutId = setTimeout(() => {
+    let timeoutId: Timer | null = setTimeout(() => {
       if (timeoutId) {
         timeoutId = null;
 
@@ -1289,9 +1282,6 @@ class ChildProcess extends EventEmitter {
       this.disconnect = this.#disconnect;
       this.#closesNeeded += 1;
 
-      const ipc = new Pipe(Pipe.constants.IPC, this.#handle.ipcFd, this);
-      ipc.unref();
-      setupChannel(this, ipc, serialization);
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1802,16 +1792,121 @@ function genericNodeError(message, options) {
 }
 
 function _forkChild(fd, serializationMode) {
-  // set process.send()
-  const p = new Pipe(Pipe.constants.IPC, fd, process);
-  p.unref();
-  const control = setupChannel(process, p, serializationMode);
-  process.on("newListener", function onNewListener(name) {
-    if (name === "message" || name === "disconnect") control.refCounted();
-  });
-  process.on("removeListener", function onRemoveListener(name) {
-    if (name === "message" || name === "disconnect") control.unrefCounted();
-  });
+  process.send = function (message, handle, options, callback) {
+    if (typeof handle === "function") {
+      callback = handle;
+      handle = undefined;
+      options = undefined;
+    } else if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    } else if (options !== undefined) {
+      validateObject(options, "options");
+    }
+
+    options = { swallowErrors: false, ...options };
+
+    if (this.connected) {
+      return this._send(message, handle, options, callback);
+    }
+    const ex = ERR_IPC_CHANNEL_CLOSED();
+    if (typeof callback === "function") {
+      process.nextTick(callback, ex);
+    } else {
+      process.nextTick(() => this.emit("error", ex));
+    }
+    return false;
+  };
+
+  process._send = function (message, handle, options, callback) {
+    $assert(this.connected);
+
+    if (message === undefined) throw ERR_MISSING_ARGS("message");
+
+    // Non-serializable messages should not reach the remote
+    // end point; as any failure in the stringification there
+    // will result in error message that is weakly consumable.
+    // So perform a final check on message prior to sending.
+    if (
+      typeof message !== "string" &&
+      typeof message !== "object" &&
+      typeof message !== "number" &&
+      typeof message !== "boolean"
+    ) {
+      throw ERR_INVALID_ARG_TYPE("message", "string, object, number, or boolean", message);
+    }
+
+    // Support legacy function signature
+    if (typeof options === "boolean") {
+      options = { swallowErrors: options };
+    }
+
+    let err;
+
+    if (serializationMode === "json") {
+      const string = JSONStringify(message) + "\n";
+      try {
+        FsModule.writeFileSync(fd, string);
+        err = 0;
+      } catch (e) {
+        err = e;
+      }
+    } else if (serializationMode === "advanced") {
+      $assert(false); // TODO
+    } else {
+      $assert(false); // unsupported serialization mode
+    }
+
+    if (err === 0) {
+      if (typeof callback === "function") {
+        process.nextTick(callback, null);
+      }
+    } else {
+      if (!options.swallowErrors) {
+        const ex = new ErrnoException(err, "write");
+        if (typeof callback === "function") {
+          process.nextTick(callback, ex);
+        } else {
+          process.nextTick(() => this.emit("error", ex));
+        }
+      }
+    }
+
+    return true;
+  };
+
+  process.disconnect = function () {
+    if (!this.connected) {
+      this.emit("error", ERR_IPC_DISCONNECTED());
+      return;
+    }
+
+    // // Do not allow any new messages to be written.
+    // this.connected = false;
+    // connected is a getter
+
+    // If there are no queued messages, disconnect immediately. Otherwise,
+    // postpone the disconnect so that it happens internally after the
+    // queue is flushed.
+    // if (!this._handleQueue) this._disconnect();
+    this._disconnect();
+  };
+
+  process._disconnect = function () {
+    // $assert(!this.connected);
+
+    let fired = false;
+    function finish() {
+      if (fired) return;
+      fired = true;
+
+      // channel.close();
+      FsModule.closeSync(fd);
+      process.emit("disconnect");
+    }
+
+    process.nextTick(finish);
+  };
 }
 
 // const messages = new Map();

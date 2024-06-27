@@ -252,6 +252,7 @@ pub const Tag = enum(u8) {
 
     // Below this line are Windows API calls only.
 
+    ReadFile,
     WriteFile,
     NtQueryDirectoryFile,
     NtSetInformationFile,

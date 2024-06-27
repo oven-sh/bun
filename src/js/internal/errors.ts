@@ -11,7 +11,6 @@ class ErrnoException extends Error {
     // getSystemErrorName(err) to guard against invalid arguments from users.
     // This can be replaced with [ code ] = errmap.get(err) when this method
     // is no longer exposed to user land.
-    console.log(["ErrnoException", err, syscall, original]);
     const code = util.getSystemErrorName(err.errno);
     const message = original ? `${syscall} ${code} ${original}` : `${syscall} ${code}`;
 

@@ -5992,6 +5992,56 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     describe("--trust", async () => {
+      test("unhoisted untrusted scripts, none at root node_modules", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                // prevents real `uses-what-bin` from hoisting to root
+                "uses-what-bin": "npm:a-dep@1.0.3",
+              },
+              workspaces: ["pkg1"],
+            }),
+          ),
+          write(
+            join(packageDir, "pkg1", "package.json"),
+            JSON.stringify({
+              name: "pkg1",
+              dependencies: {
+                "uses-what-bin": "1.0.0",
+              },
+            }),
+          ),
+        ]);
+
+        await runBunInstall(testEnv, packageDir);
+
+        const results = await Promise.all([
+          exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin")),
+          exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")),
+        ]);
+
+        expect(results).toEqual([true, false]);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "trust", "--all"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        const err = await Bun.readableStreamToText(stderr);
+        expect(err).not.toContain("error:");
+
+        expect(await exited).toBe(0);
+
+        expect(
+          await exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")),
+        ).toBeTrue();
+      });
       const trustTests = [
         {
           label: "only name",

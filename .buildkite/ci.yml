@@ -6,6 +6,14 @@
 #
 # Changes to this file will be automatically uploaded on the next run
 # for a particular commit.
+#
+# Future tests machines to be added:
+# - macOS 12
+# - Windows Server 2016 & 2019
+# - Amazon Linux 2 & 2023
+# - CentOS / RHEL / Fedora / other Linux distros
+# - Docker containers
+# - Rasberry Pi?
 steps:
   # macOS aarch64
   - key: "darwin-aarch64"
@@ -157,33 +165,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-nolto"
 
-      - key: "darwin-aarch64-test-macos-12"
-        label: ":darwin: 12 aarch64 - test-bun"
-        parallelism: 2
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-aarch64-build-bun-nolto"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "aarch64"
-          release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun-nolto"
-
       - key: "darwin-aarch64-test-macos-14-smoke"
         label: ":darwin: 14 aarch64 - test-bun (smoke)"
         parallelism: 1
@@ -235,33 +216,6 @@ steps:
           os: "darwin"
           arch: "aarch64"
           release: "13"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.1"
-
-      - key: "darwin-aarch64-test-macos-12-smoke"
-        label: ":darwin: 12 aarch64 - test-bun (smoke)"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-aarch64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "aarch64"
-          release: "12"
         command:
           - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.1"
 
@@ -414,33 +368,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun-nolto"
 
-      - key: "darwin-x64-test-macos-12"
-        label: ":darwin: 12 x64 - test-bun"
-        parallelism: 2
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-x64-build-bun-nolto"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "x64"
-          release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun-nolto"
-
       - key: "darwin-x64-test-macos-14-smoke"
         label: ":darwin: 14 x64 - test-bun (smoke)"
         parallelism: 1
@@ -492,33 +419,6 @@ steps:
           os: "darwin"
           arch: "x64"
           release: "13"
-        command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.1"
-
-      - key: "darwin-x64-test-macos-12-smoke"
-        label: ":darwin: 12 x64 - test-bun (smoke)"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "darwin-x64-build-bun"
-        agents:
-          queue: "test-darwin"
-          os: "darwin"
-          arch: "x64"
-          release: "12"
         command:
           - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.1"
 
@@ -1683,8 +1583,6 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
-          - "ls"
-          - "sleep 300"
 
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
@@ -1706,8 +1604,6 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
-          - "ls"
-          - "sleep 300"
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"

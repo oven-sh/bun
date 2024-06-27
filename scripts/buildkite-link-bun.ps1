@@ -40,7 +40,7 @@ ninja -v
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
 ls
-if ($UseLto -eq "OFF") {
+if ($Fast) {
   $Tag = "$Tag-nolto"
 }
 

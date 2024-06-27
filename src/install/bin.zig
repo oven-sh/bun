@@ -361,7 +361,7 @@ pub const Bin = extern struct {
             }
 
             // Skip if the target does not exist. This is important because placing a dangling
-            // symlink in path might break a postinstall
+            // shim in path might break a postinstall
             if (!bun.sys.exists(abs_target)) {
                 return;
             }
@@ -374,6 +374,26 @@ pub const Bin = extern struct {
             if (this.err != null) {
                 // cleanup on error just in case
                 unlinkBinOrShim(abs_dest);
+                return;
+            }
+
+            if (comptime !Environment.isWindows) {
+                // any error here is ignored
+                const bin = bun.sys.File.openat(bun.invalid_fd, abs_target, bun.O.RDWR, 0o664).unwrap() catch return;
+                defer bin.close();
+
+                var shebang_buf: [1024]u8 = undefined;
+                const read = bin.read(&shebang_buf).unwrap() catch return;
+                const chunk = shebang_buf[0..read];
+                if (chunk.len < 7 or chunk[0] != '#' or chunk[1] != '!') return;
+
+                if (strings.indexOfChar(chunk, '\n')) |newline| {
+                    if (newline > 0 and chunk[newline - 1] == '\r') {
+                        const pos = newline - 1;
+                        bin.handle.asFile().seekTo(pos) catch return;
+                        bin.writeAll("\n").unwrap() catch return;
+                    }
+                }
             }
         }
 

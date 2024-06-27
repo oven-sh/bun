@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { isWindows } from "harness";
+import { shellExe } from "harness";
 import { constants } from "os";
 
 const inputs = {
@@ -13,7 +13,7 @@ describe("subprocess.kill", () => {
       for (let input of inputs[key as keyof typeof inputs]) {
         test(Bun.inspect(input).replaceAll("\n", "\\n"), async () => {
           const proc = Bun.spawn({
-            cmd: ["bash", "-c", "sleep 1000"],
+            cmd: [shellExe(), "-c", "sleep 1000"],
             stdio: ["inherit", "inherit", "inherit"],
           });
 
@@ -33,7 +33,7 @@ describe("subprocess.kill", () => {
     for (let input of fails) {
       test(Bun.inspect(input).replaceAll("\n", "\\n"), async () => {
         const proc = Bun.spawn({
-          cmd: ["bash", "-c", "sleep 1000"],
+          cmd: [shellExe(), "-c", "sleep 1000"],
           stdio: ["inherit", "inherit", "inherit"],
         });
 

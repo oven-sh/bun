@@ -12288,6 +12288,10 @@ pub const PackageManager = struct {
                     },
                 }
             } else {
+                if (this.bins[package_id].tag != .none) {
+                    this.trees[this.current_tree_id].binaries.add(dependency_id) catch bun.outOfMemory();
+                }
+
                 var destination_dir = this.node_modules.makeAndOpenDir(this.root_node_modules_folder) catch |err| {
                     if (log_level != .silent) {
                         Output.err(err, "Failed to open node_modules folder for <r><red>{s}<r> in {s}", .{

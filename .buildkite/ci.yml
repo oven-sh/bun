@@ -207,7 +207,7 @@ steps:
           arch: "aarch64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.1"
 
       - key: "darwin-aarch64-test-macos-13-smoke"
         label: ":darwin: 13 aarch64 - test-bun (smoke)"
@@ -234,7 +234,7 @@ steps:
           arch: "aarch64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.1"
 
       - key: "darwin-aarch64-test-macos-12-smoke"
         label: ":darwin: 12 aarch64 - test-bun (smoke)"
@@ -261,7 +261,7 @@ steps:
           arch: "aarch64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-aarch64-build-bun --smoke 0.1"
 
   # macOS x64
   - key: "darwin-x64"
@@ -462,7 +462,7 @@ steps:
           arch: "x64"
           release: "14"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.1"
 
       - key: "darwin-x64-test-macos-13-smoke"
         label: ":darwin: 13 x64 - test-bun (smoke)"
@@ -489,7 +489,7 @@ steps:
           arch: "x64"
           release: "13"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.1"
 
       - key: "darwin-x64-test-macos-12-smoke"
         label: ":darwin: 12 x64 - test-bun (smoke)"
@@ -516,7 +516,7 @@ steps:
           arch: "x64"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step darwin-x64-build-bun --smoke 0.1"
 
   # Linux aarch64
   - key: "linux-aarch64"
@@ -749,7 +749,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
 
       - key: "linux-aarch64-test-debian-11-smoke"
         label: ":debian: 11 aarch64 - test-bun (smoke)"
@@ -777,7 +777,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
 
       - key: "linux-aarch64-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 aarch64 - test-bun (smoke)"
@@ -805,7 +805,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
 
       - key: "linux-aarch64-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 aarch64 - test-bun (smoke)"
@@ -833,7 +833,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.1"
 
   # Linux x64
   - key: "linux-x64"
@@ -1066,7 +1066,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
 
       - key: "linux-x64-test-debian-11-smoke"
         label: ":debian: 11 x64 - test-bun (smoke)"
@@ -1094,7 +1094,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
 
       - key: "linux-x64-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 x64 - test-bun (smoke)"
@@ -1122,7 +1122,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
 
       - key: "linux-x64-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 x64 - test-bun (smoke)"
@@ -1150,7 +1150,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun --smoke 0.1"
 
   # Linux x64-baseline
   - key: "linux-x64-baseline"
@@ -1383,7 +1383,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
 
       - key: "linux-x64-baseline-test-debian-11-smoke"
         label: ":debian: 11 x64-baseline - test-bun (smoke)"
@@ -1411,7 +1411,7 @@ steps:
           distro: "debian"
           release: "11"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
 
       - key: "linux-x64-baseline-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 x64-baseline - test-bun (smoke)"
@@ -1439,7 +1439,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
 
       - key: "linux-x64-baseline-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 x64-baseline - test-bun (smoke)"
@@ -1467,7 +1467,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.05"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun --smoke 0.1"
 
   # Windows x64
   - key: "windows-x64"
@@ -1538,7 +1538,9 @@ steps:
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
-          - "windows-x64-build-bun-nolto"
+          - "windows-x64-build-deps"
+          - "windows-x64-build-zig"
+          - "windows-x64-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -1559,6 +1561,16 @@ steps:
         parallelism: 10
         soft_fail:
           - exit_status: 1
+        retry:
+          automatic:
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
         depends_on:
           - "windows-x64-build-bun-nolto"
         agents:
@@ -1573,6 +1585,16 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 1
+        retry:
+          automatic:
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
         depends_on:
           - "windows-x64-build-bun"
         agents:
@@ -1580,7 +1602,7 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun --smoke 0.05"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun --smoke 0.1"
 
   # Windows x64-baseline
   - key: "windows-x64-baseline"
@@ -1655,7 +1677,9 @@ steps:
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         depends_on:
-          - "windows-x64-baseline-build-bun-nolto"
+          - "windows-x64-baseline-build-deps"
+          - "windows-x64-baseline-build-zig"
+          - "windows-x64-baseline-build-cpp"
         agents:
           queue: "build-windows"
           os: "windows"
@@ -1676,6 +1700,16 @@ steps:
         parallelism: 10
         soft_fail:
           - exit_status: 1
+        retry:
+          automatic:
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
         depends_on:
           - "windows-x64-baseline-build-bun-nolto"
         agents:
@@ -1690,6 +1724,16 @@ steps:
         parallelism: 1
         soft_fail:
           - exit_status: 1
+        retry:
+          automatic:
+            - exit_status: -1
+              limit: 3
+            - exit_status: 255
+              limit: 3
+            - signal_reason: agent_stop
+              limit: 3
+            - signal: SIGTERM
+              limit: 3
         depends_on:
           - "windows-x64-baseline-build-bun"
         agents:
@@ -1697,4 +1741,4 @@ steps:
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun --smoke 0.05"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun --smoke 0.1"

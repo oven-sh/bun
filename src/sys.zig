@@ -379,6 +379,10 @@ pub const Error = struct {
         return "UNKNOWN";
     }
 
+    pub fn toZigErr(this: Error) anyerror {
+        return bun.errnoToZigErr(this.errno);
+    }
+
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
@@ -482,6 +486,15 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
     return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+        Maybe(void).success;
+}
+
+pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.chmod(path, mode);
+    }
+
+    return Maybe(void).errnoSysP(C.chmod(path.ptr, mode), .chmod, path) orelse
         Maybe(void).success;
 }
 
@@ -1732,14 +1745,14 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
 
 pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
     while (true) {
-        const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
+        const rc = sys.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]const u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         buf[@intCast(rc)] = 0;
-        return Maybe(usize){ .result = buf[0..@intCast(rc)] };
+        return Maybe([:0]const u8){ .result = buf[0..@intCast(rc) :0] };
     }
 }
 
@@ -2488,7 +2501,8 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         }
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0;
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
         syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
 
         return .{
@@ -2554,7 +2568,10 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
         }
 
         const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
+            // from libuv: directories cannot be read-only
+            // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
+            (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
         syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
         return is_regular_file;
@@ -2953,6 +2970,13 @@ pub const File = struct {
         };
     }
 
+    pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
+            .result => |fd| .{ .result = .{ .handle = fd } },
+            .err => |err| .{ .err = err },
+        };
+    }
+
     pub fn from(other: anytype) File {
         const T = @TypeOf(other);
 
@@ -3014,6 +3038,23 @@ pub const File = struct {
             }
         }
 
+        return .{ .result = {} };
+    }
+
+    pub fn writeFile(
+        relative_dir_or_cwd: anytype,
+        path: bun.OSPathSliceZ,
+        data: []const u8,
+    ) Maybe(void) {
+        const file = switch (File.openatOSPath(relative_dir_or_cwd, path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .err => |err| return .{ .err = err },
+            .result => |fd| fd,
+        };
+        defer file.close();
+        switch (file.writeAll(data)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
         return .{ .result = {} };
     }
 

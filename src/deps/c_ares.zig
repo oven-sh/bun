@@ -1364,12 +1364,26 @@ pub const Error = enum(i32) {
             };
         }
 
+        const eai: std.posix.system.EAI = @enumFromInt(rc);
+
         // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
-        if (rc == @intFromEnum(std.posix.system.EAI.NODATA) or rc == @intFromEnum(std.posix.system.EAI.NONAME)) {
+        if (eai == .NODATA or eai == .NONAME) {
             return Error.ENOTFOUND;
         }
 
-        return switch (@as(std.posix.system.EAI, @enumFromInt(rc))) {
+        if (comptime bun.Environment.isLinux) {
+            switch (eai) {
+                .SOCKTYPE => return Error.ECONNREFUSED,
+                .IDN_ENCODE => return Error.EBADSTR,
+                .ALLDONE => return Error.ENOTFOUND,
+                .INPROGRESS => return Error.ETIMEOUT,
+                .CANCELED => return Error.ECANCELLED,
+                .NOTCANCELED => return Error.ECANCELLED,
+                else => {},
+            }
+        }
+
+        return switch (eai) {
             @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints

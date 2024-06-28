@@ -1316,6 +1316,26 @@ pub const Error = enum(i32) {
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
 
+    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("name"),
+            JSC.ZigString.init("DNSException").toValueGC(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("code"),
+            JSC.ZigString.init(this.code()).toValueGC(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("errno"),
+            JSC.jsNumber(@intFromEnum(this)),
+        );
+        return error_value;
+    }
+
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
             // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815

@@ -100,6 +100,7 @@ describe("dns", () => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
+        name: "DNSException",
       });
     });
 
@@ -107,6 +108,7 @@ describe("dns", () => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
         code: "DNS_ENOTFOUND",
+        name: "DNSException",
       });
     });
   });

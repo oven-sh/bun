@@ -342,6 +342,7 @@ const mapLookupAll = res => {
 function throwIfEmpty(res) {
   if (res.length === 0) {
     const err = new Error("No records found");
+    err.name = "DNSException";
     err.code = "ENODATA";
     // Hardcoded errno
     err.errno = 1;

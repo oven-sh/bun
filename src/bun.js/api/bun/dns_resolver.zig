@@ -492,29 +492,15 @@ pub const CAresNameInfo = struct {
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?c_ares.struct_nameinfo) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("lookupService failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
         if (result == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("lookupService failed: No results", .{});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
             this.deinit();
             return;
         }
@@ -910,29 +896,15 @@ pub const CAresReverse = struct {
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("reverse failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
         if (result == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("reverse failed: No results", .{});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
             this.deinit();
             return;
         }
@@ -989,28 +961,15 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
             if (err_) |err| {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
-                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, err.label() });
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
-                );
-
-                promise.rejectTask(globalThis, error_value);
+                const globalThis = this.globalThis;
+                promise.rejectTask(globalThis, err.toJS(globalThis));
                 this.deinit();
                 return;
             }
             if (result == null) {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
-                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-                );
-                promise.rejectTask(globalThis, error_value);
+                const globalThis = this.globalThis;
+                promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
                 this.deinit();
                 return;
             }
@@ -1074,19 +1033,14 @@ pub const DNSLookup = struct {
         log("processGetAddrInfoNative: status={d}", .{status});
         if (c_ares.Error.initEAI(status)) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
                     break :brk bun.sys.Error.fromCode(bun.C.getErrno(@as(c_int, -1)), .getaddrinfo).toJSC(globalThis);
                 }
-                const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
-                );
-                break :brk error_value;
+
+                break :brk err.toJS(globalThis);
             };
 
             this.deinit();
@@ -1100,28 +1054,17 @@ pub const DNSLookup = struct {
         log("processGetAddrInfo", .{});
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
 
         if (result == null or result.?.node == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
-            const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{"No results"});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
+            const error_value = c_ares.Error.ENOTFOUND.toJS(globalThis);
             promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
@@ -2422,13 +2365,8 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (resolver.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
                 defer ip_slice.deinit();
-                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toJS(globalThis));
                 return .zero;
             },
         };
@@ -2807,13 +2745,7 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
-
-                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toJS(globalThis));
                 return .zero;
             },
         };

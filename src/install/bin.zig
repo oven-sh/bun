@@ -385,7 +385,9 @@ pub const Bin = extern struct {
                 var shebang_buf: [1024]u8 = undefined;
                 const read = bin.read(&shebang_buf).unwrap() catch return;
                 const chunk = shebang_buf[0..read];
-                if (chunk.len < 7 or chunk[0] != '#' or chunk[1] != '!') return;
+                // 123 4 5
+                // #!a\r\n
+                if (chunk.len < 5 or chunk[0] != '#' or chunk[1] != '!') return;
 
                 if (strings.indexOfChar(chunk, '\n')) |newline| {
                     if (newline > 0 and chunk[newline - 1] == '\r') {

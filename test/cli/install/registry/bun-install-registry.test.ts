@@ -128,6 +128,28 @@ describe("optionalDependencies", () => {
   }
 });
 
+test("tarball override does not crash", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "two-range-deps": "||",
+      },
+      overrides: {
+        "no-deps": `http://localhost:${port}/no-deps/-/no-deps-2.0.0.tgz`,
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "2.0.0",
+  });
+});
+
 describe.each(["--production", "without --production"])("%s", flag => {
   const prod = flag === "--production";
   const order = ["devDependencies", "dependencies"];

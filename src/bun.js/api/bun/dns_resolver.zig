@@ -1407,7 +1407,7 @@ pub const InternalDNS = struct {
         // https://github.com/nodejs/node/issues/33816
         // https://github.com/aio-libs/aiohttp/issues/5357
         // https://github.com/libuv/libuv/issues/2225
-        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else std.c.AI_ADDRINFO,
+        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,

@@ -3,7 +3,7 @@
 set -eo pipefail
 
 function assert_main() {
-  if [ "$BUILDKITE_REPO" != "$BUILDKITE_PULL_REQUEST_REPO" ]; then
+  if [[ "$BUILDKITE_PULL_REQUEST_REPO" && "$BUILDKITE_REPO" != "$BUILDKITE_PULL_REQUEST_REPO" ]]; then
     echo "error: Cannot upload release from a fork"
     exit 1
   fi

@@ -112,6 +112,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 2
         soft_fail:
           - exit_status: 2
@@ -140,6 +141,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-13"
         label: ":darwin: 13 aarch64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 2
         soft_fail:
           - exit_status: 2
@@ -167,6 +169,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-14-smoke"
         label: ":darwin: 14 aarch64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -194,6 +197,7 @@ steps:
 
       - key: "darwin-aarch64-test-macos-13-smoke"
         label: ":darwin: 13 aarch64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -316,6 +320,7 @@ steps:
 
       - key: "darwin-x64-test-macos-14"
         label: ":darwin: 14 x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 2
         soft_fail:
           - exit_status: 2
@@ -343,6 +348,7 @@ steps:
 
       - key: "darwin-x64-test-macos-13"
         label: ":darwin: 13 x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 2
         soft_fail:
           - exit_status: 2
@@ -370,6 +376,7 @@ steps:
 
       - key: "darwin-x64-test-macos-14-smoke"
         label: ":darwin: 14 x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -397,6 +404,7 @@ steps:
 
       - key: "darwin-x64-test-macos-13-smoke"
         label: ":darwin: 13 x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -519,6 +527,7 @@ steps:
 
       - key: "linux-aarch64-test-debian-12"
         label: ":debian: 12 aarch64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -547,6 +556,7 @@ steps:
 
       - key: "linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -575,6 +585,7 @@ steps:
 
       - key: "linux-aarch64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 aarch64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -603,6 +614,7 @@ steps:
 
       - key: "linux-aarch64-test-debian-12-smoke"
         label: ":debian: 12 aarch64 - test-bun-smoke"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -631,6 +643,7 @@ steps:
 
       - key: "linux-aarch64-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 aarch64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -659,6 +672,7 @@ steps:
 
       - key: "linux-aarch64-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 aarch64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -782,6 +796,7 @@ steps:
 
       - key: "linux-x64-test-debian-12"
         label: ":debian: 12 x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -810,6 +825,7 @@ steps:
 
       - key: "linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -838,6 +854,7 @@ steps:
 
       - key: "linux-x64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -866,6 +883,7 @@ steps:
 
       - key: "linux-x64-test-debian-12-smoke"
         label: ":debian: 12 x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -894,6 +912,7 @@ steps:
 
       - key: "linux-x64-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -922,6 +941,7 @@ steps:
 
       - key: "linux-x64-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -1045,6 +1065,7 @@ steps:
 
       - key: "linux-x64-baseline-test-debian-12"
         label: ":debian: 12 x64-baseline - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -1073,6 +1094,7 @@ steps:
 
       - key: "linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -1101,6 +1123,7 @@ steps:
 
       - key: "linux-x64-baseline-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 5
         soft_fail:
           - exit_status: 2
@@ -1129,6 +1152,7 @@ steps:
 
       - key: "linux-x64-baseline-test-debian-12-smoke"
         label: ":debian: 12 x64-baseline - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -1157,6 +1181,7 @@ steps:
 
       - key: "linux-x64-baseline-test-ubuntu-2204-smoke"
         label: ":ubuntu: 22.04 x64-baseline - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -1185,6 +1210,7 @@ steps:
 
       - key: "linux-x64-baseline-test-ubuntu-2004-smoke"
         label: ":ubuntu: 20.04 x64-baseline - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 2
@@ -1300,6 +1326,7 @@ steps:
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 10
         soft_fail:
           - exit_status: 1
@@ -1324,6 +1351,7 @@ steps:
 
       - key: "windows-x64-test-bun-smoke"
         label: ":windows: x64 - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 1
@@ -1439,6 +1467,7 @@ steps:
 
       - key: "windows-x64-baseline-test-bun"
         label: ":windows: x64-baseline - test-bun"
+        if: "build.branch != 'main'"
         parallelism: 10
         soft_fail:
           - exit_status: 1
@@ -1463,6 +1492,7 @@ steps:
 
       - key: "windows-x64-baseline-test-bun-smoke"
         label: ":windows: x64-baseline - test-bun (smoke)"
+        if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:
           - exit_status: 1

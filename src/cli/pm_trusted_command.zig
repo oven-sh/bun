@@ -172,7 +172,7 @@ pub const TrustCommand = struct {
     fn printErrorZeroUntrustedDependenciesFound(trust_all: bool, packages_to_trust: []const string) void {
         Output.print("\n", .{});
         if (trust_all) {
-            Output.errGeneric("0 scripts ran. This means all dependencies are already trusted or non have scripts.", .{});
+            Output.errGeneric("0 scripts ran. This means all dependencies are already trusted or none have scripts.", .{});
         } else {
             Output.errGeneric("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
             for (packages_to_trust) |arg| {

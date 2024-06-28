@@ -114,7 +114,7 @@ steps:
       - key: "darwin-aarch64-test-macos-14"
         label: ":darwin: 14 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 2
+        parallelism: 3
         soft_fail:
           - exit_status: 2
         retry:
@@ -143,7 +143,7 @@ steps:
       - key: "darwin-aarch64-test-macos-13"
         label: ":darwin: 13 aarch64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 2
+        parallelism: 3
         soft_fail:
           - exit_status: 2
         retry:
@@ -323,7 +323,7 @@ steps:
       - key: "darwin-x64-test-macos-14"
         label: ":darwin: 14 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 2
+        parallelism: 3
         soft_fail:
           - exit_status: 2
         retry:
@@ -351,7 +351,7 @@ steps:
       - key: "darwin-x64-test-macos-13"
         label: ":darwin: 13 x64 - test-bun"
         if: "build.branch != 'main'"
-        parallelism: 2
+        parallelism: 3
         soft_fail:
           - exit_status: 2
         retry:

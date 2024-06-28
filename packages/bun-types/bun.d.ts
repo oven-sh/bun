@@ -2968,7 +2968,7 @@ declare module "bun" {
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
      * Throws an error if either version is invalid.
      */
-    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+    order(this: void, v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
   var semver: Semver;
 

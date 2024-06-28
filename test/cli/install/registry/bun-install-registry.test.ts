@@ -106,7 +106,7 @@ async function generateRegistryUser(username: string, password: string): Promise
     throw new Error("that user already exists");
   } else users[username] = password;
 
-  const url = `http://localhost:4873/-/user/org.couchdb.user:${username}`;
+  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
   const user = {
     name: username,
     password: password,

@@ -104,7 +104,7 @@ describe("bun patch <pkg>", async () => {
         ],
         ["@types/ws@7.4.7", "node_modules/@types/ws", "@types/ws@7.4.7", "patches/@types%2Fws@7.4.7.patch"],
       ];
-      for (const [arg, path, ver, patch_path] of args) {
+      for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
@@ -165,7 +165,7 @@ describe("bun patch <pkg>", async () => {
 
           expect(await $`cat ${path}/index.js`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
 
-          expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies[ver]).toEqual(
+          expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies[version]).toEqual(
             patch_path,
           );
         });

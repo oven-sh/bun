@@ -518,6 +518,111 @@ pub const Parser = struct {
 pub const IniTestingAPIs = struct {
     const JSC = bun.JSC;
 
+    pub fn loadNpmrcFromJS(
+        globalThis: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(.C) JSC.JSValue {
+        const arg = callframe.argument(0);
+        const npmrc_contents = arg.toBunString(globalThis);
+        defer npmrc_contents.deref();
+        const npmrc_utf8 = npmrc_contents.toUTF8(bun.default_allocator);
+        defer npmrc_utf8.deinit();
+        const source = bun.logger.Source.initPathString("<js>", npmrc_utf8.slice());
+
+        var log = bun.logger.Log.init(bun.default_allocator);
+        defer log.deinit();
+
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
+        const allocator = arena.allocator();
+        defer arena.deinit();
+
+        const envjs = callframe.argument(1);
+        const env = if (envjs.isEmptyOrUndefinedOrNull()) globalThis.bunVM().bundler.env else brk: {
+            var envmap = bun.DotEnv.Map.HashTable.init(allocator);
+            var object_iter = JSC.JSPropertyIterator(.{
+                .skip_empty_name = false,
+                .include_value = true,
+            }).init(globalThis, envjs);
+            defer object_iter.deinit();
+
+            envmap.ensureTotalCapacity(object_iter.len) catch bun.outOfMemory();
+
+            while (object_iter.next()) |key| {
+                const keyslice = key.toOwnedSlice(allocator) catch bun.outOfMemory();
+                var value = object_iter.value;
+                if (value == .undefined) continue;
+
+                const value_str = value.getZigString(globalThis);
+                const slice = value_str.toOwnedSlice(allocator) catch bun.outOfMemory();
+
+                envmap.put(keyslice, .{
+                    .value = slice,
+                    .conditional = false,
+                }) catch bun.outOfMemory();
+            }
+
+            const map = allocator.create(bun.DotEnv.Map) catch bun.outOfMemory();
+            map.* = .{
+                .map = envmap,
+            };
+
+            const env = bun.DotEnv.Loader.init(map, allocator);
+            const envstable = allocator.create(bun.DotEnv.Loader) catch bun.outOfMemory();
+            envstable.* = env;
+            break :brk envstable;
+        };
+
+        const install = allocator.create(bun.Schema.Api.BunInstall) catch bun.outOfMemory();
+        install.* = std.mem.zeroes(bun.Schema.Api.BunInstall);
+        loadNpmrc(allocator, install, env, false, &log, &source) catch {
+            return log.toJS(globalThis, allocator, "error");
+        };
+
+        var obj = JSC.JSValue.createEmptyObject(globalThis, 3);
+        obj.protect();
+        defer obj.unprotect();
+
+        const default_registry_url, const default_registry_token, const default_registry_username, const default_registry_password = brk: {
+            const default_registry = install.default_registry orelse break :brk .{ bun.String.static(Registry.default_url[0..]), bun.String.empty, bun.String.empty, bun.String.empty };
+
+            break :brk .{
+                bun.String.fromBytes(default_registry.url),
+                bun.String.fromBytes(default_registry.token),
+                bun.String.fromBytes(default_registry.username),
+                bun.String.fromBytes(default_registry.password),
+            };
+        };
+        defer {
+            default_registry_url.deref();
+            default_registry_token.deref();
+            default_registry_username.deref();
+            default_registry_password.deref();
+        }
+
+        obj.put(
+            globalThis,
+            bun.String.static("default_registry_url"),
+            default_registry_url.toJS(globalThis),
+        );
+        obj.put(
+            globalThis,
+            bun.String.static("default_registry_token"),
+            default_registry_token.toJS(globalThis),
+        );
+        obj.put(
+            globalThis,
+            bun.String.static("default_registry_username"),
+            default_registry_username.toJS(globalThis),
+        );
+        obj.put(
+            globalThis,
+            bun.String.static("default_registry_password"),
+            default_registry_password.toJS(globalThis),
+        );
+
+        return obj;
+    }
+
     pub fn parse(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
@@ -773,14 +878,13 @@ pub const ScopeIterator = struct {
     }
 };
 
-pub fn loadNpmrc(
+pub fn loadNpmrcFromFile(
     allocator: std.mem.Allocator,
+    install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
-    ctx: bun.CLI.Command.Context,
     log: *bun.logger.Log,
 ) !void {
-    const Api = bun.Schema.Api;
     const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
         .result => |fd| fd,
         .err => |err| {
@@ -809,7 +913,18 @@ pub fn loadNpmrc(
     }
     const source = bun.logger.Source.initPathString(".npmrc", npmrc_contents.items[0..]);
 
-    var parser = bun.ini.Parser.init(allocator, ".npmrc", npmrc_contents.items[0..], env);
+    return loadNpmrc(allocator, install, env, auto_loaded, log, &source);
+}
+
+pub fn loadNpmrc(
+    allocator: std.mem.Allocator,
+    install: *bun.Schema.Api.BunInstall,
+    env: *bun.DotEnv.Loader,
+    auto_loaded: bool,
+    log: *bun.logger.Log,
+    source: *const bun.logger.Source,
+) !void {
+    var parser = bun.ini.Parser.init(allocator, ".npmrc", source.contents, env);
     defer parser.deinit();
     parser.parse(parser.arena.allocator()) catch |e| {
         if (e == error.ParserError) {
@@ -836,21 +951,14 @@ pub fn loadNpmrc(
     // We need to dupe all strings
     const out = parser.out;
 
-    var install: *Api.BunInstall = ctx.install orelse brk: {
-        const install_ = allocator.create(Api.BunInstall) catch bun.outOfMemory();
-        install_.* = std.mem.zeroes(Api.BunInstall);
-        ctx.install = install_;
-        break :brk install_;
-    };
-
     if (out.asProperty("registry")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
             var p = bun.Schema.Api.NpmRegistry.Parser{
                 .allocator = allocator,
                 .log = log,
-                .source = &source,
+                .source = source,
             };
-            install.default_registry = p.parseRegistryURLStringImpl(ctx.allocator.dupe(u8, str) catch bun.outOfMemory()) catch |e| {
+            install.default_registry = p.parseRegistryURLStringImpl(allocator.dupe(u8, str) catch bun.outOfMemory()) catch |e| {
                 if (e == error.OutOfMemory) bun.outOfMemory();
                 return error.ParserError;
             };
@@ -859,7 +967,7 @@ pub fn loadNpmrc(
 
     if (out.asProperty("cache")) |query| {
         if (query.expr.asUtf8StringLiteral()) |str| {
-            install.cache_directory = ctx.allocator.dupe(u8, str) catch bun.outOfMemory();
+            install.cache_directory = allocator.dupe(u8, str) catch bun.outOfMemory();
         } else if (query.expr.asBool()) |b| {
             install.disable_cache = !b;
         }
@@ -880,7 +988,7 @@ pub fn loadNpmrc(
         var iter = bun.ini.ScopeIterator{
             .config = parser.out.data.e_object,
             .count = true,
-            .source = &source,
+            .source = source,
             .log = log,
             .allocator = allocator,
         };
@@ -891,7 +999,7 @@ pub fn loadNpmrc(
                 const prop_idx = iter.prop_idx -| 1;
                 const prop = iter.config.properties.at(prop_idx);
                 const loc = prop.key.?.loc;
-                log.addErrorFmt(&source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
+                log.addErrorFmt(source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
                 return error.ParserError;
             }) |o| {
                 if (o == .some) {
@@ -902,17 +1010,17 @@ pub fn loadNpmrc(
         };
 
         defer install.scoped = registry_map;
-        registry_map.scopes.ensureUnusedCapacity(ctx.allocator, scope_count) catch bun.outOfMemory();
+        registry_map.scopes.ensureUnusedCapacity(allocator, scope_count) catch bun.outOfMemory();
 
         iter.prop_idx = 0;
         iter.count = false;
 
         while (iter.next() catch unreachable) |val| {
             if (val.get()) |result| {
-                const registry = result.registry.dupe(ctx.allocator);
+                const registry = result.registry.dupe(allocator);
                 registry_map.scopes.put(
-                    ctx.allocator,
-                    ctx.allocator.dupe(u8, result.scope) catch bun.outOfMemory(),
+                    allocator,
+                    allocator.dupe(u8, result.scope) catch bun.outOfMemory(),
                     registry,
                 ) catch bun.outOfMemory();
             }
@@ -975,7 +1083,7 @@ pub fn loadNpmrc(
 
         var iter = bun.ini.ConfigIterator{
             .config = parser.out.data.e_object,
-            .source = &source,
+            .source = source,
             .log = log,
             .allocator = allocator,
         };
@@ -984,7 +1092,7 @@ pub fn loadNpmrc(
             const prop_idx = iter.prop_idx -| 1;
             const prop = iter.config.properties.at(prop_idx);
             const loc = prop.key.?.loc;
-            log.addErrorFmt(&source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
+            log.addErrorFmt(source, loc, parser.arena.allocator(), "Found an invalid registry option:", .{}) catch bun.outOfMemory();
             return error.ParserError;
         }) |val| {
             if (val.get()) |conf_item_| {
@@ -999,7 +1107,7 @@ pub fn loadNpmrc(
                 switch (conf_item.optname) {
                     ._auth, .email, .certfile, .keyfile => {
                         log.addWarningFmt(
-                            &source,
+                            source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
                             allocator,
                             "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
@@ -1059,7 +1167,7 @@ pub fn loadNpmrc(
 
                 if (!matched_at_least_one) {
                     log.addWarningFmt(
-                        &source,
+                        source,
                         iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
                         allocator,
                         "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
@@ -1079,18 +1187,18 @@ pub fn loadNpmrc(
         return error.ParserError;
     }
 
-    if (!bun.Environment.isDebug) {
-        if (!@import("./bun.js/module_loader.zig").ModuleLoader.is_allowed_to_use_internal_testing_apis)
-            return;
-    }
+    // if (!bun.Environment.isDebug) {
+    //     if (!@import("./bun.js/module_loader.zig").ModuleLoader.is_allowed_to_use_internal_testing_apis)
+    //         return;
+    // }
 
-    if (bun.getenvTruthy("BUN_TEST_LOG_DEFAULT_REGISTRY")) {
-        if (install.default_registry) |reg| {
-            Output.print("Default registry url: {s}\n", .{reg.url});
-            Output.print("Default registry token: {s}\n", .{reg.token});
-            Output.print("Default registry username: {s}\n", .{reg.username});
-            Output.print("Default registry password: {s}\n", .{reg.password});
-            Output.flush();
-        }
-    }
+    // if (bun.getenvTruthy("BUN_TEST_LOG_DEFAULT_REGISTRY")) {
+    //     if (install.default_registry) |reg| {
+    //         Output.print("Default registry url: {s}\n", .{reg.url});
+    //         Output.print("Default registry token: {s}\n", .{reg.token});
+    //         Output.print("Default registry username: {s}\n", .{reg.username});
+    //         Output.print("Default registry password: {s}\n", .{reg.password});
+    //         Output.flush();
+    //     }
+    // }
 }

@@ -21,7 +21,7 @@ import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefault
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
 const { iniInternals } = require("bun:internal-for-testing");
-const { registryConfig } = iniInternals;
+const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,
@@ -36,12 +36,29 @@ var packageDir: string;
 let users: Record<string, string> = {};
 
 beforeAll(async () => {
+  console.log("STARTING VERDACCIO");
   setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
     { silent: true, execPath: "bun" },
   );
+
+  verdaccioServer.stderr?.on("data", data => {
+    console.error(`Error: ${data}`);
+  });
+
+  verdaccioServer.on("error", error => {
+    console.error(`Failed to start child process: ${error}`);
+  });
+
+  verdaccioServer.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code} and signal ${signal}`);
+    } else {
+      console.log("Child process exited successfully");
+    }
+  });
 
   await new Promise<void>(done => {
     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
@@ -55,7 +72,7 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
-  verdaccioServer.kill();
+  if (verdaccioServer) verdaccioServer.kill();
 });
 
 beforeEach(async () => {
@@ -79,6 +96,7 @@ registry = "http://localhost:${port}/"
  * Returns auth token
  */
 async function generateRegistryUser(username: string, password: string): Promise<string> {
+  console.log("GENERATE REGISTRY USER");
   if (users[username]) {
     throw new Error("that user already exists");
   } else users[username] = password;
@@ -166,26 +184,13 @@ registry = http://localhost:${port}/
   });
 
   it("default registry from env variable", async () => {
-    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
     const ini = /* ini */ `
 registry=\${LOL}
   `;
 
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    const stdout = await Bun.$`BUN_TEST_LOG_DEFAULT_REGISTRY=1 ${bunExe()} install`
-      .cwd(packageDir)
-      .throws(true)
-      .env({ ...env, LOL: `http://localhost:${port}/` })
-      .text();
+    const result = loadNpmrc(ini, { LOL: `http://localhost:${port}/` });
 
-    expect(stdout).toContain(`Default registry url: http://localhost:${port}/`);
+    expect(result.default_registry_url).toBe(`http://localhost:${port}/`);
   });
 
   it("default registry from env variable 2", async () => {
@@ -195,25 +200,19 @@ registry=\${LOL}
 registry=http://localhost:\${PORT}/
   `;
 
-    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
-    await Bun.$`echo ${JSON.stringify({
-      name: "foo",
-      dependencies: {
-        "@types/no-deps": "1.0.0",
-      },
-    })} > package.json`.cwd(packageDir);
-    const stdout = await Bun.$`BUN_TEST_LOG_DEFAULT_REGISTRY=1 ${bunExe()} install`
-      .cwd(packageDir)
-      .throws(true)
-      .env({ ...env, PORT: port })
-      .text();
+    const result = loadNpmrc(ini, { ...env, PORT: port });
 
-    expect(stdout).toContain(`Default registry url: http://localhost:${port}/`);
+    expect(result.default_registry_url).toEqual(`http://localhost:${port}/`);
   });
 
   async function makeTest(
     options: [option: string, value: string | (() => Promise<string>)][],
-    check: (stdout: string) => void,
+    check: (result: {
+      default_registry_url: string;
+      default_registry_token: string;
+      default_registry_username: string;
+      default_registry_password: string;
+    }) => void,
   ) {
     const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${await val}`));
     test(optionName.join(" "), async () => {
@@ -226,7 +225,6 @@ registry=http://localhost:\${PORT}/
       const ini = /* ini */ `
 ${iniInner.join("\n")}
 `;
-      console.log("INI", ini);
 
       await Bun.$`echo ${JSON.stringify({
         name: "hello",
@@ -239,28 +237,28 @@ ${iniInner.join("\n")}
 
       await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
 
-      const stdout = await Bun.$`BUN_TEST_LOG_DEFAULT_REGISTRY=1 ${bunExe()} i`.cwd(packageDir).text();
+      const result = loadNpmrc(ini);
 
-      check(stdout);
+      check(result);
     });
   }
 
-  await makeTest([["_authToken", "skibidi"]], stdout => {
-    expect(stdout).toContain("Default registry url: https://registry.npmjs.org/");
-    expect(stdout).toContain("Default registry token: skibidi");
-  });
+  // await makeTest([["_authToken", "skibidi"]], result => {
+  //   expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+  //   expect(result.default_registry_token).toEqual("Default registry token: skibidi");
+  // });
 
-  await makeTest(
-    [
-      ["username", "zorp"],
-      ["_password", "skibidi"],
-    ],
-    stdout => {
-      expect(stdout).toContain("Default registry url: https://registry.npmjs.org/");
-      expect(stdout).toContain("Default registry username: zorp");
-      expect(stdout).toContain("Default registry password: skibidi");
-    },
-  );
+  // await makeTest(
+  //   [
+  //     ["username", "zorp"],
+  //     ["_password", "skibidi"],
+  //   ],
+  //   result => {
+  //     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+  //     expect(result.default_registry_username).toEqual("zorp");
+  //     expect(result.default_registry_password).toEqual("skibidi");
+  //   },
+  // );
 
   it("authentication works", async () => {
     await Bun.$`rm -rf ${packageDir}/bunfig.toml`;

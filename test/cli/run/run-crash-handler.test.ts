@@ -1,7 +1,7 @@
 import { crash_handler } from "bun:internal-for-testing";
 import { test, expect, describe } from "bun:test";
 import { bunExe, bunEnv, tempDirWithFiles, mergeWindowEnvs } from "harness";
-import { existsSync } from "js/node/fs/export-star-from";
+import { existsSync } from "node:fs";
 import path from "path";
 const { getMachOImageZeroOffset } = crash_handler;
 

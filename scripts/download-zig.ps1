@@ -23,7 +23,7 @@ try {
   if (!(Test-Path $TarPath)) {
     try {
       Write-Host "-- Downloading Zig"
-      Invoke-WebRequest $Url -OutFile $TarPath
+      Invoke-RestMethod $Url -OutFile $TarPath
     } catch {
       Write-Error "Failed to fetch Zig from: $Url"
       throw $_

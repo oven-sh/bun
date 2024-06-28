@@ -74,7 +74,6 @@ export default [
         getter: "getStdout",
         cache: "stdout",
       },
-
       ref: {
         fn: "doRef",
         length: 0,
@@ -91,20 +90,24 @@ export default [
         fn: "doSend",
         length: 1,
       },
-
       kill: {
         fn: "kill",
         length: 1,
+      },
+      disconnect: {
+        fn: "disconnect",
+        length: 0,
+      },
+      connected: {
+        getter: "getConnected",
       },
       "@@asyncDispose": {
         fn: "asyncDispose",
         length: 1,
       },
-
       killed: {
         getter: "getKilled",
       },
-
       exitCode: {
         getter: "getExitCode",
       },
@@ -116,9 +119,6 @@ export default [
       },
       stdio: {
         getter: "getStdio",
-      },
-      ipcFd: {
-        getter: "getIpcFd",
       },
     },
   }),

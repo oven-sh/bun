@@ -157,6 +157,9 @@ cluster.fork = function (env) {
     cluster.emit("message", this, message, handle);
   });
 
+  // FIXME: throwing an error in this function does not get caught
+  // at least in the cases where #handle has become null
+  // may be always; don't have time to investigate right now
   worker.process.once("exit", (exitCode, signalCode) => {
     /*
      * Remove the worker from the workers list only

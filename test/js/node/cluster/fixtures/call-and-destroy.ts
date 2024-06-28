@@ -1,5 +1,5 @@
-const cluster = require("cluster");
-const assert = require("assert");
+import cluster from "node:cluster";
+import assert from "node:assert";
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();

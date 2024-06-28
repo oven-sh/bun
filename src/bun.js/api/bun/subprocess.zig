@@ -738,10 +738,18 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn disconnect(this: *Subprocess) void {
-        const ipc_data = this.ipc_data orelse return;
+    pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        _ = globalThis;
+        _ = callframe;
+        const ipc_data = this.ipc_maybe() orelse return .undefined;
         ipc_data.socket.close(.normal);
         this.ipc_data = null;
+        return .undefined;
+    }
+
+    pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        _ = globalThis;
+        return JSValue.jsBoolean(this.ipc_maybe() != null);
     }
 
     pub fn pid(this: *const Subprocess) i32 {
@@ -1771,7 +1779,6 @@ pub const Subprocess = struct {
             }
 
             if (args != .zero and args.isObject()) {
-
                 // This must run before the stdio parsing happens
                 if (!is_sync) {
                     if (args.getTruthy(globalThis, "ipc")) |val| {
@@ -2289,7 +2296,6 @@ pub const Subprocess = struct {
     }
 
     pub fn handleIPCClose(this: *Subprocess) void {
-        this.ipc_data = null;
         this.updateHasPendingActivity();
 
         const this_jsvalue = this.this_jsvalue;
@@ -2310,10 +2316,4 @@ pub const Subprocess = struct {
     }
 
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
-
-    pub fn getIpcFd(this: *Subprocess, globalThis: *JSGlobalObject) callconv(.C) JSValue {
-        _ = globalThis;
-        const ipc_data = this.ipc_maybe() orelse return .null;
-        return JSC.JSValue.jsNumber(ipc_data.socket.fd().cast());
-    }
 };

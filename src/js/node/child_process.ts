@@ -996,7 +996,6 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  connected = false;
   signalCode = null;
   exitCode = null;
   spawnfile;
@@ -1198,6 +1197,12 @@ class ChildProcess extends EventEmitter {
     return (this.#stdioObject ??= this.#createStdioObject());
   }
 
+  get connected() {
+    const handle = this.#handle;
+    if (handle === null) return false;
+    return handle.connected ?? false;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -1265,7 +1270,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      onDisconnect: () => this.disconnect(),
+      onDisconnect: this.#disconnect.bind(this),
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1281,7 +1286,6 @@ class ChildProcess extends EventEmitter {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
       this.#closesNeeded += 1;
-
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1339,12 +1343,13 @@ class ChildProcess extends EventEmitter {
 
   #disconnect() {
     if (!this.connected) {
-      this.emit("error", new TypeError("Process was closed while trying to send message"));
+      this.emit("error", ERR_IPC_DISCONNECTED());
       return;
     }
-    this.connected = false;
     this.#handle.disconnect();
+    $assert(!this.connected);
     this.#handleOnExit(0, null, null);
+    process.nextTick(() => this.emit("disconnect"));
   }
 
   kill(sig?) {
@@ -1844,9 +1849,9 @@ function _forkChild(fd, serializationMode) {
     let err;
 
     if (serializationMode === "json") {
-      const string = JSONStringify(message) + "\n";
+      const string = JSONStringify(message);
       try {
-        FsModule.writeFileSync(fd, string);
+        FsModule.writeFileSync(fd, string + "\n");
         err = 0;
       } catch (e) {
         err = e;

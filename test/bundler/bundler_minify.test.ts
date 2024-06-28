@@ -1,6 +1,5 @@
-import assert from "assert";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -122,7 +121,7 @@ describe("bundler", () => {
     run: { stdout: "4 2 3\n4 5 3\n4 5 6" },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      assert([...code.matchAll(/var /g)].length === 1, "expected only 1 variable declaration statement");
+      expect([...code.matchAll(/var /g)]).toHaveLength(1);
     },
   });
   itBundled("minify/Infinity", {

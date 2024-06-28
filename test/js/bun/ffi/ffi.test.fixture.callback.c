@@ -2,12 +2,12 @@
 #define IS_CALLBACK 1
 // This file is part of Bun!
 // You can find the original source:
-// https://github.com/oven-sh/bun/blob/main/src/bun.js/api/FFI.h#L2
+// https://github.com/oven-sh/bun/blob/main/src/bun.js/api/FFI.h
 //
 // clang-format off
 // This file is only compatible with 64 bit CPUs
 // It must be kept in sync with JSCJSValue.h
-// https://github.com/oven-sh/WebKit/blob/72c2052b781cbfd4af867ae79ac9de460e392fba/Source/JavaScriptCore/runtime/JSCJSValue.h#L455-L458
+// https://github.com/oven-sh/WebKit/blob/main/Source/JavaScriptCore/runtime/JSCJSValue.h
 #ifdef IS_CALLBACK
 #define INJECT_BEFORE int c = 500; // This is a callback, so we need to inject code before the call
 #endif
@@ -292,9 +292,6 @@ ZIG_REPR_TYPE JSFunctionCall(void* jsGlobalObject, void* callFrame);
 
  
 /* --- The Callback Function */
-/* --- The Callback Function */
-bool my_callback_function(void* arg0);
-
 bool my_callback_function(void* arg0) {
  ZIG_REPR_TYPE arguments[1];
 arguments[0] = PTR_TO_JSVALUE(arg0).asZigRepr;

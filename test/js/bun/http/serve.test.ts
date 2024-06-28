@@ -2,7 +2,7 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv, dumpStats } from "harness";
+import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4 } from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
@@ -27,7 +27,6 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     while (!server) {
       try {
         server = serve({ ...serverOptions, port: 0 });
-        console.log(`Server: ${server.url}`);
         break;
       } catch (e: any) {
         console.log("catch:", e);
@@ -1275,11 +1274,12 @@ it("#5859 json", async () => {
 });
 
 it("#5859 arrayBuffer", async () => {
-  await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
-  expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
+  const tmp = join(tmpdirSync(), "bad");
+  await Bun.write(tmp, new Uint8Array([0xfd]));
+  expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
-it("server.requestIP (v4)", async () => {
+it.if(isIPv4())("server.requestIP (v4)", async () => {
   using server = Bun.serve({
     port: 0,
     fetch(req, server) {
@@ -1296,7 +1296,7 @@ it("server.requestIP (v4)", async () => {
   });
 });
 
-it("server.requestIP (v6)", async () => {
+it.if(isIPv6())("server.requestIP (v6)", async () => {
   using server = Bun.serve({
     port: 0,
     fetch(req, server) {
@@ -1313,8 +1313,8 @@ it("server.requestIP (v6)", async () => {
   });
 });
 
-it("server.requestIP (unix)", async () => {
-  const unix = "/tmp/bun-serve.sock";
+it.if(isPosix)("server.requestIP (unix)", async () => {
+  const unix = join(tmpdirSync(), "serve.sock");
   using server = Bun.serve({
     unix,
     fetch(req, server) {

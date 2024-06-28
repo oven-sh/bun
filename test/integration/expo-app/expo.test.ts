@@ -25,7 +25,10 @@ test("expo export works (no ajv issues)", async () => {
     stderr: "inherit",
     stdin: "inherit",
     cwd: tmpdir,
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      PORT: "0",
+    },
   }));
 
   // just check exit code for now

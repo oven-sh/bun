@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const install = spawnSync({
-      cmd: ["bun", "install", "--verbose"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,

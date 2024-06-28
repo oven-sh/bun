@@ -7,7 +7,7 @@ function assert_main() {
     echo "error: Cannot upload release from a fork"
     exit 1
   fi
-  if [ -n "$BUILDKITE_PULL_REQUEST" ]; then
+  if [ "$BUILDKITE_PULL_REQUEST" != "false" ]; then
     echo "error: Cannot upload release from a pull request"
     exit 1
   fi

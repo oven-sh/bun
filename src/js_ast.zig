@@ -3366,7 +3366,10 @@ pub const Expr = struct {
     }
 
     pub inline fn asUtf8StringLiteral(expr: *const Expr) ?string {
-        if (expr.data == .e_string) return expr.data.e_string.data;
+        if (expr.data == .e_string) {
+            bun.debugAssert(expr.data.e_string.next == null);
+            return expr.data.e_string.data;
+        }
         return null;
     }
 

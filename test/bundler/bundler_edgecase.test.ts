@@ -1,8 +1,6 @@
-import assert from "assert";
-import dedent from "dedent";
-import { sep, join } from "path";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { join } from "node:path";
+import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -37,7 +35,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: {
-      stdout: `a${sep}b`,
+      stdout: join("a", "b"),
     },
   });
   itBundled("edgecase/ImportStarFunction", {

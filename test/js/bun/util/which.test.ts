@@ -1,12 +1,9 @@
 import { test, expect } from "bun:test";
-
 import { $, which } from "bun";
-import { rmSync, chmodSync, mkdirSync, realpathSync } from "node:fs";
+import { rmSync, chmodSync, mkdirSync, realpathSync, rmdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
-import { rmdirSync } from "js/node/fs/export-star-from";
 import { isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
-import { w } from "vitest/dist/types-2b1c412e.js";
 
 $.nothrow();
 

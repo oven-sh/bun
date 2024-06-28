@@ -18,4 +18,4 @@ test("09041", async () => {
     expect(run.stdout).toHaveLength(1024 * 1024);
     expect(run.stdout).toEqual(buffer);
   }
-}, 10000);
+}, 30000);

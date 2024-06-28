@@ -277,7 +277,7 @@ pub fn crashHandler(
             report(trace_str_buf.slice());
 
             if (bun.auto_reload_on_crash and
-                // Do not reload if the panic arised FROM the reload function.
+                // Do not reload if the panic arose FROM the reload function.
                 !bun.isProcessReloadInProgressOnAnotherThread())
             {
                 // attempt to prevent a double panic
@@ -621,7 +621,7 @@ else
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun {s}v{s} {s} {s}{s}\n",
     .{
-        if (bun.Environment.isDebug) "Debug" else if (bun.Environment.is_canary) "Canary " else "",
+        if (bun.Environment.isDebug) "Debug " else if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
@@ -633,7 +633,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        else => unreachable,
+        else => @compileError(unreachable),
     };
 
     crashHandler(

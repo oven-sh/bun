@@ -1,0 +1,42 @@
+{
+	"name": "dep-with-map-bins",
+	"versions": {
+		"1.0.0": {
+			"name": "dep-with-map-bins",
+			"version": "1.0.0",
+			"bin": {
+				"map-bin-1": "map-bin-1",
+				"map-bin-2": "map-bin-2"
+			},
+			"_id": "dep-with-map-bins@1.0.0",
+			"_nodeVersion": "22.3.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-nUqv0LNrwcQu6Lr4VGaYof8AaVLLbQV+wYXu7MkaYPUlTq4YoxhULmnXHzJvJ/WoaTtmAocJ6LNKPxL/WwlX9g==",
+				"shasum": "6a619a186f7782d7e2e2c2750ce7c72aa45887c7",
+				"tarball": "http://localhost:4873/dep-with-map-bins/-/dep-with-map-bins-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-24T23:27:57.311Z",
+		"created": "2024-06-24T23:27:57.311Z",
+		"1.0.0": "2024-06-24T23:27:57.311Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dep-with-map-bins-1.0.0.tgz": {
+			"shasum": "6a619a186f7782d7e2e2c2750ce7c72aa45887c7",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "dep-with-map-bins",
+	"readme": "ERROR: No README data found!"
+}

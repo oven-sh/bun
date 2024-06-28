@@ -1169,7 +1169,7 @@ pub const PackageManifest = struct {
                     const sliced_version = SlicedString.init(version_name, version_name);
                     const parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) assert(parsed_version.valid);
+                    if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     if (!parsed_version.valid) {
                         log.addErrorFmt(&source, prop.value.?.loc, allocator, "Failed to parse dependency {s}", .{version_name}) catch unreachable;
                         continue;
@@ -1357,15 +1357,15 @@ pub const PackageManifest = struct {
                     var sliced_version = SlicedString.init(version_name, version_name);
                     var parsed_version = Semver.Version.parse(sliced_version);
 
-                    if (Environment.allow_assert) assert(parsed_version.valid);
+                    if (Environment.allow_assert) bun.assertWithLocation(parsed_version.valid, @src());
                     // We only need to copy the version tags if it contains pre and/or build
                     if (parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre()) {
                         const version_string = string_builder.append(String, version_name);
                         sliced_version = version_string.sliced(string_buf);
                         parsed_version = Semver.Version.parse(sliced_version);
                         if (Environment.allow_assert) {
-                            assert(parsed_version.valid);
-                            assert(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre());
+                            bun.assertWithLocation(parsed_version.valid, @src());
+                            bun.assertWithLocation(parsed_version.version.tag.hasBuild() or parsed_version.version.tag.hasPre(), @src());
                         }
                     }
                     if (!parsed_version.valid) continue;
@@ -1730,13 +1730,13 @@ pub const PackageManifest = struct {
                                 if (comptime Environment.allow_assert) {
                                     const dependencies_list = @field(package_version, pair.field);
 
-                                    assert(dependencies_list.name.off < all_extern_strings.len);
-                                    assert(dependencies_list.value.off < all_extern_strings.len);
-                                    assert(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len);
-                                    assert(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len);
+                                    bun.assertWithLocation(dependencies_list.name.off < all_extern_strings.len, @src());
+                                    bun.assertWithLocation(dependencies_list.value.off < all_extern_strings.len, @src());
+                                    bun.assertWithLocation(dependencies_list.name.off + dependencies_list.name.len < all_extern_strings.len, @src());
+                                    bun.assertWithLocation(dependencies_list.value.off + dependencies_list.value.len < all_extern_strings.len, @src());
 
-                                    assert(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names));
-                                    assert(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions));
+                                    bun.assertWithLocation(std.meta.eql(dependencies_list.name.get(all_extern_strings), this_names), @src());
+                                    bun.assertWithLocation(std.meta.eql(dependencies_list.value.get(version_extern_strings), this_versions), @src());
                                     var j: usize = 0;
                                     const name_dependencies = dependencies_list.name.get(all_extern_strings);
 
@@ -1744,31 +1744,31 @@ pub const PackageManifest = struct {
                                         if (optional_peer_dep_names.items.len == 0) {
                                             while (j < name_dependencies.len) : (j += 1) {
                                                 const dep_name = name_dependencies[j];
-                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                                bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)), @src());
+                                                bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?), @src());
                                             }
 
                                             j = 0;
                                             while (j < dependencies_list.value.len) : (j += 1) {
                                                 const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                                assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                                bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)), @src());
+                                                bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?), @src());
                                             }
                                         }
                                     } else {
                                         while (j < name_dependencies.len) : (j += 1) {
                                             const dep_name = name_dependencies[j];
-                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)));
-                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?));
+                                            bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), this_names[j].slice(string_buf)), @src());
+                                            bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), items[j].key.?.asString(allocator).?), @src());
                                         }
 
                                         j = 0;
                                         while (j < dependencies_list.value.len) : (j += 1) {
                                             const dep_name = dependencies_list.value.get(version_extern_strings)[j];
 
-                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)));
-                                            assert(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?));
+                                            bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), this_versions[j].slice(string_buf)), @src());
+                                            bun.assertWithLocation(std.mem.eql(u8, dep_name.slice(string_buf), items[j].value.?.asString(allocator).?), @src());
                                         }
                                     }
                                 }
@@ -1821,8 +1821,8 @@ pub const PackageManifest = struct {
                 };
 
                 if (comptime Environment.allow_assert) {
-                    assert(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]));
-                    assert(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]));
+                    bun.assertWithLocation(std.meta.eql(result.pkg.dist_tags.versions.get(all_semver_versions), dist_tag_versions[0..dist_tag_i]), @src());
+                    bun.assertWithLocation(std.meta.eql(result.pkg.dist_tags.tags.get(all_extern_strings), extern_strings_slice[0..dist_tag_i]), @src());
                 }
 
                 extern_strings = extern_strings[dist_tag_i..];
@@ -1931,13 +1931,13 @@ pub const PackageManifest = struct {
                             const first = semver_versions_[0];
                             const second = semver_versions_[1];
                             const order = second.order(first, string_buf, string_buf);
-                            assert(order == .gt);
+                            bun.assertWithLocation(order == .gt, @src());
                         }
                     }
                 }
             },
             else => {
-                assert(max_versions_count == 0);
+                bun.assertWithLocation(max_versions_count == 0, @src());
             },
         }
 
@@ -1945,7 +1945,7 @@ pub const PackageManifest = struct {
             const src = std.mem.sliceAsBytes(all_tarball_url_strings[0 .. all_tarball_url_strings.len - tarball_url_strings.len]);
             if (src.len > 0) {
                 var dst = std.mem.sliceAsBytes(all_extern_strings[all_extern_strings.len - extern_strings.len ..]);
-                assert(dst.len >= src.len);
+                bun.assertWithLocation(dst.len >= src.len, @src());
                 @memcpy(dst[0..src.len], src);
             }
 

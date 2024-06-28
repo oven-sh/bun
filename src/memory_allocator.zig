@@ -52,7 +52,7 @@ const CAllocator = struct {
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return CAllocator.malloc_size(ptr);
+        return mimalloc.mi_malloc_size(ptr);
     }
 
     fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
@@ -114,7 +114,7 @@ const ZAllocator = struct {
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return CAllocator.malloc_size(ptr);
+        return mimalloc.mi_malloc_size(ptr);
     }
 
     fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {

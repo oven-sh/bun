@@ -226,9 +226,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ConstEnumComments", {
-    // When it comes time to implement this inlining, we may decide we do NOT
-    // want to insert helper comments.
-    todo: true,
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -383,10 +380,9 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/MinifyEnum", {
-    todo: true,
     files: {
       "/a.ts": `enum Foo { A, B, C = Foo }\ncapture(Foo)`,
-      // "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
+      "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
     entryPoints: ["/a.ts"],
     minifySyntax: true,
@@ -396,20 +392,20 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const a = api.readFile("/out.js");
       api.writeFile("/out.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
-      // const b = api.readFile("/out/b.js");
+      const b = api.readFile("/out/b.js");
 
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']/), "should be using enum minification trick (1)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']/), "should be using enum minification trick (2)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']/), "should be using enum minification trick (3)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
     },
     runtimeFiles: {
       "/test.js": /* js */ `
         import {Foo as FooA} from './out/a.edited.js'
-        // import {Foo as FooB} from './out/b.js'
+        import {Foo as FooB} from './out/b.js'
         import assert from 'assert';
         assert.strictEqual(FooA.A, 0, 'a.ts Foo.A')
         assert.strictEqual(FooA.B, 1, 'a.ts Foo.B')
@@ -417,17 +413,16 @@ describe("bundler", () => {
         assert.strictEqual(FooA[0], 'A', 'a.ts Foo[0]')
         assert.strictEqual(FooA[1], 'B', 'a.ts Foo[1]')
         assert.strictEqual(FooA[FooA], 'C', 'a.ts Foo[Foo]')
-        // assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
-        // assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
-        // assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
-        // assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
-        // assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
-        // assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
+        assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
+        assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
+        assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
+        assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
+        assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
+        assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
       `,
     },
   });
   itBundled("ts/MinifyEnumExported", {
-    todo: true,
     files: {
       "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
@@ -831,7 +826,6 @@ describe("bundler", () => {
       stdout: '[123,{"test":true}]',
     },
   });
-  // TODO: all situations with decorators are currently not runtime-checked. as of writing bun crashes when hitting them at all.
   itBundled("ts/TypeScriptDecoratorsSimpleCase", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1872,8 +1866,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingEnum", {
-    todo: true,
-    // GENERATED
     files: {
       "/number.ts": /* ts */ `
         (0, eval)('globalThis.y = 1234');
@@ -1967,7 +1959,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumTreeShaking", {
-    todo: true,
     files: {
       "/simple-member.ts": /* ts */ `
         enum x_DROP { y_DROP = 123 }
@@ -2035,7 +2026,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumJSX", {
-    todo: true,
     files: {
       "/element.tsx": /* tsx */ `
         import { create } from 'not-react'
@@ -2082,7 +2072,6 @@ describe("bundler", () => {
     ],
   });
   itBundled("ts/EnumDefine", {
-    todo: true,
     files: {
       "/entry.ts": `
         enum a { b = 123, c = d }
@@ -2095,7 +2084,6 @@ describe("bundler", () => {
     run: { stdout: "123 123" },
   });
   itBundled("ts/EnumSameModuleInliningAccess", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         enum a_drop { x = 123 }
@@ -2116,7 +2104,6 @@ describe("bundler", () => {
     run: { stdout: '[123,123,123,123,{"123":"x","x":123}]' },
   });
   itBundled("ts/EnumCrossModuleInliningAccess", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { drop_a, drop_b, c, d, e } from './enums'
@@ -2139,7 +2126,6 @@ describe("bundler", () => {
     dce: true,
   });
   itBundled("ts/EnumCrossModuleInliningDefinitions", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { a } from './enums'
@@ -2167,7 +2153,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumCrossModuleInliningReExport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { a } from './re-export'
@@ -2192,7 +2177,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumCrossModuleTreeShaking", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2243,7 +2227,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumExportClause", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2284,7 +2267,6 @@ describe("bundler", () => {
   // `, */
   // });
   itBundled("ts/EnumRulesFrom_TypeScript_5_0", {
-    // GENERATED
     files: {
       "/supported.ts":
         `
@@ -2460,7 +2442,7 @@ describe("bundler", () => {
         )
       `,
     },
-    // dce: true,
+    dce: true,
     entryPoints: ["/supported.ts", "/not-supported.ts"],
     run: [
       {
@@ -2478,20 +2460,19 @@ describe("bundler", () => {
       },
     ],
     onAfterBundle(api) {
-      // expect(api.captureFile("/out/not-supported.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
-      //   '"1"',
-      //   "NonIntegerNumberToString.UNSUPPORTED",
-      //   '"1000000000"',
-      //   "OutOfBoundsNumberToString.UNSUPPORTED",
-      //   "TemplateExpressions.NULL",
-      //   "TemplateExpressions.TRUE",
-      //   "TemplateExpressions.FALSE",
-      //   "TemplateExpressions.BIGINT",
-      // ]);
+      expect(api.captureFile("/out/not-supported.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
+        '"1"',
+        "NonIntegerNumberToString.UNSUPPORTED",
+        '"1000000000"',
+        "OutOfBoundsNumberToString.UNSUPPORTED",
+        "TemplateExpressions.NULL",
+        "TemplateExpressions.TRUE",
+        "TemplateExpressions.FALSE",
+        "TemplateExpressions.BIGINT",
+      ]);
     },
   });
   itBundled("ts/EnumUseBeforeDeclare", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         before();

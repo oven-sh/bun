@@ -7404,9 +7404,12 @@ pub const Scope = struct {
             // "enum Foo {} namespace Foo { ... }"
             if (new == .ts_namespace) {
                 switch (existing) {
-                    .ts_namespace, .hoisted_function, .generator_or_async_function, .ts_enum, .class => {
-                        return .keep_existing;
-                    },
+                    .ts_namespace,
+                    .ts_enum,
+                    .hoisted_function,
+                    .generator_or_async_function,
+                    .class,
+                    => return .keep_existing,
                     else => {},
                 }
             }

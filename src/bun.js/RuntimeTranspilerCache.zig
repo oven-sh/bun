@@ -1,6 +1,7 @@
-// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
-// Version 2 -> 3: "Infinity" becomes "1/0".
-const expected_version = 3;
+/// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
+/// Version 3: "Infinity" becomes "1/0".
+/// Version 4: TypeScript enums and namespaces are properly handled + more constant folding
+const expected_version = 4;
 
 const bun = @import("root").bun;
 const std = @import("std");
@@ -203,7 +204,7 @@ pub const RuntimeTranspilerCache = struct {
                     if (comptime bun.Environment.allow_assert) {
                         var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
                         var metadata2 = Metadata{};
-                        metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not rountrip encode -> decode  successfully: {s}", .{@errorName(err)});
+                        metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not roundtrip encode -> decode  successfully: {s}", .{@errorName(err)});
                         bun.assert(std.meta.eql(metadata, metadata2));
                     }
 

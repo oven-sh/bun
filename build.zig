@@ -123,7 +123,7 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 }
 
 pub fn build(b: *Build) !void {
-    std.io.getStdErr().writer().print("zig build v{s}\n", .{builtin.zig_version_string});
+    std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 

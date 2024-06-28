@@ -4978,6 +4978,7 @@ pub const PackageManager = struct {
                         else => name,
                     };
                     name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+                    this.lockfile.buffers.dependencies.items[id].version = new;
                     break :version new;
                 }
             }

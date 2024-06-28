@@ -104,6 +104,9 @@ export default {
     measure(f) {
       return performance.measure(...arguments);
     },
+    timerify(f) {
+      return performance.timerify(...arguments);
+    },
     clearMarks(f) {
       return performance.clearMarks(...arguments);
     },

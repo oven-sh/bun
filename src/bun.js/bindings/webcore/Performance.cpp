@@ -31,6 +31,8 @@
  */
 
 #include "config.h"
+#include "JavaScriptCore/JSFunction.h"
+#include "JavaScriptCore/JSType.h"
 #include "Performance.h"
 
 // #include "Document.h"
@@ -79,8 +81,8 @@ void Performance::contextDestroyed()
 DOMHighResTimeStamp Performance::now() const
 {
     auto* globalObject = scriptExecutionContext()->globalObject();
-    auto* bunVM = jsCast<Zig::GlobalObject*>(globalObject)->bunVM(); 
-    auto nowNano = Bun__readOriginTimer(bunVM);    
+    auto* bunVM = jsCast<Zig::GlobalObject*>(globalObject)->bunVM();
+    auto nowNano = Bun__readOriginTimer(bunVM);
     return static_cast<double>(nowNano) / 1000000.0;
 }
 
@@ -172,7 +174,7 @@ Vector<RefPtr<PerformanceEntry>> Performance::getEntriesByType(const String& ent
 
     // if (m_navigationTiming && entryType == "navigation"_s)
     //     entries.append(m_navigationTiming);
-    
+
     // if (entryType == "resource"_s)
     //     entries.appendVector(m_resourceTimingBuffer);
 
@@ -453,7 +455,7 @@ void Performance::scheduleTaskIfNeeded()
         return;
 
     m_hasScheduledTimingBufferDeliveryTask = true;
-    context->postTask([protectedThis = Ref { *this }, this] (ScriptExecutionContext& context) {
+    context->postTask([protectedThis = Ref { *this }, this](ScriptExecutionContext& context) {
         m_hasScheduledTimingBufferDeliveryTask = false;
         for (auto& observer : copyToVector(m_observers))
             observer->deliver();

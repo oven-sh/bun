@@ -27,6 +27,7 @@ const Api = @import("../api/schema.zig").Api;
 const resolve_path = @import("../resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("../bun.js/config.zig").configureTransformOptionsForBun;
 const Command = @import("../cli.zig").Command;
+const Glob = @import("../glob.zig");
 
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
@@ -425,44 +426,90 @@ pub const CommandLineReporter = struct {
         }
         // --- LCOV ---
 
-        for (byte_ranges) |*entry| {
-            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-            defer report.deinit(bun.default_allocator);
-
-            if (comptime reporters.text) {
-                var fraction = base_fraction;
-                CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
-                avg.functions += fraction.functions;
-                avg.lines += fraction.lines;
-                avg.stmts += fraction.stmts;
-                avg_count += 1.0;
-                if (fraction.failing) {
-                    failing = true;
-                }
-
-                console_writer.writeAll("\n") catch continue;
+        var list = try std.ArrayList([]u32).initCapacity(bun.default_allocator, opts.ignore_patterns.len);
+        var ignore_everything = false;
+        for (opts.ignore_patterns) |ignore_pattern| {
+            if (strings.eqlComptime(ignore_pattern, "*") or strings.eqlComptime(ignore_pattern, "**")) {
+                ignore_everything = true;
+                break;
             }
 
-            if (comptime reporters.lcov) {
-                CodeCoverageReport.Lcov.writeFormat(
-                    &report,
-                    relative_dir,
-                    lcov_writer,
-                ) catch continue;
+            var ignore_pattern_utf32 = try std.ArrayListUnmanaged(u32).initCapacity(bun.default_allocator, ignore_pattern.len + 1);
+            var codepointer_iter = strings.UnsignedCodepointIterator.init(ignore_pattern);
+            var cursor = strings.UnsignedCodepointIterator.Cursor{};
+            while (codepointer_iter.next(&cursor)) {
+                if (cursor.c == @as(u32, '\\')) {
+                    try ignore_pattern_utf32.append(bun.default_allocator, cursor.c);
+                }
+                try ignore_pattern_utf32.append(bun.default_allocator, cursor.c);
+            }
+            try list.append(ignore_pattern_utf32.items);
+        }
+
+        if (!ignore_everything) {
+            for (byte_ranges) |*entry| {
+                var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+                defer report.deinit(bun.default_allocator);
+
+                const filename = report.source_url.slice();
+
+                var should_ignore = false;
+                for (list.items) |list_item| {
+                    if (Glob.matchImpl(list_item, filename)) {
+                        should_ignore = true;
+                        break;
+                    }
+                }
+
+                if (should_ignore) continue;
+
+                if (comptime reporters.text) {
+                    var fraction = base_fraction;
+                    CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
+                    avg.functions += fraction.functions;
+                    avg.lines += fraction.lines;
+                    avg.stmts += fraction.stmts;
+                    avg_count += 1.0;
+                    if (fraction.failing) {
+                        failing = true;
+                    }
+
+                    console_writer.writeAll("\n") catch continue;
+                }
+
+                if (comptime reporters.lcov) {
+                    CodeCoverageReport.Lcov.writeFormat(
+                        &report,
+                        relative_dir,
+                        lcov_writer,
+                    ) catch continue;
+                }
             }
         }
 
         if (comptime reporters.text) {
             {
-                avg.functions /= avg_count;
-                avg.lines /= avg_count;
-                avg.stmts /= avg_count;
+                if (avg_count == 0) {
+                    avg.functions = 0;
+                    avg.lines = 0;
+                    avg.stmts = 0;
+                } else {
+                    avg.functions /= avg_count;
+                    avg.lines /= avg_count;
+                    avg.stmts /= avg_count;
+                }
+
+                const failed = if (avg_count > 0) base_fraction else bun.sourcemap.CoverageFraction{
+                    .functions = 0,
+                    .lines = 0,
+                    .stmts = 0,
+                };
 
                 try CodeCoverageReport.Text.writeFormatWithValues(
                     "All files",
                     max_filepath_length,
                     avg,
-                    base_fraction,
+                    failed,
                     failing,
                     console,
                     false,
@@ -711,6 +758,7 @@ pub const TestCommand = struct {
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+        ignore_patterns: [][]const u8 = &.{},
     };
     pub const Reporter = enum {
         text,

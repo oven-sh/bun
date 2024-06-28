@@ -1763,7 +1763,7 @@ pub const AsyncHTTP = struct {
     signals: Signals = .{},
 
     pub var active_requests_count = std.atomic.Value(usize).init(0);
-    pub var max_simultaneous_requests = std.atomic.Value(usize).init(256);
+    pub var max_simultaneous_requests = std.atomic.Value(usize).init(65535);
 
     pub fn loadEnv(allocator: std.mem.Allocator, logger: *Log, env: *DotEnv.Loader) void {
         if (env.get("BUN_CONFIG_MAX_HTTP_REQUESTS")) |max_http_requests| {

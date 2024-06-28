@@ -276,6 +276,13 @@ pub fn splitNameAndVersion(str: string) struct { string, ?string } {
     return .{ str, null };
 }
 
+pub fn unscopedPackageName(name: []const u8) []const u8 {
+    if (name[0] != '@') return name;
+    var name_ = name;
+    name_ = name[1..];
+    return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},

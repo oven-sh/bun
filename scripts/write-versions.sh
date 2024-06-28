@@ -1,5 +1,5 @@
 #!/bin/bash
-set -euxo pipefail
+set -exo pipefail
 
 WEBKIT_VERSION=$(git rev-parse HEAD:./src/bun.js/WebKit)
 MIMALLOC_VERSION=$(git rev-parse HEAD:./src/deps/mimalloc)

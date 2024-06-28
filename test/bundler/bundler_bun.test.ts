@@ -1,9 +1,6 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
-import { isWindows } from "harness";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("bun/embedded-sqlite-file", {
@@ -82,9 +79,8 @@ describe("bundler", () => {
     run: {
       exitCode: 1,
       validate({ stderr }) {
-        assert(
-          stderr.startsWith(
-            `1 | // this file has comments and weird whitespace, intentionally
+        expect(stderr).toStartWith(
+          `1 | // this file has comments and weird whitespace, intentionally
 2 | // to make it obvious if sourcemaps were generated and mapped properly
 3 | if           (true) code();
 4 | function code() {
@@ -92,7 +88,6 @@ describe("bundler", () => {
 6 |           throw   new
                       ^
 error: Hello World`,
-          ) || void console.error(stderr),
         );
         expect(stderr).toInclude("entry.ts:6:19");
       },

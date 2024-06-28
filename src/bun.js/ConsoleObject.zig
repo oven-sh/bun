@@ -2077,10 +2077,22 @@ pub const Formatter = struct {
                 var printable = value.getName(this.globalThis);
                 defer printable.deref();
 
+                const proto = value.getPrototype(this.globalThis);
+                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+                defer func_name.deref();
+
                 if (printable.isEmpty()) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    if (func_name.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
+                    }
                 } else {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                    if (func_name.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
+                    }
                 }
             },
             .GetterSetter => {

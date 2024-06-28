@@ -12,6 +12,7 @@ import {
   runBunInstall,
   runBunUpdate,
   tempDirWithFiles,
+  randomPort,
 } from "harness";
 import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
@@ -30,7 +31,7 @@ expect.extend({
 });
 
 var verdaccioServer: ChildProcess;
-var port: number = 4873;
+var port: number = randomPort();
 var packageDir: string;
 
 let users: Record<string, string> = {};
@@ -41,7 +42,11 @@ beforeAll(async () => {
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
+    {
+      silent: true,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
+    },
   );
 
   verdaccioServer.stderr?.on("data", data => {
@@ -424,7 +429,7 @@ describe("optionalDependencies", () => {
         savesLockfile: !rootOptional,
       });
 
-      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+      expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
   }
 });
@@ -756,7 +761,7 @@ registry = "http://localhost:${port}"
   const lockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(lockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).toContain(`http://localhost:${port}`);
     }
   }
 
@@ -777,7 +782,7 @@ cache = "${cacheDir}"
   const npmLockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(npmLockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).not.toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).not.toContain(`http://localhost:${port}`);
     }
   }
 });
@@ -4070,7 +4075,8 @@ describe("update", () => {
       "+ uses-what-bin@1.5.0",
       "+ what-bin@1.5.0",
       "",
-      expect.stringContaining("20 packages installed"),
+      // Due to optional-native dependency, this can be either 20 or 19 packages
+      expect.stringMatching(/(?:20|19) packages installed/),
       "",
       "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
       "",
@@ -4524,7 +4530,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  expect(out).toMatchSnapshot();
+  expect(out.replaceAll(`${port}`, "4873")).toMatchSnapshot();
   expect(await exited).toBe(0);
 });
 
@@ -7601,7 +7607,7 @@ test("doesn't error when the migration is out of sync", async () => {
         },
         "node_modules/no-deps": {
           "version": "1.0.0",
-          "resolved": "http://localhost:4873/no-deps/-/no-deps-1.0.0.tgz",
+          "resolved": `http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`,
           "integrity":
             "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
           "dev": true,

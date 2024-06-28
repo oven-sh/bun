@@ -1,6 +1,5 @@
-import assert from "assert";
-import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "../expectBundled";
+import { describe } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_importstar_ts_test.go

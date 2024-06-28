@@ -47,6 +47,7 @@ function lookup(domain, options, callback) {
   }
 
   dns.lookup(domain, options).then(res => {
+    throwIfEmpty(res);
     res.sort((a, b) => a.family - b.family);
 
     if (options?.all) {
@@ -333,18 +334,32 @@ var {
 function setDefaultResultOrder() {}
 function setServers() {}
 
-const promisifyLookup = res => {
-  res.sort((a, b) => a.family - b.family);
-  const [{ address, family }] = res;
-  return { address, family };
-};
-
 const mapLookupAll = res => {
   const { address, family } = res;
   return { address, family };
 };
 
+function throwIfEmpty(res) {
+  if (res.length === 0) {
+    const err = new Error("No records found");
+    err.code = "ENODATA";
+    // Hardcoded errno
+    err.errno = 1;
+    err.syscall = "getaddrinfo";
+    throw err;
+  }
+}
+Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
+
+const promisifyLookup = res => {
+  throwIfEmpty(res);
+  res.sort((a, b) => a.family - b.family);
+  const [{ address, family }] = res;
+  return { address, family };
+};
+
 const promisifyLookupAll = res => {
+  throwIfEmpty(res);
   res.sort((a, b) => a.family - b.family);
   return res.map(mapLookupAll);
 };

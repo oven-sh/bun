@@ -271,6 +271,10 @@ pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const
         } else if (strings.isIPV6Address(name)) {
             backend.* = .system;
         }
+        // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
+        else if (strings.eqlComptime(name, "localhost")) {
+            backend.* = .system;
+        }
     }
 
     return name;
@@ -1396,7 +1400,10 @@ pub const InternalDNS = struct {
         .addrlen = 0,
         .canonname = null,
         .family = std.c.AF.UNSPEC,
-        .flags = 0,
+        // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
+        // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=467497
+        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,

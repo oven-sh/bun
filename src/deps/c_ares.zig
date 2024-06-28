@@ -388,7 +388,7 @@ pub const AddrInfo = extern struct {
         addr_info: *AddrInfo,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        var node = addr_info.node.?;
+        var node = addr_info.node orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
             node.count(),
@@ -1318,6 +1318,11 @@ pub const Error = enum(i32) {
 
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
+            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+            if (rc == libuv.UV_EAI_NODATA or rc == libuv.UV_EAI_NONAME) {
+                return Error.ENOTFOUND;
+            }
+
             // TODO: revisit this
             return switch (rc) {
                 0 => null,
@@ -1339,6 +1344,11 @@ pub const Error = enum(i32) {
             };
         }
 
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (rc == @intFromEnum(std.posix.system.EAI.NODATA) or rc == @intFromEnum(std.posix.system.EAI.NONAME)) {
+            return Error.ENOTFOUND;
+        }
+
         return switch (@as(std.posix.system.EAI, @enumFromInt(rc))) {
             @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
@@ -1346,11 +1356,9 @@ pub const Error = enum(i32) {
             .FAIL => Error.EBADRESP,
             .FAMILY => Error.EBADFAMILY,
             .MEMORY => Error.ENOMEM,
-            .NODATA => Error.ENODATA,
-            .NONAME => Error.ENONAME,
             .SERVICE => Error.ESERVICE,
             .SYSTEM => Error.ESERVFAIL,
-            else => unreachable,
+            else => bun.todo(@src(), Error.ENOTIMP),
         };
     }
 
@@ -1411,6 +1419,11 @@ pub const Error = enum(i32) {
     });
 
     pub fn get(rc: i32) ?Error {
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (rc == ARES_ENODATA or rc == ARES_ENONAME) {
+            return get(ARES_ENOTFOUND);
+        }
+
         return switch (rc) {
             0 => null,
             1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),

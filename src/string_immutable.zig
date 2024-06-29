@@ -200,11 +200,6 @@ pub inline fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub inline fn indexAny(in: anytype, target: string) ?usize {
-    for (in, 0..) |str, i| if (indexOf(str, target) != null) return i;
-    return null;
-}
-
 pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {

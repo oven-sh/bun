@@ -32,8 +32,10 @@ const BuildOptions = if (isTest) struct {
     pub const is_canary = false;
     pub const base_path = "/tmp";
     pub const canary_revision = 0;
+    pub const reported_nodejs_version = "22.3.0";
 } else @import("root").build_options;
 
+pub const reported_nodejs_version = BuildOptions.reported_nodejs_version;
 pub const baseline = BuildOptions.baseline;
 pub const enableSIMD: bool = !baseline;
 pub const git_sha = BuildOptions.sha;

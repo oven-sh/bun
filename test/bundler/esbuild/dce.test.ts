@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled, dedent } from "../expectBundled";
+import { describe, expect } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_dce_test.go
@@ -1019,8 +1017,8 @@ describe("bundler", () => {
     },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      assert(!code.includes("_yes"), "should not contain any *_yes variables");
-      assert(code.includes("var bare = foo(bar)"), "should contain `var bare = foo(bar)`");
+      expect(code).not.toContain("_yes"); // should not contain any *_yes variables
+      expect(code).toContain("var bare = foo(bar)"); // should contain `var bare = foo(bar)`
       const keep = [
         ["at_no", true],
         ["new_at_no", true],
@@ -1048,8 +1046,8 @@ describe("bundler", () => {
       for (const [name, pureComment] of keep) {
         const regex = new RegExp(`${name}\\s*=[^\/\n]*(\\/\\*.*?\\*\\/)?`, "g");
         const match = regex.exec(code);
-        assert(!!match, `should contain ${name}`);
-        assert(pureComment ? !!match[1] : !match[1], `should contain a pure comment for ${name}`);
+        expect(match).toBeTruthy(); // should contain ${name}
+        expect(pureComment ? !!match[1] : !match[1]).toBeTruthy(); // should contain a pure comment for ${name}
       }
     },
   });
@@ -1204,10 +1202,7 @@ describe("bundler", () => {
     dce: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      assert(
-        [...code.matchAll(/return/g)].length === 2,
-        "should remove 3 trailing returns and the arrow function return",
-      );
+      expect([...code.matchAll(/return/g)]).toHaveLength(2); // should remove 3 trailing returns and the arrow function return
     },
   });
   itBundled("dce/ImportReExportOfNamespaceImport", {
@@ -2813,7 +2808,7 @@ describe("bundler", () => {
     dce: true,
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      assert([...code.matchAll(/\[\.\.\.args\]/g)].length === 2, "spread should be preserved");
+      expect([...code.matchAll(/\[\.\.\.args\]/g)]).toHaveLength(2); // spread should be preserved
     },
   });
   itBundled("dce/TopLevelFunctionInliningWithSpread", {

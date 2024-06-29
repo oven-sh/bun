@@ -56,6 +56,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             buf: [8192]u8, // TODO align(@alignOf(os.system.dirent)),
             index: usize,
             end_index: usize,
+            received_eof: bool = false,
 
             const Self = @This();
 
@@ -77,6 +78,22 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
             fn nextDarwin(self: *Self) Result {
                 start_over: while (true) {
                     if (self.index >= self.end_index) {
+                        if (self.received_eof) {
+                            return .{ .result = null };
+                        }
+
+                        // getdirentries64() writes to the last 4 bytes of the
+                        // buffer to indicate EOF. If that value is not zero, we
+                        // have reached the end of the directory and we can skip
+                        // the extra syscall.
+                        // https://github.com/apple-oss-distributions/xnu/blob/94d3b452840153a99b38a3a9659680b2a006908e/bsd/vfs/vfs_syscalls.c#L10444-L10470
+                        const GETDIRENTRIES64_EXTENDED_BUFSIZE = 1024;
+                        comptime bun.assert(@sizeOf(@TypeOf(self.buf)) >= GETDIRENTRIES64_EXTENDED_BUFSIZE);
+                        self.received_eof = false;
+                        // Always zero the bytes where the flag will be written
+                        // so we don't confuse garbage with EOF.
+                        self.buf[self.buf.len - 4 ..][0..4].* = .{ 0, 0, 0, 0 };
+
                         const rc = posix.system.__getdirentries64(
                             self.dir.fd,
                             &self.buf,
@@ -85,7 +102,11 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
                         );
 
                         if (rc < 1) {
-                            if (rc == 0) return Result{ .result = null };
+                            if (rc == 0) {
+                                self.received_eof = true;
+                                return Result{ .result = null };
+                            }
+
                             if (Result.errnoSys(rc, .getdirentries64)) |err| {
                                 return err;
                             }
@@ -93,6 +114,7 @@ pub fn NewIterator(comptime use_windows_ospath: bool) type {
 
                         self.index = 0;
                         self.end_index = @as(usize, @intCast(rc));
+                        self.received_eof = self.end_index <= (self.buf.len - 4) and @as(u32, @bitCast(self.buf[self.buf.len - 4 ..][0..4].*)) == 1;
                     }
                     const darwin_entry = @as(*align(1) posix.system.dirent, @ptrCast(&self.buf[self.index]));
                     const next_index = self.index + darwin_entry.reclen;

@@ -1,8 +1,7 @@
 // @ts-nocheck
 import path from "path";
 import type { Field, ClassDefinition } from "./class-definitions";
-import { writeIfNotChanged } from "./helpers";
-import { camelCase, pascalCase } from "change-case";
+import { writeIfNotChanged, camelCase, pascalCase } from "./helpers";
 
 if (process.env.BUN_SILENT === "1") {
   console.log = () => {};

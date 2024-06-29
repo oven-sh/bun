@@ -1,9 +1,6 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
-import { fillRepeating } from "harness";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {

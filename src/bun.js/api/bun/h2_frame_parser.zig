@@ -928,7 +928,7 @@ pub const H2FrameParser = struct {
                     continue;
                 }
 
-                const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
+                const value = JSC.ZigString.fromUTF8(header.value).toJS(globalObject);
 
                 if (current_value.jsType().isArray()) {
                     current_value.push(globalObject, value);
@@ -943,7 +943,7 @@ pub const H2FrameParser = struct {
             } else {
                 // TODO: check for well-known headers and use pre-allocated static strings (see lshpack.c)
                 const name = JSC.ZigString.fromUTF8(header.name);
-                const value = JSC.ZigString.fromUTF8(header.value).toValueGC(globalObject);
+                const value = JSC.ZigString.fromUTF8(header.value).toJS(globalObject);
                 headers.put(globalObject, &name, value);
             }
 

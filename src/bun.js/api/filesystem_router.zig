@@ -329,7 +329,7 @@ pub const FileSystemRouter = struct {
 
     pub fn getOrigin(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
         if (this.origin) |origin| {
-            return JSC.ZigString.init(origin.slice()).withEncoding().toValueGC(globalThis);
+            return JSC.ZigString.init(origin.slice()).withEncoding().toJS(globalThis);
         }
 
         return JSValue.jsNull();
@@ -355,12 +355,12 @@ pub const FileSystemRouter = struct {
     }
 
     pub fn getStyle(_: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return ZigString.static("nextjs").toValue(globalThis);
+        return ZigString.static("nextjs").toJS(globalThis);
     }
 
     pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
         if (this.asset_prefix) |asset_prefix| {
-            return JSC.ZigString.init(asset_prefix.slice()).withEncoding().toValueGC(globalThis);
+            return JSC.ZigString.init(asset_prefix.slice()).withEncoding().toJS(globalThis);
         }
 
         return JSValue.jsNull();
@@ -400,7 +400,7 @@ pub const MatchedRoute = struct {
     pub usingnamespace JSC.Codegen.JSMatchedRoute;
 
     pub fn getName(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return ZigString.init(this.route.name).withEncoding().toValueGC(globalThis);
+        return ZigString.init(this.route.name).withEncoding().toJS(globalThis);
     }
 
     pub fn init(
@@ -469,7 +469,7 @@ pub const MatchedRoute = struct {
     ) callconv(.C) JSValue {
         return ZigString.init(this.route.file_path)
             .withEncoding()
-            .toValueGC(globalThis);
+            .toJS(globalThis);
     }
 
     pub fn finalize(
@@ -481,13 +481,13 @@ pub const MatchedRoute = struct {
     pub fn getPathname(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
         return ZigString.init(this.route.pathname)
             .withEncoding()
-            .toValueGC(globalThis);
+            .toJS(globalThis);
     }
 
     pub fn getRoute(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
         return ZigString.init(this.route.name)
             .withEncoding()
-            .toValueGC(globalThis);
+            .toJS(globalThis);
     }
 
     const KindEnum = struct {
@@ -511,7 +511,7 @@ pub const MatchedRoute = struct {
     };
 
     pub fn getKind(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return KindEnum.init(this.route.name).toValue(globalThis);
+        return KindEnum.init(this.route.name).toJS(globalThis);
     }
 
     threadlocal var query_string_values_buf: [256]string = undefined;
@@ -592,7 +592,7 @@ pub const MatchedRoute = struct {
         );
         return ZigString.init(buf[0..writer.context.pos])
             .withEncoding()
-            .toValueGC(globalThis);
+            .toJS(globalThis);
     }
 
     pub fn getParams(

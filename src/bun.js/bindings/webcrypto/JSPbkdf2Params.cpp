@@ -32,7 +32,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -46,7 +45,7 @@ template<> CryptoAlgorithmPbkdf2Params convertDictionary<CryptoAlgorithmPbkdf2Pa
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmPbkdf2Params result;
     JSValue nameValue;
@@ -54,56 +53,56 @@ template<> CryptoAlgorithmPbkdf2Params convertDictionary<CryptoAlgorithmPbkdf2Pa
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "Pbkdf2Params", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "Pbkdf2Params"_s, "DOMString"_s);
+        return {};
     }
     JSValue hashValue;
     if (isNullOrUndefined)
         hashValue = jsUndefined();
     else {
         hashValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "hash"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!hashValue.isUndefined()) {
         result.hash = convert<IDLUnion<IDLObject, IDLDOMString>>(lexicalGlobalObject, hashValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "hash", "Pbkdf2Params", "(object or DOMString)");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "hash"_s, "Pbkdf2Params"_s, "(object or DOMString)"_s);
+        return {};
     }
     JSValue iterationsValue;
     if (isNullOrUndefined)
         iterationsValue = jsUndefined();
     else {
         iterationsValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "iterations"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!iterationsValue.isUndefined()) {
         result.iterations = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, iterationsValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iterations", "Pbkdf2Params", "unsigned long");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iterations"_s, "Pbkdf2Params"_s, "unsigned long"_s);
+        return {};
     }
     JSValue saltValue;
     if (isNullOrUndefined)
         saltValue = jsUndefined();
     else {
         saltValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "salt"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!saltValue.isUndefined()) {
         result.salt = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, saltValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "salt", "Pbkdf2Params", "(ArrayBufferView or ArrayBuffer)");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "salt"_s, "Pbkdf2Params"_s, "(ArrayBufferView or ArrayBuffer)"_s);
+        return {};
     }
     return result;
 }

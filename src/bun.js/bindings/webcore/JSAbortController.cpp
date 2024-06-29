@@ -104,7 +104,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstruct
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "AbortController");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "AbortController"_s);
     auto object = AbortController::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

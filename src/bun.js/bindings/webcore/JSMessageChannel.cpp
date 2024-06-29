@@ -97,7 +97,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConst
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel"_s);
     auto object = MessageChannel::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});

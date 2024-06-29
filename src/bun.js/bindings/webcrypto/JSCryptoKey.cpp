@@ -98,9 +98,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<CryptoKey::Type>()
+template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
 {
-    return "\"public\", \"private\", \"secret\"";
+    return "\"public\", \"private\", \"secret\""_s;
 }
 
 // Attributes

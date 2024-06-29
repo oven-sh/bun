@@ -98,7 +98,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceMark");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceMark"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

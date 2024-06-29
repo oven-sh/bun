@@ -112,7 +112,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSBroadcastChannelDOMCon
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "BroadcastChannel");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "BroadcastChannel"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

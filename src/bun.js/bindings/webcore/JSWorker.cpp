@@ -121,7 +121,7 @@ template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSWorkerDOMConstructor::
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "Worker"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto scriptUrl = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());

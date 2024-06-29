@@ -166,14 +166,14 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceObserver");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceObserver"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto callback = convert<IDLCallbackFunction<JSPerformanceObserverCallback>>(
         *lexicalGlobalObject,
         argument0.value(),
         *castedThis->globalObject(),
         [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) {
-            throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback", "PerformanceObserver", nullptr);
+            throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback"_s, "PerformanceObserver"_s, nullptr);
         });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = PerformanceObserver::create(*context, callback.releaseNonNull());

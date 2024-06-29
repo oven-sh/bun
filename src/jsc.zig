@@ -61,6 +61,7 @@ pub const Node = struct {
     pub usingnamespace @import("./bun.js/node/node_fs_stat_watcher.zig");
     pub usingnamespace @import("./bun.js/node/node_fs_binding.zig");
     pub usingnamespace @import("./bun.js/node/node_os.zig");
+    pub usingnamespace @import("./bun.js/node/node_perf_hooks_histogram_binding.zig");
     pub const fs = @import("./bun.js/node/node_fs_constant.zig");
     pub const Util = struct {
         pub const parseArgs = @import("./bun.js/node/util/parse_args.zig").parseArgs;

@@ -73,4 +73,5 @@ pub const Classes = struct {
     pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
     pub const BrotliEncoder = JSC.API.BrotliEncoder;
     pub const BrotliDecoder = JSC.API.BrotliDecoder;
+    pub const RecordableHistogram = JSC.Node.RecordableHistogram; // for new class, be sure to add here
 };

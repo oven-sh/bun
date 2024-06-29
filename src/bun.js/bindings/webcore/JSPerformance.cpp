@@ -209,7 +209,10 @@ static const HashTableValue JSPerformancePrototypeTableValues[] = {
     // { "clearResourceTimings"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_clearResourceTimings, 0 } },
     // { "setResourceTimingBufferSize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_setResourceTimingBufferSize, 1 } },
     { "mark"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_mark, 1 } },
-    { "timerify"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, performanceTimerifyCodeGenerator, 1 } },
+
+    { "timerify"_s, static_cast<unsigned>(JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, performanceTimerifyCodeGenerator, 2 } }, // this routes through codegen'ed CPP to timerify in Performance.ts
+    // ERIK note because performanceTimerifyCodeGenerator has "CodeGenerator" at the end, we know the C++ bindings are generated for it based on the existance of "Performance.ts" in src/js/builtins "export timerify"
+
     { "clearMarks"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_clearMarks, 0 } },
     { "measure"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_measure, 1 } },
     { "clearMeasures"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformancePrototypeFunction_clearMeasures, 0 } },

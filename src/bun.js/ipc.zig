@@ -475,7 +475,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
             _: ?*anyopaque,
         ) void {
             // Note: uSockets has already freed the underlying socket, so calling Socket.close() can segfault
-            log("onClose\n", .{});
+            log("NewSocketIPCHandler#onClose\n", .{});
             this.handleIPCClose();
         }
 
@@ -718,6 +718,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
         }
 
         pub fn onClose(this: *Context) void {
+            log("NewNamedPipeIPCHandler#onClose\n", .{});
             this.handleIPCClose();
         }
 

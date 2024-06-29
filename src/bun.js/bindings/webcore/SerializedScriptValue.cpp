@@ -4715,6 +4715,7 @@ private:
 #if ENABLE(WEBASSEMBLY)
         case WasmModuleTag: {
             if (m_version >= 12) {
+                // https://webassembly.github.io/spec/web-api/index.html#serialization
                 CachedStringRef agentClusterID;
                 bool agentClusterIDSuccessfullyRead = readStringData(agentClusterID);
                 if (!agentClusterIDSuccessfullyRead || agentClusterID->string() != agentClusterIDFromGlobalObject(*m_globalObject)) {
@@ -4724,20 +4725,11 @@ private:
             }
             uint32_t index;
             bool indexSuccessfullyRead = read(index);
-            if (!indexSuccessfullyRead || !m_wasmMemoryHandles || index >= m_wasmMemoryHandles->size() || !JSC::Options::useSharedArrayBuffer()) {
+            if (!indexSuccessfullyRead || !m_wasmModules || index >= m_wasmModules->size()) {
                 fail();
                 return JSValue();
             }
-
-            auto& vm = m_lexicalGlobalObject->vm();
-            auto scope = DECLARE_THROW_SCOPE(vm);
-            JSWebAssemblyMemory* result = JSC::JSWebAssemblyMemory::tryCreate(m_lexicalGlobalObject, vm, m_globalObject->webAssemblyMemoryStructure());
-            // Since we are cloning a JSWebAssemblyMemory, it's impossible for that
-            // module to not have been a valid module. Therefore, tryCreate should
-            // not throw.
-            scope.releaseAssertNoException();
-            m_gcBuffer.appendWithCrashOnOverflow(result);
-            return result;
+            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {

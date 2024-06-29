@@ -1788,11 +1788,13 @@ pub const E = struct {
         /// String concatenation with numbers is required by the TypeScript compiler for
         /// "constant expression" handling in enums. We can match the behavior of a JS VM
         /// by calling out to the APIs in WebKit which are responsible for this operation.
-        pub fn toStringSafely(this: Number, allocator: std.mem.Allocator) ?string {
-            return toStringFromF64Safe(this.value, allocator);
+        ///
+        /// This can return `null` in wasm builds to avoid linking JSC
+        pub fn toString(this: Number, allocator: std.mem.Allocator) ?string {
+            return toStringFromF64(this.value, allocator);
         }
 
-        pub fn toStringFromF64Safe(value: f64, allocator: std.mem.Allocator) ?string {
+        pub fn toStringFromF64(value: f64, allocator: std.mem.Allocator) ?string {
             if (value == @trunc(value) and (value < std.math.maxInt(i32) and value > std.math.minInt(i32))) {
                 const int_value = @as(i64, @intFromFloat(value));
                 const abs = @as(u64, @intCast(@abs(int_value)));
@@ -2624,7 +2626,7 @@ pub const E = struct {
 
                 switch (part.value.data) {
                     .e_number => {
-                        if (part.value.data.e_number.toStringSafely(allocator)) |s| {
+                        if (part.value.data.e_number.toString(allocator)) |s| {
                             part.value = Expr.init(E.String, E.String.init(s), part.value.loc);
                         }
                     },
@@ -2639,6 +2641,9 @@ pub const E = struct {
                     },
                     .e_undefined => {
                         part.value = Expr.init(E.String, E.String.init("undefined"), part.value.loc);
+                    },
+                    .e_big_int => |value| {
+                        part.value = Expr.init(E.String, E.String.init(value.value), part.value.loc);
                     },
                     else => {},
                 }
@@ -5021,7 +5026,8 @@ pub const Expr = struct {
             .e_string => return expr,
             .e_undefined => "undefined",
             .e_boolean => |data| if (data.value) "true" else "false",
-            .e_number => |num| if (num.toStringSafely(allocator)) |str|
+            .e_big_int => |bigint| bigint.value,
+            .e_number => |num| if (num.toString(allocator)) |str|
                 str
             else
                 null,
@@ -6232,10 +6238,10 @@ pub const Op = struct {
     // If you add a new token, remember to add it to "Table" too
     pub const Code = enum {
         // Prefix
-        un_pos,
-        un_neg,
-        un_cpl,
-        un_not,
+        un_pos, // +expr
+        un_neg, // -expr
+        un_cpl, // ~expr
+        un_not, // !expr
         un_void,
         un_typeof,
         un_delete,
@@ -6986,24 +6992,32 @@ pub const InlinedEnumValue = packed struct {
         number: f64,
     };
 
-    const double_encode_offset_bit = 1 << 49;
+    const double_encode_offset = 1 << 49;
+    /// See PureNaN.h in WebKit for more details
     const pure_nan: f64 = @bitCast(@as(u64, 0x7ff8000000000000));
 
     pub fn encode(decoded: Decoded) InlinedEnumValue {
-        return .{ .raw_data = switch (decoded) {
-            .string => |ptr| @as(u48, @truncate(@intFromPtr(ptr))),
+        const encoded: InlinedEnumValue = .{ .raw_data = switch (decoded) {
+            .string => |ptr| @as(u48, @intCast(@intFromPtr(ptr))),
             .number => |num| if (std.math.isNan(num))
-                comptime @as(u64, @bitCast(pure_nan)) + double_encode_offset_bit
+                comptime @as(u64, @bitCast(pure_nan)) + double_encode_offset
             else
-                @as(u64, @bitCast(num)) + double_encode_offset_bit,
+                @as(u64, @bitCast(num)) + double_encode_offset,
         } };
+        if (Environment.allow_assert) {
+            bun.assert(switch (encoded.decode()) {
+                .string => |str| str == decoded.string,
+                .number => |num| num == decoded.number,
+            });
+        }
+        return encoded;
     }
 
     pub fn decode(encoded: InlinedEnumValue) Decoded {
-        if ((encoded.raw_data & double_encode_offset_bit) == 0) {
-            return .{ .string = @ptrFromInt(encoded.raw_data) };
+        if (encoded.raw_data > 0x0000FFFFFFFFFFFF) {
+            return .{ .number = @bitCast(encoded.raw_data - double_encode_offset) };
         } else {
-            return .{ .number = @bitCast(encoded.raw_data - double_encode_offset_bit) };
+            return .{ .string = @ptrFromInt(encoded.raw_data) };
         }
     }
 };
@@ -7191,7 +7205,14 @@ pub const Part = struct {
     declared_symbols: DeclaredSymbol.List = .{},
 
     // An estimate of the number of uses of all symbols used within this part.
-    symbol_uses: SymbolUseMap = SymbolUseMap{},
+    symbol_uses: SymbolUseMap = .{},
+
+    // This tracks property accesses off of imported symbols. We don't know
+    // during parsing if an imported symbol is going to be an inlined enum
+    // value or not. This is only known during linking. So we defer adding
+    // a dependency on these imported symbols until we know whether the
+    // property access is an inlined enum value or not.
+    import_symbol_property_uses: SymbolPropertyUseMap = .{},
 
     // The indices of the other parts in this file that are needed if this part
     // is needed.
@@ -7213,8 +7234,6 @@ pub const Part = struct {
 
     tag: Tag = Tag.none,
 
-    valid_in_development: if (bun.Environment.allow_assert) bool else void = bun.DebugOnlyDefault(true),
-
     pub const Tag = enum {
         none,
         jsx_import,
@@ -7229,6 +7248,8 @@ pub const Part = struct {
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
+    pub const SymbolPropertyUseMap = std.ArrayHashMapUnmanaged(Ref, std.StringHashMapUnmanaged(Symbol.Use), RefHashCtx, false);
+
     pub fn jsonStringify(self: *const Part, writer: anytype) !void {
         return writer.write(self.stmts);
     }

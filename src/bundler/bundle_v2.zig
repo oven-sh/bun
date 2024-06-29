@@ -4696,7 +4696,7 @@ const LinkerContext = struct {
                     const other_kind = exports_kind[other_file];
 
                     switch (record.kind) {
-                        ImportKind.stmt => {
+                        .stmt => {
                             // Importing using ES6 syntax from a file without any ES6 syntax
                             // causes that module to be considered CommonJS-style, even if it
                             // doesn't have any CommonJS exports.
@@ -4732,7 +4732,7 @@ const LinkerContext = struct {
                                 flags[other_file].wrap = .cjs;
                             }
                         },
-                        ImportKind.require =>
+                        .require =>
                         // Files that are imported with require() must be CommonJS modules
                         {
                             if (other_kind == .esm) {
@@ -4743,7 +4743,7 @@ const LinkerContext = struct {
                                 exports_kind[other_file] = .cjs;
                             }
                         },
-                        ImportKind.dynamic => {
+                        .dynamic => {
                             if (!this.graph.code_splitting) {
                                 // If we're not splitting, then import() is just a require() that
                                 // returns a promise, so the imported file must be a CommonJS module
@@ -5783,8 +5783,49 @@ const LinkerContext = struct {
         const parts_slice: []js_ast.Part = parts.slice();
         var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
         outer: for (parts_slice, 0..) |*part, part_index| {
+            // Now that all files have been parsed, determine which property
+            // accesses off of imported symbols are inlined enum values and
+            // which ones aren't
+            for (
+                part.import_symbol_property_uses.keys(),
+                part.import_symbol_property_uses.values(),
+            ) |ref, properties| {
+                const use = part.symbol_uses.getPtr(ref).?;
 
-            // TODO: inline const TypeScript enum here
+                // Rare path: this import is a TypeScript enum
+                if (c.graph.meta.items(.imports_to_bind)[id].get(ref)) |import_data| {
+                    const import_ref = import_data.data.import_ref;
+                    if (c.graph.symbols.get(import_ref)) |symbol| {
+                        if (symbol.kind == .ts_enum) {
+                            if (c.graph.ts_enums.get(import_ref)) |enum_data| {
+                                var found_non_inlined_enum = false;
+
+                                var it = properties.iterator();
+                                while (it.next()) |next| {
+                                    const name = next.key_ptr.*;
+                                    const prop_use = next.value_ptr;
+
+                                    if (enum_data.get(name) == null) {
+                                        found_non_inlined_enum = true;
+                                        use.count_estimate += prop_use.count_estimate;
+                                    }
+                                }
+
+                                if (!found_non_inlined_enum) {
+                                    _ = part.symbol_uses.swapRemove(ref);
+                                }
+                            }
+                            continue;
+                        }
+                    }
+                }
+
+                // Common path: this import isn't a TypeScript enum
+                var it = properties.valueIterator();
+                while (it.next()) |prop_use| {
+                    use.count_estimate += prop_use.count_estimate;
+                }
+            }
 
             // TODO: inline function calls here
 
@@ -5827,10 +5868,8 @@ const LinkerContext = struct {
                 }
             }
 
-            const symbol_uses = part.symbol_uses.keys();
-
             // Now that we know this, we can determine cross-part dependencies
-            for (symbol_uses, 0..) |ref, j| {
+            for (part.symbol_uses.keys(), 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }

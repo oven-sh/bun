@@ -1189,6 +1189,31 @@ describe("bundler", () => {
       stdout: "12 312\n12 3124",
     },
   });
+  itBundled("edgecase/ProtoNullProtoInlining", {
+    files: {
+      "/entry.ts": `
+        console.log({ __proto__: null }.__proto__ !== void 0)
+      `,
+    },
+    run: {
+      stdout: "false",
+    },
+  });
+  itBundled("edgecase/ConstantFoldingShiftOperations", {
+    files: {
+      "/entry.ts": `
+        capture(421 >> -542)
+        capture(421 >>> -542)
+        capture(1 << 32)
+        capture(1 >> 32)
+        capture(1 >>> 32)
+        capture(47849312 << 34)
+        capture(-9 >> 1)
+        capture(-5 >> 1)
+      `,
+    },
+    capture: ["105", "105", "1", "1", "1", "191397248"],
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

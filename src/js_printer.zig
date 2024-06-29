@@ -2614,6 +2614,15 @@ fn NewPrinter(
                     var wrap = false;
                     if (e.optional_chain == null) {
                         flags.insert(.has_non_optional_chain_parent);
+
+                        if (e.index.data.as(.e_string)) |str| {
+                            str.resolveRopeIfNeeded(p.options.allocator);
+
+                            if (str.isUTF8()) if (p.tryToGetImportedEnumValue(e.target, str.data)) |value| {
+                                p.printInlinedEnum(value, str.data, level);
+                                return;
+                            };
+                        }
                     } else {
                         if (flags.contains(.has_non_optional_chain_parent)) {
                             wrap = true;
@@ -2624,10 +2633,7 @@ fn NewPrinter(
 
                     p.printExpr(e.target, .postfix, flags);
 
-                    // Zig compiler bug: e.optional_chain == null or e.optional_chain == .start causes broken LLVM IR
-                    // https://github.com/ziglang/zig/issues/6059
-                    const is_optional_chain_start = (e.optional_chain orelse js_ast.OptionalChain.continuation) == js_ast.OptionalChain.start;
-
+                    const is_optional_chain_start = e.optional_chain == .start;
                     if (is_optional_chain_start) {
                         p.print("?.");
                     }
@@ -5265,10 +5271,13 @@ fn NewPrinter(
                 }, level, .{}),
             }
 
-            if (!p.options.minify_whitespace and p.options.minify_identifiers) {
-                p.print(" /* ");
-                p.print(comment);
-                p.print(" */");
+            if (!p.options.minify_whitespace and !p.options.minify_identifiers) {
+                // TODO: rewrite this to handle </script>
+                if (!bun.strings.containsComptime(comment, "*/")) {
+                    p.print(" /* ");
+                    p.print(comment);
+                    p.print(" */");
+                }
             }
         }
 

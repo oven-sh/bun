@@ -766,14 +766,14 @@ static JSC::EncodedJSValue KeyObject__createOKPFromPrivate(JSC::JSGlobalObject* 
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    uint8_t public_key[ED25519_PUBLIC_KEY_LEN];
+    unsigned char public_key[ED25519_PUBLIC_KEY_LEN];
 
     if (namedCurve == CryptoKeyOKP::NamedCurve::Ed25519) {
         memcpy(public_key, keyData.data() + ED25519_PRIVATE_KEY_LEN, ED25519_PUBLIC_KEY_LEN);
     } else {
         X25519_public_from_private(public_key, keyData.data());
     }
-    auto result = CryptoKeyOKP::create(alg, namedCurve, CryptoKeyType::Public, Vector<uint8_t>(public_key), true, CryptoKeyUsageVerify);
+    auto result = CryptoKeyOKP::create(alg, namedCurve, CryptoKeyType::Public, Vector<unsigned char>::from(public_key), true, CryptoKeyUsageVerify);
     if (UNLIKELY(result == nullptr)) {
         JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
         return JSValue::encode(JSC::jsUndefined());

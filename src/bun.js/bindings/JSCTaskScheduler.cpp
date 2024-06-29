@@ -31,7 +31,7 @@ WTF_MAKE_ISO_ALLOCATED_IMPL(JSCDeferredWorkTask);
 
 static JSC::VM& getVM(Ticket ticket)
 {
-    return ticket->scriptExecutionOwner.get()->vm();
+    return ticket->scriptExecutionOwner()->vm();
 }
 
 void JSCTaskScheduler::onAddPendingWork(std::unique_ptr<TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind)

@@ -120,7 +120,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor, (JSC::JSGlobalOb
     idString = idValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    auto index = idString->tryGetValue().reverseFind('/', idString->length());
+    auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
     if (index != WTF::notFound) {
       dirname = JSC::jsSubstring(globalObject, idString, 0, index);

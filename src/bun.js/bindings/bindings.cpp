@@ -240,7 +240,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
                 return AsymmetricMatcherResult::PASS;
             } else if (otherProp.isBoolean() && globalObject->booleanObjectConstructor() == constructorObject) {
                 return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isSymbol() && globalObject->symbolObjectConstructor() == constructorObject) {
+            } else if (otherProp.isSymbol() && globalObject->symbolObjectStructure() == constructorObject->structure()) {
                 return AsymmetricMatcherResult::PASS;
             } else if (otherProp.isString()) {
                 if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
@@ -2829,13 +2829,13 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
 
     auto str = strValue->value(arg2);
 
-    if (str.is8Bit()) {
-        arg1->ptr = str.span8().data();
+    if (str->is8Bit()) {
+        arg1->ptr = str->span8().data();
     } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str.span16().data());
+        arg1->ptr = Zig::taggedUTF16Ptr(str->span16().data());
     }
 
-    arg1->len = str.length();
+    arg1->len = str->length();
 }
 
 JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))

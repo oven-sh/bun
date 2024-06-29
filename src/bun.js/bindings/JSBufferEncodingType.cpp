@@ -59,7 +59,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     if (UNLIKELY(!str))
         return std::nullopt;
 
-    auto encoding = str->value(&lexicalGlobalObject);
+    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;

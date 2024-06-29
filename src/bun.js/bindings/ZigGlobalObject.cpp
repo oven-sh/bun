@@ -280,7 +280,7 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
         auto* str = errorMessage.toString(lexicalGlobalObject);
         if (str->length() > 0) {
             sb.append("Error: "_s);
-            sb.append(str->value(lexicalGlobalObject));
+            sb.append(str->value(lexicalGlobalObject).data);
         } else {
             sb.append("Error"_s);
         }
@@ -1585,7 +1585,7 @@ extern "C" JSC__JSValue ArrayBuffer__fromSharedMemfd(int64_t fd, JSC::JSGlobalOb
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    auto buffer = ArrayBuffer::createFromBytes(reinterpret_cast<char*>(ptr) + byteOffset, byteLength, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
+    auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(reinterpret_cast<char*>(ptr) + byteOffset), byteLength }, createSharedTask<void(void*)>([ptr, totalLength](void* p) {
         munmap(ptr, totalLength);
     }));
 
@@ -3693,7 +3693,7 @@ JSC::Identifier GlobalObject::moduleLoaderResolve(JSGlobalObject* jsGlobalObject
     BunString keyZ;
     if (key.isString()) {
         auto moduleName = jsCast<JSString*>(key)->value(globalObject);
-        if (moduleName.startsWith("file://"_s)) {
+        if (moduleName->startsWith("file://"_s)) {
             auto url = WTF::URL(moduleName);
             if (url.isValid() && !url.isEmpty()) {
                 keyZ = Bun::toStringRef(url.fileSystemPath());
@@ -3765,7 +3765,7 @@ JSC::JSInternalPromise* GlobalObject::moduleLoaderImportModule(JSGlobalObject* j
     ErrorableString resolved;
     BunString moduleNameZ;
 
-    auto moduleName = moduleNameValue->value(globalObject);
+    String moduleName = moduleNameValue->value(globalObject);
 #if BUN_DEBUG
     auto startRefCount = moduleName.impl()->refCount();
 #endif

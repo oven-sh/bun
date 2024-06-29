@@ -222,7 +222,7 @@ JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalO
     auto* subclassStructure = globalObject->JSBufferSubclassStructure();
 
     if (LIKELY(length > 0)) {
-        auto buffer = ArrayBuffer::createFromBytes(ptr, length, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, bytesDeallocator](void* p) {
             if (bytesDeallocator)
                 bytesDeallocator(p, ctx);
         }));
@@ -256,11 +256,11 @@ static inline JSC::EncodedJSValue writeToBuffer(JSC::JSGlobalObject* lexicalGlob
     case WebCore::BufferEncodingType::base64url:
     case WebCore::BufferEncodingType::hex: {
 
-        if (view.is8Bit()) {
-            const auto span = view.span8();
+        if (view->is8Bit()) {
+            const auto span = view->span8();
             written = Bun__encoding__writeLatin1(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         } else {
-            const auto span = view.span16();
+            const auto span = view->span16();
             written = Bun__encoding__writeUTF16(span.data(), span.size(), reinterpret_cast<unsigned char*>(castedThis->vector()) + offset, length, static_cast<uint8_t>(encoding));
         }
         break;
@@ -374,8 +374,8 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
     const auto& view = str->tryGetValue(lexicalGlobalObject);
     JSC::EncodedJSValue result;
 
-    if (view.is8Bit()) {
-        const auto span = view.span8();
+    if (view->is8Bit()) {
+        const auto span = view->span8();
 
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
@@ -399,7 +399,7 @@ static JSC::EncodedJSValue constructFromEncoding(JSGlobalObject* lexicalGlobalOb
         }
         }
     } else {
-        const auto span = view.span16();
+        const auto span = view->span16();
         switch (encoding) {
         case WebCore::BufferEncodingType::utf8:
         case WebCore::BufferEncodingType::base64:
@@ -605,8 +605,8 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
         int64_t length = str->length();
         const auto& view = str->tryGetValue(lexicalGlobalObject);
 
-        if (view.is8Bit()) {
-            const auto span = view.span8();
+        if (view->is8Bit()) {
+            const auto span = view->span8();
             if (span.data()[length - 1] == 0x3D) {
                 length--;
 
@@ -614,7 +614,7 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
                     length--;
             }
         } else {
-            const auto span = view.span16();
+            const auto span = view->span16();
             if (span.data()[length - 1] == 0x3D) {
                 length--;
 
@@ -633,11 +633,11 @@ static inline JSC::EncodedJSValue jsBufferByteLengthFromStringAndEncoding(JSC::J
 
     case WebCore::BufferEncodingType::utf8: {
         const auto& view = str->tryGetValue(lexicalGlobalObject);
-        if (view.is8Bit()) {
-            const auto span = view.span8();
+        if (view->is8Bit()) {
+            const auto span = view->span8();
             written = Bun__encoding__byteLengthLatin1(span.data(), span.size(), static_cast<uint8_t>(encoding));
         } else {
-            const auto span = view.span16();
+            const auto span = view->span16();
             written = Bun__encoding__byteLengthUTF16(span.data(), span.size(), static_cast<uint8_t>(encoding));
         }
         break;
@@ -1715,7 +1715,7 @@ extern "C" JSC::EncodedJSValue JSBuffer__fromMmap(Zig::GlobalObject* globalObjec
 
     auto* structure = globalObject->JSBufferSubclassStructure();
 
-    auto buffer = ArrayBuffer::createFromBytes(ptr, length, createSharedTask<void(void*)>([length](void* p) {
+    auto buffer = ArrayBuffer::createFromBytes({ static_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([length](void* p) {
 #if !OS(WINDOWS)
         munmap(p, length);
 #else
@@ -1814,7 +1814,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocWithoutTypeChecks, JSUint8Array
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return allocBuffer(lexicalGlobalObject, byteLength);
+    return { allocBuffer(lexicalGlobalObject, byteLength) };
 }
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
@@ -1824,7 +1824,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeWithoutTypeChecks, JSUint
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return allocBufferUnsafe(lexicalGlobalObject, byteLength);
+    return { allocBufferUnsafe(lexicalGlobalObject, byteLength) };
 }
 
 JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JSUint8Array*, (JSC::JSGlobalObject * lexicalGlobalObject, void* thisValue, int byteLength))
@@ -1834,7 +1834,7 @@ JSC_DEFINE_JIT_OPERATION(jsBufferConstructorAllocUnsafeSlowWithoutTypeChecks, JS
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return allocBufferUnsafe(lexicalGlobalObject, byteLength);
+    return { allocBufferUnsafe(lexicalGlobalObject, byteLength) };
 }
 
 JSC_ANNOTATE_HOST_FUNCTION(JSBufferConstructorConstruct, JSBufferConstructor::construct);

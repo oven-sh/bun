@@ -30,6 +30,7 @@
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
 #include "PathInlines.h"
+#include "wtf/text/ASCIILiteral.h"
 
 namespace Bun {
 
@@ -219,12 +220,12 @@ JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
 
 static JSValue constructBunVersion(VM& vm, JSObject*)
 {
-    return JSC::jsString(vm, makeString(Bun__version + 1));
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version + 1)));
 }
 
 static JSValue constructBunRevision(VM& vm, JSObject*)
 {
-    return JSC::jsString(vm, makeString(Bun__version_sha));
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
 static JSValue constructIsMainThread(VM&, JSObject* object)
@@ -389,7 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (!length)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    String resolvedString = string->value(lexicalGlobalObject);
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
     if (!resolvedString.is8Bit()) {
         const auto span = resolvedString.span16();

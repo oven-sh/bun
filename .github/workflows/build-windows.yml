@@ -214,9 +214,6 @@ jobs:
       arch: ${{ inputs.arch }}
       cpu: ${{ inputs.cpu }}
       assertions: ${{ inputs.assertions }}
-      zig-optimize: ReleaseSafe
-      # Windows is always ReleaseSafe for now
-      # zig-optimize: ${{ inputs.zig-optimize }}
       canary: ${{ inputs.canary }}
       no-cache: ${{ inputs.no-cache }}
 

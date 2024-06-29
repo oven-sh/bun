@@ -2,6 +2,7 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
+const cluster = require("node:cluster");
 
 const {
   getHeader,
@@ -522,6 +523,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     this[serverSymbol] = Bun.serve<any>({
       tls,
       port,
+      reusePort: !cluster.isPrimary,
       hostname: host,
       unix: socketPath,
       // Bindings to be used for WS Server

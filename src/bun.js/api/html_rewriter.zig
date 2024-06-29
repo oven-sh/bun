@@ -1104,7 +1104,7 @@ pub const TextChunk = struct {
     ) callconv(.C) JSValue {
         if (this.text_chunk == null)
             return JSValue.jsUndefined();
-        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toValueGC(global);
+        return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toJS(global);
     }
 
     pub fn removed(this: *TextChunk, _: *JSGlobalObject) callconv(.C) JSValue {
@@ -1141,7 +1141,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getName().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValueGC(globalObject);
+        return ZigString.init(str).toJS(globalObject);
     }
 
     pub fn systemId(
@@ -1154,7 +1154,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getSystemId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValueGC(globalObject);
+        return ZigString.init(str).toJS(globalObject);
     }
 
     pub fn publicId(
@@ -1167,7 +1167,7 @@ pub const DocType = struct {
         const str = this.doctype.?.getPublicId().slice();
         if (str.len == 0)
             return JSValue.jsNull();
-        return ZigString.init(str).toValueGC(globalObject);
+        return ZigString.init(str).toJS(globalObject);
     }
 };
 
@@ -1493,7 +1493,7 @@ pub const Element = struct {
         if (this.element == null)
             return JSValue.jsNull();
         if (function.isUndefinedOrNull() or !function.isCallable(globalObject.vm())) {
-            return ZigString.init("Expected a function").withEncoding().toValueGC(globalObject);
+            return ZigString.init("Expected a function").withEncoding().toJS(globalObject);
         }
 
         const end_tag_handler = bun.default_allocator.create(EndTag.Handler) catch bun.outOfMemory();

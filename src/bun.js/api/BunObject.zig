@@ -608,7 +608,7 @@ pub fn which(
         cwd_str.slice(),
         bin_str.slice(),
     )) |bin_path| {
-        return ZigString.init(bin_path).withEncoding().toValueGC(globalThis);
+        return ZigString.init(bin_path).withEncoding().toJS(globalThis);
     }
 
     return JSC.JSValue.jsNull();
@@ -722,7 +722,7 @@ pub fn inspect(
     // we are going to always clone to keep things simple for now
     // the common case here will be stack-allocated, so it should be fine
     var out = ZigString.init(array.toOwnedSliceLeaky()).withEncoding();
-    const ret = out.toValueGC(globalThis);
+    const ret = out.toJS(globalThis);
     array.deinit();
     return ret;
 }
@@ -771,14 +771,14 @@ pub fn getCWD(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toValueGC(globalThis);
+    return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().origin.origin).toValueGC(globalThis);
+    return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
 pub fn getStdin(
@@ -880,14 +880,14 @@ pub fn getMain(
         return vm.main_resolved_path.toJS(globalThis);
     }
 
-    return ZigString.init(vm.main).toValueGC(globalThis);
+    return ZigString.init(vm.main).toJS(globalThis);
 }
 
 pub fn getAssetPrefix(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
 ) callconv(.C) JSC.JSValue {
-    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toValueGC(globalThis);
+    return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toJS(globalThis);
 }
 
 pub fn getArgv(
@@ -1167,7 +1167,7 @@ fn doResolveWithArgs(
             return null;
         };
 
-        return ZigString.initUTF8(arraylist.items).toValueGC(ctx);
+        return ZigString.initUTF8(arraylist.items).toJS(ctx);
     }
 
     return errorable.result.value.toJS(ctx);
@@ -1279,7 +1279,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     var writer = stream.writer();
     getPublicPath(to.slice(), VirtualMachine.get().origin, @TypeOf(&writer), &writer);
 
-    return ZigString.init(stream.buffer[0..stream.pos]).toValueGC(globalObject);
+    return ZigString.init(stream.buffer[0..stream.pos]).toJS(globalObject);
 }
 
 extern fn dump_zone_malloc_stats() void;
@@ -2158,7 +2158,7 @@ pub const Crypto = struct {
                         const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD_{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password hashing failed with error \"{s}\"", .{@errorName(this.err)});
-                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
+                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toJS(globalObject));
                         return instance;
                     }
                 };
@@ -2175,7 +2175,7 @@ pub const Crypto = struct {
                             promise.reject(global, error_instance);
                         },
                         .hash => |value| {
-                            const js_string = JSC.ZigString.init(value).toValueGC(global);
+                            const js_string = JSC.ZigString.init(value).toJS(global);
                             bun.default_allocator.destroy(this);
                             promise.resolve(global, js_string);
                         },
@@ -2237,7 +2237,7 @@ pub const Crypto = struct {
                         return .zero;
                     },
                     .hash => |h| {
-                        return JSC.ZigString.init(h).toValueGC(globalObject);
+                        return JSC.ZigString.init(h).toJS(globalObject);
                     },
                 }
 
@@ -2400,7 +2400,7 @@ pub const Crypto = struct {
                         const error_code = std.fmt.allocPrint(bun.default_allocator, "PASSWORD{}", .{PascalToUpperUnderscoreCaseFormatter{ .input = @errorName(this.err) }}) catch bun.outOfMemory();
                         defer bun.default_allocator.free(error_code);
                         const instance = globalObject.createErrorInstance("Password verification failed with error \"{s}\"", .{@errorName(this.err)});
-                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toValueGC(globalObject));
+                        instance.put(globalObject, ZigString.static("code"), JSC.ZigString.init(error_code).toJS(globalObject));
                         return instance;
                     }
                 };
@@ -2598,7 +2598,7 @@ pub const Crypto = struct {
             globalObject: *JSC.JSGlobalObject,
         ) callconv(.C) JSC.JSValue {
             return switch (this.*) {
-                inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toValueGC(globalObject),
+                inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
             };
         }
 
@@ -3412,13 +3412,13 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     assert(len > 0);
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
         return JSC.JSValue.jsUndefined();
     };
 
     switch (escaped) {
         .static => |val| {
-            return ZigString.init(val).toValue(globalObject);
+            return ZigString.init(val).toJS(globalObject);
         },
         .original => return input_value,
         .allocated => |escaped_html| {
@@ -3458,13 +3458,13 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
     const allocator = if (input_slice.len <= 32) stack_allocator.get() else stack_allocator.fallback_allocator;
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
-        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toValue(globalObject));
+        globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
         return JSC.JSValue.jsUndefined();
     };
 
     switch (escaped) {
         .static => |val| {
-            return ZigString.init(val).toValue(globalObject);
+            return ZigString.init(val).toJS(globalObject);
         },
         .original => return input_value,
         .allocated => |escaped_html| {
@@ -3811,10 +3811,10 @@ const UnsafeObject = struct {
                 zig_str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(@alignCast(array_buffer.ptr)));
                 zig_str.len = array_buffer.len;
                 zig_str.markUTF16();
-                return zig_str.toValueGC(globalThis);
+                return zig_str.toJS(globalThis);
             },
             else => {
-                return ZigString.init(array_buffer.slice()).toValueGC(globalThis);
+                return ZigString.init(array_buffer.slice()).toJS(globalThis);
             },
         }
     }

@@ -4969,15 +4969,17 @@ pub const PackageManager = struct {
             if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                    name = switch (new.tag) {
-                        .dist_tag => new.value.dist_tag.name,
-                        .git => new.value.git.package_name,
-                        .github => new.value.github.package_name,
-                        .npm => new.value.npm.name,
-                        .tarball => new.value.tarball.package_name,
-                        else => name,
+                    name, name_hash = switch (new.tag) {
+                        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+                        .dist_tag => .{ new.value.dist_tag.name, String.Builder.stringHash(this.lockfile.str(&new.value.dist_tag.name)) },
+                        .npm => .{ new.value.npm.name, String.Builder.stringHash(this.lockfile.str(&new.value.npm.name)) },
+                        .git => .{ new.value.git.package_name, name_hash },
+                        .github => .{ new.value.github.package_name, name_hash },
+                        .tarball => .{ new.value.tarball.package_name, name_hash },
+                        else => .{ name, name_hash },
                     };
-                    name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+
+                    // `name_hash` stays the same
                     break :version new;
                 }
             }
@@ -6597,13 +6599,19 @@ pub const PackageManager = struct {
                                 .dependency, .root_dependency => |id| {
                                     var version = &manager.lockfile.buffers.dependencies.items[id].version;
                                     switch (version.tag) {
+                                        .git => {
+                                            version.value.git.package_name = pkg.name;
+                                        },
                                         .github => {
                                             version.value.github.package_name = pkg.name;
                                         },
                                         .tarball => {
                                             version.value.tarball.package_name = pkg.name;
                                         },
-                                        else => unreachable,
+
+                                        // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
+                                        // will still have the original.
+                                        else => {},
                                     }
                                     try manager.processDependencyListItem(dep, &any_root, install_peer);
                                 },

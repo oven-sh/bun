@@ -12,3 +12,4 @@ new_test("cwd.ts");
 new_test("call-and-destroy.ts");
 new_test("worker-constructor.ts");
 new_test("worker-death.ts");
+new_test("worker-events.ts");

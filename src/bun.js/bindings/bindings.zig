@@ -868,9 +868,6 @@ pub const ZigString = extern struct {
         return shim.cppFn("to16BitValue", .{ this, global });
     }
 
-    pub const toJS = toJS;
-    pub const toValueGC = toJS;
-
     pub fn withEncoding(this: *const ZigString) ZigString {
         var out = this.*;
         out.setOutputEncoding();

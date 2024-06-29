@@ -3151,7 +3151,6 @@ pub const Parser = struct {
     pub fn analyze(self: *Parser, context: *anyopaque, callback: *const fn (*anyopaque, *TSXParser, []js_ast.Part) anyerror!void) anyerror!void {
         var p: TSXParser = undefined;
         try TSXParser.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
-        p.should_fold_typescript_constant_expressions = false;
 
         defer p.lexer.deinit();
 
@@ -4900,6 +4899,9 @@ fn NewParser_(
         /// we don't implement certain items in this list. For example, we don't do all
         /// number-to-string conversions since ours might differ from how JavaScript
         /// would do it, which would be a correctness issue.
+        ///
+        /// This flag is also set globally when minify_syntax is enabled, in which this means
+        /// we always fold constant expressions.
         should_fold_typescript_constant_expressions: bool = false,
 
         emitted_namespace_vars: RefMap = RefMap{},
@@ -6728,12 +6730,15 @@ fn NewParser_(
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             }
 
+            if (p.options.features.minify_syntax) {
+                p.should_fold_typescript_constant_expressions = true;
+            }
+
             //  "React.createElement" and "createElement" become:
             //      import { createElement } from 'react';
             //  "Foo.Bar.createElement" becomes:
             //      import { Bar } from 'foo';
             //      Usages become Bar.createElement
-
             switch (comptime jsx_transform_type) {
                 .react => {
                     if (!p.options.bundle) {
@@ -7446,11 +7451,11 @@ fn NewParser_(
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                 return p.newExpr(E.Number{ .value = vals[0] + vals[1] }, v.loc);
                             }
-                        }
 
-                        // "'abc' + 'xyz'" => "'abcxyz'"
-                        if (foldStringAddition(e_.left, e_.right, p.allocator, .normal)) |res| {
-                            return res;
+                            // "'abc' + 'xyz'" => "'abcxyz'"
+                            if (foldStringAddition(e_.left, e_.right, p.allocator, .normal)) |res| {
+                                return res;
+                            }
                         }
                     },
                     .bin_sub => {

@@ -5684,15 +5684,9 @@ pub const Expr = struct {
 
         pub fn extractNumericValue(data: Expr.Data) ?f64 {
             return switch (data) {
-                .e_number => if (std.math.isFinite(data.e_number.value))
-                    data.e_number.value
-                else
-                    null,
+                .e_number => data.e_number.value,
                 .e_inlined_enum => |inlined| switch (inlined.value.data) {
-                    .e_number => |num| if (std.math.isFinite(num.value))
-                        num.value
-                    else
-                        null,
+                    .e_number => |num| num.value,
                     else => null,
                 },
                 else => null,
@@ -6986,18 +6980,20 @@ pub const InlinedEnumValue = packed struct {
     /// See PureNaN.h in WebKit for more details
     const pure_nan: f64 = @bitCast(@as(u64, 0x7ff8000000000000));
 
+    fn purifyNaN(value: f64) f64 {
+        return if (std.math.isNan(value)) pure_nan else value;
+    }
+
     pub fn encode(decoded: Decoded) InlinedEnumValue {
         const encoded: InlinedEnumValue = .{ .raw_data = switch (decoded) {
-            .string => |ptr| @as(u48, @intCast(@intFromPtr(ptr))),
-            .number => |num| if (std.math.isNan(num))
-                comptime @as(u64, @bitCast(pure_nan)) + double_encode_offset
-            else
-                @as(u64, @bitCast(num)) + double_encode_offset,
+            .string => |ptr| @as(u48, @truncate(@intFromPtr(ptr))),
+            .number => |num| @as(u64, @bitCast(purifyNaN(num))) + double_encode_offset,
         } };
         if (Environment.allow_assert) {
             bun.assert(switch (encoded.decode()) {
                 .string => |str| str == decoded.string,
-                .number => |num| num == decoded.number,
+                .number => |num| @as(u64, @bitCast(num)) ==
+                    @as(u64, @bitCast(purifyNaN(decoded.number))),
             });
         }
         return encoded;

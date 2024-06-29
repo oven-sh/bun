@@ -1212,7 +1212,44 @@ describe("bundler", () => {
         capture(-5 >> 1)
       `,
     },
-    capture: ["105", "105", "1", "1", "1", "191397248"],
+    capture: ["105", "105", "1", "1", "1", "191397248", "-5", "-3"],
+  });
+  itBundled("edgecase/EnumInliningNanBoxedEncoding", {
+    files: {
+      "/main.ts": `
+        import { Enum } from './other.ts';
+        capture(Enum.a);
+        capture(Enum.b);
+        capture(Enum.c);
+        capture(Enum.d);
+        capture(Enum.e);
+        capture(Enum.f);
+        capture(Enum.g);
+      `,
+      "/other.ts": `
+        export const enum Enum {
+          a = 0,
+          b = NaN,
+          c = (0 / 0) + 1,
+          d = Infinity,
+          e = -Infinity,
+          f = 3e450,
+          // https://float.exposed/0xffefffffffffffff
+          g = -1.79769313486231570815e+308,
+        }
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "0 /* a */",
+      "NaN /* b */",
+      "NaN /* c */",
+      "Infinity /* d */",
+      "-Infinity /* e */",
+      "Infinity /* f */",
+      // should probably fix this
+      "-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 /* g */",
+    ],
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

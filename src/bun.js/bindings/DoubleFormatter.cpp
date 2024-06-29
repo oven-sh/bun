@@ -12,6 +12,9 @@ extern "C" void WTF__dtoa(char* buf_124_bytes, double number)
     WTF::numberToString(number, buf);
 }
 
+/// This is the equivalent of the unary '+' operator on a JS string
+/// See https://262.ecma-international.org/14.0/#sec-stringtonumber
+/// Grammar: https://262.ecma-international.org/14.0/#prod-StringNumericLiteral
 extern "C" double JSC__jsToNumber(char* latin1_ptr, size_t len)
 {
     return JSC::jsToNumber(WTF::StringView(latin1_ptr, len, true));

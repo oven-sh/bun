@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
 pub const is_bindgen: bool = false;
@@ -111,7 +112,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
                     const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
-                    if (Fn.calling_convention != .C) {
+                    if (Fn.calling_convention != bun.JSC.conv) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
 

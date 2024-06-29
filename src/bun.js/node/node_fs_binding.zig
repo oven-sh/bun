@@ -144,7 +144,7 @@ pub const NodeJSFS = struct {
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
     pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*@This() {
         globalObject.throw("Not a constructor", .{});
         return null;
     }

@@ -21,7 +21,7 @@ pub const ResolveMessage = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*ResolveMessage {
+    ) callconv(JSC.conv) ?*ResolveMessage {
         globalThis.throw("ResolveMessage is not constructable", .{});
         return null;
     }

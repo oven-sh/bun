@@ -463,7 +463,7 @@ pub const Response = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Response {
+    ) callconv(JSC.conv) ?*Response {
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {

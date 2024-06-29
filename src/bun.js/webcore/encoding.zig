@@ -703,7 +703,7 @@ pub const TextDecoder = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*TextDecoder {
+    ) callconv(JSC.conv) ?*TextDecoder {
         var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 

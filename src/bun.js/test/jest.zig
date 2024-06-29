@@ -632,7 +632,7 @@ pub const TestScope = struct {
         return createIfScope(globalThis, callframe, "test.todoIf()", "todoIf", TestScope, .todo);
     }
 
-    pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onReject(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         debug("onReject", .{});
         const arguments = callframe.arguments(2);
         const err = arguments.ptr[0];
@@ -643,7 +643,7 @@ pub const TestScope = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn onResolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         debug("onResolve", .{});
         const arguments = callframe.arguments(2);
         var task: *TestRunnerTask = arguments.ptr[1].asPromisePtr(TestRunnerTask);

@@ -332,7 +332,7 @@ pub const Expect = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
         const value = if (arguments.len < 1) JSC.JSValue.jsUndefined() else arguments[0];
 
@@ -384,7 +384,7 @@ pub const Expect = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*Expect {
+    ) callconv(JSC.conv) ?*Expect {
         globalThis.throw("expect() cannot be called with new", .{});
         return null;
     }
@@ -4695,7 +4695,7 @@ pub const Expect = struct {
 
     /// Function that is run for either `expect.myMatcher()` call or `expect().myMatcher` call,
     /// and we can known which case it is based on if the `callFrame.this()` value is an instance of Expect
-    pub fn applyCustomMatcher(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn applyCustomMatcher(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         defer globalThis.bunVM().autoGarbageCollect();
 
         // retrieve the user-provided matcher function (matcher_fn)
@@ -4805,7 +4805,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn notImplementedStaticFn(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn notImplementedStaticFn(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         globalThis.throw("Not implemented", .{});
         return .zero;
     }
@@ -4825,7 +4825,7 @@ pub const Expect = struct {
         vm.autoGarbageCollect();
     }
 
-    pub fn doUnreachable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doUnreachable(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arg = callframe.arguments(1).ptr[0];
 
         if (arg.isEmptyOrUndefinedOrNull()) {
@@ -4956,7 +4956,7 @@ pub const ExpectAnything = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const anything = globalThis.bunVM().allocator.create(ExpectAnything) catch {
             globalThis.throwOutOfMemory();
             return .zero;
@@ -4984,7 +4984,7 @@ pub const ExpectStringMatching = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
@@ -5021,7 +5021,7 @@ pub const ExpectCloseTo = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callFrame.arguments(2).slice();
 
         if (args.len == 0 or !args[0].isNumber()) {
@@ -5068,7 +5068,7 @@ pub const ExpectObjectContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
@@ -5105,7 +5105,7 @@ pub const ExpectStringContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isString()) {
@@ -5142,7 +5142,7 @@ pub const ExpectAny = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
@@ -5188,7 +5188,7 @@ pub const ExpectArrayContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].jsType().isArray()) {
@@ -5232,7 +5232,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
     /// Implements the static call of the custom matcher (`expect.myCustomMatcher(<args>)`),
     /// which creates an asymmetric matcher instance (`ExpectCustomAsymmetricMatcher`).
     /// This will not run the matcher, but just capture the args etc.
-    pub fn create(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, matcher_fn: JSValue) callconv(.C) JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame, matcher_fn: JSValue) callconv(JSC.conv) JSValue {
         var flags: Expect.Flags = undefined;
 
         // try to retrieve the ExpectStatic instance (to get the flags)

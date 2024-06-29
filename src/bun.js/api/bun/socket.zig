@@ -810,7 +810,7 @@ pub const Listener = struct {
         onCreate(false, socket);
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Listener {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*Listener {
         globalObject.throw("Cannot construct Listener", .{});
         return null;
     }
@@ -1250,7 +1250,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*This {
+        pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*This {
             globalObject.throw("Cannot construct Socket", .{});
             return null;
         }
@@ -3252,7 +3252,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
         }
     };
 }
-pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
 
     const arguments = callframe.arguments(3);

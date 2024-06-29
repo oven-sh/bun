@@ -1000,7 +1000,7 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
@@ -1054,7 +1054,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

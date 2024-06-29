@@ -261,7 +261,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -296,7 +296,7 @@ pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.
     }
 }
 
-pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -2445,7 +2445,7 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*H2FrameParser {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*H2FrameParser {
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected 1 argument", .{});

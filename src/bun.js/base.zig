@@ -1370,7 +1370,7 @@ pub fn wrapStaticMethod(
         pub fn method(
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(FunctionTypeInfo.params.len);
             var iter = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
             var args: Args = undefined;

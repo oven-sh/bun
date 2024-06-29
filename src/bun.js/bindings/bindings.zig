@@ -3236,7 +3236,7 @@ pub const JSGlobalObject = extern struct {
     };
 };
 
-pub const JSNativeFn = *const fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSNativeFn = JSHostFunctionPtr;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -6059,7 +6059,7 @@ pub const EncodedJSValue = extern union {
     asPtr: ?*anyopaque,
     asDouble: f64,
 };
-pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 

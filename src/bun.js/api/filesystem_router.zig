@@ -49,7 +49,7 @@ pub const FileSystemRouter = struct {
 
     pub usingnamespace JSC.Codegen.JSFileSystemRouter;
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*FileSystemRouter {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*FileSystemRouter {
         const argument_ = callframe.arguments(1);
         if (argument_.len == 0) {
             globalThis.throwInvalidArguments("Expected object", .{});

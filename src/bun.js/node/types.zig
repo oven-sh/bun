@@ -1661,7 +1661,7 @@ pub fn StatType(comptime Big: bool) type {
             return this;
         }
 
-        pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*This {
+        pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*This {
             if (Big) {
                 globalObject.throwInvalidArguments("BigIntStats is not a constructor", .{});
                 return null;
@@ -1766,7 +1766,7 @@ pub const Dirent = struct {
     pub const Kind = std.fs.File.Kind;
     pub usingnamespace JSC.Codegen.JSDirent;
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Dirent {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*Dirent {
         globalObject.throw("Dirent is not a constructor", .{});
         return null;
     }

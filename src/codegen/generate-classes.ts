@@ -384,7 +384,7 @@ ${
 }
 
 ${"finalize" in obj ? `extern "C" void ${classSymbolName(typeName, "finalize")}(void*);` : ""}
-${obj.call ? `extern "C" JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` : ""}
+${obj.call ? `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` : ""}
 
 ${renderDecls(protoSymbolName, typeName, protoFields, obj.supportsObjectCreate || false)}
 STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${proto}, ${proto}::Base);
@@ -1639,7 +1639,7 @@ function generateZig(
 
     if (construct && !noConstructor) {
       output += `
-        if (@TypeOf(${typeName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) ?*${typeName})) {
+        if (@TypeOf(${typeName}.constructor) != (fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(JSC.conv) ?*${typeName})) {
            @compileLog("${typeName}.constructor is not a constructor");
         }
       `;
@@ -1928,7 +1928,11 @@ const GENERATED_CLASSES_IMPL_HEADER = `
 #include "JSDOMConvertBufferSource.h"
 #include "ZigGeneratedClasses.h"
 
-
+#if !OS(WINDOWS)
+#define JSC_CALLCONV "C"
+#else
+#define JSC_CALLCONV 
+#endif
 
 
 namespace WebCore {
@@ -1990,7 +1994,7 @@ const std = @import("std");
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(.C) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(.C) bool;
-pub const StaticCallbackType = fn(*JSC.JSGlobalObject, *JSC.CallFrame) callconv(.C) JSC.JSValue;
+pub const StaticCallbackType = JSC.JSHostFunctionType;
 
 `;
 

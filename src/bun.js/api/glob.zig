@@ -317,7 +317,7 @@ fn makeGlobWalker(
 pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) ?*Glob {
+) callconv(JSC.conv) ?*Glob {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);

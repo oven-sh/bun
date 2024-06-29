@@ -35,12 +35,12 @@ pub const BrotliEncoder = struct {
         return this.has_pending_activity.load(.monotonic) > 0;
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*BrotliEncoder {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*BrotliEncoder {
         globalThis.throw("BrotliEncoder is not constructable", .{});
         return null;
     }
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
 
         if (arguments.len < 3) {
@@ -357,12 +357,12 @@ pub const BrotliDecoder = struct {
         this.destroy();
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*BrotliDecoder {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*BrotliDecoder {
         globalThis.throw("Crypto is not constructable", .{});
         return null;
     }
 
-    pub fn create(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn create(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
 
         if (arguments.len < 3) {

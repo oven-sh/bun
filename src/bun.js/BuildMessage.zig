@@ -22,7 +22,7 @@ pub const BuildMessage = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*BuildMessage {
+    ) callconv(JSC.conv) ?*BuildMessage {
         globalThis.throw("BuildMessage is not constructable", .{});
         return null;
     }

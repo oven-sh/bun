@@ -1151,7 +1151,7 @@ pub const Interpreter = struct {
         fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJSC(globalThis),
-                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -2616,7 +2616,7 @@ pub const Interpreter = struct {
                 pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
                     return switch (this) {
                         .syscall => |err| err.toJSC(globalThis),
-                        .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                        .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
                     };
                 }
             };

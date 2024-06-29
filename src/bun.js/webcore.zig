@@ -353,7 +353,7 @@ pub const Prompt = struct {
         // *  Too complex for server context.
 
         // 9. Return result.
-        return result.toValueGC(globalObject);
+        return result.toJS(globalObject);
     }
 };
 

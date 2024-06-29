@@ -2277,6 +2277,8 @@ pub const E = struct {
             }
         }
 
+        /// Cloning the rope string is rarely needed, see `foldStringAddition`'s
+        /// comments and the 'edgecase/EnumInliningRopeStringPoison' test
         pub fn cloneRopeNodes(s: String) String {
             var root = s;
 
@@ -3493,7 +3495,7 @@ pub const Expr = struct {
     }
 
     // The goal of this function is to "rotate" the AST if it's possible to use the
-    // left-associative property of the operator to avoid unnecessary parenthesess.
+    // left-associative property of the operator to avoid unnecessary parentheses.
     //
     // When using this, make absolutely sure that the operator is actually
     // associative. For example, the "-" operator is not associative for
@@ -6840,118 +6842,105 @@ pub const Span = struct {
     range: logger.Range = .{},
 };
 
-// This is for TypeScript "enum" and "namespace" blocks. Each block can
-// potentially be instantiated multiple times. The exported members of each
-// block are merged into a single namespace while the non-exported code is
-// still scoped to just within that block:
-//
-//	let x = 1;
-//	namespace Foo {
-//	  let x = 2;
-//	  export let y = 3;
-//	}
-//	namespace Foo {
-//	  console.log(x); // 1
-//	  console.log(y); // 3
-//	}
-//
-// Doing this also works inside an enum:
-//
-//	enum Foo {
-//	  A = 3,
-//	  B = A + 1,
-//	}
-//	enum Foo {
-//	  C = A + 2,
-//	}
-//	console.log(Foo.B) // 4
-//	console.log(Foo.C) // 5
-//
-// This is a form of identifier lookup that works differently than the
-// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
-// to search sibling scopes in addition to parent scopes. This is accomplished
-// by sharing the map of exported members between all matching sibling scopes.
+/// This is for TypeScript "enum" and "namespace" blocks. Each block can
+/// potentially be instantiated multiple times. The exported members of each
+/// block are merged into a single namespace while the non-exported code is
+/// still scoped to just within that block:
+///
+///	let x = 1;
+///	namespace Foo {
+///	  let x = 2;
+///	  export let y = 3;
+///	}
+///	namespace Foo {
+///	  console.log(x); // 1
+///	  console.log(y); // 3
+///	}
+///
+/// Doing this also works inside an enum:
+///
+///	enum Foo {
+///	  A = 3,
+///	  B = A + 1,
+///	}
+///	enum Foo {
+///	  C = A + 2,
+///	}
+///	console.log(Foo.B) // 4
+///	console.log(Foo.C) // 5
+///
+/// This is a form of identifier lookup that works differently than the
+/// hierarchical scope-based identifier lookup in JavaScript. Lookup now needs
+/// to search sibling scopes in addition to parent scopes. This is accomplished
+/// by sharing the map of exported members between all matching sibling scopes.
 pub const TSNamespaceScope = struct {
-    // This is specific to this namespace block. It's the argument of the
-    // immediately-invoked function expression that the namespace block is
-    // compiled into:
-    //
-    //   var ns;
-    //   (function (ns2) {
-    //     ns2.x = 123;
-    //   })(ns || (ns = {}));
-    //
-    // This variable is "ns2" in the above example. It's the symbol to use when
-    // generating property accesses off of this namespace when it's in scope.
+    /// This is specific to this namespace block. It's the argument of the
+    /// immediately-invoked function expression that the namespace block is
+    /// compiled into:
+    ///
+    ///   var ns;
+    ///   (function (ns2) {
+    ///     ns2.x = 123;
+    ///   })(ns || (ns = {}));
+    ///
+    /// This variable is "ns2" in the above example. It's the symbol to use when
+    /// generating property accesses off of this namespace when it's in scope.
     arg_ref: Ref,
 
-    // This is shared between all sibling namespace blocks
+    /// This is shared between all sibling namespace blocks
     exported_members: *TSNamespaceMemberMap,
 
-    // This is a lazily-generated map of identifiers that actually represent
-    // property accesses to this namespace's properties. For example:
-    //
-    //   namespace x {
-    //     export let y = 123
-    //   }
-    //   namespace x {
-    //     export let z = y
-    //   }
-    //
-    // This should be compiled into the following code:
-    //
-    //   var x;
-    //   (function(x2) {
-    //     x2.y = 123;
-    //   })(x || (x = {}));
-    //   (function(x3) {
-    //     x3.z = x3.y;
-    //   })(x || (x = {}));
-    //
-    // When we try to find the symbol "y", we instead return one of these lazily
-    // generated proxy symbols that represent the property access "x3.y". This
-    // map is unique per namespace block because "x3" is the argument symbol that
-    // is specific to that particular namespace block.
+    /// This is a lazily-generated map of identifiers that actually represent
+    /// property accesses to this namespace's properties. For example:
+    ///
+    ///   namespace x {
+    ///     export let y = 123
+    ///   }
+    ///   namespace x {
+    ///     export let z = y
+    ///   }
+    ///
+    /// This should be compiled into the following code:
+    ///
+    ///   var x;
+    ///   (function(x2) {
+    ///     x2.y = 123;
+    ///   })(x || (x = {}));
+    ///   (function(x3) {
+    ///     x3.z = x3.y;
+    ///   })(x || (x = {}));
+    ///
+    /// When we try to find the symbol "y", we instead return one of these lazily
+    /// generated proxy symbols that represent the property access "x3.y". This
+    /// map is unique per namespace block because "x3" is the argument symbol that
+    /// is specific to that particular namespace block.
     property_accesses: std.StringArrayHashMapUnmanaged(Ref) = .{},
 
-    // This is specific to this namespace block. It's the argument of the
-    // immediately-invoked function expression that the namespace block is
-    // compiled into:
-    //
-    //   var ns;
-    //   (function (ns2) {
-    //     ns2.x = 123;
-    //   })(ns || (ns = {}));
-    //
-    // This variable is "ns2" in the above example. It's the symbol to use when
-    // generating property accesses off of this namespace when it's in scope.
-    // arg_ref: Ref,
-
-    // Even though enums are like namespaces and both enums and namespaces allow
-    // implicit references to properties of sibling scopes, they behave like
-    // separate, er, namespaces. Implicit references only work namespace-to-
-    // namespace and enum-to-enum. They do not work enum-to-namespace. And I'm
-    // not sure what's supposed to happen for the namespace-to-enum case because
-    // the compiler crashes: https://github.com/microsoft/TypeScript/issues/46891.
-    // So basically these both work:
-    //
-    //   enum a { b = 1 }
-    //   enum a { c = b }
-    //
-    //   namespace x { export let y = 1 }
-    //   namespace x { export let z = y }
-    //
-    // This doesn't work:
-    //
-    //   enum a { b = 1 }
-    //   namespace a { export let c = b }
-    //
-    // And this crashes the TypeScript compiler:
-    //
-    //   namespace a { export let b = 1 }
-    //   enum a { c = b }
-    //
-    // Therefore we only allow enum/enum and namespace/namespace interactions.
+    /// Even though enums are like namespaces and both enums and namespaces allow
+    /// implicit references to properties of sibling scopes, they behave like
+    /// separate, er, namespaces. Implicit references only work namespace-to-
+    /// namespace and enum-to-enum. They do not work enum-to-namespace. And I'm
+    /// not sure what's supposed to happen for the namespace-to-enum case because
+    /// the compiler crashes: https://github.com/microsoft/TypeScript/issues/46891.
+    /// So basically these both work:
+    ///
+    ///   enum a { b = 1 }
+    ///   enum a { c = b }
+    ///
+    ///   namespace x { export let y = 1 }
+    ///   namespace x { export let z = y }
+    ///
+    /// This doesn't work:
+    ///
+    ///   enum a { b = 1 }
+    ///   namespace a { export let c = b }
+    ///
+    /// And this crashes the TypeScript compiler:
+    ///
+    ///   namespace a { export let b = 1 }
+    ///   enum a { c = b }
+    ///
+    /// Therefore we only allow enum/enum and namespace/namespace interactions.
     is_enum_scope: bool,
 };
 
@@ -6982,7 +6971,7 @@ pub const TSNamespaceMember = struct {
 };
 
 /// Inlined enum values can only be numbers and strings
-/// This type special cases an encoding similar to JSCJSValue, where nan-boxing is used
+/// This type special cases an encoding similar to JSValue, where nan-boxing is used
 /// to encode both a 64-bit pointer or a 64-bit float using 64 bits.
 pub const InlinedEnumValue = packed struct {
     raw_data: u64,
@@ -6992,6 +6981,7 @@ pub const InlinedEnumValue = packed struct {
         number: f64,
     };
 
+    /// See JSCJSValue.h in WebKit for more details
     const double_encode_offset = 1 << 49;
     /// See PureNaN.h in WebKit for more details
     const pure_nan: f64 = @bitCast(@as(u64, 0x7ff8000000000000));
@@ -7195,41 +7185,41 @@ pub const Part = struct {
     stmts: []Stmt = &([_]Stmt{}),
     scopes: []*Scope = &([_]*Scope{}),
 
-    // Each is an index into the file-level import record list
+    /// Each is an index into the file-level import record list
     import_record_indices: ImportRecordIndices = .{},
 
-    // All symbols that are declared in this part. Note that a given symbol may
-    // have multiple declarations, and so may end up being declared in multiple
-    // parts (e.g. multiple "var" declarations with the same name). Also note
-    // that this list isn't deduplicated and may contain duplicates.
+    /// All symbols that are declared in this part. Note that a given symbol may
+    /// have multiple declarations, and so may end up being declared in multiple
+    /// parts (e.g. multiple "var" declarations with the same name). Also note
+    /// that this list isn't deduplicated and may contain duplicates.
     declared_symbols: DeclaredSymbol.List = .{},
 
-    // An estimate of the number of uses of all symbols used within this part.
+    /// An estimate of the number of uses of all symbols used within this part.
     symbol_uses: SymbolUseMap = .{},
 
-    // This tracks property accesses off of imported symbols. We don't know
-    // during parsing if an imported symbol is going to be an inlined enum
-    // value or not. This is only known during linking. So we defer adding
-    // a dependency on these imported symbols until we know whether the
-    // property access is an inlined enum value or not.
+    /// This tracks property accesses off of imported symbols. We don't know
+    /// during parsing if an imported symbol is going to be an inlined enum
+    /// value or not. This is only known during linking. So we defer adding
+    /// a dependency on these imported symbols until we know whether the
+    /// property access is an inlined enum value or not.
     import_symbol_property_uses: SymbolPropertyUseMap = .{},
 
-    // The indices of the other parts in this file that are needed if this part
-    // is needed.
+    /// The indices of the other parts in this file that are needed if this part
+    /// is needed.
     dependencies: Dependency.List = .{},
 
-    // If true, this part can be removed if none of the declared symbols are
-    // used. If the file containing this part is imported, then all parts that
-    // don't have this flag enabled must be included.
+    /// If true, this part can be removed if none of the declared symbols are
+    /// used. If the file containing this part is imported, then all parts that
+    /// don't have this flag enabled must be included.
     can_be_removed_if_unused: bool = false,
 
-    // This is used for generated parts that we don't want to be present if they
-    // aren't needed. This enables tree shaking for these parts even if global
-    // tree shaking isn't enabled.
+    /// This is used for generated parts that we don't want to be present if they
+    /// aren't needed. This enables tree shaking for these parts even if global
+    /// tree shaking isn't enabled.
     force_tree_shaking: bool = false,
 
-    // This is true if this file has been marked as live by the tree shaking
-    // algorithm.
+    /// This is true if this file has been marked as live by the tree shaking
+    /// algorithm.
     is_live: bool = false,
 
     tag: Tag = Tag.none,

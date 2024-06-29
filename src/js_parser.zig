@@ -284,13 +284,20 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                 return Expr.init(E.String, new, lhs.loc);
             }
 
+            if (rhs.data == .e_template) {
+                // TODO:
+            }
+
             if (left.len() == 0 and rhs.knownPrimitive() == .string) {
                 return rhs;
             }
 
             return null;
         },
-        // .e_template => {},
+
+        .e_template => {
+            // TODO:
+        },
 
         .e_binary => |bin| {
             if (bin.op == .bin_add) {
@@ -2519,7 +2526,7 @@ const ExprIn = struct {
     //   a?.b?.()  // ECall
     //
     // Also note that this is false if our parent is a node with a OptionalChain
-    // value of OptionalChainNone. That means it's outside parenthesess, which
+    // value of OptionalChainNone. That means it's outside parentheses, which
     // means it's no longer part of the chain.
     //
     // Some examples:
@@ -2652,7 +2659,7 @@ const InvalidLoc = struct {
         @setCold(true);
         const text = switch (loc.kind) {
             .spread => "Unexpected trailing comma after rest element",
-            .parentheses => "Unexpected parenthesess in binding pattern",
+            .parentheses => "Unexpected parentheses in binding pattern",
             .getter => "Unexpected getter in binding pattern",
             .setter => "Unexpected setter in binding pattern",
             .method => "Unexpected method in binding pattern",
@@ -3395,7 +3402,7 @@ pub const Parser = struct {
                         const old_scopes_in_order = p.scope_order_to_visit;
                         defer p.scope_order_to_visit = old_scopes_in_order;
 
-                        p.scope_order_to_visit = p.scopes_in_order_for_enum.get(stmt.loc) orelse @panic("Enum Visit Failed: No entry");
+                        p.scope_order_to_visit = p.scopes_in_order_for_enum.get(stmt.loc).?;
 
                         var enum_parts = ListManaged(js_ast.Part).init(p.allocator);
                         var sliced = try ListManaged(Stmt).initCapacity(p.allocator, 1);
@@ -10213,7 +10220,7 @@ fn NewParser_(
                     // Detect for-of loops
                     if (p.lexer.isContextualKeyword("of") or isForAwait) {
                         if (bad_let_range) |r| {
-                            try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parenthesess to be used as an expression here");
+                            try p.log.addRangeError(p.source, r, "\"let\" must be wrapped in parentheses to be used as an expression here");
                             return error.SyntaxError;
                         }
 
@@ -11909,13 +11916,9 @@ fn NewParser_(
         // namespace is another block that is to be merged with an existing namespace,
         // use that earlier namespace's object instead.
         pub fn getOrCreateExportedNamespaceMembers(p: *P, name: []const u8, is_export: bool) *js_ast.TSNamespaceMemberMap {
-            std.debug.print("getOrCreateExportedNamespaceMembers {s}\n", .{name});
-
             // Merge with a sibling namespace from the same scope
             if (p.current_scope.members.get(name)) |existing_member| {
-                std.debug.print("got {}\n", .{existing_member});
                 if (p.ref_to_ts_namespace_member.get(existing_member.ref)) |member_data| {
-                    std.debug.print("got 2 {}\n", .{member_data});
                     if (member_data == .namespace)
                         return member_data.namespace;
                 }
@@ -11930,8 +11933,6 @@ fn NewParser_(
                     }
                 }
             }
-
-            std.debug.print("getOrCreateExportedNamespaceMembers create {s}\n", .{name});
 
             // Otherwise, generate a new namespace object
             return bun.create(p.allocator, js_ast.TSNamespaceMemberMap, .{});
@@ -14719,7 +14720,7 @@ fn NewParser_(
 
                     // Arrow functions aren't allowed in the middle of expressions
                     if (level.gt(.assign)) {
-                        // Allow "in" inside parenthesess
+                        // Allow "in" inside parentheses
                         const oldAllowIn = p.allow_in;
                         p.allow_in = true;
 
@@ -14827,7 +14828,7 @@ fn NewParser_(
                                         p.log.addRangeError(p.source, name_range, "The keyword \"yield\" cannot be escaped") catch unreachable;
                                     } else {
                                         if (level.gt(.assign)) {
-                                            p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parenthesess") catch unreachable;
+                                            p.log.addRangeError(p.source, name_range, "Cannot use a \"yield\" here without parentheses") catch unreachable;
                                         }
 
                                         if (p.fn_or_arrow_data_parse.track_arrow_arg_errors) {
@@ -15406,7 +15407,7 @@ fn NewParser_(
 
             if (level.gt(.call)) {
                 const r = js_lexer.rangeOfIdentifier(p.source, loc);
-                p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parenthesess") catch unreachable;
+                p.log.addRangeError(p.source, r, "Cannot use an \"import\" expression here without parentheses") catch unreachable;
             }
 
             // allow "in" inside call arguments;
@@ -16002,8 +16003,6 @@ fn NewParser_(
                             },
                         }
                     },
-
-                    .s_enum => unreachable, // must be lowered?
 
                     else => {
                         // Assume that all statements not explicitly special-cased here have side
@@ -16746,7 +16745,7 @@ fn NewParser_(
                         // node. We only care about deeply-nested left nodes because most binary
                         // operators in JavaScript are left-associative and the problematic edge
                         // cases we're trying to avoid crashing on have lots of left-associative
-                        // binary operators chained together without parenthesess (e.g. "1+2+...").
+                        // binary operators chained together without parentheses (e.g. "1+2+...").
                         const left = v.e.left;
                         const left_in = v.left_in;
 
@@ -21765,7 +21764,7 @@ fn NewParser_(
                             const old_scopes_in_order = p.scope_order_to_visit;
                             defer p.scope_order_to_visit = old_scopes_in_order;
 
-                            p.scope_order_to_visit = p.scopes_in_order_for_enum.get(stmt.loc) orelse @panic("Enum Visit Failed: No entry");
+                            p.scope_order_to_visit = p.scopes_in_order_for_enum.get(stmt.loc).?;
 
                             var temp = ListManaged(Stmt).init(p.allocator);
                             try p.visitAndAppendStmt(&temp, stmt);
@@ -22314,7 +22313,7 @@ fn NewParser_(
             // scope of the arrow function itself.
             const scope_index = try p.pushScopeForParsePass(.function_args, loc);
 
-            // Allow "in" inside parenthesess
+            // Allow "in" inside parentheses
             const oldAllowIn = p.allow_in;
             p.allow_in = true;
 

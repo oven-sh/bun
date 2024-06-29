@@ -1,6 +1,6 @@
 /// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
 /// Version 3: "Infinity" becomes "1/0".
-/// Version 4: TypeScript enums and namespaces are properly handled + more constant folding
+/// Version 4: TypeScript enums are properly handled + more constant folding
 const expected_version = 4;
 
 const bun = @import("root").bun;

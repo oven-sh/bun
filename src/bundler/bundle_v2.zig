@@ -3331,9 +3331,9 @@ const LinkerGraph = struct {
     has_client_components: bool = false,
     has_server_components: bool = false,
 
-    // This is for cross-module inlining of detected inlinable constants
+    /// This is for cross-module inlining of detected inlinable constants
     const_values: js_ast.Ast.ConstValuesMap = .{},
-    // This is for cross-module inlining of TypeScript enum constants
+    /// This is for cross-module inlining of TypeScript enum constants
     ts_enums: js_ast.Ast.TsEnumsMap = .{},
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {

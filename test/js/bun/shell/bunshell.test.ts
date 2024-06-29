@@ -1848,10 +1848,10 @@ describe("condexprs", () => {
       .runAsTest("&& has a higher parsing precedence than ||");
     TestBuilder.command`[[ -n $TDIR || -n $UNSET && $PWD -ef xyz ]]`
       .exitCode(1)
-      .runAsTest("...but expressions in parenthesess may be used to override precedence rules");
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
     TestBuilder.command`[[ ( -n $TDIR || -n $UNSET ) && $PWD -ef xyz ]]`
       .exitCode(1)
-      .runAsTest("...but expressions in parenthesess may be used to override precedence rules");
+      .runAsTest("...but expressions in parentheses may be used to override precedence rules");
 
     TestBuilder.command`
 unset IVAR A

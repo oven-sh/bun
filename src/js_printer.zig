@@ -834,7 +834,7 @@ fn NewPrinter(
                 }
 
                 switch (e.op) {
-                    // "??" can't directly contain "||" or "&&" without being wrapped in parenthesess
+                    // "??" can't directly contain "||" or "&&" without being wrapped in parentheses
                     .bin_nullish_coalescing => {
                         switch (e.left.data) {
                             .e_binary => {

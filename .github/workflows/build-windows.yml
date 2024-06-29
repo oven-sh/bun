@@ -48,7 +48,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -117,7 +116,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
@@ -149,7 +147,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -216,7 +213,6 @@ jobs:
       assertions: ${{ inputs.assertions }}
       canary: ${{ inputs.canary }}
       no-cache: ${{ inputs.no-cache }}
-
   link:
     name: Link
     runs-on: ${{ inputs.runs-on }}
@@ -232,7 +228,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -328,7 +323,6 @@ jobs:
           path: features.json
           if-no-files-found: error
           overwrite: true
-
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure

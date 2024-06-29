@@ -1,5 +1,6 @@
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
+import { join } from "path";
 import { expect, test, describe, it } from "bun:test";
 import { bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 
@@ -106,11 +107,12 @@ hello = greeting: \${LOL
       const { name, ini, env, expected } = args;
       test(name, async () => {
         const tempdir = tempDirWithFiles("hi", { "foo.ini": ini });
+        const inipath = `${tempdir}/foo.ini`.replaceAll("\\", "/");
         const code = /* ts */ `
 const { iniInternals } = require("bun:internal-for-testing");
 const { parse } = iniInternals;
 
-const ini = await Bun.$\`cat ${tempdir}/foo.ini\`.text()
+const ini = await Bun.$\`cat ${inipath}\`.text()
 
 console.log(JSON.stringify(parse(ini)))
         `;

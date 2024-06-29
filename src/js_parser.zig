@@ -46,7 +46,7 @@ const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
 
 fn _disabledAssert(_: bool) void {
-    if (!Environment.allow_assert) @compileLog("assert is missing an if (Environment.allow_assert)");
+    if (!Environment.allow_assert) @compileError("assert is missing an if (Environment.allow_assert)");
     unreachable;
 }
 
@@ -10869,7 +10869,7 @@ fn NewParser_(
                     inline .s_namespace, .s_enum => |ns| {
                         if (ns.is_export) {
                             if (p.ref_to_ts_namespace_member.get(ns.name.ref.?)) |member_data| {
-                                assert(member_data == .namespace);
+                                bun.assert(member_data == .namespace);
                                 try exported_members.put(
                                     p.allocator,
                                     p.symbols.items[ns.name.ref.?.inner_index].original_name,

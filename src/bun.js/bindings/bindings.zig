@@ -267,8 +267,9 @@ pub const ZigString = extern struct {
             return false;
 
         if (this.is16Bit()) {
-            for (this.utf16SliceAligned(), 0..) |cp, i| {
-                if (cp != needle[i]) {
+            const u16_slice = this.utf16SliceAligned();
+            for (needle, 0..) |c, i| {
+                if (u16_slice[i] != c) {
                     return false;
                 }
             }

@@ -303,7 +303,7 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
         return header.key == name;
     });
     if (index != notFound)
-        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, ", ", value);
+        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, ", "_s, value);
     else
         m_commonHeaders.append(CommonHeader { name, value });
 }

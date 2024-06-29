@@ -53,7 +53,7 @@ pub const BuildMessage = struct {
         var str = ZigString.init(text);
         str.setOutputEncoding();
         if (str.isUTF8()) {
-            const out = str.toValueGC(globalThis);
+            const out = str.toJS(globalThis);
             default_allocator.free(text);
             return out;
         }
@@ -112,7 +112,7 @@ pub const BuildMessage = struct {
         _: *JSC.CallFrame,
     ) callconv(.C) JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 4);
-        object.put(globalThis, ZigString.static("name"), ZigString.init("BuildMessage").toValueGC(globalThis));
+        object.put(globalThis, ZigString.static("name"), ZigString.init("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
         object.put(globalThis, ZigString.static("message"), this.getMessage(globalThis));
         object.put(globalThis, ZigString.static("level"), this.getLevel(globalThis));
@@ -126,17 +126,17 @@ pub const BuildMessage = struct {
         object.put(
             globalThis,
             ZigString.static("lineText"),
-            ZigString.init(location.line_text orelse "").toValueGC(globalThis),
+            ZigString.init(location.line_text orelse "").toJS(globalThis),
         );
         object.put(
             globalThis,
             ZigString.static("file"),
-            ZigString.init(location.file).toValueGC(globalThis),
+            ZigString.init(location.file).toJS(globalThis),
         );
         object.put(
             globalThis,
             ZigString.static("namespace"),
-            ZigString.init(location.namespace).toValueGC(globalThis),
+            ZigString.init(location.namespace).toJS(globalThis),
         );
         object.put(
             globalThis,
@@ -190,14 +190,14 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(this.msg.data.text).toValueGC(globalThis);
+        return ZigString.init(this.msg.data.text).toJS(globalThis);
     }
 
     pub fn getLevel(
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(this.msg.kind.string()).toValueGC(globalThis);
+        return ZigString.init(this.msg.kind.string()).toJS(globalThis);
     }
 
     pub fn finalize(this: *BuildMessage) callconv(.C) void {

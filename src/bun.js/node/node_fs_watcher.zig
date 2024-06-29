@@ -584,7 +584,7 @@ pub const FSWatcher = struct {
             if (this.encoding == .buffer)
                 filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
             else if (this.encoding == .utf8) {
-                filename = JSC.ZigString.fromUTF8(file_name).toValueGC(globalObject);
+                filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
                 filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalObject, this.encoding);

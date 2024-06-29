@@ -185,7 +185,7 @@ pub const FFI = struct {
         function.printCallbackSourceCode(null, null, &writer) catch {
             return ZigString.init("Error while printing code").toErrorInstance(global);
         };
-        return ZigString.init(arraylist.items).toValueGC(global);
+        return ZigString.init(arraylist.items).toJS(global);
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {

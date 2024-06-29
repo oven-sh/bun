@@ -91,7 +91,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
-            JSC.ZigString.init(std.mem.span(hostname.?)).toValueAuto(globalThis),
+            JSC.ZigString.init(std.mem.span(hostname.?)).toJS(globalThis),
         });
 
         if (result.toError()) |err| {
@@ -619,7 +619,7 @@ pub const UDPSocket = struct {
 
     pub fn getHostname(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
         const hostname = JSC.ZigString.init(this.config.hostname);
-        return hostname.toValueGC(this.globalThis);
+        return hostname.toJS(this.globalThis);
     }
 
     pub fn getPort(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
@@ -676,9 +676,9 @@ pub const UDPSocket = struct {
         globalThis: *JSGlobalObject,
     ) callconv(.C) JSValue {
         return switch (this.config.binary_type) {
-            .Buffer => JSC.ZigString.init("buffer").toValueGC(globalThis),
-            .Uint8Array => JSC.ZigString.init("uint8array").toValueGC(globalThis),
-            .ArrayBuffer => JSC.ZigString.init("arraybuffer").toValueGC(globalThis),
+            .Buffer => JSC.ZigString.init("buffer").toJS(globalThis),
+            .Uint8Array => JSC.ZigString.init("uint8array").toJS(globalThis),
+            .ArrayBuffer => JSC.ZigString.init("arraybuffer").toJS(globalThis),
             else => @panic("Invalid binary type"),
         };
     }

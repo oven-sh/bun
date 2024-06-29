@@ -2,14 +2,11 @@
 
 const child_process = require("node:child_process");
 
-const primary = require("internal/cluster/primary");
-const child = require("internal/cluster/child");
-
 const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
 const NumberParseInt = Number.parseInt;
 
 const childOrPrimary = ObjectPrototypeHasOwnProperty.$call(process.env, "NODE_UNIQUE_ID");
-const cluster = childOrPrimary ? child : primary;
+const cluster = childOrPrimary ? require("internal/cluster/child") : require("internal/cluster/primary");
 export default cluster;
 
 //

@@ -355,6 +355,7 @@ expect.extend({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
+      cwd: process.cwd(),
     });
 
     if (result.exitCode !== 0) {

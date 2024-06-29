@@ -1270,7 +1270,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      onDisconnect: this.#disconnect.bind(this),
+      onDisconnect: () => this.#disconnect(),
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1348,8 +1348,8 @@ class ChildProcess extends EventEmitter {
     }
     this.#handle.disconnect();
     $assert(!this.connected);
-    this.#handleOnExit(0, null, null);
     process.nextTick(() => this.emit("disconnect"));
+    this.#maybeClose();
   }
 
   kill(sig?) {
@@ -1905,7 +1905,6 @@ function _forkChild(fd, serializationMode) {
       if (fired) return;
       fired = true;
 
-      // channel.close();
       FsModule.closeSync(fd);
       process.emit("disconnect");
     }

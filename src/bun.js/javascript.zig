@@ -389,37 +389,8 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-pub export fn Bun__Process__send(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) JSValue {
-    JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
-    }
-    const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
-    }
-}
-
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
-}
-
-pub export fn Bun__Process__disconnect(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) JSValue {
-    JSC.markBinding(@src());
-    _ = callFrame;
-    _ = globalObject;
-    return .undefined;
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,

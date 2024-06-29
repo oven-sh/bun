@@ -21,8 +21,6 @@ on:
         required: true
       assertions:
         type: boolean
-      zig-optimize:
-        type: string
       canary:
         type: boolean
       no-cache:
@@ -111,7 +109,6 @@ jobs:
           name: bun-${{ inputs.tag }}-deps
           path: bun-deps
           if-no-files-found: error
-
   codegen:
     name: Codegen
     runs-on: ubuntu-latest
@@ -141,7 +138,6 @@ jobs:
           name: bun-${{ inputs.tag }}-codegen
           path: build-codegen-win32-x64
           if-no-files-found: error
-
   build-cpp:
     name: Build C++
     needs: codegen
@@ -207,12 +203,12 @@ jobs:
           name: bun-${{ inputs.tag }}-cpp
           path: build/bun-cpp-objects.a
           if-no-files-found: error
-
   build-zig:
     name: Build Zig
     uses: ./.github/workflows/build-zig.yml
     with:
       os: windows
+      zig-optimize: ReleaseSafe
       only-zig: true
       tag: ${{ inputs.tag }}
       arch: ${{ inputs.arch }}

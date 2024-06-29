@@ -571,8 +571,10 @@ const Scanner = struct {
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
                 const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
                 const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;
-                const path2_1 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                _ = this.readDirWithName(path2_1, child_dir) catch bun.outOfMemory();
+                _ = this.readDirWithName(
+                    this.fs.dirname_store.append(string, path2),
+                    child_dir,
+                ) catch bun.outOfMemory();
             }
         }
     }

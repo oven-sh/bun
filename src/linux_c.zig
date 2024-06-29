@@ -698,3 +698,7 @@ pub const RENAME_WHITEOUT = 1 << 2;
 
 pub extern "C" fn quick_exit(code: c_int) noreturn;
 pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
+
+pub const netdb = @cImport({
+    @cInclude("netdb.h");
+});

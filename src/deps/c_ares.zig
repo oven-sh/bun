@@ -388,7 +388,7 @@ pub const AddrInfo = extern struct {
         addr_info: *AddrInfo,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        var node = addr_info.node.?;
+        var node = addr_info.node orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
             node.count(),
@@ -1316,8 +1316,33 @@ pub const Error = enum(i32) {
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
 
+    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("name"),
+            JSC.ZigString.init("DNSException").toValueGC(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("code"),
+            JSC.ZigString.init(this.code()).toValueGC(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("errno"),
+            JSC.jsNumber(@intFromEnum(this)),
+        );
+        return error_value;
+    }
+
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
+            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+            if (rc == libuv.UV_EAI_NODATA or rc == libuv.UV_EAI_NONAME) {
+                return Error.ENOTFOUND;
+            }
+
             // TODO: revisit this
             return switch (rc) {
                 0 => null,
@@ -1339,18 +1364,35 @@ pub const Error = enum(i32) {
             };
         }
 
-        return switch (@as(std.posix.system.EAI, @enumFromInt(rc))) {
+        const eai: std.posix.system.EAI = @enumFromInt(rc);
+
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (eai == .NODATA or eai == .NONAME) {
+            return Error.ENOTFOUND;
+        }
+
+        if (comptime bun.Environment.isLinux) {
+            switch (eai) {
+                .SOCKTYPE => return Error.ECONNREFUSED,
+                .IDN_ENCODE => return Error.EBADSTR,
+                .ALLDONE => return Error.ENOTFOUND,
+                .INPROGRESS => return Error.ETIMEOUT,
+                .CANCELED => return Error.ECANCELLED,
+                .NOTCANCELED => return Error.ECANCELLED,
+                else => {},
+            }
+        }
+
+        return switch (eai) {
             @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
             .FAMILY => Error.EBADFAMILY,
             .MEMORY => Error.ENOMEM,
-            .NODATA => Error.ENODATA,
-            .NONAME => Error.ENONAME,
             .SERVICE => Error.ESERVICE,
             .SYSTEM => Error.ESERVFAIL,
-            else => unreachable,
+            else => bun.todo(@src(), Error.ENOTIMP),
         };
     }
 
@@ -1411,6 +1453,11 @@ pub const Error = enum(i32) {
     });
 
     pub fn get(rc: i32) ?Error {
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (rc == ARES_ENODATA or rc == ARES_ENONAME) {
+            return get(ARES_ENOTFOUND);
+        }
+
         return switch (rc) {
             0 => null,
             1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),

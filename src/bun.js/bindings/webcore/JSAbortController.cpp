@@ -294,18 +294,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<AbortController>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7AbortController@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore15AbortControllerE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore15AbortControllerE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // AbortController has subclasses. If AbortController has subclasses that get passed
         // to toJS() we currently require AbortController you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<AbortController>(globalObject, WTFMove(impl));

@@ -44,7 +44,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
+        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -71,7 +71,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
         if (headerName != HTTPHeaderName::SetCookie) {
             if (headers.contains(headerName)) {
-                combinedValue = makeString(headers.get(headerName), ", ", normalizedValue);
+                combinedValue = makeString(headers.get(headerName), ", "_s, normalizedValue);
             }
         }
 
@@ -92,7 +92,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     }
 
     if (headers.contains(name))
-        combinedValue = makeString(headers.get(name), ", ", normalizedValue);
+        combinedValue = makeString(headers.get(name), ", "_s, normalizedValue);
     auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -222,14 +222,14 @@ size_t FetchHeaders::memoryCost() const
 ExceptionOr<String> FetchHeaders::get(const String& name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     return m_headers.get(name);
 }
 
 ExceptionOr<bool> FetchHeaders::has(const String& name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
     return m_headers.contains(name);
 }
 

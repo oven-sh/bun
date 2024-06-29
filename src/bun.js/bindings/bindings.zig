@@ -869,7 +869,7 @@ pub const ZigString = extern struct {
     }
 
     pub const toJS = toJS;
-    pub const toJS = toJS;
+    pub const toValueGC = toJS;
 
     pub fn withEncoding(this: *const ZigString) ZigString {
         var out = this.*;

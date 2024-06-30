@@ -31,6 +31,7 @@ async function getDevServerURL() {
       NEXT_TELEMETRY_DISABLED: "1",
       // Print lots of debug logs in next.js:
       // "DEBUG": "*",
+      PUPPETEER_SKIP_DOWNLOAD: true,
     },
     stdio: ["ignore", "pipe", "inherit"],
   });

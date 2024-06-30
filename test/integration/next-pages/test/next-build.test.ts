@@ -29,7 +29,10 @@ async function tempDirToBuildIn() {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: dir,
-    env: bunEnv,
+    env: {
+      ...bunEnv,
+      PUPPETEER_SKIP_DOWNLOAD: true,
+    },
     stdin: "inherit",
     stdout: "inherit",
     stderr: "inherit",

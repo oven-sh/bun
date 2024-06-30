@@ -4625,6 +4625,10 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
+    pub fn toJSString(globalObject: *JSC.JSGlobalObject, slice_: []const u8) JSC.JSValue {
+        return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
+    }
+
     pub fn asCell(this: JSValue) *JSCell {
         return cppFn("asCell", .{this});
     }

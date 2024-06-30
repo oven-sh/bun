@@ -1933,25 +1933,23 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         comptime {
-            if (!JSC.is_bindgen) {
-                @export(finalize, .{ .name = shim.symbolName("finalize") });
-                @export(write, .{ .name = shim.symbolName("write") });
-                @export(close, .{ .name = shim.symbolName("close") });
-                @export(flush, .{ .name = shim.symbolName("flush") });
-                @export(start, .{ .name = shim.symbolName("start") });
-                @export(end, .{ .name = shim.symbolName("end") });
-                @export(construct, .{ .name = shim.symbolName("construct") });
-                @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
-                @export(updateRef, .{ .name = shim.symbolName("updateRef") });
+            @export(finalize, .{ .name = shim.symbolName("finalize") });
+            @export(write, .{ .name = shim.symbolName("write") });
+            @export(close, .{ .name = shim.symbolName("close") });
+            @export(flush, .{ .name = shim.symbolName("flush") });
+            @export(start, .{ .name = shim.symbolName("start") });
+            @export(end, .{ .name = shim.symbolName("end") });
+            @export(construct, .{ .name = shim.symbolName("construct") });
+            @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
+            @export(updateRef, .{ .name = shim.symbolName("updateRef") });
 
-                shim.assertJSFunction(.{
-                    write,
-                    close,
-                    flush,
-                    start,
-                    end,
-                });
-            }
+            shim.assertJSFunction(.{
+                write,
+                close,
+                flush,
+                start,
+                end,
+            });
         }
 
         pub const Extern = [_][]const u8{ "createObject", "fromJS", "assignToStream", "onReady", "onClose", "detachPtr" };

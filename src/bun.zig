@@ -800,7 +800,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlInsensitive(line[0..key_end], key)) {
+            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }

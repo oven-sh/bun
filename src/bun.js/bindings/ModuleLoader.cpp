@@ -844,7 +844,32 @@ static JSValue fetchESMSourceCode(
         JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value))));
 }
 
-extern "C" JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSValue fetchESMSourceCodeSync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+
+JSValue fetchESMSourceCodeAsync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+}
+
+using namespace Bun;
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res = {};
@@ -882,7 +907,7 @@ extern "C" JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::J
     return JSValue::encode(jsUndefined());
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSValue reason = callFrame->argument(0);
@@ -895,27 +920,4 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObjec
     promise->reject(globalObject, reason);
 
     return JSValue::encode(reason);
-}
-
-JSValue fetchESMSourceCodeSync(
-    Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer,
-    BunString* typeAttribute)
-{
-    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
-}
-
-JSValue fetchESMSourceCodeAsync(
-    Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer,
-    BunString* typeAttribute)
-{
-    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
-}
 }

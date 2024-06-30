@@ -251,19 +251,6 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    global->onLoadPlugins.fileNamespace.clear();
-    global->onResolvePlugins.fileNamespace.clear();
-    global->onLoadPlugins.groups.clear();
-    global->onResolvePlugins.namespaces.clear();
-
-    delete global->onLoadPlugins.virtualModules;
-
-    return JSValue::encode(jsUndefined());
-}
-
 static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
@@ -341,11 +328,6 @@ static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObje
     }
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
-}
-
-JSC_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
-{
-    return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }
 
 void BunPlugin::Group::append(JSC::VM& vm, JSC::RegExp* filter, JSC::JSFunction* func)
@@ -931,3 +913,21 @@ JSC::JSValue runVirtualModule(Zig::GlobalObject* globalObject, BunString* specif
 }
 
 } // namespace Bun
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
+    global->onLoadPlugins.fileNamespace.clear();
+    global->onResolvePlugins.fileNamespace.clear();
+    global->onLoadPlugins.groups.clear();
+    global->onResolvePlugins.namespaces.clear();
+
+    delete global->onLoadPlugins.virtualModules;
+
+    return JSC::JSValue::encode(JSC::jsUndefined());
+}
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
+{
+    return Bun::setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
+}

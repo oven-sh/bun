@@ -1,0 +1,12 @@
+{
+  "name": "bun-crash-dump",
+  "version": "1.0.0",
+  "module": "main.js",
+  "type": "module",
+  "devDependencies": {
+    "bun-types": "^1.0.1"
+  },
+  "bin": {
+    "bun-crash-dump": "./bun.js"
+  }
+}

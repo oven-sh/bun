@@ -4121,7 +4121,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) u8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4131,7 +4131,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) u16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4141,7 +4141,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) u32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4151,7 +4151,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4161,7 +4161,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i8, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4171,7 +4171,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i16, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4181,7 +4181,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4191,7 +4191,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4202,7 +4202,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) f32, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4213,7 +4213,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) f64, @ptrFromInt(addr)).*;
             return JSValue.jsNumber(value);
@@ -4224,7 +4224,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) u64, @ptrFromInt(addr)).*;
             return JSValue.fromUInt64NoTruncate(global, value);
@@ -4235,7 +4235,7 @@ pub const FFIObject = struct {
             _: *anyopaque,
             raw_addr: i64,
             offset: i32,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             const addr = @as(usize, @intCast(raw_addr)) + @as(usize, @intCast(offset));
             const value = @as(*align(1) i64, @ptrFromInt(addr)).*;
             return JSValue.fromInt64NoTruncate(global, value);
@@ -4755,7 +4755,7 @@ pub const JSZlib = struct {
 pub usingnamespace @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
-    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);

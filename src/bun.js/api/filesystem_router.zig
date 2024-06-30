@@ -211,7 +211,7 @@ pub const FileSystemRouter = struct {
         return fs_router;
     }
 
-    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn reload(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const this_value = callframe.this();
 
         var arena = globalThis.allocator().create(bun.ArenaAllocator) catch unreachable;
@@ -259,7 +259,7 @@ pub const FileSystemRouter = struct {
         return this_value;
     }
 
-    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn match(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const argument_ = callframe.arguments(2);
         if (argument_.len == 0) {
             globalThis.throwInvalidArguments("Expected string, Request or Response", .{});

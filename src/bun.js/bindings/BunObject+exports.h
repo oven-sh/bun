@@ -67,11 +67,11 @@
     macro(createShellInterpreter) \
     macro(createParsedShellScript) \
 
-#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern "C" JSC::EncodedJSValue BunObject_callback_##name(JSC::JSGlobalObject*, JSC::CallFrame*);
+#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(BunObject_callback_##name)
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern JSC_CALLCONV JSC::EncodedJSValue BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 

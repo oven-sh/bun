@@ -46,7 +46,7 @@ console.log(positionals);
 
 then it outputs
 
-```
+```sh
 $ bun run cli.tsx --flag1 --flag2 value
 {
   flag1: true,

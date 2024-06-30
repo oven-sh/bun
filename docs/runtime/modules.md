@@ -48,14 +48,6 @@ In this case, we are importing from `./hello`, a relative path with no extension
 - `./hello/index.cjs`
 - `./hello/index.json`
 
-Import paths are case-insensitive, meaning these are all valid imports:
-
-```ts#index.ts
-import { hello } from "./hello";
-import { hello } from "./HELLO";
-import { hello } from "./hElLo";
-```
-
 Import paths can optionally include extensions. If an extension is present, Bun will only check for a file with that exact extension.
 
 ```ts#index.ts

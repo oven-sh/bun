@@ -1,6 +1,6 @@
 #!/usr/bin/env pwsh
 param(
-  # TODO: change this to 'latest' when Bun for Windows is stable.
+  # Version to install, 'latest' stable version or 'canary' for bleeding edge.
   [String]$Version = "latest",
   # Forces installing the baseline build regardless of what CPU you are actually using.
   [Switch]$ForceBaseline = $false,
@@ -229,24 +229,33 @@ function Install-Bun {
 
   try {
     $env:IS_BUN_AUTO_UPDATE = "1"
-    # TODO: When powershell completions are added, make this switch actually do something
     if ($NoCompletions) {
-      $env:BUN_NO_INSTALL_COMPLETIONS = "1"
-    }
-    # This completions script in general will install some extra stuff, mainly the `bunx` link.
-    # It also installs completions.
-    $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
-    if ($LASTEXITCODE -ne 0) {
-      Write-Output $output
-      Write-Output "Install Failed - could not finalize installation"
-      Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
-      return 1
+      Write-Output "Skipping installing completions because NoCompletions was specified."
+    } else {
+      # This completions script in general will install some extra stuff, mainly the `bunx` link.
+      # It also installs completions.
+      $output = "$(& "${BunBin}\bun.exe" completions 2>&1)"
+      # Completions are installed in the user's ~/.bun dir by completions and need to be added to the users $PROFILE because powershell does not have a "completions" directory.
+      # https://github.com/PowerShell/PowerShell/issues/17582
+      if (Get-Content $PROFILE.CurrentUserCurrentHost -Raw -ErrorAction SilentlyContinue | Select-String -SimpleMatch "bun.completion.ps1" -Quiet) {
+        Write-Output "Skipping adding completions to your profile, as they are already there."
+      } else {
+        # Don't throw errors loading a user's profile if the completions can't load and keep it one line for easy removal.
+        # This starts with a newline in case the current users profile doesn't end with a newline after the last statement in it.
+        "`ntry { . ~/.bun/bun.completion.ps1 } catch { Write-Warning 'Failed to load bun autocompletion' }" | Add-Content -Path $PROFILE.CurrentUserCurrentHost -Force
+      }
+
+      if ($LASTEXITCODE -ne 0) {
+        Write-Output $output
+        Write-Output "Install Failed - could not finalize installation"
+        Write-Output "The command '${BunBin}\bun.exe completions' exited with code ${LASTEXITCODE}`n"
+        return 1
+      }
     }
   } catch {
     # it is possible on powershell 5 that an error happens, but it is probably fine?
   }
   $env:IS_BUN_AUTO_UPDATE = $null
-  $env:BUN_NO_INSTALL_COMPLETIONS = $null
 
   $DisplayVersion = if ($BunRevision -like "*-canary.*") {
     "${BunRevision}"

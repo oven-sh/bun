@@ -1,0 +1,56 @@
+name: coverity-scan
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "src/**/*"
+      - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
+  pull_request:
+    branches: [main]
+    paths:
+      - "src/**/*"
+      - "test/**/*"
+      - "packages/bun-usockets/src/**/*"
+      - "build.zig"
+      - "Makefile"
+      - "Dockerfile"
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: [ ubuntu-latest ]
+    steps:
+      - name: Checkout Source
+        uses: actions/checkout@v4
+
+      - name: Coverity Full Scan
+        if: ${{ github.event_name != 'pull_request' }}
+        uses: synopsys-sig/synopsys-action@v1.5.0
+        with:
+          coverity_url: ${{ secrets.COVERITY_URL }}
+          coverity_user: ${{ secrets.COVERITY_USER }}
+          coverity_passphrase: ${{ secrets.COVERITY_PASSPHRASE }}
+          coverity_project_name: ${{ github.event.repository.name }}
+          coverity_stream_name: ${{ github.event.repository.name }}-${{ github.ref_name }}
+          coverity_policy_view: 'Outstanding Issues'
+          ### Uncomment below configuration if Synopsys Bridge diagnostic files needs to be uploaded
+          # include_diagnostics: true
+
+      - name: Coverity PR Scan
+        if: ${{ github.event_name == 'pull_request' }}
+        uses: synopsys-sig/synopsys-action@v1.5.0
+        with:
+          coverity_url: ${{ secrets.COVERITY_URL }}
+          coverity_user: ${{ secrets.COVERITY_USER }}
+          coverity_passphrase: ${{ secrets.COVERITY_PASSPHRASE }}
+          coverity_project_name: ${{ github.event.repository.name }}
+          coverity_stream_name: ${{ github.event.repository.name }}-${{ github.base_ref }}
+          coverity_automation_prcomment: true
+          github_token: ${{ secrets.GITHUB_TOKEN }} # Mandatory when coverity_automation_prcomment is set to 'true'
+          ### Uncomment below configuration if Synopsys Bridge diagnostic files needs to be uploaded
+          # include_diagnostics: true

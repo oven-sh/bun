@@ -166,14 +166,12 @@
 
 using namespace Bun;
 
-extern "C" JSC__JSValue Bun__NodeUtil__jsParseArgs(JSC::JSGlobalObject*, JSC::CallFrame*);
-
+BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
-extern "C" JSC::EncodedJSValue H2FrameParser__getConstructor(Zig::GlobalObject* globalObject);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
-using JSGlobalObject
-    = JSC::JSGlobalObject;
+
+using JSGlobalObject = JSC::JSGlobalObject;
 using Exception = JSC::Exception;
 using JSValue = JSC::JSValue;
 using JSString = JSC::JSString;
@@ -3245,9 +3243,9 @@ JSC::GCClient::IsoSubspace* GlobalObject::subspaceForImpl(JSC::VM& vm)
         [](auto& server) -> JSC::HeapCellType& { return server.m_heapCellTypeForJSWorkerGlobalScope; });
 }
 
-extern "C" JSC::EncodedJSValue WebCore__alert(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue WebCore__prompt(JSC::JSGlobalObject*, JSC::CallFrame*);
-extern "C" JSC::EncodedJSValue WebCore__confirm(JSC::JSGlobalObject*, JSC::CallFrame*);
+BUN_DECLARE_HOST_FUNCTION(WebCore__alert);
+BUN_DECLARE_HOST_FUNCTION(WebCore__prompt);
+BUN_DECLARE_HOST_FUNCTION(WebCore__confirm);
 
 JSValue GlobalObject_getPerformanceObject(VM& vm, JSObject* globalObject)
 {

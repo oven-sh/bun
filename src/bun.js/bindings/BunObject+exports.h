@@ -72,11 +72,11 @@
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 
-#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" SYSV_ABI JSC::EncodedJSValue BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
+#define DECLARE_ZIG_BUN_OBJECT_GETTER(name) extern "C" JSC::EncodedJSValue SYSV_ABI BunObject_getter_##name(JSC::JSGlobalObject*, JSC::JSObject*);
 FOR_EACH_GETTER(DECLARE_ZIG_BUN_OBJECT_GETTER);
 #undef DECLARE_ZIG_BUN_OBJECT_GETTER
 
-#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) JSC::JSValue BunObject_getter_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
+#define DEFINE_ZIG_BUN_OBJECT_GETTER_WRAPPER(name) static JSC::JSValue BunObject_getter_wrap_##name(JSC::VM &vm, JSC::JSObject *object) { \
     return JSC::JSValue::decode(BunObject_getter_##name(object->globalObject(), object)); \
 } \
 

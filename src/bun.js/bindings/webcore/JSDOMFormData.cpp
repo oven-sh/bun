@@ -184,7 +184,7 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
-extern "C" JSC::EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+BUN_DECLARE_HOST_FUNCTION(FormData__jsFunctionFromMultipartData);
 
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {

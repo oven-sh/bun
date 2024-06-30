@@ -3595,20 +3595,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         });
 
         comptime {
-            if (!JSC.is_bindgen) {
-                @export(onResolve, .{
-                    .name = Export[0].symbol_name,
-                });
-                @export(onReject, .{
-                    .name = Export[1].symbol_name,
-                });
-                @export(onResolveStream, .{
-                    .name = Export[2].symbol_name,
-                });
-                @export(onRejectStream, .{
-                    .name = Export[3].symbol_name,
-                });
-            }
+            @export(onResolve, .{
+                .name = Export[0].symbol_name,
+            });
+            @export(onReject, .{
+                .name = Export[1].symbol_name,
+            });
+            @export(onResolveStream, .{
+                .name = Export[2].symbol_name,
+            });
+            @export(onRejectStream, .{
+                .name = Export[3].symbol_name,
+            });
         }
     };
 }

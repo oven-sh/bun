@@ -208,7 +208,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
-extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *, CallFrame *);
+BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap, (JSGlobalObject * globalObject, CallFrame *callFrame)) {
   auto &vm = globalObject->vm();

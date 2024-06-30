@@ -251,7 +251,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionAppendOnResolvePluginBrowser, (JSC::JSGlobalO
     return jsFunctionAppendOnResolvePluginGlobal(globalObject, callframe, BunPluginTargetBrowser);
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBunPluginClear, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     Zig::GlobalObject* global = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     global->onLoadPlugins.fileNamespace.clear();
@@ -264,7 +264,7 @@ extern "C" JSC::EncodedJSValue jsFunctionBunPluginClear(JSC::JSGlobalObject* glo
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
+static inline JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe, BunPluginTarget target)
 {
     JSC::VM& vm = globalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -343,7 +343,7 @@ extern "C" JSC::EncodedJSValue setupBunPlugin(JSC::JSGlobalObject* globalObject,
     RELEASE_AND_RETURN(throwScope, JSValue::encode(jsUndefined()));
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionBunPlugin(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe)
+JSC_DEFINE_HOST_FUNCTION(jsFunctionBunPlugin, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callframe))
 {
     return setupBunPlugin(globalObject, callframe, BunPluginTargetBun);
 }
@@ -488,7 +488,8 @@ JSObject* JSModuleMock::executeOnce(JSC::JSGlobalObject* lexicalGlobalObject)
 }
 
 extern "C" JSC::EncodedJSValue Bun__resolveSyncWithSource(JSC::JSGlobalObject* global, JSC::EncodedJSValue specifier, BunString* from, bool is_esm);
-extern "C" EncodedJSValue JSMock__jsModuleMock(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callframe)
+BUN_DECLARE_HOST_FUNCTION(JSMock__jsModuleMock);
+extern "C" JSC_DEFINE_HOST_FUNCTION(JSMock__jsModuleMock, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callframe))
 {
     JSC::VM& vm = lexicalGlobalObject->vm();
     Zig::GlobalObject* globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);

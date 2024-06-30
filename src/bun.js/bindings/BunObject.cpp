@@ -25,19 +25,36 @@
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
-#include "BunObject+exports.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
 #include "PathInlines.h"
 #include "wtf/text/ASCIILiteral.h"
+#include "BunObject+exports.h"
+
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
+BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
-BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
@@ -275,23 +292,6 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 
     return bunShell;
 }
-
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
-BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {

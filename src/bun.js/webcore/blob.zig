@@ -1386,7 +1386,7 @@ pub const Blob = struct {
     pub export fn JSDOMFile__construct(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Blob {
+    ) callconv(JSC.conv) ?*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;

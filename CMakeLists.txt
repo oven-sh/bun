@@ -13,6 +13,7 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+set(LINKER_TYPE LLD)
 
 # Should not start with v
 # Used in process.version, process.versions.node, napi, and elsewhere
@@ -1117,8 +1118,10 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
+    add_compile_options(-Xclang -emit-llvm-bc)
+
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC

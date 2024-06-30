@@ -114,40 +114,53 @@ export function getJS2NativeCPP() {
     ...new Set(nativeCalls.filter(x => x.filename.endsWith(".cpp")).map(x => x.filename.replace(/.cpp$/, ".h"))),
   ];
 
+  const externs: string[] = [];
+
+  const nativeCallStrings = nativeCalls
+    .filter(x => x.type === "zig")
+    .flatMap(
+      call => (
+        externs.push(`extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n"),
+        [
+          `JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
+          `  return JSValue::decode(${symbol(call)}_workaround(global));`,
+          `}` + "\n\n",
+        ]
+      ),
+    );
+
+  const wrapperCallStrings = wrapperCalls.map(x => {
+    if (x.wrap_kind === "new-function") {
+      return [
+        (x.type === "zig" &&
+          externs.push(
+            `BUN_DECLARE_HOST_FUNCTION(${symbol({
+              type: "zig",
+              symbol: x.symbol_taget,
+            })});`,
+          ),
+        "") || "",
+        `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
+        `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
+          x.display_name,
+        )}_s, ${symbol({ type: x.type, symbol: x.symbol_taget })}, JSC::ImplementationVisibility::Public);`,
+        `}`,
+      ].join("\n");
+    }
+    throw new Error(`Unknown wrap kind ${x.wrap_kind}`);
+  });
+
   return [
     `#pragma once`,
     `#include "root.h"`,
     ...files.map(filename => `#include ${JSON.stringify(filename)}`),
+    ...externs,
     "\n" + "namespace JS2NativeGenerated {",
     "using namespace Bun;",
     "using namespace JSC;",
     "using namespace WebCore;" + "\n",
-    ...nativeCalls
-      .filter(x => x.type === "zig")
-      .flatMap(call => [
-        `extern "C" SYSV_ABI JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);` + "\n",
-        `JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
-        `  return JSValue::decode(${symbol(call)}_workaround(global));`,
-        `}` + "\n\n",
-      ]),
-    ...wrapperCalls.map(x => {
-      if (x.wrap_kind === "new-function") {
-        return [
-          x.type === "zig"
-            ? `BUN_DECLARE_HOST_FUNCTION(${symbol({
-                type: "zig",
-                symbol: x.symbol_taget,
-              })});`
-            : "",
-          `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
-          `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
-            x.display_name,
-          )}_s, ${symbol({ type: x.type, symbol: x.symbol_taget })}, JSC::ImplementationVisibility::Public);`,
-          `}`,
-        ].join("\n");
-      }
-      throw new Error(`Unknown wrap kind ${x.wrap_kind}`);
-    }),
+    ...nativeCallStrings,
+    ...wrapperCallStrings,
     `typedef JSC::JSValue (*JS2NativeFunction)(Zig::GlobalObject*);`,
     `static JS2NativeFunction js2nativePointers[] = {`,
     ...nativeCalls.map(x => `  ${cppPointer(x)},`),

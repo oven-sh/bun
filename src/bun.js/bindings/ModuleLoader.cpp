@@ -844,7 +844,7 @@ static JSValue fetchESMSourceCode(
         JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+extern "C" JSC_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res = {};

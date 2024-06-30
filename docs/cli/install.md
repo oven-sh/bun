@@ -130,6 +130,20 @@ $ bun install --frozen-lockfile
 
 For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](/docs/install/lockfile).
 
+## Lockfile only
+
+To perform a bun.lockb update without installing any packages or updating package.json
+
+```bash
+$ bun install --lockfile-only
+```
+
+or
+
+```bash
+$ bun update --lockfile-only
+```
+
 ## Dry run
 
 To perform a dry run (i.e. don't actually install anything):
@@ -175,6 +189,9 @@ production = false
 
 # equivalent to `--frozen-lockfile` flag
 frozenLockfile = false
+
+# equivalent to `--lockfile-only` flag
+lockfileOnly = false
 
 # equivalent to `--dry-run` flag
 dryRun = false

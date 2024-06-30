@@ -2943,6 +2943,9 @@ pub const Api = struct {
         /// concurrent_scripts
         concurrent_scripts: ?u32 = null,
 
+        /// lockfile_only
+        lockfile_only: ?bool = null,
+
         pub fn decode(reader: anytype) anyerror!BunInstall {
             var this = std.mem.zeroes(BunInstall);
 
@@ -3014,6 +3017,9 @@ pub const Api = struct {
                     },
                     21 => {
                         this.concurrent_scripts = try reader.readValue(u32);
+                    },
+                    22 => {
+                        this.lockfile_only = try reader.readValue(bool);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -3107,6 +3113,10 @@ pub const Api = struct {
             if (this.concurrent_scripts) |concurrent_scripts| {
                 try writer.writeFieldID(21);
                 try writer.writeInt(concurrent_scripts);
+            }
+            if (this.lockfile_only) |lockfile_only| {
+                try writer.writeFieldID(22);
+                try writer.writeInt(@as(u8, @intFromBool(lockfile_only)));
             }
             try writer.endMessage();
         }

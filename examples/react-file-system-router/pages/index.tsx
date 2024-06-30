@@ -1,17 +1,13 @@
 // reachable from http://localhost:3000/
 
 export default () => (
-  <html>
-    <head>
-      <title>index</title>
-    </head>
-    <body>
-      <h1>
+    <>
+      <h2>
         <a href="/one">one</a>
-      </h1>
-      <h1>
+      </h2>
+      <h2>
         <a href="/two">two</a>
-      </h1>
-    </body>
-  </html>
+      </h2>
+    </>
+    
 );

@@ -1,9 +1,12 @@
 #include "root.h"
-
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/NumberObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSPromiseConstructor.h"
 #include "JavaScriptCore/DeleteAllCodeEffort.h"
-
+#include "JavaScriptCore/BooleanObject.h"
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -195,7 +198,6 @@ static constexpr int FLAG_NOT = (1 << 2);
 
 #pragma clang diagnostic pop
 
-extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value);
 extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC__JSValue thisValue, JSC__JSGlobalObject* globalObject, JSC__JSValue leftValue);
 
 enum class AsymmetricMatcherResult : uint8_t {
@@ -204,10 +206,85 @@ enum class AsymmetricMatcherResult : uint8_t {
     NOT_MATCHER,
 };
 
-bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+enum class AsymmetricMatcherConstructorType : uint8_t {
+    none = 0,
+    Symbol = 1,
+    String = 2,
+    Object = 3,
+    Array = 4,
+    BigInt = 5,
+    Boolean = 6,
+    Number = 7,
+    Promise = 8,
+    InstanceOf = 9,
+};
+
+extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value, AsymmetricMatcherConstructorType* constructorType);
+
+extern "C" uint8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject* globalObject, JSC__JSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isObject()) {
+        JSObject* object = value.getObject();
+        JSC::VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (globalObject->numberObjectConstructor() == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Number);
+        }
+
+        if (globalObject->booleanObjectConstructor() == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Boolean);
+        }
+
+        auto stringConstructorValue = globalObject->stringPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (stringConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::String);
+        }
+
+        auto symbolConstructorValue = globalObject->symbolPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (symbolConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Symbol);
+        }
+
+        auto bigIntConstructorValue = globalObject->bigIntPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (bigIntConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::BigInt);
+        }
+
+        JSObject* promiseConstructor = globalObject->promiseConstructor();
+
+        if (promiseConstructor == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Promise);
+        }
+
+        JSObject* array = globalObject->arrayConstructor();
+
+        if (array == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Array);
+        }
+
+        JSObject* obj = globalObject->objectConstructor();
+
+        if (obj == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Object);
+        }
+
+        return static_cast<uint8_t>(AsymmetricMatcherConstructorType::InstanceOf);
+    }
+
+    return static_cast<uint8_t>(AsymmetricMatcherConstructorType::none);
+}
+
+bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value, AsymmetricMatcherConstructorType& constructorType)
 {
     JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
-    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
+    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded, &constructorType)) {
         value = JSValue::decode(valueEncoded);
         return true;
     }
@@ -216,11 +293,11 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope, ExpectFlags& flags)
 {
-    VM& vm = globalObject->vm();
     JSCell* matcherPropCell = matcherProp.asCell();
+    AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         if (otherProp.isUndefinedOrNull()) {
@@ -229,46 +306,95 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue constructorValue = expectAny->m_constructorValue.get();
         JSObject* constructorObject = constructorValue.getObject();
 
-        if (otherProp.isPrimitive()) {
-            if (otherProp.isNumber() && globalObject->numberObjectConstructor() == constructorObject) {
+        switch (constructorType) {
+        case AsymmetricMatcherConstructorType::Symbol: {
+            if (otherProp.isSymbol()) {
                 return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isBoolean() && globalObject->booleanObjectConstructor() == constructorObject) {
-                return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isSymbol() && globalObject->symbolObjectStructure() == constructorObject->structure()) {
-                return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isString()) {
-                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
-                    String name = constructorFunction->name(vm);
-                    if (name == "String"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
-                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
-                    String name = internalConstructorFunction->name();
-                    if (name == "String"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+            }
+            break;
+        }
+        case AsymmetricMatcherConstructorType::String: {
+            if (otherProp.isCell()) {
+                JSCell* cell = otherProp.asCell();
+                switch (cell->type()) {
+                case JSC::StringType:
+                case JSC::StringObjectType:
+                case JSC::DerivedStringObjectType: {
+                    return AsymmetricMatcherResult::PASS;
                 }
-            } else if (otherProp.isBigInt()) {
-                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
-                    String name = constructorFunction->name(vm);
-                    if (name == "BigInt"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
-                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
-                    String name = internalConstructorFunction->name();
-                    if (name == "BigInt"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+                default: {
+                    break;
+                }
                 }
             }
+            break;
+        }
 
-            return AsymmetricMatcherResult::FAIL;
+        case AsymmetricMatcherConstructorType::BigInt: {
+            if (otherProp.isBigInt()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Boolean: {
+            if (otherProp.isBoolean()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Number: {
+            if (otherProp.isNumber()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Promise: {
+            if (otherProp.isCell() && otherProp.asCell()->type() == JSPromiseType) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Array: {
+            if (JSC::isArray(globalObject, otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Object: {
+            if (otherProp.isObject()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::InstanceOf: {
+            break;
+        }
+        case AsymmetricMatcherConstructorType::none: {
+            ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid constructor type");
+            break;
+        }
         }
 
         if (constructorObject->hasInstance(globalObject, otherProp)) {
@@ -277,7 +403,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
@@ -296,7 +422,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
@@ -324,7 +450,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
@@ -369,7 +495,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
@@ -384,7 +510,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         if (!otherProp.isNumber()) {
@@ -412,7 +538,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
     } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)

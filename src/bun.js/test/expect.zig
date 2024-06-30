@@ -93,7 +93,27 @@ pub const Expect = struct {
 
         not: bool = false,
 
-        _: u5 = undefined, // padding
+        // This was originally padding.
+        // We don't use all the bits in the u5, so if you need to reuse this elsewhere, you could.
+        asymmetric_matcher_constructor_type: AsymmetricMatcherConstructorType = .none,
+
+        pub const AsymmetricMatcherConstructorType = enum(u5) {
+            none = 0,
+            Symbol = 1,
+            String = 2,
+            Object = 3,
+            Array = 4,
+            BigInt = 5,
+            Boolean = 6,
+            Number = 7,
+            Promise = 8,
+            InstanceOf = 9,
+
+            extern fn AsymmetricMatcherConstructorType__fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) u8;
+            pub fn fromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) AsymmetricMatcherConstructorType {
+                return @enumFromInt(AsymmetricMatcherConstructorType__fromJS(globalObject, value));
+            }
+        };
 
         pub const FlagsCppType = u8;
         comptime {
@@ -247,11 +267,12 @@ pub const Expect = struct {
     }
 
     /// Called by C++ when matching with asymmetric matchers
-    fn readFlagsAndProcessPromise(instanceValue: JSValue, globalThis: *JSGlobalObject, outFlags: *Expect.Flags.FlagsCppType, value: *JSValue) callconv(.C) bool {
+    fn readFlagsAndProcessPromise(instanceValue: JSValue, globalThis: *JSGlobalObject, outFlags: *Expect.Flags.FlagsCppType, value: *JSValue, any_constructor_type: *u8) callconv(.C) bool {
         const flags: Expect.Flags = flags: {
             if (ExpectCustomAsymmetricMatcher.fromJS(instanceValue)) |instance| {
                 break :flags instance.flags;
             } else if (ExpectAny.fromJS(instanceValue)) |instance| {
+                any_constructor_type.* = @intFromEnum(instance.flags.asymmetric_matcher_constructor_type);
                 break :flags instance.flags;
             } else if (ExpectAnything.fromJS(instanceValue)) |instance| {
                 break :flags instance.flags;
@@ -5159,11 +5180,22 @@ pub const ExpectAny = struct {
             return .zero;
         }
 
+        const asymmetric_matcher_constructor_type = Expect.Flags.AsymmetricMatcherConstructorType.fromJS(globalThis, constructor);
+
+        // I don't think this case is possible, but just in case!
+        if (globalThis.hasException()) {
+            return .zero;
+        }
+
         var any = globalThis.bunVM().allocator.create(ExpectAny) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };
-        any.* = .{};
+        any.* = .{
+            .flags = .{
+                .asymmetric_matcher_constructor_type = asymmetric_matcher_constructor_type,
+            },
+        };
 
         const any_js_value = any.toJS(globalThis);
         any_js_value.ensureStillAlive();

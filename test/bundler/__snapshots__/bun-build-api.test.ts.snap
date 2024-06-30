@@ -115,3 +115,9 @@ NS.then(({ fn: fn2 }) => {
 });
 "
 `;
+
+exports[`Bun.build BuildArtifact properties splitting: hash ./index.js 1`] = `"d9cff65881357a1d"`;
+
+exports[`Bun.build BuildArtifact properties splitting: hash ./fn.js 1`] = `"a0df50db1e9c5ebf"`;
+
+exports[`Bun.build BuildArtifact properties splitting: hash ./chunk-44590bb2ecae49ab.js 1`] = `"44590bb2ecae49ab"`;

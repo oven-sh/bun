@@ -266,7 +266,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             header_names: ?[*]const JSC.ZigString,
             header_values: ?[*]const JSC.ZigString,
             header_count: usize,
-        ) callconv(.C) ?*HTTPClient {
+        ) callconv(JSC.conv) ?*HTTPClient {
             const vm = global.bunVM();
 
             bun.assert(vm.event_loop_handle != null);

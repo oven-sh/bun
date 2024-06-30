@@ -1621,7 +1621,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return shim.cppFn("setDestroyCallback", .{ value, callback });
         }
 
-        pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
 
             if (comptime !@hasDecl(SinkType, "construct")) {
@@ -1670,7 +1670,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             shim.cppFn("detachPtr", .{ptr});
         }
 
-        fn getThis(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) ?*ThisSink {
+        inline fn getThis(globalThis: *JSGlobalObject, callframe: *const JSC.CallFrame) ?*ThisSink {
             return @as(
                 *ThisSink,
                 @ptrCast(@alignCast(
@@ -1693,7 +1693,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         }
 
-        pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn write(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
 
@@ -1815,7 +1815,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.end(null).toJS(globalThis);
         }
 
-        pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn flush(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1850,7 +1850,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.flush().toJS(globalThis);
         }
 
-        pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn start(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1883,7 +1883,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             ).toJS(globalThis);
         }
 
-        pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn end(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
 
             var this = getThis(globalThis, callframe) orelse return invalidThis(globalThis);
@@ -1906,7 +1906,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return this.sink.endFromJS(globalThis).toJS(globalThis);
         }
 
-        pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+        pub fn endWithSink(ptr: *anyopaque, globalThis: *JSGlobalObject) callconv(JSC.conv) JSValue {
             JSC.markBinding(@src());
 
             var this = @as(*ThisSink, @ptrCast(@alignCast(ptr)));
@@ -1925,18 +1925,6 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return shim.cppFn("assignToStream", .{ globalThis, stream, ptr, jsvalue_ptr });
         }
 
-        pub const Export = shim.exportFunctions(.{
-            .finalize = finalize,
-            .write = write,
-            .close = close,
-            .flush = flush,
-            .start = start,
-            .end = end,
-            .construct = construct,
-            .endWithSink = endWithSink,
-            .updateRef = updateRef,
-        });
-
         pub fn updateRef(ptr: *anyopaque, value: bool) callconv(.C) void {
             JSC.markBinding(@src());
             var this = bun.cast(*ThisSink, ptr);
@@ -1946,15 +1934,23 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(finalize, .{ .name = Export[0].symbol_name });
-                @export(write, .{ .name = Export[1].symbol_name });
-                @export(close, .{ .name = Export[2].symbol_name });
-                @export(flush, .{ .name = Export[3].symbol_name });
-                @export(start, .{ .name = Export[4].symbol_name });
-                @export(end, .{ .name = Export[5].symbol_name });
-                @export(construct, .{ .name = Export[6].symbol_name });
-                @export(endWithSink, .{ .name = Export[7].symbol_name });
-                @export(updateRef, .{ .name = Export[8].symbol_name });
+                @export(finalize, .{ .name = shim.symbolName("finalize") });
+                @export(write, .{ .name = shim.symbolName("write") });
+                @export(close, .{ .name = shim.symbolName("close") });
+                @export(flush, .{ .name = shim.symbolName("flush") });
+                @export(start, .{ .name = shim.symbolName("start") });
+                @export(end, .{ .name = shim.symbolName("end") });
+                @export(construct, .{ .name = shim.symbolName("construct") });
+                @export(endWithSink, .{ .name = shim.symbolName("endWithSink") });
+                @export(updateRef, .{ .name = shim.symbolName("updateRef") });
+
+                shim.assertJSFunction(.{
+                    write,
+                    close,
+                    flush,
+                    start,
+                    end,
+                });
             }
         }
 

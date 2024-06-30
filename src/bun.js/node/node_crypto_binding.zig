@@ -14,7 +14,7 @@ const JSValue = JSC.JSValue;
 
 pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(2).slice();
 
             var at_least: u52 = 0;
@@ -35,7 +35,7 @@ pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
 pub fn pbkdf2(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(5);
 
     const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
@@ -50,7 +50,7 @@ pub fn pbkdf2(
 pub fn pbkdf2Sync(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(5);
 
     var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {

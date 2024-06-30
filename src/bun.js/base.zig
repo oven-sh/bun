@@ -934,6 +934,7 @@ pub fn DOMCall(
     comptime ResultType: type,
     comptime dom_effect: DOMEffect,
 ) type {
+    _ = ResultType; // autofix
     return extern struct {
         const className = class_name;
         pub const is_dom_call = true;
@@ -949,7 +950,7 @@ pub fn DOMCall(
             thisValue: JSC.JSValue,
             arguments_ptr: [*]const JSC.JSValue,
             arguments_len: usize,
-        ) callconv(.C) JSValue {
+        ) callconv(JSC.conv) JSValue {
             return @field(Container, functionName)(
                 globalObject,
                 thisValue,
@@ -961,215 +962,18 @@ pub fn DOMCall(
         pub const Fastpath = @TypeOf(fastpath);
         pub const Arguments = std.meta.ArgsTuple(Fastpath);
 
-        pub const Export = shim.exportFunctions(.{
-            .slowpath = slowpath,
-            .fastpath = fastpath,
-        });
-
         pub fn put(globalObject: *JSC.JSGlobalObject, value: JSValue) void {
             shim.cppFn("put", .{ globalObject, value });
         }
 
         pub const effect = dom_effect;
 
-        pub fn printGenerateDOMJITSignature(comptime Writer: type, writer: Writer) !void {
-            const signatureName = "DOMJIT_" ++ shim.name ++ "_signature";
-            const slowPathName = Export[0].symbol_name;
-            const fastPathName = Export[1].symbol_name;
-            const Fields: []const std.builtin.Type.StructField = std.meta.fields(Arguments);
-
-            const options = .{
-                .name = functionName,
-                .exportName = name ++ "__put",
-                .signatureName = signatureName,
-                .IDLResultName = DOMCallResultType(ResultType),
-                .fastPathName = fastPathName,
-                .slowPathName = slowPathName,
-                .argumentsCount = Fields.len - 2,
-            };
-            {
-                const fmt =
-                    \\extern "C" JSC_DECLARE_HOST_FUNCTION({[slowPathName]s}Wrapper);
-                    \\extern "C" JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
-                ;
-                try writer.print(fmt, .{ .fastPathName = options.fastPathName, .slowPathName = options.slowPathName });
-            }
-            {
-                switch (Fields.len - 2) {
-                    0 => {
-                        try writer.writeAll("));\n");
-                    },
-                    1 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll("));\n");
-                    },
-                    2 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
-                        try writer.writeAll("));\n");
-                    },
-                    else => @compileError("Must be <= 3 arguments"),
-                }
-            }
-
-            {
-                const fmt =
-                    \\
-                    \\JSC_DEFINE_JIT_OPERATION({[fastPathName]s}Wrapper, EncodedJSValue, (JSC::JSGlobalObject* lexicalGlobalObject, void* thisValue
-                ;
-                try writer.print(fmt, .{ .fastPathName = options.fastPathName });
-            }
-            {
-                switch (Fields.len - 2) {
-                    0 => {
-                        try writer.writeAll(")) {\n");
-                    },
-                    1 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(" arg1)) {\n");
-                    },
-                    2 => {
-                        try writer.writeAll(", ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[2].type));
-                        try writer.writeAll(" arg1, ");
-                        try writer.writeAll(DOMCallArgumentTypeWrapper(Fields[3].type));
-                        try writer.writeAll(" arg2)) {\n");
-                    },
-                    else => @compileError("Must be <= 3 arguments"),
-                }
-                {
-                    const fmt =
-                        \\VM& vm = JSC::getVM(lexicalGlobalObject);
-                        \\IGNORE_WARNINGS_BEGIN("frame-address")
-                        \\CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-                        \\IGNORE_WARNINGS_END
-                        \\JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-                        \\return {[fastPathName]s}(lexicalGlobalObject, thisValue
-                    ;
-                    try writer.print(fmt, .{ .fastPathName = options.fastPathName });
-                }
-                {
-                    switch (Fields.len - 2) {
-                        0 => {
-                            try writer.writeAll(");\n}\n");
-                        },
-                        1 => {
-                            try writer.writeAll(", arg1);\n}\n");
-                        },
-                        2 => {
-                            try writer.writeAll(", arg1, arg2);\n}\n");
-                        },
-                        else => @compileError("Must be <= 3 arguments"),
-                    }
-                }
-            }
-
-            {
-                const fmt =
-                    \\JSC_DEFINE_HOST_FUNCTION({[slowPathName]s}Wrapper, (JSC::JSGlobalObject *globalObject, JSC::CallFrame* frame)) {{
-                    \\    return {[slowPathName]s}(globalObject, JSValue::encode(frame->thisValue()), reinterpret_cast<JSC::EncodedJSValue*>(frame->addressOfArgumentsStart()), frame->argumentCount());
-                    \\}}
-                    \\
-                    \\extern "C" void {[exportName]s}(JSC::JSGlobalObject *globalObject, JSC::EncodedJSValue value) {{
-                    \\  JSC::JSObject *thisObject = JSC::jsCast<JSC::JSObject *>(JSC::JSValue::decode(value));
-                    \\  static const JSC::DOMJIT::Signature {[signatureName]s}(
-                    \\    {[fastPathName]s}Wrapper,
-                    \\    thisObject->classInfo(),
-                    \\
-                ;
-
-                try writer.print(fmt, .{
-                    .slowPathName = options.slowPathName,
-                    .exportName = options.exportName,
-                    .fastPathName = options.fastPathName,
-                    .signatureName = options.signatureName,
-                });
-            }
-            if (effect.isPure()) {
-                try writer.writeAll("JSC::DOMJIT::Effect::forPure(),\n  ");
-            } else if (effect.writes[0] == DOMEffect.pure.writes[0]) {
-                try writer.print(
-                    "JSC::DOMJIT::Effect::forReadKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
-                    .{
-                        @tagName(effect.reads[0]),
-                        @tagName(effect.reads[1]),
-                        @tagName(effect.reads[2]),
-                        @tagName(effect.reads[3]),
-                    },
-                );
-            } else if (effect.reads[0] == DOMEffect.pure.reads[0]) {
-                try writer.print(
-                    "JSC::DOMJIT::Effect::forWriteKinds(JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}, JSC::DFG::AbstractHeapKind::{s}),\n  ",
-                    .{
-                        @tagName(effect.writes[0]),
-                        @tagName(effect.writes[1]),
-                        @tagName(effect.writes[2]),
-                        @tagName(effect.writes[3]),
-                    },
-                );
-            } else {
-                try writer.writeAll("JSC::DOMJIT::Effect::forReadWrite(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),\n  ");
-            }
-
-            {
-                try writer.writeAll(DOMCallResultType(ResultType));
-            }
-
-            switch (Fields.len - 2) {
-                0 => {},
-                1 => {
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
-                    try writer.writeAll("\n  ");
-                },
-                2 => {
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[2].type));
-                    try writer.writeAll(",\n  ");
-                    try writer.writeAll(DOMCallArgumentType(Fields[3].type));
-                    try writer.writeAll("\n  ");
-                },
-                else => @compileError("Must be <= 3 arguments"),
-            }
-
-            try writer.writeAll(");\n  ");
-
-            {
-                const fmt =
-                    \\                JSFunction* function = JSFunction::create(
-                    \\                    globalObject->vm(),
-                    \\                    globalObject,
-                    \\                    {[argumentsCount]d},
-                    \\                    String("{[name]s}"_s),
-                    \\                    {[slowPathName]s}Wrapper, ImplementationVisibility::Public, NoIntrinsic, {[slowPathName]s}Wrapper,
-                    \\                    &{[signatureName]s}
-                    \\                );
-                    \\           thisObject->putDirect(
-                    \\             globalObject->vm(),
-                    \\             Identifier::fromString(globalObject->vm(), "{[name]s}"_s),
-                    \\             function
-                    \\           );
-                    \\}}
-                ;
-                try writer.print(fmt, .{
-                    .argumentsCount = options.argumentsCount,
-                    .name = options.name,
-                    .slowPathName = options.slowPathName,
-                    .signatureName = options.signatureName,
-                });
-            }
-        }
-
         pub const Extern = [_][]const u8{"put"};
 
         comptime {
             if (!JSC.is_bindgen) {
-                @export(slowpath, .{ .name = Export[0].symbol_name });
-                @export(fastpath, .{ .name = Export[1].symbol_name });
+                @export(slowpath, .{ .name = shim.symbolName("slowpath") });
+                @export(fastpath, .{ .name = shim.symbolName("fastpath") });
             } else {
                 _ = slowpath;
                 _ = fastpath;

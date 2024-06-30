@@ -361,7 +361,7 @@ JSC_DECLARE_CUSTOM_GETTER(js${typeName}Constructor);
   }
 
   if (obj.call) {
-    externs += `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` + "\n";
+    externs += `BUN_DECLARE_HOST_FUNCTION(${classSymbolName(typeName, "call")});` + "\n";
   }
 
   for (const name in protoFields) {
@@ -880,7 +880,7 @@ function renderStaticDecls(symbolName, typeName, fields, supportsObjectCreate = 
     }
 
     if ("fn" in fields[name]) {
-      externs += `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbolName(typeName, fields[name].fn)});` + "\n";
+      externs += `BUN_DECLARE_HOST_FUNCTION(${symbolName(typeName, fields[name].fn)});` + "\n";
     }
   }
 

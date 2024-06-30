@@ -1,4 +1,4 @@
-export * from "util";
+export * from "./node_modules/util";
 
 const TextEncoder = globalThis.TextEncoder;
 const TextDecoder = globalThis.TextDecoder;

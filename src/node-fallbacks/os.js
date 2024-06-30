@@ -1,4 +1,4 @@
-import os from "os-browserify/browser";
+import os from "./node_modules/os-browserify/browser";
 export default os;
 export var {
   endianness,

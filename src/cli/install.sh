@@ -57,7 +57,7 @@ command -v unzip >/dev/null ||
     error 'unzip is required to install bun'
 
 if [[ $# -gt 2 ]]; then
-    error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info")'
+    error 'Too many arguments, only 2 are allowed. The first can be a specific tag of bun to install. (e.g. "bun-v0.1.4") The second can be a build variant of bun to install. (e.g. "debug-info", "baseline")'
 fi
 
 case $platform in
@@ -111,6 +111,12 @@ if [[ $# = 2 && $2 = debug-info ]]; then
     target=$target-profile
     exe_name=bun-profile
     info "You requested a debug build of bun. More information will be shown if a crash occurs."
+fi
+
+if [[ $# = 2 && $2 = baseline ]]; then
+    target=$target-baseline
+    exe_name=bun
+    info "You requested a baseline build of bun. This build is slower but supports older CPUs."
 fi
 
 if [[ $# = 0 ]]; then

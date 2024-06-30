@@ -1143,7 +1143,7 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
@@ -1158,7 +1158,7 @@ pub const TestingAPIs = struct {
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 

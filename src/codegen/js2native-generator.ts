@@ -124,7 +124,7 @@ export function getJS2NativeCPP() {
     ...nativeCalls
       .filter(x => x.type === "zig")
       .flatMap(call => [
-        `extern "C" JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);`,
+        `extern JSC_CALLCONV JSC::EncodedJSValue ${symbol(call)}_workaround(Zig::GlobalObject*);`,
         `JSC::JSValue ${symbol(call)}(Zig::GlobalObject* global) {`,
         `  return JSValue::decode(${symbol(call)}_workaround(global));`,
         `}`,
@@ -133,10 +133,10 @@ export function getJS2NativeCPP() {
       if (x.wrap_kind === "new-function") {
         return [
           x.type === "zig"
-            ? `extern "C" JSC::EncodedJSValue ${symbol({
+            ? `extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(${symbol({
                 type: "zig",
                 symbol: x.symbol_taget,
-              })}(JSC::JSGlobalObject*, JSC::CallFrame*);`
+              })});`
             : "",
           `JSC::JSValue ${x.symbol_generated}(Zig::GlobalObject* globalObject) {`,
           `  return JSC::JSFunction::create(globalObject->vm(), globalObject, ${x.call_length}, ${JSON.stringify(
@@ -163,10 +163,10 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
     ...nativeCalls
       .filter(x => x.type === "zig")
       .flatMap(call => [
-        `export fn ${symbol(call)}_workaround(global: u64) callconv(.C) JSC.JSValue {`,
+        `export fn ${symbol(call)}_workaround(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {`,
         `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), call.filename))}).${
           call.symbol
-        }(@ptrFromInt(global));`,
+        }(global);`,
         "}",
       ]),
     ...wrapperCalls
@@ -175,10 +175,10 @@ export function getJS2NativeZig(gs2NativeZigPath: string) {
         `export fn ${symbol({
           type: "zig",
           symbol: x.symbol_taget,
-        })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(.C) JSC.JSValue {`,
-        `  return @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))}).${
-          x.symbol_taget
-        }(global, call_frame);`,
+        })}(global: *JSC.JSGlobalObject, call_frame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {`,
+        `
+          const function = @import(${JSON.stringify(path.relative(path.dirname(gs2NativeZigPath), x.filename))});
+          return @call(.always_inline, function.${x.symbol_taget}, .{global, call_frame});`,
         "}",
       ]),
     "comptime {",

@@ -24,6 +24,7 @@ const {
   randomInt: _randomInt,
   pbkdf2: pbkdf2_,
   pbkdf2Sync: pbkdf2Sync_,
+  generatePrime: __generatePrime,
 } = $zig("node_crypto_binding.zig", "createNodeCryptoBindingZig");
 
 function randomInt(min, max, callback) {
@@ -36,6 +37,30 @@ function randomInt(min, max, callback) {
     return;
   }
   return _randomInt(min, max);
+}
+
+function bigintToBuffer(bigint) {
+  const hexString = bigint.toString(16);
+  const paddedHexString = hexString.length % 2 === 0 ? hexString : "0" + hexString;
+  return Buffer.from(paddedHexString, "hex");
+}
+
+function arrayBufferToBigInt(buffer) {
+  const view = new DataView(buffer);
+  let result = 0n;
+  for (let i = 0; i < view.byteLength; i++) {
+    result = (result << 8n) + BigInt(view.getUint8(i));
+  }
+  return result;
+}
+
+function _generatePrime(bits, options) {
+  if (options && options.bigint === true) {
+    const prime = __generatePrime(bits, options);
+    return arrayBufferToBigInt(prime);
+  }
+
+  return __generatePrime(bits, options);
 }
 
 const MAX_STRING_LENGTH = 536870888;
@@ -11787,7 +11812,40 @@ var DEFAULT_ENCODING = "buffer",
             throw err2;
           }
         }
-      : void 0;
+      : void 0,
+  generatePrimeSync = function (size, options) {
+    if (options && options.rem && typeof options.rem === "bigint") {
+      options.rem = bigintToBuffer(options.rem);
+    }
+    if (options && options.add && typeof options.add === "bigint") {
+      options.add = bigintToBuffer(options.add);
+    }
+    return _generatePrime(size, options);
+  },
+  generatePrime = function (size, opts, cb) {
+    let callback = cb;
+    let options = opts;
+    if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    }
+
+    if (options && options.rem && typeof options.rem === "bigint") {
+      options.rem = bigintToBuffer(options.rem);
+    }
+    if (options && options.add && typeof options.add === "bigint") {
+      options.add = bigintToBuffer(options.add);
+    }
+
+    process.nextTick(() => {
+      try {
+        callback(null, _generatePrime(size, options));
+      } catch (e) {
+        callback(e);
+      }
+    });
+  };
+
 timingSafeEqual &&
   (Object.defineProperty(timingSafeEqual, "name", {
     value: "::bunternal::",
@@ -12171,6 +12229,8 @@ __export(crypto_exports, {
   scrypt: () => scrypt,
   scryptSync: () => scryptSync,
   timingSafeEqual: () => timingSafeEqual,
+  generatePrimeSync: () => generatePrimeSync,
+  generatePrime: () => generatePrime,
   webcrypto: () => webcrypto,
   subtle: () => _subtle,
 });

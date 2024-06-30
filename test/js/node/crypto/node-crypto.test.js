@@ -1,8 +1,8 @@
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
-import util from "node:util";
-import { PassThrough, Readable } from "node:stream";
+import util, { promisify } from "node:util";
+import { PassThrough } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
   expect(crypto.randomBytes(1) instanceof Buffer).toBe(true);
@@ -32,6 +32,78 @@ it("crypto.randomInt with a callback", async () => {
   expect(typeof result).toBe("number");
   expect(result).toBeGreaterThanOrEqual(0);
   expect(result).toBeLessThanOrEqual(10);
+});
+
+describe.each([
+  ["generatePrime", promisify(crypto.generatePrime)],
+  ["generatePrimeSync", crypto.generatePrimeSync],
+])("crypto.%s", (_name, fn) => {
+  it("throws when invalid arguments are passed for the `size`", async () => {
+    await expect(() => fn(undefined)).toThrow(TypeError);
+    await expect(() => fn(undefined)).toThrow(TypeError);
+    await expect(() => fn("")).toThrow(TypeError);
+    await expect(() => fn(false)).toThrow(TypeError);
+    await expect(() => fn([])).toThrow(TypeError);
+    await expect(() => fn({})).toThrow(TypeError);
+    await expect(() => fn(-1)).toThrow(RangeError);
+  });
+
+  it("throws when invalid arguments are passed for the `options`", async () => {
+    await expect(() => fn(1, "")).toThrow(TypeError);
+    await expect(() => fn(1, false)).toThrow(TypeError);
+    // await expect(() => fn(1, [])).toThrow(TypeError);
+
+    await expect(() => fn(1, { safe: "foo" })).toThrow(TypeError);
+    await expect(() => fn(1, { safe: {} })).toThrow(TypeError);
+    await expect(() => fn(1, { safe: [] })).toThrow(TypeError);
+
+    await expect(() => fn(1, { add: [], rem: [] })).toThrow(TypeError);
+    await expect(() => fn(1, { add: "", rem: "" })).toThrow(TypeError);
+    await expect(() => fn(1, { add: false, rem: false })).toThrow(TypeError);
+    await expect(() => fn(1, { add: {}, rem: {} })).toThrow(TypeError);
+  });
+
+  it.each([-1, 0, 2 ** 31, 2 ** 31 + 1, 2 ** 32 - 1, 2 ** 32])(
+    `throws when out of range arguments are supplied`,
+    async size => {
+      await expect(() => fn(size)).toThrow(RangeError);
+    },
+  );
+
+  it("should return an ArrayBuffer", async () => {
+    const result = await fn(1024);
+    expect(result).toBeInstanceOf(ArrayBuffer);
+  });
+
+  it("throws an error when add/rem are not the correct diff", async () => {
+    await expect(() => fn(32, { add: 1, rem: 1 })).toThrow(Error);
+    await expect(() => fn(32, { add: 42, rem: 123 })).toThrow(Error);
+  });
+
+  describe.each([
+    ["Buffer", v => Buffer.from([v])],
+    ["ArrayBuffer", v => Buffer.from([v]).buffer],
+    ["BigInt", v => BigInt(v)],
+  ])("when `add` and `rem` are %ss", (_, k) => {
+    it.each([
+      [12, 11],
+      [34, 33],
+    ])("Must respect `add` and `rem` for %i and %i", async (add, rem) => {
+      const add_buf = k(add);
+      const rem_buf = k(rem);
+      const prime = await fn(32, { add: add_buf, rem: rem_buf });
+      const prime_buf = Buffer.from(prime);
+      expect(prime_buf.readUInt32BE() % add).toBe(rem);
+    });
+  });
+
+  it("should respect `bigint` option", async () => {
+    const primeAsBigInt = await fn(32, { bigint: true });
+    expect(primeAsBigInt).toBeTypeOf("bigint");
+
+    const primeAsArrayBuffer = await fn(32, { bigint: false });
+    expect(primeAsArrayBuffer).toBeInstanceOf(ArrayBuffer);
+  });
 });
 
 // https://github.com/oven-sh/bun/issues/1839

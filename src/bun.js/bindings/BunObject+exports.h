@@ -67,7 +67,7 @@
     macro(createShellInterpreter) \
     macro(createParsedShellScript) \
 
-#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(BunObject_callback_##name)
+#define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) extern JSC_CALLCONV JSC::EncodedJSValue BunObject_callback_##name(JSC::JSGlobalObject*, JSC::CallFrame*);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);
 #undef DECLARE_ZIG_BUN_OBJECT_CALLBACK
 

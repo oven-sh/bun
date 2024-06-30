@@ -46,7 +46,7 @@ const HeaderBuilder = HTTP.HeaderBuilder;
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
-const Npm = @import("./npm.zig");
+pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
@@ -6960,8 +6960,8 @@ pub const PackageManager = struct {
             }
             if (bun_install_) |bun_install| {
                 if (bun_install.scoped) |scoped| {
-                    for (scoped.scopes, 0..) |name, i| {
-                        var registry = scoped.registries[i];
+                    for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
+                        var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
                         try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
                     }
@@ -8412,6 +8412,19 @@ pub const PackageManager = struct {
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+
+        var log = logger.Log.init(ctx.allocator);
+        defer log.deinit();
+        initializeStore();
+        bun.ini.loadNpmrcFromFile(ctx.allocator, ctx.install orelse brk: {
+            const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+            install_.* = std.mem.zeroes(Api.BunInstall);
+            ctx.install = install_;
+            break :brk install_;
+        }, env, true, &log) catch {
+            if (log.errors == 1) Output.warn("Encountered an error while reading <b>.npmrc<r>:", .{}) else Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+            log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
+        };
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

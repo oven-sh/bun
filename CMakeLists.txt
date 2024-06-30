@@ -948,6 +948,10 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+if(APPLE)
+    add_compile_definitions("__APPLE_USE_RFC_3542=1")
+Endif()
+
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?
@@ -1139,6 +1143,7 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-dead_strip_dylibs")
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
+
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
 
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")

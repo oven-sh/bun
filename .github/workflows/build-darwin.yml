@@ -9,7 +9,7 @@ on:
     inputs:
       runs-on:
         type: string
-        default: macos-12-large
+        default: macos-13-large
       tag:
         type: string
         required: true

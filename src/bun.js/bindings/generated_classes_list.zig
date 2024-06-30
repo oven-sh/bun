@@ -71,6 +71,8 @@ pub const Classes = struct {
     pub const FileInternalReadableStreamSource = JSC.WebCore.FileReader.Source;
     pub const BlobInternalReadableStreamSource = JSC.WebCore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
+    pub const PostgresSQLConnection = JSC.Postgres.PostgresSQLConnection;
+    pub const PostgresSQLQuery = JSC.Postgres.PostgresSQLQuery;
     pub const BrotliEncoder = JSC.API.BrotliEncoder;
     pub const BrotliDecoder = JSC.API.BrotliDecoder;
 };

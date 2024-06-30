@@ -83,6 +83,34 @@ pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
 
+    pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
+        switch (this) {
+            .done => |socket| {
+                debug("us_socket_close({d})", .{@intFromPtr(socket)});
+                _ = us_socket_close(
+                    comptime @intFromBool(is_ssl),
+                    socket,
+                    code,
+                    null,
+                );
+            },
+            .connecting => |socket| {
+                debug("us_connecting_socket_close({d})", .{@intFromPtr(socket)});
+                _ = us_connecting_socket_close(
+                    comptime @intFromBool(is_ssl),
+                    socket,
+                );
+            },
+        }
+    }
+
+    pub fn isClosed(this: InternalSocket, comptime is_ssl: bool) bool {
+        return switch (this) {
+            .done => |socket| us_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+            .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+        };
+    }
+
     pub fn get(this: @This()) ?*Socket {
         return switch (this) {
             .done => this.done,
@@ -470,40 +498,11 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
 
         pub fn isClosed(this: ThisSocket) bool {
-            switch (this.socket) {
-                .done => |socket| {
-                    return us_socket_is_closed(
-                        comptime ssl_int,
-                        socket,
-                    ) > 0;
-                },
-                .connecting => |socket| {
-                    return us_connecting_socket_is_closed(
-                        comptime ssl_int,
-                        socket,
-                    ) > 0;
-                },
-            }
+            return this.socket.isClosed(comptime is_ssl);
         }
 
         pub fn close(this: ThisSocket, code: CloseCode) void {
-            // debug("us_socket_close({d})", .{@intFromPtr(this.socket)});
-            switch (this.socket) {
-                .done => |socket| {
-                    _ = us_socket_close(
-                        comptime ssl_int,
-                        socket,
-                        code,
-                        null,
-                    );
-                },
-                .connecting => |socket| {
-                    _ = us_connecting_socket_close(
-                        comptime ssl_int,
-                        socket,
-                    );
-                },
-            }
+            return this.socket.close(comptime is_ssl, code);
         }
         pub fn localPort(this: ThisSocket) i32 {
             const socket = this.socket.get() orelse return 0;
@@ -2913,6 +2912,108 @@ pub fn newSocketFromPair(ctx: *SocketContext, ext_size: c_int, fds: *[2]LIBUS_SO
 }
 
 extern fn us_socket_get_error(ssl_flag: c_int, socket: *Socket) c_int;
+
+pub const AnySocket = union(enum) {
+    SocketTCP: SocketTCP,
+    SocketTLS: SocketTLS,
+
+    pub fn setTimeout(this: AnySocket, seconds: c_uint) void {
+        switch (this) {
+            .SocketTCP => this.SocketTCP.setTimeout(seconds),
+            .SocketTLS => this.SocketTLS.setTimeout(seconds),
+        }
+    }
+
+    pub fn shutdown(this: AnySocket) void {
+        debug("us_socket_shutdown({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn shutdownRead(this: AnySocket) void {
+        debug("us_socket_shutdown_read({d})", .{@intFromPtr(this.socket())});
+        return us_socket_shutdown_read(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+    pub fn isShutdown(this: AnySocket) bool {
+        return switch (this) {
+            .SocketTCP => this.SocketTCP.isShutdown(),
+            .SocketTLS => this.SocketTLS.isShutdown(),
+        };
+    }
+    pub fn isClosed(this: AnySocket) bool {
+        return switch (this) {
+            inline else => |s| s.isClosed(),
+        };
+    }
+    pub fn close(this: AnySocket) void {
+        switch (this) {
+            inline else => |s| s.close(.normal),
+        }
+    }
+
+    pub fn terminate(this: AnySocket) void {
+        switch (this) {
+            inline else => |s| s.close(.failure),
+        }
+    }
+
+    pub fn write(this: AnySocket, data: []const u8, msg_more: bool) i32 {
+        return switch (this) {
+            .SocketTCP => return this.SocketTCP.write(data, msg_more),
+            .SocketTLS => return this.SocketTLS.write(data, msg_more),
+        };
+    }
+
+    pub fn getNativeHandle(this: AnySocket) ?*anyopaque {
+        return switch (this.socket()) {
+            .done => |sock| us_socket_get_native_handle(
+                @intFromBool(this.isSSL()),
+                sock,
+            ).?,
+            else => null,
+        };
+    }
+
+    pub fn localPort(this: AnySocket) i32 {
+        return us_socket_local_port(
+            @intFromBool(this.isSSL()),
+            this.socket(),
+        );
+    }
+
+    pub fn isSSL(this: AnySocket) bool {
+        return switch (this) {
+            .SocketTCP => false,
+            .SocketTLS => true,
+        };
+    }
+
+    pub fn socket(this: AnySocket) InternalSocket {
+        return switch (this) {
+            .SocketTCP => this.SocketTCP.socket,
+            .SocketTLS => this.SocketTLS.socket,
+        };
+    }
+
+    pub fn ext(this: AnySocket, comptime ContextType: type) ?*ContextType {
+        const ptr = us_socket_ext(
+            this.isSSL(),
+            this.socket(),
+        ) orelse return null;
+
+        return @ptrCast(@alignCast(ptr));
+    }
+    pub fn context(this: AnySocket) *SocketContext {
+        return us_socket_context(
+            this.isSSL(),
+            this.socket(),
+        ).?;
+    }
+};
 
 pub const udp = struct {
     pub const Socket = opaque {

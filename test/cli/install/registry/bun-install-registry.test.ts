@@ -18,9 +18,11 @@ import { join, sep, resolve } from "path";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
+const { iniInternals } = require("bun:internal-for-testing");
+const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,
@@ -32,7 +34,10 @@ var verdaccioServer: ChildProcess;
 var port: number = randomPort();
 var packageDir: string;
 
+let users: Record<string, string> = {};
+
 beforeAll(async () => {
+  console.log("STARTING VERDACCIO");
   setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
@@ -44,6 +49,22 @@ beforeAll(async () => {
     },
   );
 
+  verdaccioServer.stderr?.on("data", data => {
+    console.error(`Error: ${data}`);
+  });
+
+  verdaccioServer.on("error", error => {
+    console.error(`Failed to start child process: ${error}`);
+  });
+
+  verdaccioServer.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code} and signal ${signal}`);
+    } else {
+      console.log("Child process exited successfully");
+    }
+  });
+
   await new Promise<void>(done => {
     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
       if (msg.verdaccio_started) {
@@ -54,12 +75,16 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => {
-  verdaccioServer.kill();
+afterAll(async () => {
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+  if (verdaccioServer) verdaccioServer.kill();
 });
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
+  users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -69,6 +94,287 @@ beforeEach(async () => {
 cache = false
 registry = "http://localhost:${port}/"
 `,
+  );
+});
+
+/**
+ * Returns auth token
+ */
+async function generateRegistryUser(username: string, password: string): Promise<string> {
+  console.log("GENERATE REGISTRY USER");
+  if (users[username]) {
+    throw new Error("that user already exists");
+  } else users[username] = password;
+
+  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
+  const user = {
+    name: username,
+    password: password,
+    email: `${username}@example.com`,
+  };
+
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(user),
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    console.log(`Token: ${data.token}`);
+    return data.token;
+  } else {
+    throw new Error("Failed to create user:", response.statusText);
+  }
+}
+
+/**
+ * Important:
+ *
+ * Any tests here that check that authentication actually works, are done by publishing a package
+ *
+ * The verdaccio.yaml config specifies that publishing requires users to be authenticated
+ * so we can test that our authentication works by publishing a package
+ */
+describe("npmrc", async () => {
+  it("works with empty file", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ ``;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {},
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets default registry", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry = http://localhost:${port}/
+`;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets scoped registry", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("default registry from env variable", async () => {
+    const ini = /* ini */ `
+registry=\${LOL}
+  `;
+
+    const result = loadNpmrc(ini, { LOL: `http://localhost:${port}/` });
+
+    expect(result.default_registry_url).toBe(`http://localhost:${port}/`);
+  });
+
+  it("default registry from env variable 2", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry=http://localhost:\${PORT}/
+  `;
+
+    const result = loadNpmrc(ini, { ...env, PORT: port });
+
+    expect(result.default_registry_url).toEqual(`http://localhost:${port}/`);
+  });
+
+  async function makeTest(
+    options: [option: string, value: string | (() => Promise<string>)][],
+    check: (result: {
+      default_registry_url: string;
+      default_registry_token: string;
+      default_registry_username: string;
+      default_registry_password: string;
+    }) => void,
+  ) {
+    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${await val}`));
+    test(optionName.join(" "), async () => {
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      const iniInner = await Promise.all(
+        options.map(async ([option, value]) => `//registry.npmjs.org/:${option}=${await value}`),
+      );
+
+      const ini = /* ini */ `
+${iniInner.join("\n")}
+`;
+
+      await Bun.$`echo ${JSON.stringify({
+        name: "hello",
+        main: "index.js",
+        version: "1.0.0",
+        dependencies: {
+          "is-even": "1.0.0",
+        },
+      })} > package.json`.cwd(packageDir);
+
+      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+
+      const result = loadNpmrc(ini);
+
+      check(result);
+    });
+  }
+
+  // await makeTest([["_authToken", "skibidi"]], result => {
+  //   expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+  //   expect(result.default_registry_token).toEqual("Default registry token: skibidi");
+  // });
+
+  // await makeTest(
+  //   [
+  //     ["username", "zorp"],
+  //     ["_password", "skibidi"],
+  //   ],
+  //   result => {
+  //     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+  //     expect(result.default_registry_username).toEqual("zorp");
+  //     expect(result.default_registry_password).toEqual("skibidi");
+  //   },
+  // );
+
+  it("authentication works", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry = http://localhost:${port}/
+//localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
+`;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "private-pkg-dont-touch",
+      main: "index.js",
+      version: "1.0.0",
+      dependencies: {},
+      "publishConfig": {
+        "registry": `http://localhost:${port}`,
+      },
+    })} > package.json`.cwd(packageDir);
+
+    const code = /* js */ `
+module.exports = function lmao() {
+  return 'lmao'
+}`;
+
+    await Bun.$`echo ${code} > index.js`.cwd(packageDir);
+
+    const { stdout, stderr: stderrBuf } = Bun.spawnSync(["npm", "publish", "--registry", `http://localhost:${port}/`], {
+      cwd: packageDir,
+    });
+
+    const stderr = stderrBuf.toString();
+    expect(stderr).not.toContain("ERR!");
+    expect(stderr).not.toContain("code E401");
+    expect(stderr).not.toContain("Unable to authenticate");
+  });
+
+  function registryConfigOptionTest(
+    name: string,
+    _opts: Record<string, string> | (() => Promise<Record<string, string>>),
+    _env?: Record<string, string> | (() => Promise<Record<string, string>>),
+  ) {
+    it(`sets scoped registry option: ${name}`, async () => {
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      const env = _env ? (typeof _env === "function" ? await _env() : _env) : {};
+      const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
+
+      const ini = /* ini */ `
+registry = http://localhost:${port}/
+${Object.keys(opts)
+  .map(k => `//localhost:${port}/${k}=${opts[k]}`)
+  .join("\n")}
+`;
+
+      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+      await Bun.$`echo ${JSON.stringify({
+        name: "private-pkg-dont-touch",
+        main: "index.js",
+        version: "1.0.0",
+        dependencies: {},
+        "publishConfig": {
+          "registry": `http://localhost:${port}`,
+        },
+      })} > package.json`.cwd(packageDir);
+
+      const code = /* js */ `
+module.exports = function lmao() {
+  return 'lmao'
+}`;
+
+      await Bun.$`echo ${code} > index.js`.cwd(packageDir);
+
+      const { stdout, stderr: stderrBuf } = Bun.spawnSync(
+        ["npm", "publish", "--registry", `http://localhost:${port}/`],
+        {
+          cwd: packageDir,
+          env,
+        },
+      );
+
+      const stderr = stderrBuf.toString();
+      expect(stderr).not.toContain("ERR!");
+      expect(stderr).not.toContain("code E401");
+      expect(stderr).not.toContain("Unable to authenticate");
+    });
+  }
+
+  registryConfigOptionTest("_authToken", async () => ({
+    "_authToken": await generateRegistryUser("bilbo_baggins", "verysecure"),
+  }));
+  registryConfigOptionTest(
+    "_authToken with env variable value",
+    async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
+    async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
+  );
+  registryConfigOptionTest("username and password", async () => {
+    await generateRegistryUser("gandalf420", "verysecure");
+    return { username: "gandalf420", _password: "verysecure" };
+  });
+  registryConfigOptionTest(
+    "username and password with env variable password",
+    async () => {
+      await generateRegistryUser("gandalf421", "verysecure");
+      return { username: "gandalf420", _password: "${SUPER_SECRET_PASSWORD}" };
+    },
+    {
+      SUPER_SECRET_PASSWORD: "verysecure",
+    },
   );
 });
 

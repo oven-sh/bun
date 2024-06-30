@@ -69,8 +69,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
 
 // Attributes
 

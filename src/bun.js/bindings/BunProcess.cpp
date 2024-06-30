@@ -113,8 +113,8 @@ extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__Process__send);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {

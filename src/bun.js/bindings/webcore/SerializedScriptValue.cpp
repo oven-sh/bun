@@ -2420,7 +2420,7 @@ private:
     SerializationForStorage m_forStorage;
 };
 
-void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
+SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
 {
     ctx->write(data, size);
 }

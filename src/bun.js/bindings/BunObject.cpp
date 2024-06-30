@@ -276,22 +276,22 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     return bunShell;
 }
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
+extern JSC_CALLCONV JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {

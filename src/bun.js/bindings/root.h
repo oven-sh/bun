@@ -78,4 +78,10 @@
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1
 
+#if !OS(WINDOWS)
+#define JSC_CALLCONV "C"
+#else
+#define JSC_CALLCONV "C" SYSV_ABI
+#endif
+
 #endif

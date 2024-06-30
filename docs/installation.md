@@ -30,8 +30,17 @@ $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
-```bash#Proto
+```bash#proto
 $ proto install bun
+```
+
+```bash#asdf
+# for macOS and Linux - add the bun plugin if not installed
+# asdf lets you have multiple versions of bun installed
+$ asdf plugin-add bun
+# Install/use latest version
+$ asdf install bun latest
+$ asdf global bun latest
 ```
 
 {% /codetabs %}
@@ -142,11 +151,13 @@ $ bun upgrade
 ```
 
 {% callout %}
-**Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
+**Homebrew users** - To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 
 **Scoop users** — To avoid conflicts with Scoop, use `scoop update bun` instead.
 
 **proto users** - Use `proto install bun --pin` instead.
+
+**asdf users** - Use `asdf install bun latest` and `asdf global bun latest` instead.
 {% /callout %}
 
 ## Canary builds

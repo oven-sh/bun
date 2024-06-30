@@ -59,6 +59,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
+pub const ini = @import("./ini.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -810,6 +811,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
+}
+
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
 }
 
 pub const FDHashMapContext = struct {

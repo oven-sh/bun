@@ -820,6 +820,15 @@ pub fn ParseJSONUTF8(
     log: *logger.Log,
     allocator: std.mem.Allocator,
 ) !Expr {
+    return try ParseJSONUTF8Impl(source, log, allocator, false);
+}
+
+pub fn ParseJSONUTF8Impl(
+    source: *const logger.Source,
+    log: *logger.Log,
+    allocator: std.mem.Allocator,
+    comptime check_len: bool,
+) !Expr {
     const len = source.contents.len;
 
     switch (len) {
@@ -843,9 +852,14 @@ pub fn ParseJSONUTF8(
     var parser = try JSONParser.init(allocator, source.*, log);
     bun.assert(parser.source().contents.len > 0);
 
-    return try parser.parseExpr(false, true);
+    const result = try parser.parseExpr(false, true);
+    if (comptime check_len) {
+        if (parser.lexer.end >= source.contents.len) return result;
+        try parser.lexer.unexpected();
+        return error.ParserError;
+    }
+    return result;
 }
-
 pub fn ParseJSONForMacro(source: *const logger.Source, log: *logger.Log, allocator: std.mem.Allocator) !Expr {
     switch (source.contents.len) {
         // This is to be consisntent with how disabled JS files are handled

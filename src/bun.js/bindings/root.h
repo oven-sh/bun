@@ -78,10 +78,6 @@
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1
 
-#if !OS(WINDOWS)
-#define JSC_CALLCONV "C"
-#else
-#define JSC_CALLCONV "C" SYSV_ABI
-#endif
+#define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
 
 #endif

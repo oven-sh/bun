@@ -4,8 +4,8 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include "BunClientData.h"
 
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
 
 namespace Zig {
 class GlobalObject;

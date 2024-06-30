@@ -40,6 +40,7 @@
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -251,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(fetchHeadersGetSetCookie, (JSC::JSGlobalObject * lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl))
+JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 

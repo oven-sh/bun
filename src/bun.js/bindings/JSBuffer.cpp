@@ -568,7 +568,7 @@ static inline JSC::EncodedJSValue jsBufferConstructorFunction_allocUnsafeSlowBod
 }
 
 // new SlowBuffer(size)
-EncodedJSValue constructSlowBuffer(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(constructSlowBuffer, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return jsBufferConstructorFunction_allocUnsafeSlowBody(lexicalGlobalObject, callFrame);
 }

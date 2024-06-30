@@ -20,7 +20,7 @@ namespace Zig {
 
 using namespace JSC;
 
-using FFIFunction = JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+using FFIFunction = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 /**
  * Call a C function with low overhead, modeled after JSC::JSNativeStdFunction

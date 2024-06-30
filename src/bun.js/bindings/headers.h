@@ -15,7 +15,7 @@
 #ifdef __cplusplus
   #define AUTO_EXTERN_C extern "C"
   #ifdef WIN32
-    #define AUTO_EXTERN_C_ZIG extern "C" 
+    #define AUTO_EXTERN_C_ZIG 
   #else
     #define AUTO_EXTERN_C_ZIG extern "C" __attribute__((weak))
   #endif
@@ -301,7 +301,7 @@ CPP_DECL void JSC__JSMap__set(JSC__JSMap* arg0, JSC__JSGlobalObject* arg1, JSC__
 
 #pragma mark - JSC::JSValue
 
-CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
+CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, SYSV_ABI JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), SYSV_ABI JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSCell* JSC__JSValue__asCell(JSC__JSValue JSValue0);
@@ -605,14 +605,14 @@ CPP_DECL void ArrayBufferSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVal
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue ArrayBufferSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__construct);
+extern JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__end);
 ZIG_DECL JSC__JSValue ArrayBufferSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void ArrayBufferSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue ArrayBufferSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__flush);
+extern JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__start);
 ZIG_DECL void ArrayBufferSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(ArrayBufferSink__write);
 
 #endif
 CPP_DECL JSC__JSValue HTTPSResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -625,14 +625,14 @@ CPP_DECL void HTTPSResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSV
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue HTTPSResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__construct);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__end);
 ZIG_DECL JSC__JSValue HTTPSResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPSResponseSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__flush);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__start);
 ZIG_DECL void HTTPSResponseSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPSResponseSink__write);
 
 #endif
 CPP_DECL JSC__JSValue HTTPResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -645,14 +645,14 @@ CPP_DECL void HTTPResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVa
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue HTTPResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__construct);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__end);
 ZIG_DECL JSC__JSValue HTTPResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPResponseSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue HTTPResponseSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__flush);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__start);
 ZIG_DECL void HTTPResponseSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(HTTPResponseSink__write);
 
 #endif
 CPP_DECL JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -665,14 +665,14 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue FileSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__construct);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__end);
 ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue FileSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__flush);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
 
@@ -686,14 +686,14 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue FileSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__construct);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__end);
 ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue FileSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__flush);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
 
@@ -788,37 +788,37 @@ ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* arg0, JSC__JSV
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onReject);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onReject);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onRejectStream);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolve);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onReject);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onRejectStream);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolve);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onReject);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onRejectStream);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolve);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 #endif
 
@@ -827,15 +827,15 @@ ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolveStream(JSC__JSGl
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__TestScope__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__TestScope__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__TestScope__onReject);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__TestScope__onResolve);
 
 #endif
 
@@ -853,7 +853,7 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg
 
 #ifdef __cplusplus
 
-CPP_DECL JSC__JSValue Bun__onResolveEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-CPP_DECL JSC__JSValue Bun__onRejectEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
+extern JSC_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
 #endif

@@ -325,8 +325,6 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ${USE_LTO})
-
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)

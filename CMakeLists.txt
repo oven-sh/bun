@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.18")
-set(WEBKIT_TAG 7fe2fbb7c94505916302d7a7d481cd18a830bb63)
+set(WEBKIT_TAG dd00a7813a83b20f9ac62a24e0913ebd7bbbbc3f)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -323,7 +323,6 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
-
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
@@ -1121,8 +1120,8 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
-    if (USE_LTO)
-        target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc" ) 
+    if(USE_LTO)
+        target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc")
     endif()
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")

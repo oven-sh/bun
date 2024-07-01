@@ -21,6 +21,7 @@ namespace Zig {
 using namespace JSC;
 
 using FFIFunction = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
 #if OS(WINDOWS)
 using CFFIFunction = JSC::EncodedJSValue __attribute__((cdecl)) (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 #else

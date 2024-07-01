@@ -70,6 +70,7 @@ public:
     DECLARE_EXPORT_INFO;
 
     JS_EXPORT_PRIVATE static JSFFIFunction* create(VM&, Zig::GlobalObject*, unsigned length, const String& name, FFIFunction, Intrinsic = NoIntrinsic, NativeFunction nativeConstructor = callHostFunctionAsConstructor);
+    JS_EXPORT_PRIVATE static JSFFIFunction* createForFFI(VM&, Zig::GlobalObject*, unsigned length, const String& name, CFFIFunction);
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
     {
@@ -77,16 +78,22 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    const FFIFunction function() { return m_function; }
+    const CFFIFunction function() const { return m_function; }
+
+#if OS(WINDOWS)
+
+    static JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES trampoline(JSGlobalObject* globalObject, CallFrame* callFrame);
+
+#endif
 
     void* dataPtr;
 
 private:
-    JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, FFIFunction&&);
+    JSFFIFunction(VM&, NativeExecutable*, JSGlobalObject*, Structure*, CFFIFunction&&);
     void finishCreation(VM&, NativeExecutable*, unsigned length, const String& name);
     DECLARE_VISIT_CHILDREN;
 
-    FFIFunction m_function;
+    CFFIFunction m_function;
 };
 
 } // namespace JSC

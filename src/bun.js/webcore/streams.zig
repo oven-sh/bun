@@ -2752,13 +2752,13 @@ pub fn ReadableStreamSource(
         pub const construct = JSReadableStreamSource.construct;
         pub const getIsClosedFromJS = JSReadableStreamSource.isClosed;
         pub const JSReadableStreamSource = struct {
-            pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) ?*ReadableStreamSourceType {
+            pub fn construct(globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) ?*ReadableStreamSourceType {
                 _ = callFrame; // autofix
                 globalThis.throw("Cannot construct ReadableStreamSource", .{});
                 return null;
             }
 
-            pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            pub fn pull(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
                 JSC.markBinding(@src());
                 const this_jsvalue = callFrame.this();
                 const arguments = callFrame.arguments(2);
@@ -2774,7 +2774,7 @@ pub fn ReadableStreamSource(
                 );
             }
 
-            pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            pub fn start(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.globalThis = globalThis;
                 this.this_jsvalue = callFrame.this();
@@ -2792,7 +2792,7 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn isClosed(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+            pub fn isClosed(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 _ = globalObject; // autofix
                 return JSC.JSValue.jsBoolean(this.is_closed);
             }
@@ -2823,7 +2823,7 @@ pub fn ReadableStreamSource(
                 }
             }
 
-            pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            pub fn cancel(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
                 _ = globalObject; // autofix
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
@@ -2831,7 +2831,7 @@ pub fn ReadableStreamSource(
                 return JSC.JSValue.jsUndefined();
             }
 
-            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+            pub fn setOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
                 JSC.markBinding(@src());
                 this.close_handler = JSReadableStreamSource.onClose;
                 this.globalThis = globalObject;
@@ -2850,7 +2850,7 @@ pub fn ReadableStreamSource(
                 return true;
             }
 
-            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+            pub fn setOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) bool {
                 JSC.markBinding(@src());
                 this.globalThis = globalObject;
 
@@ -2868,7 +2868,7 @@ pub fn ReadableStreamSource(
                 return true;
             }
 
-            pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+            pub fn getOnCloseFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 _ = globalObject; // autofix
 
                 JSC.markBinding(@src());
@@ -2876,7 +2876,7 @@ pub fn ReadableStreamSource(
                 return this.close_jsvalue.get() orelse .undefined;
             }
 
-            pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+            pub fn getOnDrainFromJS(this: *ReadableStreamSourceType, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 _ = globalObject; // autofix
 
                 JSC.markBinding(@src());
@@ -2888,7 +2888,7 @@ pub fn ReadableStreamSource(
                 return .undefined;
             }
 
-            pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            pub fn updateRef(this: *ReadableStreamSourceType, globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 const ref_or_unref = callFrame.argument(0).toBooleanSlow(globalObject);
@@ -2907,13 +2907,13 @@ pub fn ReadableStreamSource(
                 this.close_jsvalue.clear();
             }
 
-            pub fn finalize(this: *ReadableStreamSourceType) callconv(.C) void {
+            pub fn finalize(this: *ReadableStreamSourceType) void {
                 this.this_jsvalue = .zero;
 
                 _ = this.decrementCount();
             }
 
-            pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+            pub fn drain(this: *ReadableStreamSourceType, globalThis: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
                 JSC.markBinding(@src());
                 this.this_jsvalue = callFrame.this();
                 var list = this.drain();

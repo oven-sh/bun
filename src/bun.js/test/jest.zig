@@ -1761,11 +1761,11 @@ inline fn createIfScope(
     const value = args[0].toBooleanSlow(globalThis);
 
     const truthy_falsey: [2]JSC.JSHostFunctionType = switch (tag) {
-        .pass => .{ Scope.call, Scope.skip },
+        .pass => .{ Scope.skip, Scope.call },
         .fail => @compileError("unreachable"),
         .only => @compileError("unreachable"),
-        .skip => .{ Scope.skip, Scope.call },
-        .todo => .{ Scope.todo, Scope.call },
+        .skip => .{ Scope.call, Scope.skip },
+        .todo => .{ Scope.call, Scope.todo },
     };
 
     switch (@intFromBool(value)) {

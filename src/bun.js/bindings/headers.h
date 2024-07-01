@@ -461,104 +461,104 @@ CPP_DECL void FFI__ptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue FFI__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2);
-ZIG_DECL JSC__JSValue FFI__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI FFI__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2);
+extern "C" JSC__JSValue SYSV_ABI FFI__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u8__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u16__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__ptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i8__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i16__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__f32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__f32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__f32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__f64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__f64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__f64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__intptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__intptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__intptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 

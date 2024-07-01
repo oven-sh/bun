@@ -676,7 +676,7 @@ pub const ParsedShellScript = struct {
         bun.destroy(this);
     }
 
-    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
@@ -694,7 +694,7 @@ pub const ParsedShellScript = struct {
         return .undefined;
     }
 
-    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         var env =
             if (this.export_env) |*env|
         brk: {
@@ -741,7 +741,7 @@ pub const ParsedShellScript = struct {
     pub fn createParsedShellScript(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSValue {
+    ) JSValue {
         var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
@@ -1159,7 +1159,7 @@ pub const Interpreter = struct {
     pub fn createShellInterpreter(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSValue {
+    ) JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());

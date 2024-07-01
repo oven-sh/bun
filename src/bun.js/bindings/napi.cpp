@@ -331,7 +331,7 @@ public:
         ASSERT(jsCast<NAPIFunction*>(callframe->jsCallee()));
         auto* function = static_cast<NAPIFunction*>(callframe->jsCallee());
         auto* env = toNapi(globalObject);
-        auto* callback = reinterpret_cast<napi_callback>(function->m_method.get());
+        auto* callback = reinterpret_cast<napi_callback>(function->m_method);
         JSC::VM& vm = globalObject->vm();
 
         MarkedArgumentBufferWithSize<12> args;
@@ -348,14 +348,14 @@ public:
         RELEASE_AND_RETURN(scope, JSC::JSValue::encode(toJS(result)));
     }
 
-    NAPIFunction(JSC::VM& vm, JSC::NativeExecutable* exec, JSGlobalObject* globalObject, Structure* structure, JSC::NativeFunction method, void* dataPtr)
+    NAPIFunction(JSC::VM& vm, JSC::NativeExecutable* exec, JSGlobalObject* globalObject, Structure* structure, Zig::CFFIFunction method, void* dataPtr)
         : Base(vm, exec, globalObject, structure)
         , m_method(method)
         , m_dataPtr(dataPtr)
     {
     }
 
-    static NAPIFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, unsigned length, const WTF::String& name, JSC::NativeFunction method, void* dataPtr)
+    static NAPIFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, unsigned length, const WTF::String& name, Zig::CFFIFunction method, void* dataPtr)
     {
 
         auto* structure = globalObject->NAPIFunctionStructure();
@@ -366,7 +366,7 @@ public:
     }
 
     void* m_dataPtr = nullptr;
-    JSC::NativeFunction m_method = nullptr;
+    Zig::CFFIFunction m_method = nullptr;
 
     template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
@@ -430,7 +430,7 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
     if (property.method) {
         JSC::JSValue value;
-        auto method = reinterpret_cast<Zig::FFIFunction>(property.method);
+        auto method = reinterpret_cast<Zig::CFFIFunction>(property.method);
 
         auto* function = NAPIFunction::create(vm, globalObject, 1, propertyName.isSymbol() ? String() : propertyName.string(), method, dataPtr);
         value = JSC::JSValue(function);
@@ -443,8 +443,8 @@ static void defineNapiProperty(Zig::GlobalObject* globalObject, JSC::JSObject* t
 
         JSC::JSObject* getter = nullptr;
         JSC::JSObject* setter = nullptr;
-        auto getterProperty = reinterpret_cast<FFIFunction>(property.getter);
-        auto setterProperty = reinterpret_cast<FFIFunction>(property.setter);
+        auto getterProperty = reinterpret_cast<CFFIFunction>(property.getter);
+        auto setterProperty = reinterpret_cast<CFFIFunction>(property.setter);
 
         if (getterProperty) {
             getter = NAPIFunction::create(vm, globalObject, 0, makeString("get "_s, propertyName.isSymbol() ? String() : propertyName.string()), getterProperty, dataPtr);
@@ -1069,7 +1069,7 @@ extern "C" napi_status napi_create_function(napi_env env, const char* utf8name,
         name = WTF::String::fromUTF8({ utf8name, length == NAPI_AUTO_LENGTH ? strlen(utf8name) : length });
     }
 
-    auto method = reinterpret_cast<Zig::FFIFunction>(cb);
+    auto method = reinterpret_cast<Zig::CFFIFunction>(cb);
     auto* function = NAPIFunction::create(vm, globalObject, length, name, method, data);
 
     ASSERT(function->isCallable());
@@ -1815,7 +1815,7 @@ void NapiClass::finishCreation(VM& vm, NativeExecutable* executable, unsigned le
 {
     Base::finishCreation(vm, executable, length, name);
     ASSERT(inherits(info()));
-    this->m_constructor = reinterpret_cast<FFIFunction>(constructor);
+    this->m_constructor = reinterpret_cast<CFFIFunction>(constructor);
     auto globalObject = reinterpret_cast<Zig::GlobalObject*>(this->globalObject());
 
     this->putDirect(vm, vm.propertyNames->name, jsString(vm, name), JSC::PropertyAttribute::DontEnum | 0);

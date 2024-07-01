@@ -160,13 +160,13 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    FFIFunction constructor()
+    CFFIFunction constructor()
     {
         return m_constructor;
     }
 
     void* dataPtr = nullptr;
-    FFIFunction m_constructor = nullptr;
+    CFFIFunction m_constructor = nullptr;
     NapiRef* napiRef = nullptr;
 
 private:

@@ -1434,11 +1434,11 @@ pub fn StatType(comptime Big: bool) type {
             }
         }
 
-        const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
+        const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue;
 
         fn getter(comptime field: meta.FieldEnum(This)) PropertyGetter {
             return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
+                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
@@ -1450,7 +1450,7 @@ pub fn StatType(comptime Big: bool) type {
 
         fn dateGetter(comptime field: meta.FieldEnum(This)) PropertyGetter {
             return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
+                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
                     // but it will tell comptime code how to convert the i64/f64 to a JS Date.

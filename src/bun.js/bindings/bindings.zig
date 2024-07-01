@@ -2684,7 +2684,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        implementation: *const JSHostFunctionType,
+        comptime implementation: *const JSHostFunctionType,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {

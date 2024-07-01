@@ -1426,7 +1426,7 @@ pub const Fetch = struct {
             return switch (this.body_size) {
                 .content_length => @truncate(this.body_size.content_length),
                 .total_received => @truncate(this.body_size.total_received),
-                else => 0,
+                .unknown => 0,
             };
         }
 
@@ -1732,7 +1732,7 @@ pub const Fetch = struct {
             task.http.?.* = async_http.*;
             task.http.?.response_buffer = async_http.response_buffer;
 
-            log("callback success {} has_more {} bytes {}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
+            log("callback success={} has_more={} bytes={}", .{ result.isSuccess(), result.has_more, result.body.?.list.items.len });
 
             const prev_metadata = task.result.metadata;
             const prev_cert_info = task.result.certificate_info;

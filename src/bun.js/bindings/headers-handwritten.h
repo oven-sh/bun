@@ -68,6 +68,8 @@ typedef struct BunString {
     // This one usually will clone the raw bytes.
     WTF::String toWTFString() const;
 
+    bool isEmpty() const;
+
 } BunString;
 
 typedef struct ZigErrorType {

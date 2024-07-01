@@ -10,6 +10,7 @@ pub const BrotliEncoder = struct {
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
 
     stream: brotli.BrotliCompressionStream,
+    maxOutputLength: usize,
 
     freelist: Queue = Queue.init(bun.default_allocator),
     freelist_write_lock: bun.Lock = bun.Lock.init(),
@@ -28,7 +29,7 @@ pub const BrotliEncoder = struct {
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     ref_count: u32 = 1,
-    write_failed: bool = false,
+    write_failure: ?JSC.DeferredError = null,
     poll_ref: bun.Async.KeepAlive = .{},
 
     pub fn hasPendingActivity(this: *BrotliEncoder) callconv(.C) bool {
@@ -51,29 +52,40 @@ pub const BrotliEncoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
+
         var this: *BrotliEncoder = BrotliEncoder.new(.{
             .globalThis = globalThis,
             .stream = brotli.BrotliCompressionStream.init() catch {
                 globalThis.throw("Failed to create BrotliEncoder", .{});
                 return .zero;
             },
+            .maxOutputLength = maxOutputLength,
         });
 
         if (opts.get(globalThis, "params")) |params| {
             inline for (std.meta.fields(bun.brotli.c.BrotliEncoderParameter)) |f| {
-                const idx = params.getIndex(globalThis, f.value);
-                if (!idx.isNumber()) break;
-                const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
-                if (!was_set) {
-                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
-                    this.deinit();
-                    return .zero;
+                if (params.hasOwnPropertyValue(globalThis, JSC.ZigString.static(std.fmt.comptimePrint("{d}", .{f.value})).toValue(globalThis))) {
+                    const idx = params.getIndex(globalThis, f.value);
+                    if (!idx.isNumber()) {
+                        var typestring = idx.jsTypeString(globalThis).toSlice(globalThis, bun.default_allocator);
+                        defer typestring.deinit();
+                        globalThis.vm().throwError(globalThis, globalThis.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"options.params[key]\" property must be of type number. Received type {s}", .{typestring.slice()}));
+                        return .zero;
+                    }
+                    const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
+                    if (!was_set) {
+                        globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                        this.deinit();
+                        return .zero;
+                    }
                 }
             }
         }
 
         const out = this.toJS(globalThis);
-        @This().callbackSetCached(out, globalThis, callback);
+        BrotliEncoder.callbackSetCached(out, globalThis, callback);
         this.callback_value.set(globalThis, callback);
 
         return out;
@@ -115,14 +127,13 @@ pub const BrotliEncoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
-            if (this.write_failed)
-                // TODO: propagate error from brotli
-                this.globalThis.createErrorInstance("BrotliError", .{})
+        const result = this.callback_value.get().?.call(
+            this.globalThis,
+            if (this.write_failure) |*err|
+                &.{err.toJS(this.globalThis)}
             else
-                JSC.JSValue.null,
-            this.collectOutputValue(),
-        });
+                &.{ .null, this.collectOutputValue() },
+        );
 
         if (result.toError()) |err| {
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
@@ -183,9 +194,14 @@ pub const BrotliEncoder = struct {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
                         writer.writeAll(input.slice()) catch {
                             _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                            this.encoder.write_failed = true;
+                            this.encoder.write_failure = JSC.DeferredError.from(.Error, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                             return;
                         };
+                        if (this.encoder.output.items.len > this.encoder.maxOutputLength) {
+                            _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
+                            this.encoder.write_failure = JSC.DeferredError.from(.RangeError, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                            return;
+                        }
                     }
 
                     any = any or pending.len > 0;
@@ -201,13 +217,18 @@ pub const BrotliEncoder = struct {
 
                     output.appendSlice(bun.default_allocator, this.encoder.stream.end() catch {
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                        this.encoder.write_failed = true;
+                        this.encoder.write_failure = JSC.DeferredError.from(.Error, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                         return;
                     }) catch {
                         _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
-                        this.encoder.write_failed = true;
+                        this.encoder.write_failure = JSC.DeferredError.from(.Error, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                         return;
                     };
+                    if (output.items.len > this.encoder.maxOutputLength) {
+                        _ = this.encoder.pending_encode_job_count.fetchSub(1, .monotonic);
+                        this.encoder.write_failure = JSC.DeferredError.from(.RangeError, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.encoder.maxOutputLength});
+                        return;
+                    }
                 }
             }
 
@@ -300,23 +321,26 @@ pub const BrotliEncoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
+        if (!is_last and this.output.items.len == 0) {
+            return .undefined;
+        }
+        if (this.write_failure) |*err| {
+            globalThis.vm().throwError(globalThis, err.toJS(globalThis));
+            return .zero;
+        }
+        return this.collectOutputValue();
     }
 
-    pub fn end(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         _ = this;
         _ = globalThis;
         _ = callframe;
-
-        return .zero;
+        return .undefined;
     }
 
-    pub fn endSync(this: *BrotliEncoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.total_in);
     }
 };
 
@@ -326,11 +350,12 @@ pub const BrotliDecoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
     stream: brotli.BrotliReaderArrayList,
+    maxOutputLength: usize,
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     ref_count: u32 = 1,
     poll_ref: bun.Async.KeepAlive = .{},
-    write_failed: bool = false,
+    write_failure: ?JSC.DeferredError = null,
     callback_value: JSC.Strong = .{},
     has_called_end: bool = false,
     pending_decode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -358,7 +383,7 @@ pub const BrotliDecoder = struct {
     }
 
     pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*BrotliDecoder {
-        globalThis.throw("Crypto is not constructable", .{});
+        globalThis.throw("BrotliDecoder is not constructable", .{});
         return null;
     }
 
@@ -373,9 +398,13 @@ pub const BrotliDecoder = struct {
         const opts = arguments[0];
         const callback = arguments[2];
 
+        _ = globalThis.checkMinOrGetDefault(opts, "chunkSize", u32, 64, 1024 * 14) orelse return .zero;
+        const maxOutputLength = globalThis.checkMinOrGetDefaultU64(opts, "maxOutputLength", usize, 0, std.math.maxInt(u52)) orelse return .zero;
+
         var this: *BrotliDecoder = BrotliDecoder.new(.{
             .globalThis = globalThis,
             .stream = undefined, // &this.output needs to be a stable pointer
+            .maxOutputLength = maxOutputLength,
         });
         this.stream = brotli.BrotliReaderArrayList.initWithOptions("", &this.output, bun.default_allocator, .{}) catch {
             globalThis.throw("Failed to create BrotliDecoder", .{});
@@ -420,14 +449,13 @@ pub const BrotliDecoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
-            if (this.write_failed)
-                // TODO: propagate error from brotli
-                this.globalThis.createErrorInstance("BrotliError", .{})
+        const result = this.callback_value.get().?.call(
+            this.globalThis,
+            if (this.write_failure) |*err|
+                &.{err.toJS(this.globalThis)}
             else
-                JSC.JSValue.null,
-            this.collectOutputValue(),
-        });
+                &.{ .null, this.collectOutputValue() },
+        );
 
         if (result.toError()) |err| {
             _ = this.globalThis.bunVM().uncaughtException(this.globalThis, err, false);
@@ -524,7 +552,14 @@ pub const BrotliDecoder = struct {
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
-        return if (!is_last) .undefined else this.collectOutputValue();
+        if (!is_last) {
+            return .undefined;
+        }
+        if (this.write_failure) |*err| {
+            globalThis.throwValue(err.toJS(globalThis));
+            return .zero;
+        }
+        return this.collectOutputValue();
     }
 
     // We can only run one decode job at a time
@@ -581,10 +616,17 @@ pub const BrotliDecoder = struct {
                         const input = if (pending.len <= 1) pending[0].slice() else input_list.items;
                         this.decoder.stream.input = input;
                         this.decoder.stream.readAll(false) catch {
+                            any = true;
                             _ = this.decoder.pending_decode_job_count.fetchSub(1, .monotonic);
-                            this.decoder.write_failed = true;
+                            this.decoder.write_failure = JSC.DeferredError.from(.Error, .ERR_OPERATION_FAILED, "BrotliError", .{}); // TODO propogate better error
                             return;
                         };
+                        if (this.decoder.output.items.len > this.decoder.maxOutputLength) {
+                            any = true;
+                            _ = this.decoder.pending_decode_job_count.fetchSub(1, .monotonic);
+                            this.decoder.write_failure = JSC.DeferredError.from(.RangeError, .ERR_BUFFER_TOO_LARGE, "Cannot create a Buffer larger than {d} bytes", .{this.decoder.maxOutputLength});
+                            return;
+                        }
                     }
 
                     any = any or pending.len > 0;
@@ -603,19 +645,15 @@ pub const BrotliDecoder = struct {
         }
     };
 
-    pub fn end(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn reset(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
         _ = this;
         _ = globalThis;
         _ = callframe;
-
-        return .zero;
+        return .undefined;
     }
 
-    pub fn endSync(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
-
-        return .zero;
+    pub fn getBytesWritten(this: *@This(), globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        _ = globalObject;
+        return JSC.JSValue.jsNumber(this.stream.total_in);
     }
 };

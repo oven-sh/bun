@@ -1,20 +1,28 @@
 // Hardcoded module "node:zlib"
 
 const stream = require("node:stream");
+const BufferModule = require("node:buffer");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
+const ObjectDefineProperty = Object.defineProperty;
 
 const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
 const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+const createDeflateEncoder = $zig("node_zlib_binding.zig", "createDeflateEncoder");
+const createDeflateDecoder = $zig("node_zlib_binding.zig", "createDeflateDecoder");
+
+const maxOutputLengthDefault = $requireMap.$get("buffer")?.exports.kMaxLength ?? BufferModule.kMaxLength;
 
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {
     callback = opts;
     opts = {};
   }
+  if (opts == null) opts = {};
   if (typeof callback !== "function") throw new TypeError("BrotliEncoder callback is not callable");
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createBrotliEncoder(opts, {}, callback);
-  encoder.encode(buffer, undefined, true);
+  encoder.write(buffer, undefined, true);
 }
 
 function brotliDecompress(buffer, opts, callback) {
@@ -22,20 +30,28 @@ function brotliDecompress(buffer, opts, callback) {
     callback = opts;
     opts = {};
   }
+  if (opts == null) opts = {};
   if (typeof callback !== "function") throw new TypeError("BrotliDecoder callback is not callable");
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createBrotliDecoder(opts, {}, callback);
-  decoder.decode(buffer, undefined, true);
+  decoder.write(buffer, undefined, true);
 }
 
 function brotliCompressSync(buffer, opts) {
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const encoder = createBrotliEncoder(opts, {}, null);
-  return encoder.encodeSync(buffer, undefined, true);
+  return encoder.writeSync(buffer, undefined, true);
 }
 
 function brotliDecompressSync(buffer, opts) {
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   const decoder = createBrotliDecoder(opts, {}, null);
-  return decoder.decodeSync(buffer, undefined, true);
+  return decoder.writeSync(buffer, undefined, true);
 }
+
+//
 
 function createBrotliCompress(opts) {
   return new BrotliCompress(opts);
@@ -45,17 +61,26 @@ const kHandle = Symbol("kHandle");
 
 function BrotliCompress(opts) {
   if (!(this instanceof BrotliCompress)) return new BrotliCompress(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createBrotliEncoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
 BrotliCompress.prototype = {};
 ObjectSetPrototypeOf(BrotliCompress.prototype, stream.Transform.prototype);
+ObjectDefineProperty(BrotliCompress.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+BrotliCompress.prototype.flush = ZlibBase_flush;
+BrotliCompress.prototype.reset = ZlibBase_reset;
 
 BrotliCompress.prototype._transform = function _transform(chunk, encoding, callback) {
-  callback(undefined, this[kHandle].encodeSync(chunk, encoding, false));
+  callback(undefined, this[kHandle].writeSync(chunk, encoding, false));
 };
 BrotliCompress.prototype._flush = function _flush(callback) {
-  callback(undefined, this[kHandle].encodeSync("", undefined, true));
+  callback(undefined, this[kHandle].writeSync("", undefined, true));
 };
 
 function createBrotliDecompress(opts) {
@@ -64,25 +89,270 @@ function createBrotliDecompress(opts) {
 
 function BrotliDecompress(opts) {
   if (!(this instanceof BrotliDecompress)) return new BrotliDecompress(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
   this[kHandle] = createBrotliDecoder(opts, {}, null);
   stream.Transform.$apply(this, arguments);
 }
 BrotliDecompress.prototype = {};
 ObjectSetPrototypeOf(BrotliDecompress.prototype, stream.Transform.prototype);
+ObjectDefineProperty(BrotliDecompress.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+BrotliDecompress.prototype.flush = ZlibBase_flush;
+BrotliDecompress.prototype.reset = ZlibBase_reset;
 
 BrotliDecompress.prototype._transform = function (chunk, encoding, callback) {
-  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+  callback(undefined, this[kHandle].writeSync(chunk, encoding, false));
 };
 BrotliDecompress.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].writeSync("", undefined, true));
+};
+
+//
+
+function deflate(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (options == null) options = {};
+  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const encoder = createDeflateEncoder(options, {}, callback);
+  encoder.encode(buffer, undefined, true);
+}
+
+function deflateSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const encoder = createDeflateEncoder(options, {}, null);
+  return encoder.writeSync(buffer, undefined, true);
+}
+
+function inflate(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (options == null) options = {};
+  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const decoder = createDeflateDecoder(options, {}, callback);
+  decoder.write(buffer, undefined, true);
+}
+
+function inflateSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const decoder = createDeflateDecoder(options, {}, null);
+  return decoder.writeSync(buffer, undefined, true);
+}
+
+//
+
+function createDeflate(opts) {
+  return new Deflate(opts);
+}
+
+function Deflate(opts) {
+  if (!(this instanceof Deflate)) return new Deflate(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
+  this[kHandle] = createDeflateEncoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+Deflate.prototype = {};
+ObjectSetPrototypeOf(Deflate.prototype, stream.Transform.prototype);
+ObjectDefineProperty(Deflate.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+Deflate.prototype.flush = ZlibBase_flush;
+Deflate.prototype.reset = ZlibBase_reset;
+Deflate.prototype.params = Zlib_params;
+
+Deflate.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].writeSync(chunk, encoding, false));
+};
+Deflate.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].writeSync("", undefined, true));
+};
+
+function createInflate(opts) {
+  return new Inflate(opts);
+}
+
+function Inflate(opts) {
+  if (!(this instanceof Inflate)) return new Inflate(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
+  this[kHandle] = createDeflateDecoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+Inflate.prototype = {};
+ObjectSetPrototypeOf(Inflate.prototype, stream.Transform.prototype);
+ObjectDefineProperty(Inflate.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+Inflate.prototype.flush = ZlibBase_flush;
+Inflate.prototype.reset = ZlibBase_reset;
+Inflate.prototype.params = Zlib_params;
+
+Inflate.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].decodeSync(chunk, encoding, false));
+};
+Inflate.prototype._flush = function (callback) {
   callback(undefined, this[kHandle].decodeSync("", undefined, true));
 };
+
+//
+
+function deflateRaw(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (options == null) options = {};
+  if (typeof callback !== "function") throw new TypeError("DeflateEncoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  if (options && options.windowBits === 8) options.windowBits = 9;
+  const encoder = createDeflateEncoder(options, {}, callback);
+  encoder.write(buffer, undefined, true);
+}
+
+function deflateRawSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  if (options && options.windowBits === 8) options.windowBits = 9;
+  const encoder = createDeflateEncoder(options, {}, null);
+  return encoder.writeSync(buffer, undefined, true);
+}
+
+function inflateRaw(buffer, options, callback) {
+  if (typeof options === "function") {
+    callback = options;
+    options = {};
+  }
+  if (options == null) options = {};
+  if (typeof callback !== "function") throw new TypeError("DeflateDecoder callback is not callable");
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const decoder = createDeflateDecoder(options, {}, callback);
+  decoder.write(buffer, undefined, true);
+}
+
+function inflateRawSync(buffer, options) {
+  if (options == null) options = {};
+  options.maxOutputLength ??= maxOutputLengthDefault;
+  const decoder = createDeflateDecoder(options, {}, null);
+  return decoder.writeSync(buffer, undefined, true);
+}
+
+//
+
+function createDeflateRaw(opts) {
+  return new DeflateRaw(opts);
+}
+
+function DeflateRaw(opts) {
+  if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
+  if (opts && opts.windowBits === 8) opts.windowBits = 9;
+  this[kHandle] = createDeflateEncoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+DeflateRaw.prototype = {};
+ObjectSetPrototypeOf(DeflateRaw.prototype, stream.Transform.prototype);
+ObjectDefineProperty(DeflateRaw.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+DeflateRaw.prototype.flush = ZlibBase_flush;
+DeflateRaw.prototype.reset = ZlibBase_reset;
+DeflateRaw.prototype.params = Zlib_params;
+
+DeflateRaw.prototype._transform = function _transform(chunk, encoding, callback) {
+  callback(undefined, this[kHandle].writeSync(chunk, encoding, false));
+};
+DeflateRaw.prototype._flush = function _flush(callback) {
+  callback(undefined, this[kHandle].writeSync("", undefined, true));
+};
+
+function createInflateRaw(opts) {
+  return new InflateRaw(opts);
+}
+
+function InflateRaw(opts) {
+  if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
+  if (opts == null) opts = {};
+  opts.maxOutputLength ??= maxOutputLengthDefault;
+  this[kHandle] = createDeflateDecoder(opts, {}, null);
+  stream.Transform.$apply(this, arguments);
+}
+InflateRaw.prototype = {};
+ObjectSetPrototypeOf(InflateRaw.prototype, stream.Transform.prototype);
+ObjectDefineProperty(InflateRaw.prototype, "bytesWritten", {
+  get: function () {
+    return this[kHandle].bytesWritten;
+  },
+});
+InflateRaw.prototype.flush = ZlibBase_flush;
+InflateRaw.prototype.reset = ZlibBase_reset;
+InflateRaw.prototype.params = Zlib_params;
+
+InflateRaw.prototype._transform = function (chunk, encoding, callback) {
+  callback(undefined, this[kHandle].writeSync(chunk, encoding, false));
+};
+InflateRaw.prototype._flush = function (callback) {
+  callback(undefined, this[kHandle].writeSync("", undefined, true));
+};
+
+const kFlushFlag = Symbol("kFlushFlag");
+const kFlushBuffers: Buffer[] = [];
+{
+  const dummyArrayBuffer = new ArrayBuffer();
+  for (const flushFlag of [0, 1, 2, 3, 4, 5]) {
+    kFlushBuffers[flushFlag] = Buffer.from(dummyArrayBuffer);
+    kFlushBuffers[flushFlag][kFlushFlag] = flushFlag;
+  }
+}
+
+function ZlibBase_flush(kind, callback) {
+  if (typeof kind === "function" || (kind === undefined && !callback)) {
+    callback = kind;
+    kind = 3;
+  }
+
+  if (this.writableFinished) {
+    if (callback) process.nextTick(callback);
+  } else if (this.writableEnded) {
+    if (callback) this.once("end", callback);
+  } else {
+    this.write(kFlushBuffers[kind], "", callback);
+  }
+}
+
+function ZlibBase_reset() {
+  assert(this[kHandle], "zlib binding closed");
+  return this[kHandle].reset();
+}
+
+function Zlib_params(level, strategy, callback) {
+  // TODO:
+}
 
 // TODO: **use a native binding from Bun for this!!**
 // This is a very slow module!
 // It should really be fixed. It will show up in benchmarking. It also loads
 // slowly. We need to fix it!
 const assert = require("node:assert");
-const BufferModule = require("node:buffer");
 const StreamModule = require("node:stream");
 const Util = require("node:util");
 const { isAnyArrayBuffer, isArrayBufferView } = require("node:util/types");
@@ -4080,7 +4350,7 @@ var require_lib = __commonJS({
     var Transform = StreamModule.Transform;
     var binding = require_binding();
     var util = Util;
-    var kMaxLength = BufferModule.kMaxLength;
+    var kMaxLength = maxOutputLengthDefault;
     var kRangeErrorMessage =
       "Cannot create final Buffer. It would be larger than 0x" + kMaxLength.toString(16) + " bytes";
     binding.Z_MIN_WINDOWBITS = 8;
@@ -4131,26 +4401,10 @@ var require_lib = __commonJS({
       value: Object.freeze(codes),
       writable: false,
     });
-    exports.constants = require_constants();
-    exports.Deflate = Deflate;
-    exports.Inflate = Inflate;
+    exports.constants = Object.freeze(require_constants());
     exports.Gzip = Gzip;
     exports.Gunzip = Gunzip;
-    exports.DeflateRaw = DeflateRaw;
-    exports.InflateRaw = InflateRaw;
     exports.Unzip = Unzip;
-    exports.createDeflate = function (o) {
-      return new Deflate(o);
-    };
-    exports.createInflate = function (o) {
-      return new Inflate(o);
-    };
-    exports.createDeflateRaw = function (o) {
-      return new DeflateRaw(o);
-    };
-    exports.createInflateRaw = function (o) {
-      return new InflateRaw(o);
-    };
     exports.createGzip = function (o) {
       return new Gzip(o);
     };
@@ -4159,16 +4413,6 @@ var require_lib = __commonJS({
     };
     exports.createUnzip = function (o) {
       return new Unzip(o);
-    };
-    exports.deflate = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new Deflate(opts), buffer, callback);
-    };
-    exports.deflateSync = function (buffer, opts) {
-      return zlibBufferSync(new Deflate(opts), buffer);
     };
     exports.gzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
@@ -4180,16 +4424,6 @@ var require_lib = __commonJS({
     exports.gzipSync = function (buffer, opts) {
       return zlibBufferSync(new Gzip(opts), buffer);
     };
-    exports.deflateRaw = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new DeflateRaw(opts), buffer, callback);
-    };
-    exports.deflateRawSync = function (buffer, opts) {
-      return zlibBufferSync(new DeflateRaw(opts), buffer);
-    };
     exports.unzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
         callback = opts;
@@ -4199,16 +4433,6 @@ var require_lib = __commonJS({
     };
     exports.unzipSync = function (buffer, opts) {
       return zlibBufferSync(new Unzip(opts), buffer);
-    };
-    exports.inflate = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new Inflate(opts), buffer, callback);
-    };
-    exports.inflateSync = function (buffer, opts) {
-      return zlibBufferSync(new Inflate(opts), buffer);
     };
     exports.gunzip = function (buffer, opts, callback) {
       if (typeof opts === "function") {
@@ -4220,16 +4444,6 @@ var require_lib = __commonJS({
     exports.gunzipSync = function (buffer, opts) {
       return zlibBufferSync(new Gunzip(opts), buffer);
     };
-    exports.inflateRaw = function (buffer, opts, callback) {
-      if (typeof opts === "function") {
-        callback = opts;
-        opts = {};
-      }
-      return zlibBuffer(new InflateRaw(opts), buffer, callback);
-    };
-    exports.inflateRawSync = function (buffer, opts) {
-      return zlibBufferSync(new InflateRaw(opts), buffer);
-    };
 
     exports.brotliCompress = brotliCompress;
     exports.brotliDecompress = brotliDecompress;
@@ -4239,6 +4453,24 @@ var require_lib = __commonJS({
     exports.BrotliCompress = BrotliCompress;
     exports.createBrotliDecompress = createBrotliDecompress;
     exports.BrotliDecompress = BrotliDecompress;
+
+    exports.deflate = deflate;
+    exports.deflateSync = deflateSync;
+    exports.inflate = inflate;
+    exports.inflateSync = inflateSync;
+    exports.createDeflate = createDeflate;
+    exports.Deflate = Deflate;
+    exports.createInflate = createInflate;
+    exports.Inflate = Inflate;
+
+    exports.deflateRaw = deflateRaw;
+    exports.deflateRawSync = deflateRawSync;
+    exports.inflateRaw = inflateRaw;
+    exports.inflateRawSync = inflateRawSync;
+    exports.createDeflateRaw = createDeflateRaw;
+    exports.DeflateRaw = DeflateRaw;
+    exports.createInflateRaw = createInflateRaw;
+    exports.InflateRaw = InflateRaw;
 
     function zlibBuffer(engine, buffer, callback) {
       var buffers = [];
@@ -4289,14 +4521,6 @@ var require_lib = __commonJS({
       var flushFlag = engine._finishFlushFlag;
       return engine._processChunk(buffer, flushFlag);
     }
-    function Deflate(opts) {
-      if (!(this instanceof Deflate)) return new Deflate(opts);
-      Zlib.$call(this, opts, binding.DEFLATE);
-    }
-    function Inflate(opts) {
-      if (!(this instanceof Inflate)) return new Inflate(opts);
-      Zlib.$call(this, opts, binding.INFLATE);
-    }
     function Gzip(opts) {
       if (!(this instanceof Gzip)) return new Gzip(opts);
       Zlib.$call(this, opts, binding.GZIP);
@@ -4304,14 +4528,6 @@ var require_lib = __commonJS({
     function Gunzip(opts) {
       if (!(this instanceof Gunzip)) return new Gunzip(opts);
       Zlib.$call(this, opts, binding.GUNZIP);
-    }
-    function DeflateRaw(opts) {
-      if (!(this instanceof DeflateRaw)) return new DeflateRaw(opts);
-      Zlib.$call(this, opts, binding.DEFLATERAW);
-    }
-    function InflateRaw(opts) {
-      if (!(this instanceof InflateRaw)) return new InflateRaw(opts);
-      Zlib.$call(this, opts, binding.INFLATERAW);
     }
     function Unzip(opts) {
       if (!(this instanceof Unzip)) return new Unzip(opts);
@@ -4582,12 +4798,8 @@ var require_lib = __commonJS({
         cb();
       }
     };
-    util.inherits(Deflate, Zlib);
-    util.inherits(Inflate, Zlib);
     util.inherits(Gzip, Zlib);
     util.inherits(Gunzip, Zlib);
-    util.inherits(DeflateRaw, Zlib);
-    util.inherits(InflateRaw, Zlib);
     util.inherits(Unzip, Zlib);
   },
 });

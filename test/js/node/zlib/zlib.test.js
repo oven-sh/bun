@@ -258,3 +258,126 @@ describe("zlib.brotli", () => {
     }
   });
 });
+
+it.each(["BrotliCompress", "BrotliDecompress", "Deflate", "Inflate", "DeflateRaw", "InflateRaw"])(
+  "%s should work with and without `new` keyword",
+  constructor_name => {
+    const C = zlib[constructor_name];
+    expect(C()).toBeInstanceOf(C);
+    expect(new C()).toBeInstanceOf(C);
+  },
+);
+
+describe.each(["Deflate", "DeflateRaw"])("%s", constructor_name => {
+  describe.each(["chunkSize", "level", "windowBits", "memLevel", "strategy", "maxOutputLength"])(
+    "should throw if options.%s is",
+    option_name => {
+      // [], // error: Test "-3.4416124249222144e-103" timed out after 5000ms
+      it.each(["test", Symbol("bun"), 2n, {}, true])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(TypeError);
+      });
+      it.each([Infinity, -Infinity, -1])("%p", value => {
+        expect(() => new zlib[constructor_name]({ [option_name]: value })).toThrow(RangeError);
+      });
+    },
+  );
+});
+
+it("premature end handles bytesWritten properly", () => {
+  for (const [compress, decompressor] of [
+    [zlib.deflateRawSync, zlib.createInflateRaw],
+    [zlib.deflateSync, zlib.createInflate],
+    [zlib.brotliCompressSync, zlib.createBrotliDecompress],
+  ]) {
+    const input = "0123456789".repeat(4);
+    const compressed = compress(input);
+    const trailingData = Buffer.from("not valid compressed data");
+
+    for (const variant of [
+      stream => {
+        stream.end(compressed);
+      },
+      stream => {
+        stream.write(compressed);
+        stream.write(trailingData);
+      },
+      stream => {
+        stream.write(compressed);
+        stream.end(trailingData);
+      },
+      stream => {
+        stream.write(Buffer.concat([compressed, trailingData]));
+      },
+      stream => {
+        stream.end(Buffer.concat([compressed, trailingData]));
+      },
+    ]) {
+      let output = "";
+      const stream = decompressor();
+      stream.setEncoding("utf8");
+      stream.on("data", chunk => (output += chunk));
+      stream.on("end", () => {
+        expect(output).toBe(input);
+        expect(stream.bytesWritten).toBe(compressed.length);
+      });
+      variant(stream);
+    }
+  }
+});
+
+const inputString =
+  "ΩΩLorem ipsum dolor sit amet, consectetur adipiscing eli" +
+  "t. Morbi faucibus, purus at gravida dictum, libero arcu " +
+  "convallis lacus, in commodo libero metus eu nisi. Nullam" +
+  " commodo, neque nec porta placerat, nisi est fermentum a" +
+  "ugue, vitae gravida tellus sapien sit amet tellus. Aenea" +
+  "n non diam orci. Proin quis elit turpis. Suspendisse non" +
+  " diam ipsum. Suspendisse nec ullamcorper odio. Vestibulu" +
+  "m arcu mi, sodales non suscipit id, ultrices ut massa. S" +
+  "ed ac sem sit amet arcu malesuada fermentum. Nunc sed. ";
+
+const errMessage = /unexpected end of file/;
+
+it.each([
+  // ["gzip/gunzip", "gunzip", "gunzipSync"],
+  // ["gzip/unzip", "unzip", "unzipSync"],
+  ["deflate", "inflate", "inflateSync"],
+  ["deflateRaw", "inflateRaw", "inflateRawSync"],
+])("%s should handle truncated input correctly", async (comp, decomp, decompSync) => {
+  const comp_p = util.promisify(zlib[comp]);
+  const decomp_p = util.promisify(zlib[decomp]);
+
+  const compressed = await comp_p(inputString);
+
+  const truncated = compressed.slice(0, compressed.length / 2);
+  const toUTF8 = buffer => buffer.toString("utf-8");
+
+  // sync sanity
+  const decompressed = zlib[decompSync](compressed);
+  expect(toUTF8(decompressed)).toEqual(inputString);
+
+  // async sanity
+  expect(toUTF8(await decomp_p(compressed))).toEqual(inputString);
+
+  // Sync truncated input test
+  expect(() => zlib[decompSync](truncated)).toThrow();
+
+  // Async truncated input test
+  expect(async () => await decomp_p(truncated)).toThrow();
+
+  const syncFlushOpt = { finishFlush: zlib.constants.Z_SYNC_FLUSH };
+
+  // Sync truncated input test, finishFlush = Z_SYNC_FLUSH
+  {
+    const result = toUTF8(zlib[decompSync](truncated, syncFlushOpt));
+    const expected = inputString.slice(0, result.length);
+    expect(result).toBe(expected);
+  }
+
+  // Async truncated input test, finishFlush = Z_SYNC_FLUSH
+  {
+    const result = toUTF8(await decomp_p(truncated, syncFlushOpt));
+    const expected = inputString.slice(0, result.length);
+    expect(result).toBe(expected);
+  }
+});

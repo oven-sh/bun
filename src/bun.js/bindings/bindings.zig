@@ -901,6 +901,15 @@ pub const ZigString = extern struct {
         return shim.cppFn("toRangeErrorInstance", .{ this, global });
     }
 
+    pub fn fromFmt(comptime fmt: []const u8, args: anytype) ZigString {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
+            var buf = bun.MutableString.init2048(bun.default_allocator) catch unreachable;
+            buf.writer().print(fmt, args) catch return ZigString.static(fmt).*;
+            return ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+        }
+        return ZigString.static(fmt).*;
+    }
+
     pub const Extern = [_][]const u8{
         "toAtomicValue",
         "toExternalValue",
@@ -2806,6 +2815,17 @@ pub const JSGlobalObject = extern struct {
         return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
     }
 
+    pub fn throwInvalidPropertyTypeValue(
+        this: *JSGlobalObject,
+        field: []const u8,
+        typename: []const u8,
+        value: JSValue,
+    ) JSValue {
+        const ty_str = value.jsTypeString(this).toSlice(this, bun.default_allocator);
+        defer ty_str.deinit();
+        return this.throwValueRet(this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" property must be of type {s}. Received {s}", .{ field, typename, ty_str.slice() }));
+    }
+
     pub fn createNotEnoughArguments(
         this: *JSGlobalObject,
         comptime name_: []const u8,
@@ -3234,6 +3254,71 @@ pub const JSGlobalObject = extern struct {
         // "createError",
         // "throwError",
     };
+
+    pub fn checkRangesOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, max: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (!level_val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
+            if (!level_val.isInt32()) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
+                return null;
+            }
+            const level_i32 = level_val.toInt32();
+            if (level_i32 < min or level_i32 > max) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d} and <= {d}. Received {d}", .{ field_name, min, max, level_i32 }));
+                return null;
+            }
+            return @intCast(level_i32);
+        }
+        return default;
+    }
+
+    pub fn checkMinOrGetDefault(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (!level_val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
+            if (!level_val.isInt32()) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be a finite number. Received {s}", .{ field_name, level_val.toString(this).getZigString(this).slice() }));
+                return null;
+            }
+            const level_i32 = level_val.toInt32();
+            if (level_i32 < min) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_i32 }));
+                return null;
+            }
+            return @intCast(level_i32);
+        }
+        return default;
+    }
+
+    pub fn checkMinOrGetDefaultU64(this: *JSGlobalObject, obj: JSValue, comptime field_name: []const u8, comptime T: type, min: T, default: T) ?T {
+        if (obj.get(this, field_name)) |level_val| {
+            if (!level_val.isNumber()) {
+                _ = this.throwInvalidPropertyTypeValue("options." ++ field_name, "number", level_val);
+                return null;
+            }
+            const level_double = level_val.coerceToDouble(this);
+            if (level_double == std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received Infinity", .{ field_name, min }));
+                return null;
+            }
+            if (level_double == -std.math.inf(f64)) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received -Infinity", .{ field_name, min }));
+                return null;
+            }
+            const level_int = level_val.to(i64);
+            if (level_int < min) {
+                this.vm().throwError(this, this.createRangeErrorInstanceWithCode(.ERR_OUT_OF_RANGE, "The value of \"options.{s}\" is out of range. It must be >= {d}. Received {d}", .{ field_name, min, level_int }));
+                return null;
+            }
+            return @intCast(level_int);
+        }
+        return default;
+    }
 };
 
 pub const JSNativeFn = *const fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
@@ -6458,3 +6543,36 @@ comptime {
     // because zig will complain about outside-of-module stuff
     _ = @import("./GeneratedJS2Native.zig");
 }
+
+// Error's cannot be created off of the main thread. So we use this to store the
+// information until its ready to be materialized later.
+pub const DeferredError = struct {
+    kind: Kind,
+    code: JSC.Node.ErrorCode,
+    msg: bun.String,
+
+    pub const Kind = enum(u8) { Error, TypeError, RangeError };
+
+    extern fn Bun__createErrorInstanceWithKind(
+        globalObject: *JSC.JSGlobalObject,
+        kind: Kind,
+        code: ?*const bun.String,
+        message: ?*const bun.String,
+    ) JSValue;
+
+    pub fn from(kind: Kind, code: JSC.Node.ErrorCode, comptime fmt: []const u8, args: anytype) DeferredError {
+        return .{
+            .kind = kind,
+            .code = code,
+            .msg = if (std.meta.fields(@TypeOf(args)).len > 0) bun.String.createFormat(fmt, args) catch bun.outOfMemory() else bun.String.init(fmt),
+        };
+    }
+
+    pub fn toJS(this: *DeferredError, globalThis: *JSGlobalObject) JSValue {
+        defer {
+            this.msg = bun.String.empty;
+        }
+
+        return Bun__createErrorInstanceWithKind(globalThis, this.kind, &bun.String.init(@tagName(this.code)), &this.msg);
+    }
+};

@@ -1,5 +1,5 @@
 /// https://nodejs.org/api/errors.html#nodejs-error-codes
-pub const Code = enum {
+pub const Code = enum(u16) {
     /// Used when an operation has been aborted (typically using an AbortController).
     /// APIs not using AbortSignals typically do not raise an error with this code.
     /// This code does not use the regular ERR_* convention Node.js errors use in order to be compatible with the web platform's AbortError.

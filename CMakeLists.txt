@@ -2,6 +2,7 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.18")
 set(WEBKIT_TAG 7fe2fbb7c94505916302d7a7d481cd18a830bb63)
 
@@ -14,6 +15,7 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(LINKER_TYPE LLD)
+
 
 # Should not start with v
 # Used in process.version, process.versions.node, napi, and elsewhere
@@ -321,6 +323,8 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ${USE_LTO})
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
@@ -1081,6 +1085,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             # -emit-llvm seems to not be supported or under a different name on Windows.
             list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
+        else()
+            list(APPEND LTO_FLAG "-fno-lto")
         endif()
 
         target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG})
@@ -1118,7 +1124,9 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
-    add_compile_options(-Xclang -emit-llvm-bc)
+    if (USE_LTO)
+        add_compile_options(-Xclang -emit-llvm-bc)
+    endif()
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")

@@ -20,10 +20,6 @@ class ErrnoException extends Error {
     this.code = code;
     this.syscall = syscall;
   }
-
-  // get ["constructor"]() {
-  //   return Error;
-  // }
 }
 
 export default {

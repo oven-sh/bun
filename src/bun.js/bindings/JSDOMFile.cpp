@@ -8,7 +8,7 @@
 using namespace JSC;
 
 extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
-extern "C" bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
 // That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.

@@ -581,17 +581,17 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObj
 
 #ifdef __cplusplus
 
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__basename(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__dirname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__extname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__format(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__isAbsolute(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__join(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-extern "C" SYSV_ABI JSC__JSValue Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__basename(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__dirname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__extname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__format(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__isAbsolute(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__join(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 
 #endif
 
@@ -607,7 +607,7 @@ CPP_DECL void ArrayBufferSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVal
 ZIG_DECL JSC__JSValue ArrayBufferSink__close(JSC__JSGlobalObject* arg0, void* arg1);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__construct);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__end);
-ZIG_DECL JSC__JSValue ArrayBufferSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL JSC__JSValue SYSV_ABI ArrayBufferSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void ArrayBufferSink__finalize(void* arg0);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__flush);
 BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__start);
@@ -627,7 +627,7 @@ CPP_DECL void HTTPSResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSV
 ZIG_DECL JSC__JSValue HTTPSResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__construct);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__end);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL JSC__JSValue SYSV_ABI HTTPSResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPSResponseSink__finalize(void* arg0);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__flush);
 BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__start);
@@ -647,7 +647,7 @@ CPP_DECL void HTTPResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVa
 ZIG_DECL JSC__JSValue HTTPResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__construct);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__end);
-ZIG_DECL JSC__JSValue HTTPResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI HTTPResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPResponseSink__finalize(void* arg0);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__flush);
 BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__start);
@@ -667,7 +667,7 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
 BUN_DECLARE_HOST_FUNCTION(FileSink__end);
-ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL JSC__JSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
 BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
 BUN_DECLARE_HOST_FUNCTION(FileSink__start);
@@ -688,7 +688,7 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
 BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
 BUN_DECLARE_HOST_FUNCTION(FileSink__end);
-ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+ZIG_DECL JSC__JSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
 BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
 BUN_DECLARE_HOST_FUNCTION(FileSink__start);
@@ -701,7 +701,7 @@ BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 ZIG_DECL void Bun__WebSocketHTTPClient__cancel(WebSocketHTTPClient* arg0);
 ZIG_DECL WebSocketHTTPClient* Bun__WebSocketHTTPClient__connect(JSC__JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
-ZIG_DECL SYSV_ABI void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
+ZIG_DECL void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
 
 #endif
 
@@ -709,7 +709,7 @@ ZIG_DECL SYSV_ABI void Bun__WebSocketHTTPClient__register(JSC__JSGlobalObject* a
 
 ZIG_DECL void Bun__WebSocketHTTPSClient__cancel(WebSocketHTTPSClient* arg0);
 ZIG_DECL WebSocketHTTPSClient* Bun__WebSocketHTTPSClient__connect(JSC__JSGlobalObject* arg0, void* arg1, CppWebSocket* arg2, const ZigString* arg3, uint16_t arg4, const ZigString* arg5, const ZigString* arg6, ZigString* arg7, ZigString* arg8, size_t arg9);
-ZIG_DECL SYSV_ABI void Bun__WebSocketHTTPSClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
+ZIG_DECL void Bun__WebSocketHTTPSClient__register(JSC__JSGlobalObject* arg0, void* arg1, void* arg2);
 
 #endif
 

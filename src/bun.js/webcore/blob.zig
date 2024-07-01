@@ -1496,7 +1496,7 @@ pub const Blob = struct {
         this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
     }
 
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+    pub fn estimatedSize(this: *Blob) usize {
         return this.reported_estimated_size;
     }
 

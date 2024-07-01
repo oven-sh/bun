@@ -10,6 +10,13 @@ const assert_fail = () => {
 };
 
 export default class RoundRobinHandle {
+  key;
+  all;
+  free;
+  handles;
+  handle;
+  server;
+
   constructor(key, address, { port, fd, flags, backlog, readableAll, writableAll }) {
     this.key = key;
     this.all = new Map();

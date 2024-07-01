@@ -2,6 +2,11 @@ const dgram = require("internal/dgram");
 const net = require("node:net");
 
 export default class SharedHandle {
+  key;
+  workers;
+  handle;
+  errno;
+
   constructor(key, address, { port, addressType, fd, flags }) {
     this.key = key;
     this.workers = new Map();

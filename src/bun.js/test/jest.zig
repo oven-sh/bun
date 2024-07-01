@@ -1760,7 +1760,7 @@ inline fn createIfScope(
     const name = ZigString.static(property);
     const value = args[0].toBooleanSlow(globalThis);
 
-    const truthy_falsey: [2]JSC.JSHostFunctionPtr = switch (tag) {
+    const truthy_falsey: [2]JSC.JSHostFunctionType = switch (tag) {
         .pass => .{ Scope.call, Scope.skip },
         .fail => @compileError("unreachable"),
         .only => @compileError("unreachable"),
@@ -1768,8 +1768,9 @@ inline fn createIfScope(
         .todo => .{ Scope.todo, Scope.call },
     };
 
-    const call = truthy_falsey[if (value) 0 else 1];
-    return JSC.NewFunction(globalThis, name, 2, call, false);
+    switch (@intFromBool(value)) {
+        inline else => |index| return JSC.NewFunction(globalThis, name, 2, truthy_falsey[index], false),
+    }
 }
 
 fn consumeArg(

@@ -613,7 +613,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.this_jsvalue = callframe.this();
 
         var arguments = callframe.arguments(1);

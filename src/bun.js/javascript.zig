@@ -392,7 +392,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
@@ -415,7 +415,7 @@ pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.Stri
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;

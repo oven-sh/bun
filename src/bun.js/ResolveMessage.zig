@@ -119,7 +119,7 @@ pub const ResolveMessage = struct {
         this: *ResolveMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const args_ = callframe.arguments(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {

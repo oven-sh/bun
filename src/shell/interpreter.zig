@@ -741,7 +741,7 @@ pub const ParsedShellScript = struct {
     pub fn createParsedShellScript(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) callconv(JSC.conv) JSValue {
         var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
@@ -1159,7 +1159,7 @@ pub const Interpreter = struct {
     pub fn createShellInterpreter(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) callconv(JSC.conv) JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -1790,7 +1790,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
@@ -1801,7 +1801,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 

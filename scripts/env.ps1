@@ -52,10 +52,15 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Proces
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /Zi -Xclang -emit-llvm-bc'
+$CFLAGS = '/O2 /Zi'
 # $CFLAGS = '/O2 /Z7 /MT'
-$CXXFLAGS = '/O2 /Zi -Xclang -emit-llvm-bc'
+$CXXFLAGS = '/O2 /Zi'
 # $CXXFLAGS = '/O2 /Z7 /MT'
+
+if ($env:GITHUB_ACTIONS) {
+  $CFLAGS += ' -Xclang -emit-llvm-bc'
+  $CXXFLAGS += ' -Xclang -emit-llvm-bc'
+}
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
 $env:CPU_TARGET = $CPU_NAME

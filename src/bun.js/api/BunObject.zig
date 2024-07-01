@@ -1,3 +1,4 @@
+const conv = std.builtin.CallingConvention.Unspecified;
 /// How to add a new function or property to the Bun global
 ///
 /// - Add a callback or property to the below struct
@@ -8,69 +9,69 @@
 /// - Run "make dev"
 pub const BunObject = struct {
     // --- Callbacks ---
-    pub const allocUnsafe = Bun.allocUnsafe;
-    pub const build = Bun.JSBundler.buildFn;
-    pub const connect = JSC.wrapStaticMethod(JSC.API.Listener, "connect", false);
-    pub const deflateSync = JSC.wrapStaticMethod(JSZlib, "deflateSync", true);
-    pub const file = WebCore.Blob.constructBunFile;
-    pub const gc = Bun.runGC;
-    pub const generateHeapSnapshot = Bun.generateHeapSnapshot;
-    pub const gunzipSync = JSC.wrapStaticMethod(JSZlib, "gunzipSync", true);
-    pub const gzipSync = JSC.wrapStaticMethod(JSZlib, "gzipSync", true);
-    pub const indexOfLine = Bun.indexOfLine;
-    pub const inflateSync = JSC.wrapStaticMethod(JSZlib, "inflateSync", true);
-    pub const jest = @import("../test/jest.zig").Jest.call;
-    pub const listen = JSC.wrapStaticMethod(JSC.API.Listener, "listen", false);
-    pub const udpSocket = JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false);
-    pub const mmap = Bun.mmapFile;
-    pub const nanoseconds = Bun.nanoseconds;
-    pub const openInEditor = Bun.openInEditor;
-    pub const registerMacro = Bun.registerMacro;
-    pub const resolve = Bun.resolve;
-    pub const resolveSync = Bun.resolveSync;
-    pub const serve = Bun.serve;
-    pub const sha = JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true);
-    pub const shrink = Bun.shrink;
-    pub const sleepSync = Bun.sleepSync;
-    pub const spawn = JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false);
-    pub const spawnSync = JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false);
-    pub const which = Bun.which;
-    pub const write = JSC.WebCore.Blob.writeFile;
-    pub const stringWidth = Bun.stringWidth;
-    pub const braces = Bun.braces;
-    pub const shellEscape = Bun.shellEscape;
-    pub const createParsedShellScript = bun.shell.ParsedShellScript.createParsedShellScript;
-    pub const createShellInterpreter = bun.shell.Interpreter.createShellInterpreter;
+    pub const allocUnsafe = toJSCallback(Bun.allocUnsafe);
+    pub const build = toJSCallback(Bun.JSBundler.buildFn);
+    pub const connect = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "connect", false));
+    pub const deflateSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "deflateSync", true));
+    pub const file = toJSCallback(WebCore.Blob.constructBunFile);
+    pub const gc = toJSCallback(Bun.runGC);
+    pub const generateHeapSnapshot = toJSCallback(Bun.generateHeapSnapshot);
+    pub const gunzipSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "gunzipSync", true));
+    pub const gzipSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "gzipSync", true));
+    pub const indexOfLine = toJSCallback(Bun.indexOfLine);
+    pub const inflateSync = toJSCallback(JSC.wrapStaticMethod(JSZlib, "inflateSync", true));
+    pub const jest = toJSCallback(@import("../test/jest.zig").Jest.call);
+    pub const listen = toJSCallback(JSC.wrapStaticMethod(JSC.API.Listener, "listen", false));
+    pub const udpSocket = toJSCallback(JSC.wrapStaticMethod(JSC.API.UDPSocket, "udpSocket", false));
+    pub const mmap = toJSCallback(Bun.mmapFile);
+    pub const nanoseconds = toJSCallback(Bun.nanoseconds);
+    pub const openInEditor = toJSCallback(Bun.openInEditor);
+    pub const registerMacro = toJSCallback(Bun.registerMacro);
+    pub const resolve = toJSCallback(Bun.resolve);
+    pub const resolveSync = toJSCallback(Bun.resolveSync);
+    pub const serve = toJSCallback(Bun.serve);
+    pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
+    pub const shrink = toJSCallback(Bun.shrink);
+    pub const sleepSync = toJSCallback(Bun.sleepSync);
+    pub const spawn = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawn", false));
+    pub const spawnSync = toJSCallback(JSC.wrapStaticMethod(JSC.Subprocess, "spawnSync", false));
+    pub const which = toJSCallback(Bun.which);
+    pub const write = toJSCallback(JSC.WebCore.Blob.writeFile);
+    pub const stringWidth = toJSCallback(Bun.stringWidth);
+    pub const braces = toJSCallback(Bun.braces);
+    pub const shellEscape = toJSCallback(Bun.shellEscape);
+    pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
+    pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
     // --- Callbacks ---
 
     // --- Getters ---
-    pub const CryptoHasher = Crypto.CryptoHasher.getter;
-    pub const FFI = Bun.FFIObject.getter;
-    pub const FileSystemRouter = Bun.getFileSystemRouter;
-    pub const MD4 = Crypto.MD4.getter;
-    pub const MD5 = Crypto.MD5.getter;
-    pub const SHA1 = Crypto.SHA1.getter;
-    pub const SHA224 = Crypto.SHA224.getter;
-    pub const SHA256 = Crypto.SHA256.getter;
-    pub const SHA384 = Crypto.SHA384.getter;
-    pub const SHA512 = Crypto.SHA512.getter;
-    pub const SHA512_256 = Crypto.SHA512_256.getter;
-    pub const TOML = Bun.getTOMLObject;
-    pub const Glob = Bun.getGlobConstructor;
-    pub const Transpiler = Bun.getTranspilerConstructor;
-    pub const argv = Bun.getArgv;
-    pub const assetPrefix = Bun.getAssetPrefix;
-    pub const cwd = Bun.getCWD;
-    pub const enableANSIColors = Bun.enableANSIColors;
-    pub const hash = Bun.getHashObject;
-    pub const inspect = Bun.getInspect;
-    pub const main = Bun.getMain;
-    pub const origin = Bun.getOrigin;
-    pub const stderr = Bun.getStderr;
-    pub const stdin = Bun.getStdin;
-    pub const stdout = Bun.getStdout;
-    pub const unsafe = Bun.getUnsafe;
-    pub const semver = Bun.getSemver;
+    pub const CryptoHasher = toJSGetter(Crypto.CryptoHasher.getter);
+    pub const FFI = toJSGetter(Bun.FFIObject.getter);
+    pub const FileSystemRouter = toJSGetter(Bun.getFileSystemRouter);
+    pub const MD4 = toJSGetter(Crypto.MD4.getter);
+    pub const MD5 = toJSGetter(Crypto.MD5.getter);
+    pub const SHA1 = toJSGetter(Crypto.SHA1.getter);
+    pub const SHA224 = toJSGetter(Crypto.SHA224.getter);
+    pub const SHA256 = toJSGetter(Crypto.SHA256.getter);
+    pub const SHA384 = toJSGetter(Crypto.SHA384.getter);
+    pub const SHA512 = toJSGetter(Crypto.SHA512.getter);
+    pub const SHA512_256 = toJSGetter(Crypto.SHA512_256.getter);
+    pub const TOML = toJSGetter(Bun.getTOMLObject);
+    pub const Glob = toJSGetter(Bun.getGlobConstructor);
+    pub const Transpiler = toJSGetter(Bun.getTranspilerConstructor);
+    pub const argv = toJSGetter(Bun.getArgv);
+    pub const assetPrefix = toJSGetter(Bun.getAssetPrefix);
+    pub const cwd = toJSGetter(Bun.getCWD);
+    pub const enableANSIColors = toJSGetter(Bun.enableANSIColors);
+    pub const hash = toJSGetter(Bun.getHashObject);
+    pub const inspect = toJSGetter(Bun.getInspect);
+    pub const main = toJSGetter(Bun.getMain);
+    pub const origin = toJSGetter(Bun.getOrigin);
+    pub const stderr = toJSGetter(Bun.getStderr);
+    pub const stdin = toJSGetter(Bun.getStdin);
+    pub const stdout = toJSGetter(Bun.getStdout);
+    pub const unsafe = toJSGetter(Bun.getUnsafe);
+    pub const semver = toJSGetter(Bun.getSemver);
     // --- Getters ---
 
     fn getterName(comptime baseName: anytype) [:0]const u8 {
@@ -79,6 +80,18 @@ pub const BunObject = struct {
 
     fn callbackName(comptime baseName: anytype) [:0]const u8 {
         return "BunObject_callback_" ++ baseName;
+    }
+
+    const toJSCallback = JSC.toJSHostFunction;
+
+    const LazyPropertyCallback = fn (*JSC.JSGlobalObject, *JSC.JSObject) callconv(JSC.conv) JSC.JSValue;
+
+    fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
+        return struct {
+            pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSC.JSValue {
+                return @call(.always_inline, getter, .{ this, object });
+            }
+        }.callback;
     }
 
     pub fn exportAll() void {
@@ -303,7 +316,7 @@ const ShellTask = struct {
 pub fn shell(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const Interpreter = @import("../../shell/interpreter.zig").Interpreter;
 
     // var allocator = globalThis.bunVM().allocator;
@@ -395,7 +408,7 @@ pub fn shell(
 pub fn shellEscape(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalThis.throw("shell escape expected at least 1 argument", .{});
@@ -439,7 +452,7 @@ pub fn shellEscape(
 pub fn braces(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     defer arguments.deinit();
@@ -546,7 +559,7 @@ pub fn braces(
 pub fn which(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
     var path_buf: bun.PathBuffer = undefined;
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -617,7 +630,7 @@ pub fn which(
 pub fn inspect(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(4).slice();
     if (arguments.len == 0)
         return bun.String.empty.toJS(globalThis);
@@ -727,7 +740,7 @@ pub fn inspect(
     return ret;
 }
 
-pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) callconv(JSC.conv) JSC.JSValue {
+pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) callconv(conv) JSC.JSValue {
     const fun = JSC.createCallback(globalObject, ZigString.static("inspect"), 2, &inspect);
     var str = ZigString.init("nodejs.util.inspect.custom");
     fun.put(globalObject, ZigString.static("custom"), JSC.JSValue.symbolFor(globalObject, &str));
@@ -737,7 +750,7 @@ pub fn getInspect(globalObject: *JSC.JSGlobalObject, _: *JSC.JSObject) callconv(
 pub fn registerMacro(
     globalObject: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
     const arguments = arguments_.slice();
     if (arguments.len != 2 or !arguments[0].isNumber()) {
@@ -770,21 +783,21 @@ pub fn registerMacro(
 pub fn getCWD(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return ZigString.init(VirtualMachine.get().bundler.fs.top_level_dir).toJS(globalThis);
 }
 
 pub fn getOrigin(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return ZigString.init(VirtualMachine.get().origin.origin).toJS(globalThis);
 }
 
 pub fn getStdin(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdin();
     store.ref();
@@ -798,7 +811,7 @@ pub fn getStdin(
 pub fn getStderr(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stderr();
     store.ref();
@@ -812,7 +825,7 @@ pub fn getStderr(
 pub fn getStdout(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     var rare_data = globalThis.bunVM().rareData();
     var store = rare_data.stdout();
     store.ref();
@@ -826,14 +839,14 @@ pub fn getStdout(
 pub fn enableANSIColors(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     _ = globalThis;
     return JSValue.jsBoolean(Output.enable_ansi_colors);
 }
 pub fn getMain(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const vm = globalThis.bunVM();
 
     // Attempt to use the resolved filesystem path
@@ -886,14 +899,14 @@ pub fn getMain(
 pub fn getAssetPrefix(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return ZigString.init(VirtualMachine.get().bundler.options.routes.asset_prefix_path).toJS(globalThis);
 }
 
 pub fn getArgv(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return JSC.Node.Process.getArgv(globalThis);
 }
 
@@ -901,7 +914,7 @@ const Editor = @import("../../open.zig").Editor;
 pub fn openInEditor(
     globalThis: js.JSContextRef,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSValue {
+) JSValue {
     var edit = &VirtualMachine.get().rareData().editor_context;
     const args = callframe.arguments(4);
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args.slice());
@@ -1019,7 +1032,7 @@ pub fn getPublicPathWithAssetPrefix(
     }
 }
 
-pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(1);
 
     // Expect at least one argument.  We allow more than one but ignore them; this
@@ -1047,16 +1060,16 @@ pub fn sleepSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) c
     return .undefined;
 }
 
-pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     return globalObject.generateHeapSnapshot();
 }
 
-pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     const arguments_ = callframe.arguments(1);
     const arguments = arguments_.slice();
     return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
 }
-pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     globalObject.vm().shrinkFootprint();
     return .undefined;
 }
@@ -1173,7 +1186,7 @@ fn doResolveWithArgs(
     return errorable.result.value.toJS(ctx);
 }
 
-pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
     const arguments = callframe.arguments(3);
@@ -1186,7 +1199,7 @@ pub fn resolveSync(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame)
     return result orelse .zero;
 }
 
-pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn resolve(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     var exception_ = [1]JSC.JSValueRef{null};
     const exception = &exception_;
     const arguments = callframe.arguments(3);
@@ -1266,7 +1279,7 @@ export fn Bun__resolveSyncWithSource(
     };
 }
 
-pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {
         return bun.String.empty.toJS(globalObject);
@@ -1284,7 +1297,7 @@ pub fn getPublicPathJS(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFr
 
 extern fn dump_zone_malloc_stats() void;
 
-export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
     if (comptime bun.is_heap_breakdown_enabled) {
         dump_zone_malloc_stats();
@@ -1292,7 +1305,7 @@ export fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ca
     return .undefined;
 }
 
-pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn indexOfLine(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
     const arguments_ = callframe.arguments(2);
     const arguments = arguments_.slice();
     if (arguments.len == 0) {
@@ -2305,10 +2318,10 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub export fn JSPasswordObject__hash(
+        pub fn JSPasswordObject__hash(
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             const arguments_ = callframe.arguments(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -2339,10 +2352,10 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub export fn JSPasswordObject__hashSync(
+        pub fn JSPasswordObject__hashSync(
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             const arguments_ = callframe.arguments(2);
             const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -2464,10 +2477,10 @@ pub const Crypto = struct {
         };
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub export fn JSPasswordObject__verify(
+        pub fn JSPasswordObject__verify(
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             const arguments_ = callframe.arguments(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -2517,10 +2530,10 @@ pub const Crypto = struct {
         }
 
         // Once we have bindings generator, this should be replaced with a generated function
-        pub export fn JSPasswordObject__verifySync(
+        pub fn JSPasswordObject__verifySync(
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             const arguments_ = callframe.arguments(3);
             const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -2586,7 +2599,7 @@ pub const Crypto = struct {
         pub fn getByteLength(
             this: *CryptoHasher,
             _: *JSC.JSGlobalObject,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             return JSC.JSValue.jsNumber(switch (this.*) {
                 .evp => |*inner| inner.size(),
                 .zig => |*inner| inner.digest_length,
@@ -2596,7 +2609,7 @@ pub const Crypto = struct {
         pub fn getAlgorithm(
             this: *CryptoHasher,
             globalObject: *JSC.JSGlobalObject,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             return switch (this.*) {
                 inline else => |*inner| ZigString.fromUTF8(bun.asByteSlice(@tagName(inner.algorithm))).toJS(globalObject),
             };
@@ -2606,7 +2619,7 @@ pub const Crypto = struct {
             globalThis_: *JSC.JSGlobalObject,
             _: JSValue,
             _: JSValue,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             var values = EVP.Algorithm.names.values;
             return JSC.JSValue.createStringArray(globalThis_, &values, values.len, true);
         }
@@ -2740,11 +2753,11 @@ pub const Crypto = struct {
         pub fn getter(
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.JSObject,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             return CryptoHasher.getConstructor(globalObject);
         }
 
-        pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+        pub fn update(this: *CryptoHasher, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
             const thisValue = callframe.this();
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
@@ -2783,7 +2796,7 @@ pub const Crypto = struct {
             this: *CryptoHasher,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(JSC.conv) JSC.JSValue {
+        ) callconv(conv) JSC.JSValue {
             var new: CryptoHasher = undefined;
             switch (this.*) {
                 .evp => |*inner| {
@@ -3028,7 +3041,7 @@ pub const Crypto = struct {
             pub fn getByteLength(
                 _: *@This(),
                 _: *JSC.JSGlobalObject,
-            ) callconv(JSC.conv) JSC.JSValue {
+            ) callconv(conv) JSC.JSValue {
                 return JSC.JSValue.jsNumber(@as(u16, Hasher.digest));
             }
 
@@ -3036,7 +3049,7 @@ pub const Crypto = struct {
                 _: *JSC.JSGlobalObject,
                 _: JSValue,
                 _: JSValue,
-            ) callconv(JSC.conv) JSC.JSValue {
+            ) callconv(conv) JSC.JSValue {
                 return JSC.JSValue.jsNumber(@as(u16, Hasher.digest));
             }
 
@@ -3133,11 +3146,11 @@ pub const Crypto = struct {
             pub fn getter(
                 globalObject: *JSC.JSGlobalObject,
                 _: *JSC.JSObject,
-            ) callconv(JSC.conv) JSC.JSValue {
+            ) callconv(conv) JSC.JSValue {
                 return ThisHasher.getConstructor(globalObject);
             }
 
-            pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            pub fn update(this: *@This(), globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(conv) JSC.JSValue {
                 const thisValue = callframe.this();
                 const input = callframe.argument(0);
                 const buffer = JSC.Node.BlobOrStringOrBuffer.fromJS(globalThis, globalThis.bunVM().allocator, input) orelse {
@@ -3243,7 +3256,7 @@ pub const Crypto = struct {
 pub fn nanoseconds(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const ns = globalThis.bunVM().origin_timer.read();
     return JSC.JSValue.jsNumberFromUint64(ns);
 }
@@ -3251,7 +3264,7 @@ pub fn nanoseconds(
 pub fn serve(
     globalObject: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     var config: JSC.API.ServerConfig = brk: {
         var exception_ = [1]JSC.JSValueRef{null};
@@ -3503,7 +3516,7 @@ comptime {
 pub fn allocUnsafe(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     const arguments = callframe.arguments(1);
     const size = arguments.ptr[0];
     if (!size.isUInt32AsAnyInt()) {
@@ -3517,7 +3530,7 @@ pub fn allocUnsafe(
 pub fn mmapFile(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     if (comptime Environment.isWindows) {
         globalThis.throwTODO("mmapFile is not supported on Windows");
         return JSC.JSValue.zero;
@@ -3596,21 +3609,21 @@ pub fn mmapFile(
 pub fn getTranspilerConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return JSC.API.JSTranspiler.getConstructor(globalThis);
 }
 
 pub fn getFileSystemRouter(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return JSC.API.FileSystemRouter.getConstructor(globalThis);
 }
 
 pub fn getHashObject(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return HashObject.create(globalThis);
 }
 
@@ -3655,7 +3668,7 @@ const HashObject = struct {
             pub fn hash(
                 globalThis: *JSC.JSGlobalObject,
                 callframe: *JSC.CallFrame,
-            ) callconv(JSC.conv) JSC.JSValue {
+            ) callconv(conv) JSC.JSValue {
                 const arguments = callframe.arguments(2).slice();
                 var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
                 defer args.deinit();
@@ -3733,28 +3746,28 @@ const HashObject = struct {
 pub fn getTOMLObject(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return TOMLObject.create(globalThis);
 }
 
 pub fn getGlobConstructor(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return JSC.API.Glob.getConstructor(globalThis);
 }
 
 pub fn getSemver(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return SemverObject.create(globalThis);
 }
 
 pub fn getUnsafe(
     globalThis: *JSC.JSGlobalObject,
     _: *JSC.JSObject,
-) callconv(JSC.conv) JSC.JSValue {
+) callconv(conv) JSC.JSValue {
     return UnsafeObject.create(globalThis);
 }
 
@@ -3779,7 +3792,7 @@ const UnsafeObject = struct {
     pub fn gcAggressionLevel(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) callconv(conv) JSC.JSValue {
         const ret = JSValue.jsNumber(@as(i32, @intFromEnum(globalThis.bunVM().aggressive_garbage_collection)));
         const value = callframe.arguments(1).ptr[0];
 
@@ -3797,7 +3810,7 @@ const UnsafeObject = struct {
     pub fn arrayBufferToString(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) callconv(conv) JSC.JSValue {
         const args = callframe.arguments(2).slice();
         if (args.len < 1 or !args[0].isCell() or !args[0].jsType().isTypedArray()) {
             globalThis.throwInvalidArguments("Expected an ArrayBuffer", .{});
@@ -3842,7 +3855,7 @@ const TOMLObject = struct {
     pub fn parse(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) callconv(conv) JSC.JSValue {
         var arena = bun.ArenaAllocator.init(globalThis.allocator());
         const allocator = arena.allocator();
         defer arena.deinit();
@@ -4258,7 +4271,7 @@ pub const FFIObject = struct {
         _: *JSGlobalObject,
         _: *anyopaque,
         array: *JSC.JSUint8Array,
-    ) callconv(.C) JSValue {
+    ) callconv(JSC.conv) JSValue {
         return JSValue.fromPtrAddress(@intFromPtr(array.ptr()));
     }
 
@@ -4518,12 +4531,12 @@ pub const FFIObject = struct {
     pub fn getter(
         globalObject: *JSC.JSGlobalObject,
         _: *JSC.JSObject,
-    ) callconv(JSC.conv) JSC.JSValue {
+    ) callconv(conv) JSC.JSValue {
         return FFIObject.toJS(globalObject);
     }
 };
 
-fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
     const value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
     const options_object = if (arguments.len > 1) arguments[1] else JSC.JSValue.jsUndefined();

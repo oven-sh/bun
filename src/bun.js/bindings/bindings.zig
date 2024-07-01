@@ -6066,6 +6066,39 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
 pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
+pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
+    if (comptime @TypeOf(Function) == JSHostFunctionType) {
+        return Function;
+    }
+
+    if (comptime @TypeOf(Function) == JSHostFunctionPtr) {
+        return Function;
+    }
+
+    return struct {
+        pub fn function(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(JSC.conv) JSC.JSValue {
+            comptime {
+                const Fn = @TypeOf(Function);
+                var FnTypeInfo = @typeInfo(Fn);
+                if (FnTypeInfo == .Pointer) {
+                    FnTypeInfo = @typeInfo(std.meta.Child(Fn));
+                }
+
+                if (bun.Environment.isWindows) {
+                    if (FnTypeInfo.Fn.calling_convention == .C) {
+                        @compileLog(Function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
+                    }
+                }
+            }
+
+            return @call(.always_inline, Function, .{ globalThis, callframe });
+        }
+    }.function;
+}
+
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = opaque {
@@ -6086,7 +6119,7 @@ const private = struct {
         *JSGlobalObject,
         ?*const ZigString,
         argCount: u32,
-        function: *const anyopaque,
+        function: JSHostFunctionPtr,
         strong: bool,
         data: *anyopaque,
     ) JSValue;
@@ -6094,7 +6127,7 @@ const private = struct {
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
         argCount: u32,
-        functionPointer: *const anyopaque,
+        functionPointer: JSHostFunctionPtr,
         strong: bool,
     ) *anyopaque;
 
@@ -6116,28 +6149,23 @@ const private = struct {
     pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
 
-pub fn NewFunctionPtr(globalObject: *JSGlobalObject, symbolName: ?*const ZigString, argCount: u32, comptime functionPointer: anytype, strong: bool) *anyopaque {
-    JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @as(*const anyopaque, @ptrCast(&functionPointer)), strong);
-}
-
 pub fn NewFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    functionPointer: JSHostFunctionPtr,
+    comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
 }
 
 pub fn createCallback(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    functionPointer: JSHostFunctionPtr,
+    comptime functionPointer: anytype,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
 }
 
 pub fn NewRuntimeFunction(
@@ -6175,7 +6203,7 @@ pub fn NewFunctionWithData(
         globalObject,
         symbolName,
         argCount,
-        @as(*const anyopaque, @ptrCast(&functionPointer)),
+        toJSHostFunction(functionPointer),
         strong,
         data,
     );

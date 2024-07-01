@@ -57,11 +57,6 @@ $CFLAGS = '/O2 /Zi'
 $CXXFLAGS = '/O2 /Zi'
 # $CXXFLAGS = '/O2 /Z7 /MT'
 
-if ($env:GITHUB_ACTIONS) {
-  $CFLAGS += ' -Xclang -emit-llvm-bc'
-  $CXXFLAGS += ' -Xclang -emit-llvm-bc'
-}
-
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
 $env:CPU_TARGET = $CPU_NAME
 

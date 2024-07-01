@@ -16,6 +16,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 set(LINKER_TYPE LLD)
 
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 
 # Should not start with v
 # Used in process.version, process.versions.node, napi, and elsewhere
@@ -325,6 +326,7 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
 set(CMAKE_INTERPROCEDURAL_OPTIMIZATION ${USE_LTO})
+
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
@@ -1125,7 +1127,7 @@ if(WIN32)
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
     if (USE_LTO)
-        add_compile_options(-Xclang -emit-llvm-bc)
+        target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc" ) 
     endif()
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")

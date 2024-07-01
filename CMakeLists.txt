@@ -1084,8 +1084,6 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             # -emit-llvm seems to not be supported or under a different name on Windows.
             list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
-        else()
-            list(APPEND LTO_FLAG "-fno-lto")
         endif()
 
         target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG})

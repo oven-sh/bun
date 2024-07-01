@@ -248,22 +248,22 @@ ${iniInner.join("\n")}
     });
   }
 
-  // await makeTest([["_authToken", "skibidi"]], result => {
-  //   expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-  //   expect(result.default_registry_token).toEqual("Default registry token: skibidi");
-  // });
+  await makeTest([["_authToken", "skibidi"]], result => {
+    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_token).toEqual("Default registry token: skibidi");
+  });
 
-  // await makeTest(
-  //   [
-  //     ["username", "zorp"],
-  //     ["_password", "skibidi"],
-  //   ],
-  //   result => {
-  //     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-  //     expect(result.default_registry_username).toEqual("zorp");
-  //     expect(result.default_registry_password).toEqual("skibidi");
-  //   },
-  // );
+  await makeTest(
+    [
+      ["username", "zorp"],
+      ["_password", "skibidi"],
+    ],
+    result => {
+      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_username).toEqual("zorp");
+      expect(result.default_registry_password).toEqual("skibidi");
+    },
+  );
 
   it("authentication works", async () => {
     await Bun.$`rm -rf ${packageDir}/bunfig.toml`;

@@ -8423,8 +8423,8 @@ pub const PackageManager = struct {
             break :brk install_;
         }, env, true, &log) catch {
             if (log.errors == 1) Output.warn("Encountered an error while reading <b>.npmrc<r>:", .{}) else Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
-            log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
         };
+        log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

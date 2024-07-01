@@ -868,8 +868,6 @@ pub const ScopeIterator = struct {
                             },
                         };
                     }
-
-                    return .none;
                 }
             }
         }
@@ -898,20 +896,17 @@ pub fn loadNpmrcFromFile(
     };
     defer _ = bun.sys.close(npmrc_file);
 
-    var npmrc_contents = std.ArrayList(u8).init(allocator);
-    defer npmrc_contents.deinit();
-    switch (bun.sys.File.readToEndWithArrayList(bun.sys.File{ .handle = npmrc_file }, &npmrc_contents)) {
-        .result => {},
-        .err => |err| {
-            // TODO: should this exit(1)?
+    const source = switch (bun.sys.File.toSource(".npmrc", allocator)) {
+        .result => |s| s,
+        .err => |e| {
             Output.prettyErrorln("{}\nwhile reading .npmrc \"{s}\"", .{
-                err,
+                e,
                 ".npmrc",
             });
             Global.exit(1);
         },
-    }
-    const source = bun.logger.Source.initPathString(".npmrc", npmrc_contents.items[0..]);
+    };
+    defer allocator.free(source.contents);
 
     return loadNpmrc(allocator, install, env, auto_loaded, log, &source);
 }
@@ -1182,23 +1177,7 @@ pub fn loadNpmrc(
     }
 
     const had_errors = log.hasErrors();
-    log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
     if (had_errors) {
         return error.ParserError;
     }
-
-    // if (!bun.Environment.isDebug) {
-    //     if (!@import("./bun.js/module_loader.zig").ModuleLoader.is_allowed_to_use_internal_testing_apis)
-    //         return;
-    // }
-
-    // if (bun.getenvTruthy("BUN_TEST_LOG_DEFAULT_REGISTRY")) {
-    //     if (install.default_registry) |reg| {
-    //         Output.print("Default registry url: {s}\n", .{reg.url});
-    //         Output.print("Default registry token: {s}\n", .{reg.token});
-    //         Output.print("Default registry username: {s}\n", .{reg.username});
-    //         Output.print("Default registry password: {s}\n", .{reg.password});
-    //         Output.flush();
-    //     }
-    // }
 }

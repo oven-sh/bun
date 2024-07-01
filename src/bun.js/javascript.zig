@@ -2278,16 +2278,6 @@ pub const VirtualMachine = struct {
         res.* = ErrorableString.ok(bun.String.init(result.path));
     }
 
-    // // This double prints
-    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-    //     const result = promise.result(global.vm());
-    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
-    //         VirtualMachine.get().runErrorHandler(result, null);
-    //     }
-
-    //     return JSValue.jsUndefined();
-    // }
-
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {

@@ -1434,11 +1434,11 @@ pub fn StatType(comptime Big: bool) type {
             }
         }
 
-        const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+        const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue;
 
         fn getter(comptime field: meta.FieldEnum(This)) PropertyGetter {
             return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
@@ -1450,7 +1450,7 @@ pub fn StatType(comptime Big: bool) type {
 
         fn dateGetter(comptime field: meta.FieldEnum(This)) PropertyGetter {
             return struct {
-                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+                pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
                     const value = @field(this, @tagName(field));
                     // Doing `Date{ ... }` here shouldn't actually change the memory layout of `value`
                     // but it will tell comptime code how to convert the i64/f64 to a JS Date.
@@ -1478,13 +1478,13 @@ pub fn StatType(comptime Big: bool) type {
         const DOMCallFn = fn (
             *This,
             *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue;
+        ) callconv(JSC.conv) JSC.JSValue;
         fn domCall(comptime decl: meta.DeclEnum(This)) DOMCallFn {
             return struct {
                 pub fn run(
                     this: *This,
                     _: *JSC.JSGlobalObject,
-                ) callconv(.C) JSC.JSValue {
+                ) callconv(JSC.conv) JSC.JSValue {
                     return @field(This, @tagName(decl))(this);
                 }
             }.run;
@@ -1709,11 +1709,11 @@ pub const Dirent = struct {
         return out.toJS(globalObject);
     }
 
-    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return this.name.toJS(globalObject);
     }
 
-    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getPath(this: *Dirent, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return this.path.toJS(globalThis);
     }
 
@@ -1721,49 +1721,49 @@ pub const Dirent = struct {
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.block_device);
     }
     pub fn isCharacterDevice(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.character_device);
     }
     pub fn isDirectory(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.directory);
     }
     pub fn isFIFO(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.named_pipe or this.kind == std.fs.File.Kind.event_port);
     }
     pub fn isFile(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.file);
     }
     pub fn isSocket(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.unix_domain_socket);
     }
     pub fn isSymbolicLink(
         this: *Dirent,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.kind == std.fs.File.Kind.sym_link);
     }
 

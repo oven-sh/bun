@@ -67,12 +67,6 @@ pub const Node = struct {
     };
 };
 
-comptime {
-    if (!is_bindgen) {
-        @export(Node.Util.parseArgs, .{ .name = "Bun__NodeUtil__jsParseArgs" });
-    }
-}
-
 const std = @import("std");
 const Syscall = @import("./sys.zig");
 const Output = @import("./output.zig");

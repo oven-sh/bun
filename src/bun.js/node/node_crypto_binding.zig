@@ -12,7 +12,7 @@ const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 
-pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn randomInt(global: *JSC.JSGlobalObject) JSC.JSValue {
     const S = struct {
         fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(2).slice();
@@ -80,7 +80,7 @@ pub fn pbkdf2Sync(
     return out_arraybuffer;
 }
 
-pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 3);
 
     crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", &pbkdf2, 5, .{}));

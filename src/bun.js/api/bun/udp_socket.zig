@@ -372,7 +372,7 @@ pub const UDPSocket = struct {
         return true;
     }
 
-    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+    pub fn sendMany(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -462,7 +462,7 @@ pub const UDPSocket = struct {
         this: *This,
         globalThis: *JSGlobalObject,
         callframe: *CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.closed) {
             globalThis.throw("Socket is closed", .{});
             return .zero;
@@ -566,7 +566,7 @@ pub const UDPSocket = struct {
         address: JSValue,
     };
 
-    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn ref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (!this.closed) {
             this.poll_ref.ref(globalThis.bunVM());
         }
@@ -574,7 +574,7 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (!this.closed) {
             this.poll_ref.unref(globalThis.bunVM());
         }
@@ -586,13 +586,13 @@ pub const UDPSocket = struct {
         this: *This,
         _: *JSGlobalObject,
         _: *CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (!this.closed) this.socket.close();
 
         return .undefined;
     }
 
-    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(.C) JSValue {
+    pub fn reload(this: *This, globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         const args = callframe.arguments(1);
 
         if (args.len < 1) {
@@ -613,16 +613,16 @@ pub const UDPSocket = struct {
         return .undefined;
     }
 
-    pub fn getClosed(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getClosed(this: *This, _: *JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.closed);
     }
 
-    pub fn getHostname(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getHostname(this: *This, _: *JSGlobalObject) JSValue {
         const hostname = JSC.ZigString.init(this.config.hostname);
         return hostname.toJS(this.globalThis);
     }
 
-    pub fn getPort(this: *This, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getPort(this: *This, _: *JSGlobalObject) JSValue {
         if (this.closed) return .undefined;
         return JSValue.jsNumber(this.socket.boundPort());
     }
@@ -639,7 +639,7 @@ pub const UDPSocket = struct {
         return bun.String.createLatin1(slice).toJS(globalThis);
     }
 
-    pub fn getAddress(this: *This, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getAddress(this: *This, globalThis: *JSGlobalObject) JSValue {
         if (this.closed) return .undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
         var length: i32 = 64;
@@ -655,7 +655,7 @@ pub const UDPSocket = struct {
         );
     }
 
-    pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getRemoteAddress(this: *This, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         if (this.closed) return .undefined;
         const connect_info = this.connect_info orelse return .undefined;
         var buf: [64]u8 = [_]u8{0} ** 64;
@@ -674,7 +674,7 @@ pub const UDPSocket = struct {
     pub fn getBinaryType(
         this: *This,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return switch (this.config.binary_type) {
             .Buffer => JSC.ZigString.init("buffer").toJS(globalThis),
             .Uint8Array => JSC.ZigString.init("uint8array").toJS(globalThis),

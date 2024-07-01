@@ -261,7 +261,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -296,7 +296,7 @@ pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.
     }
 }
 
-pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -1415,7 +1415,7 @@ pub const H2FrameParser = struct {
         }
     }
 
-    pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn setEncoding(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1532,7 +1532,7 @@ pub const H2FrameParser = struct {
         return true;
     }
 
-    pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn updateSettings(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1550,7 +1550,7 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn getCurrentState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         var result = JSValue.createEmptyObject(globalObject, 9);
         result.put(globalObject, JSC.ZigString.static("effectiveLocalWindowSize"), JSC.JSValue.jsNumber(this.windowSize));
@@ -1568,7 +1568,7 @@ pub const H2FrameParser = struct {
         result.put(globalObject, JSC.ZigString.static("outboundQueueSize"), JSC.JSValue.jsNumber(0));
         return result;
     }
-    pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn goaway(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
         if (args_list.len < 1) {
@@ -1618,7 +1618,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1636,7 +1636,7 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn getEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1664,7 +1664,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(stream.endAfterHeaders);
     }
 
-    pub fn setEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn setEndAfterHeaders(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -1698,7 +1698,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsBoolean(true);
     }
 
-    pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn isStreamAborted(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1728,7 +1728,7 @@ pub const H2FrameParser = struct {
         }
         return JSC.JSValue.jsBoolean(true);
     }
-    pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn getStreamState(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -1765,7 +1765,7 @@ pub const H2FrameParser = struct {
         return state;
     }
 
-    pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn setStreamPriority(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -1859,7 +1859,7 @@ pub const H2FrameParser = struct {
         }
         return JSC.JSValue.jsBoolean(true);
     }
-    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn rstStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(2);
         if (args_list.len < 2) {
@@ -1938,7 +1938,7 @@ pub const H2FrameParser = struct {
         }
     }
 
-    pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn sendTrailers(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
         if (args_list.len < 3) {
@@ -2077,7 +2077,7 @@ pub const H2FrameParser = struct {
 
         return JSC.JSValue.jsUndefined();
     }
-    pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(3);
         if (args_list.len < 3) {
@@ -2147,7 +2147,7 @@ pub const H2FrameParser = struct {
         return stream_id;
     }
 
-    pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn request(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         // we use PADDING_STRATEGY_NONE with is default
         // TODO: PADDING_STRATEGY_MAX AND PADDING_STRATEGY_ALIGNED
@@ -2423,7 +2423,7 @@ pub const H2FrameParser = struct {
         return JSC.JSValue.jsNumber(stream.id);
     }
 
-    pub fn read(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn read(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
@@ -2537,7 +2537,7 @@ pub const H2FrameParser = struct {
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         H2FrameParser.getConstructor(global),
-        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
-        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
+        JSC.JSFunction.create(global, "getPackedSettings", JSC.toJSHostFunction(jsGetPackedSettings), 0, .{}),
+        JSC.JSFunction.create(global, "getUnpackedSettings", JSC.toJSHostFunction(jsGetUnpackedSettings), 0, .{}),
     });
 }

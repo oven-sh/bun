@@ -327,7 +327,7 @@ pub const FileSystemRouter = struct {
         return result.toJS(globalThis);
     }
 
-    pub fn getOrigin(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getOrigin(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
         if (this.origin) |origin| {
             return JSC.ZigString.init(origin.slice()).withEncoding().toJS(globalThis);
         }
@@ -335,7 +335,7 @@ pub const FileSystemRouter = struct {
         return JSValue.jsNull();
     }
 
-    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRoutes(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
         const paths = this.router.getEntryPoints() catch unreachable;
         const names = this.router.getNames() catch unreachable;
         var name_strings = bun.default_allocator.alloc(ZigString, names.len * 2) catch unreachable;
@@ -354,11 +354,11 @@ pub const FileSystemRouter = struct {
         );
     }
 
-    pub fn getStyle(_: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getStyle(_: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
         return ZigString.static("nextjs").toJS(globalThis);
     }
 
-    pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getAssetPrefix(this: *FileSystemRouter, globalThis: *JSC.JSGlobalObject) JSValue {
         if (this.asset_prefix) |asset_prefix| {
             return JSC.ZigString.init(asset_prefix.slice()).withEncoding().toJS(globalThis);
         }
@@ -399,7 +399,7 @@ pub const MatchedRoute = struct {
 
     pub usingnamespace JSC.Codegen.JSMatchedRoute;
 
-    pub fn getName(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getName(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) JSValue {
         return ZigString.init(this.route.name).withEncoding().toJS(globalThis);
     }
 
@@ -466,7 +466,7 @@ pub const MatchedRoute = struct {
     pub fn getFilePath(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return ZigString.init(this.route.file_path)
             .withEncoding()
             .toJS(globalThis);
@@ -478,13 +478,13 @@ pub const MatchedRoute = struct {
         this.deinit();
     }
 
-    pub fn getPathname(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getPathname(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) JSValue {
         return ZigString.init(this.route.pathname)
             .withEncoding()
             .toJS(globalThis);
     }
 
-    pub fn getRoute(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getRoute(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) JSValue {
         return ZigString.init(this.route.name)
             .withEncoding()
             .toJS(globalThis);
@@ -510,13 +510,13 @@ pub const MatchedRoute = struct {
         }
     };
 
-    pub fn getKind(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getKind(this: *MatchedRoute, globalThis: *JSC.JSGlobalObject) JSValue {
         return KindEnum.init(this.route.name).toJS(globalThis);
     }
 
     threadlocal var query_string_values_buf: [256]string = undefined;
     threadlocal var query_string_value_refs_buf: [256]ZigString = undefined;
-    pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap) callconv(.C) JSValue {
+    pub fn createQueryObject(ctx: js.JSContextRef, map: *QueryStringMap) JSValue {
         const QueryObjectCreator = struct {
             query: *QueryStringMap,
             pub fn create(this: *@This(), obj: *JSObject, global: *JSGlobalObject) void {
@@ -577,7 +577,7 @@ pub const MatchedRoute = struct {
     pub fn getScriptSrc(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var buf: bun.PathBuffer = undefined;
         var stream = std.io.fixedBufferStream(&buf);
         var writer = stream.writer();
@@ -598,7 +598,7 @@ pub const MatchedRoute = struct {
     pub fn getParams(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         if (this.route.params.len == 0)
             return JSValue.createEmptyObject(globalThis, 0);
 
@@ -621,7 +621,7 @@ pub const MatchedRoute = struct {
     pub fn getQuery(
         this: *MatchedRoute,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         if (this.route.query_string.len == 0 and this.route.params.len == 0) {
             return JSValue.createEmptyObject(globalThis, 0);
         } else if (this.route.query_string.len == 0) {

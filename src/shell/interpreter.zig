@@ -664,7 +664,7 @@ pub const ParsedShellScript = struct {
 
     pub fn finalize(
         this: *ParsedShellScript,
-    ) callconv(.C) void {
+    ) void {
         this.this_jsvalue = .zero;
         log("ParsedShellScript(0x{x}) finalize", .{@intFromPtr(this)});
         if (this.export_env) |*env| env.deinit();
@@ -688,7 +688,7 @@ pub const ParsedShellScript = struct {
         return .undefined;
     }
 
-    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.quiet = true;
         return .undefined;
@@ -1727,7 +1727,7 @@ pub const Interpreter = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
         return .undefined;
@@ -1824,12 +1824,12 @@ pub const Interpreter = struct {
 
     pub fn finalize(
         this: *ThisInterpreter,
-    ) callconv(.C) void {
+    ) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
 
-    pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
+    pub fn hasPendingActivity(this: *ThisInterpreter) bool {
         @fence(.seq_cst);
         return this.has_pending_activity.load(.seq_cst) > 0;
     }

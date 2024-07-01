@@ -514,7 +514,7 @@ pub const Listener = struct {
     pub fn getData(
         this: *Listener,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         log("getData()", .{});
         return this.strong_data.get() orelse JSValue.jsUndefined();
     }
@@ -569,7 +569,7 @@ pub const Listener = struct {
         }
     };
 
-    pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn reload(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const args = callframe.arguments(1);
 
         if (args.len < 1 or (this.listener == null and this.handlers.active_connections == 0)) {
@@ -874,7 +874,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const arguments = callframe.arguments(1);
         log("close", .{});
 
@@ -940,11 +940,11 @@ pub const Listener = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn getConnectionsCount(this: *Listener, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getConnectionsCount(this: *Listener, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsNumber(this.handlers.active_connections);
     }
 
-    pub fn getUnix(this: *Listener, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getUnix(this: *Listener, globalObject: *JSC.JSGlobalObject) JSValue {
         if (this.connection != .unix) {
             return JSValue.jsUndefined();
         }
@@ -952,21 +952,21 @@ pub const Listener = struct {
         return ZigString.init(this.connection.unix).withEncoding().toJS(globalObject);
     }
 
-    pub fn getHostname(this: *Listener, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getHostname(this: *Listener, globalObject: *JSC.JSGlobalObject) JSValue {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
         return ZigString.init(this.connection.host.host).withEncoding().toJS(globalObject);
     }
 
-    pub fn getPort(this: *Listener, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getPort(this: *Listener, _: *JSC.JSGlobalObject) JSValue {
         if (this.connection != .host) {
             return JSValue.jsUndefined();
         }
         return JSValue.jsNumber(this.connection.host.port);
     }
 
-    pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn ref(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const this_value = callframe.this();
         if (this.listener == null) return JSValue.jsUndefined();
         this.poll_ref.ref(globalObject.bunVM());
@@ -974,7 +974,7 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
-    pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn unref(this: *Listener, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.poll_ref.unref(globalObject.bunVM());
         if (this.handlers.active_connections == 0) {
             this.strong_self.clear();
@@ -1684,7 +1684,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getData(
             _: *This,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             log("getData()", .{});
             return JSValue.jsUndefined();
         }
@@ -1702,7 +1702,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getListener(
             this: *This,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (!this.handlers.is_server or this.detached) {
                 return JSValue.jsUndefined();
             }
@@ -1714,7 +1714,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getReadyState(
             this: *This,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             log("getReadyState()", .{});
 
             if (this.detached) {
@@ -1733,7 +1733,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getAuthorized(
             this: *This,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             log("getAuthorized()", .{});
             return JSValue.jsBoolean(this.authorized);
         }
@@ -1741,7 +1741,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments(1);
             if (this.detached) return JSValue.jsUndefined();
@@ -1764,7 +1764,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
 
             if (this.detached) {
@@ -1794,7 +1794,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
 
             if (this.detached) {
@@ -1817,7 +1817,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getLocalPort(
             this: *This,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (this.detached) {
                 return JSValue.jsUndefined();
             }
@@ -1828,7 +1828,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getRemoteAddress(
             this: *This,
             globalThis: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (this.detached) {
                 return JSValue.jsUndefined();
             }
@@ -2018,7 +2018,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (!this.detached)
                 this.socket.flush();
@@ -2030,7 +2030,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (!this.detached) {
                 this.socket.close(.failure);
@@ -2043,7 +2043,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments(1);
             if (!this.detached) {
@@ -2061,7 +2061,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
 
             const args = callframe.arguments(4);
@@ -2085,20 +2085,20 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn ref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn ref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
             if (this.detached) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
-        pub fn unref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+        pub fn unref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
-        pub fn finalize(this: *This) callconv(.C) void {
+        pub fn finalize(this: *This) void {
             log("finalize() {d}", .{@intFromPtr(this)});
             this.finalizing = true;
             if (!this.detached) {
@@ -2130,7 +2130,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
             const args = callframe.arguments(1);
 
             if (args.len < 1) {
@@ -2172,7 +2172,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2189,7 +2189,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2230,7 +2230,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2250,7 +2250,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2277,7 +2277,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2323,7 +2323,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2351,7 +2351,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn getALPNProtocol(
             this: *This,
             globalObject: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsBoolean(false);
             }
@@ -2383,7 +2383,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2471,7 +2471,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsNull();
             }
@@ -2540,7 +2540,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2587,7 +2587,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2619,7 +2619,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2651,7 +2651,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -2742,7 +2742,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsNull();
@@ -2765,7 +2765,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsBoolean(false);
@@ -2804,7 +2804,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
@@ -2859,7 +2859,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2881,7 +2881,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2897,7 +2897,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
@@ -2956,7 +2956,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             JSC.markBinding(@src());
             if (comptime ssl) {
                 return JSValue.jsUndefined();
@@ -3252,7 +3252,7 @@ pub fn NewWrappedHandler(comptime tls: bool) type {
         }
     };
 }
-pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     JSC.markBinding(@src());
 
     const arguments = callframe.arguments(3);
@@ -3270,6 +3270,6 @@ pub fn jsAddServerName(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) c
 
 pub fn createNodeTLSBinding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
-        JSC.JSFunction.create(global, "addServerName", jsAddServerName, 3, .{}),
+        JSC.JSFunction.create(global, "addServerName", JSC.toJSHostFunction(jsAddServerName), 3, .{}),
     });
 }

@@ -4525,7 +4525,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         topic_str: *JSC.JSString,
         array: *JSC.JSUint8Array,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const app = this.handler.app orelse {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
@@ -4565,7 +4565,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         topic_str: *JSC.JSString,
         str: *JSC.JSString,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const app = this.handler.app orelse {
             log("publish() closed", .{});
             return JSValue.jsNumber(0);
@@ -4775,7 +4775,7 @@ pub const ServerWebSocket = struct {
         globalThis: *JSC.JSGlobalObject,
         message_str: *JSC.JSString,
         compress: bool,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.isClosed()) {
             log("sendText() closed", .{});
             return JSValue.jsNumber(0);
@@ -4855,7 +4855,7 @@ pub const ServerWebSocket = struct {
         _: *JSC.JSGlobalObject,
         array_buffer: *JSC.JSUint8Array,
         compress: bool,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.isClosed()) {
             log("sendBinary() closed", .{});
             return JSValue.jsNumber(0);
@@ -4971,7 +4971,7 @@ pub const ServerWebSocket = struct {
     pub fn getData(
         _: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         log("getData()", .{});
         return JSValue.jsUndefined();
     }
@@ -4989,7 +4989,7 @@ pub const ServerWebSocket = struct {
     pub fn getReadyState(
         this: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         log("getReadyState()", .{});
 
         if (this.isClosed()) {
@@ -5067,7 +5067,7 @@ pub const ServerWebSocket = struct {
     pub fn getBinaryType(
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         log("getBinaryType()", .{});
 
         return switch (this.flags.binary_type) {
@@ -5103,7 +5103,7 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         log("getBufferedAmount()", .{});
 
         if (this.isClosed()) {
@@ -5227,7 +5227,7 @@ pub const ServerWebSocket = struct {
     pub fn getRemoteAddress(
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.isClosed()) {
             return JSValue.jsUndefined();
         }
@@ -5560,7 +5560,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("reload", 1, 0);
@@ -5591,7 +5591,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             this: *ThisServer,
             ctx: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             JSC.markBinding(@src());
             const arguments = callframe.arguments(2).slice();
             if (arguments.len == 0) {
@@ -5735,7 +5735,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getPort(
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             switch (this.config.address) {
                 .unix => return .undefined,
                 else => {},
@@ -5748,7 +5748,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getId(
             this: *ThisServer,
             globalThis: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var str = bun.String.createUTF8(this.config.id);
             defer str.deref();
             return str.toJS(globalThis);
@@ -5757,18 +5757,18 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getPendingRequests(
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.pending_requests)))));
         }
 
         pub fn getPendingWebSockets(
             this: *ThisServer,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             return JSC.JSValue.jsNumber(@as(i32, @intCast(@as(u31, @truncate(this.activeSocketsCount())))));
         }
 
-        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+        pub fn getAddress(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             switch (this.config.address) {
                 .unix => |unix| {
                     var value = bun.String.createUTF8(unix);
@@ -5800,7 +5800,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
         }
 
-        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+        pub fn getURL(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             const fmt = switch (this.config.address) {
                 .unix => |unix| brk: {
                     if (unix.len > 1 and unix[0] == 0) {
@@ -5837,7 +5837,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return value.toJSDOMURL(globalThis);
         }
 
-        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+        pub fn getHostname(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             switch (this.config.address) {
                 .unix => return .undefined,
                 else => {},
@@ -5870,7 +5870,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return this.cached_hostname.toJS(globalThis);
         }
 
-        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) callconv(.C) JSC.JSValue {
+        pub fn getProtocol(this: *ThisServer, globalThis: *JSGlobalObject) JSC.JSValue {
             if (this.cached_protocol.isEmpty()) {
                 this.cached_protocol = bun.String.createUTF8(if (ssl_enabled) "https" else "http");
             }
@@ -5881,7 +5881,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub fn getDevelopment(
             _: *ThisServer,
             _: *JSC.JSGlobalObject,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             return JSC.JSValue.jsBoolean(debug_mode);
         }
 

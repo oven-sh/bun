@@ -11,7 +11,7 @@ const ZigString = JSC.ZigString;
 
 pub var autoSelectFamilyDefault: bool = true;
 
-pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "getDefaultAutoSelectFamily", (struct {
         fn getter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             _ = globalThis;
@@ -21,7 +21,7 @@ pub fn getDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.
     }).getter, 0, .{});
 }
 
-pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamily", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(1);
@@ -46,7 +46,7 @@ pub fn setDefaultAutoSelectFamily(global: *JSC.JSGlobalObject) callconv(.C) JSC.
 
 pub var autoSelectFamilyAttemptTimeoutDefault: u32 = 250;
 
-pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "getDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn getter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             _ = globalThis;
@@ -56,7 +56,7 @@ pub fn getDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) cal
     }).getter, 0, .{});
 }
 
-pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn setDefaultAutoSelectFamilyAttemptTimeout(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSFunction.create(global, "setDefaultAutoSelectFamilyAttemptTimeout", (struct {
         fn setter(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(1);

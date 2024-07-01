@@ -422,13 +422,13 @@ pub const TextDecoder = struct {
     pub fn getIgnoreBOM(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
     // pub fn setIgnoreBOM(
     //     this: *TextDecoder,
     //     _: *JSC.JSGlobalObject,
-    // ) callconv(.C) JSC.JSValue {
+    // )  JSC.JSValue {
     //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
     //     return true;
     // }
@@ -447,7 +447,7 @@ pub const TextDecoder = struct {
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.fatal);
     }
 
@@ -455,7 +455,7 @@ pub const TextDecoder = struct {
     pub fn getEncoding(
         this: *TextDecoder,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
     }
     const Vector16 = std.meta.Vector(16, u16);
@@ -613,7 +613,7 @@ pub const TextDecoder = struct {
         return this.decodeSlice(globalThis, array_buffer.slice(), false);
     }
 
-    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
+    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) JSValue {
         return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 

@@ -50,7 +50,7 @@ pub const ResourceUsage = struct {
     pub fn getCPUTime(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
@@ -67,28 +67,28 @@ pub const ResourceUsage = struct {
     pub fn getMaxRSS(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.maxrss);
     }
 
     pub fn getSharedMemorySize(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.ixrss);
     }
 
     pub fn getSwapCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nswap);
     }
 
     pub fn getOps(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
         ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
@@ -98,7 +98,7 @@ pub const ResourceUsage = struct {
     pub fn getMessages(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
         msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
@@ -108,14 +108,14 @@ pub const ResourceUsage = struct {
     pub fn getSignalCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nsignals);
     }
 
     pub fn getContextSwitches(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
         ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
@@ -227,7 +227,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return this.createResourceUsageObject(globalObject);
     }
 
@@ -560,7 +560,7 @@ pub const Subprocess = struct {
     pub fn getStderr(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stderr);
         return this.stderr.toJS(globalThis, this.hasExited());
     }
@@ -568,7 +568,7 @@ pub const Subprocess = struct {
     pub fn getStdin(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stdin);
         return this.stdin.toJS(globalThis, this);
     }
@@ -576,7 +576,7 @@ pub const Subprocess = struct {
     pub fn getStdout(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stdout);
         return this.stdout.toJS(globalThis, this.hasExited());
     }
@@ -585,7 +585,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         global: *JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.process.hasExited()) {
             // rely on GC to clean everything up in this case
             return .undefined;
@@ -694,12 +694,12 @@ pub const Subprocess = struct {
         this.process.close();
     }
 
-    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.ref();
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.unref();
         return JSC.JSValue.jsUndefined();
     }
@@ -717,7 +717,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
                 global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
@@ -753,21 +753,21 @@ pub const Subprocess = struct {
     pub fn getPid(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSValue.jsNumber(this.pid());
     }
 
     pub fn getKilled(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSValue.jsBoolean(this.hasKilled());
     }
 
     pub fn getStdio(
         this: *Subprocess,
         global: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const array = JSValue.createEmptyArray(global, 0);
         array.push(global, .null);
         array.push(global, .null); // TODO: align this with options
@@ -1574,7 +1574,7 @@ pub const Subprocess = struct {
     pub fn getExited(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         switch (this.process.status) {
             .exited => |exit| {
                 return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
@@ -1598,7 +1598,7 @@ pub const Subprocess = struct {
     pub fn getExitCode(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.process.status == .exited) {
             return JSC.JSValue.jsNumber(this.process.status.exited.code);
         }
@@ -1608,7 +1608,7 @@ pub const Subprocess = struct {
     pub fn getSignalCode(
         this: *Subprocess,
         global: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.process.signalCode()) |signal| {
             if (signal.name()) |name|
                 return JSC.ZigString.init(name).toJS(global)

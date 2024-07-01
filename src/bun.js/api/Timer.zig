@@ -643,10 +643,10 @@ pub const TimerObject = struct {
         }
     }
 
-    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn hasRef(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         return JSValue.jsBoolean(this.is_keeping_event_loop_alive);
     }
-    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn toPrimitive(this: *TimerObject, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (!this.has_accessed_primitive) {
             this.has_accessed_primitive = true;
             const vm = VirtualMachine.get();

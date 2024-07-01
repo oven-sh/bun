@@ -1155,7 +1155,7 @@ pub fn wrapInstanceMethod(
                 }
             }
 
-            return @call(.auto, @field(Container, name), args);
+            return @call(.always_inline, @field(Container, name), args);
         }
     }.method;
 }
@@ -1308,7 +1308,7 @@ pub fn wrapStaticMethod(
 
             defer iter.deinit();
 
-            return @call(.auto, @field(Container, name), args);
+            return @call(.always_inline, @field(Container, name), args);
         }
     }.method;
 }

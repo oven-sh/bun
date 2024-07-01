@@ -544,7 +544,7 @@ pub const Options = struct {
     module_type: options.OutputFormat = .preserve,
 
     /// Used for cross-module inlining of import items when bundling
-    const_values: Ast.ConstValuesMap = .{},
+    // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
     // TODO: remove this
@@ -3056,14 +3056,15 @@ fn NewPrinter(
                                 p.print(")");
                             }
                         }
-                    } else if (p.options.const_values.get(ref)) |const_value| {
-                        p.printSpaceBeforeIdentifier();
-                        // TODO: addSourceMappingForName
-                        // p.addSourceMappingForName(renamer.nameForSymbol(e.ref));
-                        p.addSourceMapping(expr.loc);
-                        p.printExpr(const_value, level, flags);
-                        didPrint = true;
                     }
+                    // else if (p.options.const_values.get(ref)) |const_value| {
+                    //     p.printSpaceBeforeIdentifier();
+                    //     // TODO: addSourceMappingForName
+                    //     // p.addSourceMappingForName(renamer.nameForSymbol(e.ref));
+                    //     p.addSourceMapping(expr.loc);
+                    //     p.printExpr(const_value, level, flags);
+                    //     didPrint = true;
+                    // }
 
                     if (!didPrint) {
                         p.printSpaceBeforeIdentifier();
@@ -3580,10 +3581,11 @@ fn NewPrinter(
                                         }
                                     }
                                 },
-                                .e_import_identifier => |e| inner: {
+                                // .e_import_identifier => |e| inner: {
+                                .e_import_identifier => |e| {
                                     const ref = p.symbols().follow(e.ref);
-                                    if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                        break :inner;
+                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
+                                    //     break :inner;
 
                                     if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.eql(key.data, p.renamer.nameForSymbol(e.ref))) {
@@ -3620,11 +3622,12 @@ fn NewPrinter(
                                     }
                                     // if (strings) {}
                                 },
-                                .e_import_identifier => |e| inner: {
+                                // .e_import_identifier => |e| inner: {
+                                .e_import_identifier => |e| {
                                     const ref = p.symbols().follow(e.ref);
 
-                                    if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
-                                        break :inner;
+                                    // if (p.options.const_values.count() > 0 and p.options.const_values.contains(ref))
+                                    //     break :inner;
 
                                     if (p.symbols().get(ref)) |symbol| {
                                         if (symbol.namespace_alias == null and strings.utf16EqlString(key.slice16(), p.renamer.nameForSymbol(e.ref))) {

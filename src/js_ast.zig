@@ -6584,7 +6584,7 @@ pub const Ast = struct {
 
     /// Only populated when bundling
     target: bun.options.Target = .browser,
-    const_values: ConstValuesMap = .{},
+    // const_values: ConstValuesMap = .{},
     ts_enums: TsEnumsMap = .{},
 
     /// Not to be confused with `commonjs_named_exports`
@@ -6687,7 +6687,7 @@ pub const BundledAst = struct {
     /// Only populated when bundling
     target: bun.options.Target = .browser,
 
-    const_values: ConstValuesMap = .{},
+    // const_values: ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
     flags: BundledAst.Flags = .{},
@@ -6764,7 +6764,7 @@ pub const BundledAst = struct {
 
             .target = this.target,
 
-            .const_values = this.const_values,
+            // .const_values = this.const_values,
             .ts_enums = this.ts_enums,
 
             .uses_exports_ref = this.flags.uses_exports_ref,
@@ -6815,7 +6815,7 @@ pub const BundledAst = struct {
 
             .target = ast.target,
 
-            .const_values = ast.const_values,
+            // .const_values = ast.const_values,
             .ts_enums = ast.ts_enums,
 
             .flags = .{

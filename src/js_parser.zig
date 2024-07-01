@@ -7456,6 +7456,19 @@ fn NewParser_(
                             if (foldStringAddition(e_.left, e_.right, p.allocator, .normal)) |res| {
                                 return res;
                             }
+
+                            // "(x + 'abc') + 'xyz'" => "'abcxyz'"
+                            if (e_.left.data.as(.e_binary)) |left| {
+                                if (left.op == .bin_add) {
+                                    if (foldStringAddition(left.right, e_.right, p.allocator, .nested_left)) |result| {
+                                        return p.newExpr(E.Binary{
+                                            .left = left.left,
+                                            .right = result,
+                                            .op = .bin_add,
+                                        }, e_.left.loc);
+                                    }
+                                }
+                            }
                         }
                     },
                     .bin_sub => {
@@ -23637,7 +23650,8 @@ fn NewParser_(
 
                 .hashbang = hashbang,
 
-                .const_values = p.const_values,
+                // TODO: cross-module constant inlining
+                // .const_values = p.const_values,
                 .ts_enums = try p.computeTsEnumsMap(allocator),
 
                 .import_meta_ref = p.import_meta_ref,

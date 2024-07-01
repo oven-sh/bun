@@ -14,30 +14,38 @@ const server = Bun.listen({
 
 let connected = 0;
 async function callback() {
+  const { promise, resolve } = Promise.withResolvers();
   await Bun.connect({
     port: server.port,
-    hostname: "localhost",
+    hostname: server.hostname,
     socket: {
       open(socket) {
         connected += 1;
       },
       data(socket, data) {},
+      close() {
+        connected -= 1;
+        resolve();
+      },
     },
   });
+  return promise;
 }
+
+// warmup
+await Promise.all(new Array(10).fill(0).map(callback));
 
 const fd_before = openSync("/dev/null", "w");
 closeSync(fd_before);
 
 // start 100 connections
-const connections = await Promise.all(new Array(100).fill(0).map(callback));
+await Promise.all(new Array(100).fill(0).map(callback));
 
-expect(connected).toBe(100);
+expect(connected).toBe(0);
 
 const fd = openSync("/dev/null", "w");
 closeSync(fd);
 
 // ensure that we don't leak sockets when we initiate multiple connections
 expect(fd - fd_before).toBeLessThan(5);
-
-server.stop();
+server.stop(true);

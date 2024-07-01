@@ -2741,11 +2741,6 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
 // static JSC::JSNativeStdFunction* rejecterFunction;
 // static bool resolverFunctionInitialized = false;
 
-JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
-{
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
-}
-
 JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
     if (arg0->len == 0) {
@@ -4814,9 +4809,12 @@ enum class BuiltinNamesMap : uint8_t {
     path,
     stream,
     asyncIterator,
+    name,
+    message,
+    error,
 };
 
-static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -4862,6 +4860,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
+    }
+    case BuiltinNamesMap::name: {
+        return vm.propertyNames->name;
+    }
+    case BuiltinNamesMap::message: {
+        return vm.propertyNames->message;
+    }
+    case BuiltinNamesMap::error: {
+        return vm.propertyNames->error;
     }
     default: {
         ASSERT_NOT_REACHED();

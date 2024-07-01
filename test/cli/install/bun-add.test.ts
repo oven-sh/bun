@@ -202,11 +202,7 @@ it.each(["fileblah://"])("should reject invalid path without segfault: %s", asyn
   });
   const err = await new Response(stderr).text();
   expect(err).toContain("bun add");
-  if (protocolPrefix === "file:///") {
-    expect(err).toContain("error: MissingPackageJSON");
-  } else {
-    expect(err).toContain(`error: unrecognised dependency format: ${dep.replace(/\\\\/g, "/")}`);
-  }
+  expect(err).toContain(`error: unrecognised dependency format: ${dep}`);
 
   const out = await new Response(stdout).text();
   expect(out).toBe("");
@@ -906,6 +902,35 @@ for (const { desc, dep } of gitNameTests) {
     });
   });
 }
+
+it("git dep without package.json and with default branch", async () => {
+  await Bun.write(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+    }),
+  );
+
+  const { stderr, exited } = spawn({
+    cmd: [bunExe(), "add", "git@github.com:dylan-conway/install-test-no-packagejson"],
+    cwd: package_dir,
+    stdout: "ignore",
+    stderr: "pipe",
+    env,
+  });
+
+  const err = await Bun.readableStreamToText(stderr);
+  expect(err).not.toContain("error:");
+
+  expect(await exited).toBe(0);
+
+  expect(await file(join(package_dir, "package.json")).json()).toEqual({
+    name: "foo",
+    dependencies: {
+      "install-test-no-packagejson": "git@github.com:dylan-conway/install-test-no-packagejson",
+    },
+  });
+});
 
 it("should let you add the same package twice", async () => {
   const urls: string[] = [];

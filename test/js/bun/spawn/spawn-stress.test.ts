@@ -1,19 +1,20 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
+import { bunExe } from "harness";
 
 test("spawn stress", async () => {
   for (let i = 0; i < 100; i++) {
     try {
-      console.log("--- Begin Iteration " + i, "----");
+      console.log("=== Begin Iteration " + i, "===");
       const withoutCache = spawn({
-        cmd: ["clang", "--version"],
+        cmd: [bunExe(), "--version"],
         stdout: "pipe",
         stderr: "pipe",
         stdin: "ignore",
       });
       var err = await new Response(withoutCache.stderr).text();
       var out = await new Response(withoutCache.stdout).text();
-      console.log("--- End Iteration " + i, "----");
+      console.log("=== End Iteration " + i, "===");
       out = out.trim();
       err = err.trim();
 

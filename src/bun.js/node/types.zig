@@ -69,13 +69,13 @@ inline fn toLowerT(comptime T: type, a_c: T) T {
 
 inline fn toJSString(globalObject: *JSC.JSGlobalObject, slice: []const u8) JSC.JSValue {
     return if (slice.len > 0)
-        JSC.ZigString.init(slice).withEncoding().toValueGC(globalObject)
+        JSC.ZigString.init(slice).withEncoding().toJS(globalObject)
     else
         JSC.JSValue.jsEmptyString(globalObject);
 }
 
 inline fn toUTF8JSString(globalObject: *JSC.JSGlobalObject, slice: []const u8) JSC.JSValue {
-    return JSC.ZigString.initUTF8(slice).toValueGC(globalObject);
+    return JSC.ZigString.initUTF8(slice).toJS(globalObject);
 }
 
 fn typeBaseNameT(comptime T: type) []const u8 {
@@ -202,7 +202,7 @@ pub fn Maybe(comptime ReturnTypeT: type, comptime ErrorTypeT: type) type {
                         .Struct, .Enum, .Opaque, .Union => r.toJS(globalObject),
                         .Pointer => {
                             if (bun.trait.isZigString(ReturnType))
-                                JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toValueAuto(globalObject);
+                                JSC.ZigString.init(bun.asByteSlice(r)).withEncoding().toJS(globalObject);
 
                             return r.toJS(globalObject);
                         },
@@ -611,18 +611,18 @@ pub const Encoding = enum(u8) {
             .base64 => {
                 var buf: [std.base64.standard.Encoder.calcSize(size)]u8 = undefined;
                 const len = bun.base64.encode(&buf, input);
-                return JSC.ZigString.init(buf[0..len]).toValueGC(globalObject);
+                return JSC.ZigString.init(buf[0..len]).toJS(globalObject);
             },
             .base64url => {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(size)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalObject);
+                return JSC.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
             },
             .hex => {
                 var buf: [size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
-                const result = JSC.ZigString.init(out).toValueGC(globalObject);
+                const result = JSC.ZigString.init(out).toJS(globalObject);
                 return result;
             },
             .buffer => {
@@ -654,12 +654,12 @@ pub const Encoding = enum(u8) {
                 var buf: [std.base64.url_safe_no_pad.Encoder.calcSize(max_size * 4)]u8 = undefined;
                 const encoded = std.base64.url_safe_no_pad.Encoder.encode(&buf, input);
 
-                return JSC.ZigString.init(buf[0..encoded.len]).toValueGC(globalObject);
+                return JSC.ZigString.init(buf[0..encoded.len]).toJS(globalObject);
             },
             .hex => {
                 var buf: [max_size * 4]u8 = undefined;
                 const out = std.fmt.bufPrint(&buf, "{}", .{std.fmt.fmtSliceHexLower(input)}) catch bun.outOfMemory();
-                const result = JSC.ZigString.init(out).toValueGC(globalObject);
+                const result = JSC.ZigString.init(out).toJS(globalObject);
                 return result;
             },
             .buffer => {
@@ -4883,7 +4883,7 @@ pub const Path = struct {
 
 pub const Process = struct {
     pub fn getArgv0(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-        return JSC.ZigString.fromUTF8(bun.argv[0]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(bun.argv[0]).toJS(globalObject);
     }
 
     pub fn getExecPath(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -4892,7 +4892,7 @@ pub const Process = struct {
             return getArgv0(globalObject);
         };
 
-        return JSC.ZigString.fromUTF8(out).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(out).toJS(globalObject);
     }
 
     pub fn getExecArgv(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

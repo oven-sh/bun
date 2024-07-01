@@ -1619,7 +1619,7 @@ pub const Subprocess = struct {
     ) callconv(.C) JSValue {
         if (this.process.signalCode()) |signal| {
             if (signal.name()) |name|
-                return JSC.ZigString.init(name).toValueGC(global)
+                return JSC.ZigString.init(name).toJS(global)
             else
                 return JSC.JSValue.jsNumber(@intFromEnum(signal));
         }

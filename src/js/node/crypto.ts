@@ -11832,8 +11832,9 @@ class KeyObject {
     }
     this.$bunNativePtr = key;
   }
-  toString() {
-    return "[object KeyObject]";
+
+  get [Symbol.toStringTag]() {
+    return "KeyObject"
   }
 
   static from(key) {

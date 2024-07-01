@@ -1001,7 +1001,7 @@ pub const ServerConfig = struct {
                 }
             }
 
-            if (arg.getTruthy(global, "error")) |onError| {
+            if (arg.getTruthyComptime(global, "error")) |onError| {
                 if (!onError.isCallable(global.vm())) {
                     JSC.throwInvalidArguments("Expected error to be a function", .{}, global, exception);
                     if (args.ssl_config) |*conf| {
@@ -3667,7 +3667,7 @@ pub const WebSocketServer = struct {
 
             var valid = false;
 
-            if (object.getTruthy(globalObject, "message")) |message_| {
+            if (object.getTruthyComptime(globalObject, "message")) |message_| {
                 if (!message_.isCallable(vm)) {
                     globalObject.throwInvalidArguments("websocket expects a function for the message option", .{});
                     return null;
@@ -4119,7 +4119,7 @@ pub const ServerWebSocket = struct {
                 .text => brk: {
                     var str = ZigString.init(message);
                     str.markUTF8();
-                    break :brk str.toValueGC(globalObject);
+                    break :brk str.toJS(globalObject);
                 },
                 .binary => this.binaryToJS(globalObject, message),
                 else => unreachable,
@@ -4281,7 +4281,7 @@ pub const ServerWebSocket = struct {
             str.markUTF8();
             const result = handler.onClose.call(
                 globalObject,
-                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toValueGC(globalObject) },
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
             );
 
             if (result.toError()) |err| {
@@ -5073,9 +5073,9 @@ pub const ServerWebSocket = struct {
         log("getBinaryType()", .{});
 
         return switch (this.flags.binary_type) {
-            .Uint8Array => ZigString.static("uint8array").toValueGC(globalThis),
-            .Buffer => ZigString.static("nodebuffer").toValueGC(globalThis),
-            .ArrayBuffer => ZigString.static("arraybuffer").toValueGC(globalThis),
+            .Uint8Array => ZigString.static("uint8array").toJS(globalThis),
+            .Buffer => ZigString.static("nodebuffer").toJS(globalThis),
+            .ArrayBuffer => ZigString.static("arraybuffer").toJS(globalThis),
             else => @panic("Invalid binary type"),
         };
     }
@@ -5245,7 +5245,7 @@ pub const ServerWebSocket = struct {
         };
 
         const text = bun.fmt.formatIp(address, &text_buf) catch unreachable;
-        return ZigString.init(text).toValueGC(globalThis);
+        return ZigString.init(text).toJS(globalThis);
     }
 };
 

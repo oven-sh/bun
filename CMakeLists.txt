@@ -2,8 +2,8 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.16")
-set(WEBKIT_TAG 64d04ec1a65d91326c5f2298b9c7d05b56125252)
+set(Bun_VERSION "1.1.18")
+set(WEBKIT_TAG 5bbfe7e880090b9d0b5feaf3563e85957dd7b10d)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -13,6 +13,10 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# Should not start with v
+# Used in process.version, process.versions.node, napi, and elsewhere
+set(REPORTED_NODEJS_VERSION "22.3.0")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -610,7 +614,7 @@ set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
 if(NOT BUN_DEPS_OUT_DIR)
-    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
+    set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
 endif()
 
 set(BUN_RAW_SOURCES, "")
@@ -883,6 +887,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
         "-Denable_logs=${ENABLE_LOGS}"
+        "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -965,6 +970,7 @@ add_compile_definitions(
     "IS_BUILD"
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
+    "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
 )
 
 if(NOT ASSERT_ENABLED)
@@ -1424,10 +1430,6 @@ else()
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
     )
-endif()
-
-if(WIN32)
-    # delayimp -delayload:shell32.dll -delayload:ole32.dll
 endif()
 
 if(BUN_LINK_ONLY)

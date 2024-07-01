@@ -3281,16 +3281,16 @@ pub const Blob = struct {
     ) callconv(.C) JSValue {
         if (this.content_type.len > 0) {
             if (this.content_type_allocated) {
-                return ZigString.init(this.content_type).toValueGC(globalThis);
+                return ZigString.init(this.content_type).toJS(globalThis);
             }
-            return ZigString.init(this.content_type).toValueGC(globalThis);
+            return ZigString.init(this.content_type).toJS(globalThis);
         }
 
         if (this.store) |store| {
-            return ZigString.init(store.mime_type.value).toValueGC(globalThis);
+            return ZigString.init(store.mime_type.value).toJS(globalThis);
         }
 
-        return ZigString.Empty.toValue(globalThis);
+        return ZigString.Empty.toJS(globalThis);
     }
 
     // TODO: Move this to a separate `File` object or BunFile
@@ -3772,7 +3772,7 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
 
         if (buf.len == 0) {
-            return ZigString.Empty.toValue(global);
+            return ZigString.Empty.toJS(global);
         }
 
         if (bom == .utf16_le) {
@@ -3858,7 +3858,7 @@ pub const Blob = struct {
             @constCast(this.sharedView());
 
         if (view_.len == 0)
-            return ZigString.Empty.toValue(global);
+            return ZigString.Empty.toJS(global);
 
         return toStringWithBytes(this, global, view_, lifetime);
     }
@@ -4386,7 +4386,7 @@ pub const AnyBlob = union(enum) {
             // },
             .InternalBlob => {
                 if (this.InternalBlob.bytes.items.len == 0) {
-                    return ZigString.Empty.toValue(global);
+                    return ZigString.Empty.toJS(global);
                 }
 
                 const owned = this.InternalBlob.toStringOwned(global);
@@ -4668,7 +4668,7 @@ pub const InlineBlob = extern struct {
 
     pub fn toStringOwned(this: *@This(), globalThis: *JSC.JSGlobalObject) JSValue {
         if (this.len == 0)
-            return ZigString.Empty.toValue(globalThis);
+            return ZigString.Empty.toJS(globalThis);
 
         var str = ZigString.init(this.sliceConst());
 
@@ -4676,7 +4676,7 @@ pub const InlineBlob = extern struct {
             str.markUTF8();
         }
 
-        const out = str.toValueGC(globalThis);
+        const out = str.toJS(globalThis);
         out.ensureStillAlive();
         this.len = 0;
         return out;

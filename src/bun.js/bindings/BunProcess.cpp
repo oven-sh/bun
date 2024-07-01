@@ -77,7 +77,6 @@ namespace Bun {
 
 using namespace JSC;
 
-#define REPORTED_NODE_VERSION "22.2.0"
 #define processObjectBindingCodeGenerator processObjectInternalsBindingCodeGenerator
 #define setProcessObjectInternalsMainModuleCodeGenerator processObjectInternalsSetMainModuleCodeGenerator
 #define setProcessObjectMainModuleCodeGenerator setMainModuleCodeGenerator
@@ -147,7 +146,7 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
     JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
-        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODE_VERSION))));
+        JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(REPORTED_NODEJS_VERSION))));
     object->putDirect(
         vm, JSC::Identifier::fromString(vm, "bun"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(Bun__version + 1 /* remove "v" prefix */))));
@@ -1513,7 +1512,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
         }
 
         header->putDirect(vm, JSC::Identifier::fromString(vm, "commandLine"_s), JSValue::decode(Bun__Process__getExecArgv(globalObject)), 0);
-        header->putDirect(vm, JSC::Identifier::fromString(vm, "nodejsVersion"_s), JSC::jsString(vm, String::fromLatin1(REPORTED_NODE_VERSION)), 0);
+        header->putDirect(vm, JSC::Identifier::fromString(vm, "nodejsVersion"_s), JSC::jsString(vm, String::fromLatin1(REPORTED_NODEJS_VERSION)), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "wordSize"_s), JSC::jsNumber(64), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "arch"_s), constructArch(vm, header), 0);
         header->putDirect(vm, JSC::Identifier::fromString(vm, "platform"_s), constructPlatform(vm, header), 0);
@@ -1930,7 +1929,7 @@ static JSValue constructBrowser(VM& vm, JSObject* processObject)
 
 static JSValue constructVersion(VM& vm, JSObject* processObject)
 {
-    return JSC::jsString(vm, makeString("v", REPORTED_NODE_VERSION));
+    return JSC::jsString(vm, makeString("v", REPORTED_NODEJS_VERSION));
 }
 
 static JSValue constructIsBun(VM& vm, JSObject* processObject)

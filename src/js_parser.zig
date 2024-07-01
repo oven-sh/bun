@@ -12864,7 +12864,13 @@ fn NewParser_(
                                         if (opts.is_class and is_typescript_enabled and !opts.is_ts_abstract and strings.eqlComptime(raw, "abstract")) {
                                             opts.is_ts_abstract = true;
                                             const scope_index = p.scopes_in_order.items.len;
-                                            _ = try p.parseProperty(kind, opts, null);
+                                            if (try p.parseProperty(kind, opts, null)) |_prop| {
+                                                var prop = _prop;
+                                                if (prop.kind == .normal and prop.value == null and opts.ts_decorators.len > 0) {
+                                                    prop.kind = .abstract;
+                                                    return prop;
+                                                }
+                                            }
                                             p.discardScopesUpTo(scope_index);
                                             return null;
                                         }
@@ -12911,6 +12917,13 @@ fn NewParser_(
                                 .class_static_block = block,
                             };
                         }
+                    }
+
+                    // Handle invalid identifiers in property names
+                    // https://github.com/oven-sh/bun/issues/12039
+                    if (p.lexer.token == .t_syntax_error) {
+                        p.log.addRangeErrorFmt(p.source, name_range, p.allocator, "Unexpected {}", .{bun.fmt.quote(name)}) catch bun.outOfMemory();
+                        return error.SyntaxError;
                     }
 
                     key = p.newExpr(E.String{ .data = name }, name_range.loc);

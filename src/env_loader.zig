@@ -1088,7 +1088,7 @@ const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTableValue = struct {
+    pub const HashTableValue = struct {
         value: string,
         conditional: bool,
     };
@@ -1096,7 +1096,7 @@ pub const Map = struct {
     // An issue with this exact implementation is unicode characters can technically appear in these
     // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
     // some strings collide.
-    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
+    pub const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 
@@ -1270,7 +1270,7 @@ pub const Map = struct {
     }
 
     pub fn remove(this: *Map, key: string) void {
-        this.map.remove(key);
+        _ = this.map.swapRemove(key);
     }
 
     pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) !Map {

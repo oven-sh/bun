@@ -15,7 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { cpSync, rmSync } from "js/node/fs/export-star-from";
+import { cpSync } from "node:fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);

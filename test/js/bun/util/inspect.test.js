@@ -1,4 +1,6 @@
 import { it, expect, describe } from "bun:test";
+import { tmpdirSync } from "harness";
+import { join } from "path";
 import util from "util";
 
 it("prototype", () => {
@@ -102,7 +104,8 @@ it("when prototype defines the same property, don't print the same property twic
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
-  expect(Bun.inspect(Bun.file("/tmp/file.txt"))).toBe(`FileRef ("/tmp/file.txt") {
+  const tmpFile = join(tmpdirSync(), "file.txt");
+  expect(Bun.inspect(Bun.file(tmpFile))).toBe(`FileRef ("${tmpFile}") {
   type: "text/plain;charset=utf-8"
 }`);
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
@@ -174,7 +177,32 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent with no data set", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
+}`,
+  );
+});
+
+it("MessageEvent with deleted data", () => {
+  const event = new MessageEvent("message");
+  Object.defineProperty(event, "data", {
+    value: 123,
+    writable: true,
+    configurable: true,
+  });
+  delete event.data;
+  expect(Bun.inspect(event)).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });
@@ -367,11 +395,12 @@ describe("latin1 supplemental", () => {
   });
 });
 
+const tmpdir = tmpdirSync();
 const fixture = [
   () => globalThis,
-  () => Bun.file("/tmp/log.txt").stream(),
-  () => Bun.file("/tmp/log.1.txt").stream().getReader(),
-  () => Bun.file("/tmp/log.2.txt").writer(),
+  () => Bun.file(join(tmpdir, "log.txt")).stream(),
+  () => Bun.file(join(tmpdir, "log.1.txt")).stream().getReader(),
+  () => Bun.file(join(tmpdir, "log.2.txt")).writer(),
   () =>
     new WritableStream({
       write(chunk) {},
@@ -494,4 +523,21 @@ it("Bun.inspect array with non-indexed properties", () => {
   expect(Bun.inspect(a)).toBe(`[
   1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
 ]`);
+});
+
+describe("console.logging function displays async and generator names", async () => {
+  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+
+  const expected_logs = [
+    "[Function: a]",
+    "[AsyncFunction: b]",
+    "[GeneratorFunction: c]",
+    "[AsyncGeneratorFunction: d]",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
+    });
+  }
 });

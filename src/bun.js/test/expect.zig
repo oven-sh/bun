@@ -2344,8 +2344,8 @@ pub const Expect = struct {
             if (expected_value.isEmpty() or expected_value.isUndefined()) {
                 const signature_no_args = comptime getSignature("toThrow", "", true);
                 if (result.toError()) |err| {
-                    const name = err.get(globalThis, "name") orelse JSValue.undefined;
-                    const message = err.get(globalThis, "message") orelse JSValue.undefined;
+                    const name = err.getTruthyComptime(globalThis, "name") orelse JSValue.undefined;
+                    const message = err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
                     globalThis.throwPretty(fmt, .{
                         name.toFmt(globalThis, &formatter),
@@ -2491,7 +2491,7 @@ pub const Expect = struct {
             // If it's not an object, we are going to crash here.
             assert(expected_value.isObject());
 
-            if (expected_value.get(globalThis, "message")) |expected_message| {
+            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
@@ -4573,7 +4573,7 @@ pub const Expect = struct {
         const err = switch (Output.enable_ansi_colors) {
             inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(globalThis, &formatter) }),
         };
-        err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toValueGC(globalThis));
+        err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toJS(globalThis));
         globalThis.throwValue(err);
     }
 
@@ -4629,7 +4629,7 @@ pub const Expect = struct {
                     pass = pass_value.toBooleanSlow(globalThis);
                     if (globalThis.hasException()) return false;
 
-                    if (result.get(globalThis, "message")) |message_value| {
+                    if (result.fastGet(globalThis, .message)) |message_value| {
                         if (!message_value.isString() and !message_value.isCallable(globalThis.vm())) {
                             break :valid false;
                         }

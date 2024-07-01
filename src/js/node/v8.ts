@@ -31,24 +31,44 @@ function cachedDataVersionTag() {
 function getHeapSnapshot() {
   notimpl("getHeapSnapshot");
 }
+
+let totalmem_ = -1;
+
+function totalmem() {
+  if (totalmem_ === -1) {
+    totalmem_ = require("node:os").totalmem();
+  }
+  return totalmem_;
+}
+
 function getHeapStatistics() {
   const stats = jsc.heapStats();
-  // this is not very correct
+  const memory = jsc.memoryUsage();
+
+  // These numbers need to be plausible, even if incorrect
+  // From npm's codebase:
+  //
+  // > static #heapLimit = Math.floor(getHeapStatistics().heap_size_limit)
+  //
   return {
-    total_heap_size: stats.heapCapacity,
-    total_heap_size_executable: 0,
-    total_physical_size: stats.heapSize,
-    total_available_size: Infinity,
+    total_heap_size: stats.heapSize,
+    total_heap_size_executable: stats.heapSize >> 1,
+    total_physical_size: memory.peak,
+    total_available_size: totalmem() - stats.heapSize,
     used_heap_size: stats.heapSize,
-    heap_size_limit: Infinity,
+    heap_size_limit: Math.min(memory.peak * 10, totalmem()),
     malloced_memory: stats.heapSize,
-    peak_malloced_memory: Infinity,
+    peak_malloced_memory: memory.peak,
+
+    // -- Copied from Node:
     does_zap_garbage: 0,
-    number_of_native_contexts: Infinity,
-    number_of_detached_contexts: Infinity,
-    total_global_handles_size: Infinity,
-    used_global_handles_size: Infinity,
-    external_memory: Infinity,
+    number_of_native_contexts: 1,
+    number_of_detached_contexts: 0,
+    total_global_handles_size: 8192,
+    used_global_handles_size: 2208,
+    // ---- End of copied from Node
+
+    external_memory: stats.extraMemorySize,
   };
 }
 function getHeapSpaceStatistics() {

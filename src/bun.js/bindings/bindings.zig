@@ -134,12 +134,13 @@ pub const ZigString = extern struct {
         }
     }
 
-    pub fn toJS(this: ZigString, ctx: *JSC.JSGlobalObject) JSValue {
+    extern fn ZigString__toValueGC(arg0: *const ZigString, arg1: *JSGlobalObject) JSC.JSValue;
+    pub fn toJS(this: *const ZigString, ctx: *JSC.JSGlobalObject) JSValue {
         if (this.isGloballyAllocated()) {
             return this.toExternalValue(ctx);
         }
 
-        return this.toValueAuto(ctx);
+        return ZigString__toValueGC(this, ctx);
     }
 
     /// This function is not optimized!
@@ -729,7 +730,7 @@ pub const ZigString = extern struct {
     }
 
     pub inline fn toRef(slice_: []const u8, global: *JSGlobalObject) C_API.JSValueRef {
-        return init(slice_).toValue(global).asRef();
+        return init(slice_).toJS(global).asRef();
     }
 
     pub const Empty = ZigString{ ._unsafe_ptr_do_not_use = "", .len = 0 };
@@ -843,14 +844,6 @@ pub const ZigString = extern struct {
         return strings.trim(this.full(), " \r\n");
     }
 
-    pub fn toValueAuto(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        if (!this.is16Bit()) {
-            return this.toValue(global);
-        } else {
-            return this.to16BitValue(global);
-        }
-    }
-
     inline fn assertGlobalIfNeeded(this: *const ZigString) void {
         if (comptime bun.Environment.allow_assert) {
             if (this.isGloballyAllocated()) {
@@ -865,11 +858,6 @@ pub const ZigString = extern struct {
                 bun.Mimalloc.mi_is_in_heap_region(untagged(this._unsafe_ptr_do_not_use)) or
                 bun.Mimalloc.mi_check_owned(untagged(this._unsafe_ptr_do_not_use)));
         }
-    }
-
-    pub fn toValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        this.assertGlobalIfNeeded();
-        return shim.cppFn("toValue", .{ this, global });
     }
 
     pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
@@ -897,10 +885,6 @@ pub const ZigString = extern struct {
     pub fn to16BitValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         this.assertGlobal();
         return shim.cppFn("to16BitValue", .{ this, global });
-    }
-
-    pub fn toValueGC(this: *const ZigString, global: *JSGlobalObject) JSValue {
-        return shim.cppFn("toValueGC", .{ this, global });
     }
 
     pub fn withEncoding(this: *const ZigString) ZigString {
@@ -938,10 +922,8 @@ pub const ZigString = extern struct {
 
     pub const Extern = [_][]const u8{
         "toAtomicValue",
-        "toValue",
         "toExternalValue",
         "to16BitValue",
-        "toValueGC",
         "toErrorInstance",
         "toExternalU16",
         "toExternalValueWithCallback",
@@ -2928,7 +2910,7 @@ pub const JSGlobalObject = extern struct {
 
     pub fn createErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
         var err = this.createErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
         return err;
     }
 
@@ -2948,7 +2930,7 @@ pub const JSGlobalObject = extern struct {
 
     pub fn createTypeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
         var err = this.createTypeErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
         return err;
     }
 
@@ -2982,19 +2964,19 @@ pub const JSGlobalObject = extern struct {
 
     pub fn createRangeErrorInstanceWithCode(this: *JSGlobalObject, code: JSC.Node.ErrorCode, comptime fmt: string, args: anytype) JSValue {
         var err = this.createRangeErrorInstance(fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
         return err;
     }
 
     pub fn createRangeError(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE)).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_OUT_OF_RANGE)).toJS(this));
         return err;
     }
 
     pub fn createInvalidArgs(this: *JSGlobalObject, comptime fmt: string, args: anytype) JSValue {
         const err = createErrorInstance(this, fmt, args);
-        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE)).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.static(@tagName(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE)).toJS(this));
         return err;
     }
 
@@ -3006,8 +2988,8 @@ pub const JSGlobalObject = extern struct {
         args: anytype,
     ) JSValue {
         const err = createErrorInstance(this, message, args);
-        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toValue(this));
-        err.put(this, ZigString.static("name"), ZigString.init(error_name).toValue(this));
+        err.put(this, ZigString.static("code"), ZigString.init(@tagName(code)).toJS(this));
+        err.put(this, ZigString.static("name"), ZigString.init(error_name).toJS(this));
         return err;
     }
 
@@ -4837,6 +4819,9 @@ pub const JSValue = enum(JSValueReprInt) {
         path,
         stream,
         asyncIterator,
+        name,
+        message,
+        @"error",
 
         pub fn has(property: []const u8) bool {
             return bun.ComptimeEnumMap(BuiltinName).has(property);

@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { BundlerTestInput, itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { BundlerTestInput, itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 const helpers = {
   "/node_modules/bun-test-helpers/index.js": /* js */ `

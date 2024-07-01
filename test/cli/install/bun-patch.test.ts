@@ -247,10 +247,21 @@ describe("bun patch <pkg>", async () => {
 
     describe("inside ROOT workspace package", async () => {
       const args = [
-        ["packages/eslint-config/node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
-        ["@types/ws@8.5.4", "node_modules/@repo/eslint-config/node_modules/@types/ws"],
+        [
+          "packages/eslint-config/node_modules/@types/ws",
+          "packages/eslint-config/node_modules/@types/ws",
+          "@types/ws@8.5.4",
+          "patches/@types%2Fws@8.5.4.patch",
+        ],
+        [
+          "@types/ws@8.5.4",
+          "node_modules/@repo/eslint-config/node_modules/@types/ws",
+          "@types/ws@8.5.4",
+          "patches/@types%2Fws@8.5.4.patch",
+        ],
+        ["@types/ws@7.4.7", "node_modules/@types/ws", "@types/ws@7.4.7", "patches/@types%2Fws@7.4.7.patch"],
       ];
-      for (const [arg, path] of args) {
+      for (const [arg, path, version, patch_path] of args) {
         test(arg, async () => {
           const tempdir = tempDirWithFiles("lol", {
             "package.json": JSON.stringify({
@@ -311,9 +322,9 @@ describe("bun patch <pkg>", async () => {
 
           expect(await $`cat ${path}/index.js`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
 
-          expect(
-            (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
-          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+          expect((await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies[version]).toEqual(
+            patch_path,
+          );
         });
       }
     });

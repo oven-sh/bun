@@ -206,10 +206,10 @@ pub const Response = struct {
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toValue(globalThis);
+            return ZigString.init("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toValue(globalThis);
+        return ZigString.init("default").toJS(globalThis);
     }
 
     pub fn getStatusText(

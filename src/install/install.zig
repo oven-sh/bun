@@ -46,7 +46,7 @@ const HeaderBuilder = HTTP.HeaderBuilder;
 const Integrity = @import("./integrity.zig").Integrity;
 const clap = bun.clap;
 const ExtractTarball = @import("./extract_tarball.zig");
-const Npm = @import("./npm.zig");
+pub const Npm = @import("./npm.zig");
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
 const z_allocator = @import("../memory_allocator.zig").z_allocator;
 const Syscall = bun.sys;
@@ -1446,7 +1446,7 @@ pub fn NewPackageInstall(comptime kind: PkgInstallKind) type {
 
             state.cached_package_dir = (if (comptime Environment.isWindows)
                 if (method == .symlink)
-                    bun.openDirNoRenamingOrDeletingWindows(this.cache_dir, this.cache_dir_subpath)
+                    bun.openDirNoRenamingOrDeletingWindows(bun.toFD(this.cache_dir), this.cache_dir_subpath)
                 else
                     bun.openDir(this.cache_dir, this.cache_dir_subpath)
             else
@@ -4969,15 +4969,17 @@ pub const PackageManager = struct {
             if (dependency.version.tag != .npm or !dependency.version.value.npm.is_alias and this.lockfile.hasOverrides()) {
                 if (this.lockfile.overrides.get(name_hash)) |new| {
                     debug("override: {s} -> {s}", .{ this.lockfile.str(&dependency.version.literal), this.lockfile.str(&new.literal) });
-                    name = switch (new.tag) {
-                        .dist_tag => new.value.dist_tag.name,
-                        .git => new.value.git.package_name,
-                        .github => new.value.github.package_name,
-                        .npm => new.value.npm.name,
-                        .tarball => new.value.tarball.package_name,
-                        else => name,
+                    name, name_hash = switch (new.tag) {
+                        // only get name hash for npm and dist_tag. git, github, tarball don't have names until after extracting tarball
+                        .dist_tag => .{ new.value.dist_tag.name, String.Builder.stringHash(this.lockfile.str(&new.value.dist_tag.name)) },
+                        .npm => .{ new.value.npm.name, String.Builder.stringHash(this.lockfile.str(&new.value.npm.name)) },
+                        .git => .{ new.value.git.package_name, name_hash },
+                        .github => .{ new.value.github.package_name, name_hash },
+                        .tarball => .{ new.value.tarball.package_name, name_hash },
+                        else => .{ name, name_hash },
                     };
-                    name_hash = String.Builder.stringHash(this.lockfile.str(&name));
+
+                    // `name_hash` stays the same
                     break :version new;
                 }
             }
@@ -6597,13 +6599,19 @@ pub const PackageManager = struct {
                                 .dependency, .root_dependency => |id| {
                                     var version = &manager.lockfile.buffers.dependencies.items[id].version;
                                     switch (version.tag) {
+                                        .git => {
+                                            version.value.git.package_name = pkg.name;
+                                        },
                                         .github => {
                                             version.value.github.package_name = pkg.name;
                                         },
                                         .tarball => {
                                             version.value.tarball.package_name = pkg.name;
                                         },
-                                        else => unreachable,
+
+                                        // `else` is reachable if this package is from `overrides`. Version in `lockfile.buffer.dependencies`
+                                        // will still have the original.
+                                        else => {},
                                     }
                                     try manager.processDependencyListItem(dep, &any_root, install_peer);
                                 },
@@ -6952,8 +6960,8 @@ pub const PackageManager = struct {
             }
             if (bun_install_) |bun_install| {
                 if (bun_install.scoped) |scoped| {
-                    for (scoped.scopes, 0..) |name, i| {
-                        var registry = scoped.registries[i];
+                    for (scoped.scopes.keys(), scoped.scopes.values()) |name, *registry_| {
+                        var registry = registry_.*;
                         if (registry.url.len == 0) registry.url = base.url;
                         try this.registries.put(allocator, Npm.Registry.Scope.hash(name), try Npm.Registry.Scope.fromAPI(name, registry, allocator, env));
                     }
@@ -8404,6 +8412,19 @@ pub const PackageManager = struct {
 
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
+
+        var log = logger.Log.init(ctx.allocator);
+        defer log.deinit();
+        initializeStore();
+        bun.ini.loadNpmrcFromFile(ctx.allocator, ctx.install orelse brk: {
+            const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+            install_.* = std.mem.zeroes(Api.BunInstall);
+            ctx.install = install_;
+            break :brk install_;
+        }, env, true, &log) catch {
+            if (log.errors == 1) Output.warn("Encountered an error while reading <b>.npmrc<r>:", .{}) else Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+            log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
+        };
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 

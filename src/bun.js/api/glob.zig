@@ -174,7 +174,7 @@ pub const WalkTask = struct {
         pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJSC(globalThis),
-                .unknown => |err| ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };

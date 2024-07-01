@@ -207,7 +207,7 @@ pub const struct_hostent = extern struct {
                 const array = JSC.JSValue.createEmptyArray(globalThis, 1);
                 const h_name_len = bun.len(this.h_name);
                 const h_name_slice = this.h_name[0..h_name_len];
-                array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toValueGC(globalThis));
+                array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(h_name_slice).toJS(globalThis));
                 return array;
             }
             return JSC.JSValue.createEmptyArray(globalThis, 0);
@@ -227,7 +227,7 @@ pub const struct_hostent = extern struct {
             while (this.h_aliases[count]) |alias| {
                 const alias_len = bun.len(alias);
                 const alias_slice = alias[0..alias_len];
-                array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toValueGC(globalThis));
+                array.putIndex(globalThis, count, JSC.ZigString.fromUTF8(alias_slice).toJS(globalThis));
                 count += 1;
             }
 
@@ -313,7 +313,7 @@ pub const struct_nameinfo = extern struct {
         if (this.node != null) {
             const node_len = bun.len(this.node);
             const node_slice = this.node[0..node_len];
-            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toValueGC(globalThis));
+            array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(node_slice).toJS(globalThis));
         } else {
             array.putIndex(globalThis, 0, JSC.JSValue.jsUndefined());
         }
@@ -321,7 +321,7 @@ pub const struct_nameinfo = extern struct {
         if (this.service != null) {
             const service_len = bun.len(this.service);
             const service_slice = this.service[0..service_len];
-            array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toValueGC(globalThis));
+            array.putIndex(globalThis, 1, JSC.ZigString.fromUTF8(service_slice).toJS(globalThis));
         } else {
             array.putIndex(globalThis, 1, JSC.JSValue.jsUndefined());
         }
@@ -388,7 +388,7 @@ pub const AddrInfo = extern struct {
         addr_info: *AddrInfo,
         globalThis: *JSC.JSGlobalObject,
     ) JSC.JSValue {
-        var node = addr_info.node.?;
+        var node = addr_info.node orelse return JSC.JSValue.createEmptyArray(globalThis, 0);
         const array = JSC.JSValue.createEmptyArray(
             globalThis,
             node.count(),
@@ -775,7 +775,7 @@ pub const struct_ares_caa_reply = extern struct {
         const property = this.property[0..this.plength];
         const value = this.value[0..this.length];
         const property_str = JSC.ZigString.fromUTF8(property);
-        obj.put(globalThis, &property_str, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
+        obj.put(globalThis, &property_str, JSC.ZigString.fromUTF8(value).toJS(globalThis));
 
         return obj;
     }
@@ -860,7 +860,7 @@ pub const struct_ares_srv_reply = extern struct {
 
         const len = bun.len(this.host);
         const host = this.host[0..len];
-        obj.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("name"), JSC.ZigString.fromUTF8(host).toJS(globalThis));
 
         return obj;
     }
@@ -934,7 +934,7 @@ pub const struct_ares_mx_reply = extern struct {
 
         const host_len = bun.len(this.host);
         const host = this.host[0..host_len];
-        obj.put(globalThis, JSC.ZigString.static("exchange"), JSC.ZigString.fromUTF8(host).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("exchange"), JSC.ZigString.fromUTF8(host).toJS(globalThis));
 
         return obj;
     }
@@ -1005,7 +1005,7 @@ pub const struct_ares_txt_reply = extern struct {
     pub fn toJS(this: *struct_ares_txt_reply, globalThis: *JSC.JSGlobalObject, _: std.mem.Allocator) JSC.JSValue {
         const array = JSC.JSValue.createEmptyArray(globalThis, 1);
         const value = this.txt[0..this.length];
-        array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toValueGC(globalThis));
+        array.putIndex(globalThis, 0, JSC.ZigString.fromUTF8(value).toJS(globalThis));
         return array;
     }
 
@@ -1090,19 +1090,19 @@ pub const struct_ares_naptr_reply = extern struct {
 
         const flags_len = bun.len(this.flags);
         const flags = this.flags[0..flags_len];
-        obj.put(globalThis, JSC.ZigString.static("flags"), JSC.ZigString.fromUTF8(flags).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("flags"), JSC.ZigString.fromUTF8(flags).toJS(globalThis));
 
         const service_len = bun.len(this.service);
         const service = this.service[0..service_len];
-        obj.put(globalThis, JSC.ZigString.static("service"), JSC.ZigString.fromUTF8(service).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("service"), JSC.ZigString.fromUTF8(service).toJS(globalThis));
 
         const regexp_len = bun.len(this.regexp);
         const regexp = this.regexp[0..regexp_len];
-        obj.put(globalThis, JSC.ZigString.static("regexp"), JSC.ZigString.fromUTF8(regexp).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("regexp"), JSC.ZigString.fromUTF8(regexp).toJS(globalThis));
 
         const replacement_len = bun.len(this.replacement);
         const replacement = this.replacement[0..replacement_len];
-        obj.put(globalThis, JSC.ZigString.static("replacement"), JSC.ZigString.fromUTF8(replacement).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("replacement"), JSC.ZigString.fromUTF8(replacement).toJS(globalThis));
 
         return obj;
     }
@@ -1169,11 +1169,11 @@ pub const struct_ares_soa_reply = extern struct {
 
         const nsname_len = bun.len(this.nsname);
         const nsname = this.nsname[0..nsname_len];
-        obj.put(globalThis, JSC.ZigString.static("nsname"), JSC.ZigString.fromUTF8(nsname).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("nsname"), JSC.ZigString.fromUTF8(nsname).toJS(globalThis));
 
         const hostmaster_len = bun.len(this.hostmaster);
         const hostmaster = this.hostmaster[0..hostmaster_len];
-        obj.put(globalThis, JSC.ZigString.static("hostmaster"), JSC.ZigString.fromUTF8(hostmaster).toValueGC(globalThis));
+        obj.put(globalThis, JSC.ZigString.static("hostmaster"), JSC.ZigString.fromUTF8(hostmaster).toJS(globalThis));
 
         return obj;
     }
@@ -1316,8 +1316,33 @@ pub const Error = enum(i32) {
     ECANCELLED = ARES_ECANCELLED,
     ESERVICE = ARES_ESERVICE,
 
+    pub fn toJS(this: Error, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const error_value = globalThis.createErrorInstance("{s}", .{this.label()});
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("name"),
+            JSC.ZigString.init("DNSException").toJS(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("code"),
+            JSC.ZigString.init(this.code()).toJS(globalThis),
+        );
+        error_value.put(
+            globalThis,
+            JSC.ZigString.static("errno"),
+            JSC.jsNumber(@intFromEnum(this)),
+        );
+        return error_value;
+    }
+
     pub fn initEAI(rc: i32) ?Error {
         if (comptime bun.Environment.isWindows) {
+            // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+            if (rc == libuv.UV_EAI_NODATA or rc == libuv.UV_EAI_NONAME) {
+                return Error.ENOTFOUND;
+            }
+
             // TODO: revisit this
             return switch (rc) {
                 0 => null,
@@ -1339,18 +1364,35 @@ pub const Error = enum(i32) {
             };
         }
 
-        return switch (@as(std.posix.system.EAI, @enumFromInt(rc))) {
+        const eai: std.posix.system.EAI = @enumFromInt(rc);
+
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (eai == .NODATA or eai == .NONAME) {
+            return Error.ENOTFOUND;
+        }
+
+        if (comptime bun.Environment.isLinux) {
+            switch (eai) {
+                .SOCKTYPE => return Error.ECONNREFUSED,
+                .IDN_ENCODE => return Error.EBADSTR,
+                .ALLDONE => return Error.ENOTFOUND,
+                .INPROGRESS => return Error.ETIMEOUT,
+                .CANCELED => return Error.ECANCELLED,
+                .NOTCANCELED => return Error.ECANCELLED,
+                else => {},
+            }
+        }
+
+        return switch (eai) {
             @as(std.posix.system.EAI, @enumFromInt(0)) => return null,
             .ADDRFAMILY => Error.EBADFAMILY,
             .BADFLAGS => Error.EBADFLAGS, // Invalid hints
             .FAIL => Error.EBADRESP,
             .FAMILY => Error.EBADFAMILY,
             .MEMORY => Error.ENOMEM,
-            .NODATA => Error.ENODATA,
-            .NONAME => Error.ENONAME,
             .SERVICE => Error.ESERVICE,
             .SYSTEM => Error.ESERVFAIL,
-            else => unreachable,
+            else => bun.todo(@src(), Error.ENOTIMP),
         };
     }
 
@@ -1411,6 +1453,11 @@ pub const Error = enum(i32) {
     });
 
     pub fn get(rc: i32) ?Error {
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/errors.js#L807-L815
+        if (rc == ARES_ENODATA or rc == ARES_ENONAME) {
+            return get(ARES_ENOTFOUND);
+        }
+
         return switch (rc) {
             0 => null,
             1...ARES_ESERVICE => @as(Error, @enumFromInt(rc)),
@@ -1555,7 +1602,7 @@ pub export fn Bun__canonicalizeIP(
         }
         // use the null-terminated size to return the string
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
-        return JSC.ZigString.init(ip_addr[0..size]).toValueGC(globalThis);
+        return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
         globalThis.throwInvalidArguments("address must be a string", .{});
         return .zero;

@@ -1129,14 +1129,14 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return ZigString.fromUTF8(this.path).toValueGC(globalThis);
+        return ZigString.fromUTF8(this.path).toJS(globalThis);
     }
 
     pub fn getLoader(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSValue {
-        return ZigString.fromUTF8(@tagName(this.loader)).toValueGC(globalThis);
+        return ZigString.fromUTF8(@tagName(this.loader)).toJS(globalThis);
     }
 
     pub fn getHash(
@@ -1145,7 +1145,7 @@ pub const BuildArtifact = struct {
     ) callconv(.C) JSValue {
         var buf: [512]u8 = undefined;
         const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
-        return ZigString.init(out).toValueGC(globalThis);
+        return ZigString.init(out).toJS(globalThis);
     }
 
     pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
@@ -1157,7 +1157,7 @@ pub const BuildArtifact = struct {
     }
 
     pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return ZigString.init(@tagName(this.output_kind)).toValueGC(globalObject);
+        return ZigString.init(@tagName(this.output_kind)).toJS(globalObject);
     }
 
     pub fn getSourceMap(this: *BuildArtifact, _: *JSC.JSGlobalObject) callconv(.C) JSValue {

@@ -45,15 +45,6 @@ static void* untagVoid(const char16_t* ptr)
     return untagVoid(reinterpret_cast<const unsigned char*>(ptr));
 }
 
-static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
-{
-    if (str.len == 0 || str.ptr == nullptr) {
-        return JSC::Identifier::EmptyIdentifier;
-    }
-
-    return JSC::Identifier::fromString(global->vm(), { untag(str.ptr), str.len });
-}
-
 static bool isTaggedUTF16Ptr(const unsigned char* ptr)
 {
     return (reinterpret_cast<uintptr_t>(ptr) & (static_cast<uint64_t>(1) << 63)) != 0;
@@ -333,6 +324,16 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObj
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return JSC::JSValue(result);
+}
+
+static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return JSC::Identifier::EmptyIdentifier;
+    }
+    WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
+    JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);
+    return id;
 }
 
 }; // namespace Zig

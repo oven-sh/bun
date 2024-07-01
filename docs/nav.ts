@@ -197,6 +197,9 @@ export default {
       description:
         "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
     }),
+    page("install/npmrc", ".npmrc support", {
+      description: "Bun supports loading some configuration options from .npmrc",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),

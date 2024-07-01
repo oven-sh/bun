@@ -360,7 +360,7 @@ pub const Process = extern struct {
 
     // TODO: https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-proctitle.c
     pub fn setTitle(globalObject: *JSGlobalObject, _: *ZigString) callconv(.C) JSValue {
-        return ZigString.init(_bun).toValue(globalObject);
+        return ZigString.init(_bun).toJS(globalObject);
     }
 
     pub const getArgv = JSC.Node.Process.getArgv;

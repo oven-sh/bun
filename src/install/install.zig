@@ -2701,7 +2701,7 @@ pub const PackageManager = struct {
         this.root_package_id.id = null;
     }
 
-    pub fn crash(this: *PackageManager) noreturn {
+    pub fn crash(this: *const PackageManager) noreturn {
         if (this.options.log_level != .silent) {
             this.log.printForLogLevel(Output.errorWriter()) catch {};
         }
@@ -12489,9 +12489,264 @@ pub const PackageManager = struct {
         )));
     }
 
+    const ExistingNodeModules = enum {
+        bun,
+
+        /// root node_modules did not exist
+        enoent,
+        /// node_modules exists and unable to detect what manager created it (assume bun)
+        unknown,
+
+        npm,
+        yarn,
+        pnpm,
+
+        pub fn shouldMoveRoot(this: ExistingNodeModules) bool {
+            return this != .bun and this != .unknown and this != .enoent;
+        }
+
+        pub fn shouldMoveWorkspace(this: ExistingNodeModules) bool {
+            // root node_modules might not exist but workspace node_modules does.
+            // user might delete previous package manager node_modules but forget
+            // to delete workspace node_modules, so we move instead of delete.
+            return this != .bun and this != .unknown;
+        }
+
+        pub fn ignoredFolderName(this: ExistingNodeModules) [:0]const u8 {
+            bun.assertWithLocation(@intFromEnum(this) > 0, @src());
+            return switch (this) {
+                .bun => unreachable,
+                .unknown, .enoent => ".ignored-modules",
+                inline else => |manager| ".ignored-" ++ @tagName(manager) ++ "-modules",
+            };
+        }
+    };
+
+    /// Creates the root node_modules folder. If it exists and was created by another package
+    /// manager, move the old contents into `node_modules/.ignored`. Also moves workspaces
+    /// if npm/yarn/pnpm was detected for root node_modules
+    ///
+    /// Returns file descriptor for root node_modules
+    pub fn createNodeModulesFolders(
+        this: *const PackageManager,
+        lockfile: *const Lockfile,
+        existing_bun_lockfile: bool,
+    ) !bun.FileDescriptor {
+        var existing_root_node_modules: ExistingNodeModules = .enoent;
+
+        const cwd = bun.FD.cwd();
+        const root_node_modules = switch (bun.sys.openatOSPath(
+            cwd,
+            comptime bun.OSPathLiteral("node_modules"),
+            bun.O.DIRECTORY | bun.O.RDONLY,
+            0o755,
+        )) {
+            .result => |_root_node_modules| root_node_modules: {
+
+                // found a node_modules, check for:
+                // - .package-lock.json (npm)
+                // - .modules.yaml (pnpm)
+                // - .yarn-integrity (yarn@1)
+                // - .yarn-state (yarn@>=2, node-modules linker)
+
+                var root_node_modules = _root_node_modules;
+                existing_root_node_modules = .unknown;
+
+                if (bun.sys.existsAt(root_node_modules, ".package-lock.json")) {
+                    existing_root_node_modules = .npm;
+                } else if (bun.sys.existsAt(root_node_modules, ".modules.yaml")) {
+                    existing_root_node_modules = .pnpm;
+                } else if (bun.sys.existsAt(root_node_modules, ".yarn-integrity")) {
+                    existing_root_node_modules = .yarn;
+                } else if (bun.sys.existsAt(root_node_modules, ".yarn-state")) {
+                    existing_root_node_modules = .yarn;
+                } else if (existing_bun_lockfile) {
+                    existing_root_node_modules = .bun;
+                }
+
+                if (!existing_root_node_modules.shouldMoveRoot()) {
+                    break :root_node_modules root_node_modules;
+                }
+
+                var rand_path_buf: [48]u8 = undefined;
+                const temp_path = std.fmt.bufPrintZ(
+                    &rand_path_buf,
+                    ".old-{}",
+                    .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))},
+                ) catch unreachable;
+
+                // first rename the original to temp directory
+                bun.sys.renameat(cwd, "node_modules", cwd, temp_path).unwrap() catch break :root_node_modules root_node_modules;
+
+                // then create new node_modules
+                bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
+                    Output.err(err, "Failed to create root node_modules folder", .{});
+                    this.crash();
+                };
+
+                root_node_modules = bun.sys.openatOSPath(
+                    cwd,
+                    comptime bun.OSPathLiteral("node_modules"),
+                    bun.O.DIRECTORY | bun.O.RDONLY,
+                    0o755,
+                ).unwrap() catch |err| {
+                    Output.err(err, "Failed to open root node_modules folder", .{});
+                    this.crash();
+                };
+
+                // move the previous node_modules into `.ignored`
+                bun.sys.renameat(
+                    cwd,
+                    temp_path,
+                    root_node_modules,
+                    existing_root_node_modules.ignoredFolderName(),
+                ).unwrap() catch {
+                    // oops
+                    // TODO: maybe attempt deleting the temp node_modules?
+                };
+
+                Output.warn("Moved node_modules from {s} into './node_modules/{s}'", .{
+                    @tagName(existing_root_node_modules),
+                    existing_root_node_modules.ignoredFolderName(),
+                });
+                Output.flushStderr();
+
+                break :root_node_modules root_node_modules;
+            },
+            .err => root_node_modules: {
+                // assume it doesn't exist
+                bun.sys.mkdir("node_modules", 0o755).unwrap() catch |err| {
+                    if (err != error.EEXIST) {
+                        Output.err(err, "Failed to create root node_modules folder", .{});
+                        this.crash();
+                    }
+                };
+
+                break :root_node_modules bun.sys.openatOSPath(
+                    cwd,
+                    comptime bun.OSPathLiteral("node_modules"),
+                    bun.O.DIRECTORY | bun.O.RDONLY,
+                    0o755,
+                ).unwrap() catch |err| {
+                    // accept defeat
+                    Output.err(err, "Failed to open root node_modules folder", .{});
+                    this.crash();
+                };
+            },
+        };
+
+        // Root node_modules is created, and root node_modules from another package manager
+        // has been moved if necessary. Now workspaces:
+
+        const trees = lockfile.buffers.trees.items;
+        const dependencies = lockfile.buffers.dependencies.items;
+        const packages = lockfile.packages.slice();
+        const resolutions = packages.items(.resolution);
+        const package_ids = lockfile.buffers.resolutions.items;
+        const string_buf = lockfile.buffers.string_bytes.items;
+        var path_buf: bun.PathBuffer = undefined;
+
+        var skip_delete = Bitset.initEmpty(this.allocator, trees.len) catch bun.outOfMemory();
+        skip_delete.setValue(0, existing_root_node_modules != .bun and existing_root_node_modules != .unknown);
+
+        for (1..trees.len) |tree_id| {
+            const tree = trees[tree_id];
+            if (!dependencies[tree.dependency_id].behavior.isWorkspaceOnly()) continue;
+
+            const package_id = package_ids[tree.dependency_id];
+            if (package_id > packages.len - 1) continue;
+            const res: Resolution = resolutions[package_id];
+            if (res.tag != .workspace) continue;
+            const workspace_path = res.value.workspace.slice(string_buf);
+
+            const relative = bun.path.joinZBuf(&path_buf, &[_][]const u8{ workspace_path, "node_modules" }, .auto);
+
+            if (!existing_root_node_modules.shouldMoveWorkspace()) {
+                skip_delete.setValue(tree.id, !bun.sys.existsAt(cwd, relative));
+                continue;
+            }
+
+            // attempt to open and move node_modules if root was
+            // created with npm/yarn/pnpm
+            var rand_path_buf: [48]u8 = undefined;
+            const temp_path = std.fmt.bufPrintZ(
+                &rand_path_buf,
+                ".old-{}",
+                .{std.fmt.fmtSliceHexUpper(std.mem.asBytes(&bun.fastRandom()))},
+            ) catch unreachable;
+
+            bun.sys.renameat(cwd, relative, cwd, temp_path).unwrap() catch continue;
+
+            // rename was successful, mark skip_delete
+            skip_delete.set(tree.id);
+
+            bun.sys.mkdir(relative, 0o755).unwrap() catch continue;
+
+            const workspace_node_modules = bun.sys.openatOSPath(
+                cwd,
+                relative,
+                bun.O.DIRECTORY | bun.O.RDONLY,
+                0o755,
+            ).unwrap() catch continue;
+            defer _ = bun.sys.close(workspace_node_modules);
+
+            bun.sys.renameat(
+                cwd,
+                temp_path,
+                workspace_node_modules,
+                existing_root_node_modules.ignoredFolderName(),
+            ).unwrap() catch {
+                // oops
+                // TODO: maybe attempt deleting the temp node_modules
+                continue;
+            };
+
+            Output.warn("Moved node_modules for \"{s}\" into \"{s}/node_modules/{s}\"", .{
+                dependencies[tree.dependency_id].name.slice(string_buf),
+                res.value.workspace.slice(string_buf),
+                existing_root_node_modules.ignoredFolderName(),
+            });
+            Output.flushStderr();
+        }
+
+        // workspaces moved, mark skip delete for remaining trees if their parents were moved or didn't exist
+        for (1..trees.len) |tree_id| {
+            var curr = trees[tree_id].parent;
+            while (curr != Lockfile.Tree.invalid_id) {
+                const tree = trees[curr];
+
+                if (skip_delete.isSet(curr)) {
+                    skip_delete.set(tree_id);
+
+                    if (comptime Environment.isDebug) {
+                        // double check all parents have been set
+                        var parent = tree.parent;
+                        while (parent != Lockfile.Tree.invalid_id) {
+                            bun.assertWithLocation(skip_delete.isSet(parent), @src());
+                            parent = trees[parent].parent;
+                        }
+                    }
+
+                    break;
+                }
+
+                if (dependencies[tree.dependency_id].behavior.isWorkspaceOnly()) {
+                    // do not allow going above workspace node_modules, they exist
+                    // in separate trees on disk
+                    break;
+                }
+
+                curr = tree.parent;
+            }
+        }
+
+        return root_node_modules;
+    }
+
     pub fn installPackages(
         this: *PackageManager,
         ctx: Command.Context,
+        existing_bun_lockfile: bool,
         comptime log_level: PackageManager.Options.LogLevel,
     ) !PackageInstall.Summary {
         const original_lockfile = this.lockfile;
@@ -12530,6 +12785,10 @@ pub const PackageManager = struct {
             }
         }
 
+        // make sure to use `original_lockfile` for checking workspaces
+        const node_modules_folder_2 = try this.createNodeModulesFolders(original_lockfile, existing_bun_lockfile);
+        _ = node_modules_folder_2;
+
         // If there was already a valid lockfile and so we did not resolve, i.e. there was zero network activity
         // the packages could still not be in the cache dir
         // this would be a common scenario in a CI environment
@@ -12537,10 +12796,10 @@ pub const PackageManager = struct {
         // we want to check lazily though
         // no need to download packages you've already installed!!
         var new_node_modules = false;
-        const cwd = std.fs.cwd();
+        const cwd = bun.FD.cwd();
         const node_modules_folder = brk: {
             // Attempt to open the existing node_modules folder
-            switch (bun.sys.openatOSPath(bun.toFD(cwd), bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
+            switch (bun.sys.openatOSPath(cwd, comptime bun.OSPathLiteral("node_modules"), bun.O.DIRECTORY | bun.O.RDONLY, 0o755)) {
                 .result => |fd| break :brk std.fs.Dir{ .fd = fd.cast() },
                 .err => {},
             }
@@ -12554,7 +12813,7 @@ pub const PackageManager = struct {
                     Global.crash();
                 }
             };
-            break :brk bun.openDir(cwd, "node_modules") catch |err| {
+            break :brk bun.openDir(cwd.asDir(), "node_modules") catch |err| {
                 Output.prettyErrorln("<r><red>error<r>: <b><red>{s}<r> opening <b>node_modules<r> folder", .{@errorName(err)});
                 Global.crash();
             };
@@ -13544,6 +13803,7 @@ pub const PackageManager = struct {
         if (manager.options.do.install_packages) {
             install_summary = try manager.installPackages(
                 ctx,
+                load_lockfile_result == .ok and !load_lockfile_result.ok.was_migrated,
                 log_level,
             );
         }

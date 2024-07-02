@@ -1852,16 +1852,13 @@ function _forkChild(fd, serializationMode) {
 
     if (serializationMode === "json") {
       const string = JSONStringify(message);
-      try {
-        FsModule.writeFileSync(fd, string + "\n");
-        err = 0;
-      } catch (e) {
-        err = e;
-      }
+      $debug(process.pid, "Pipe#writeJson", string);
+      err = channel_writeUtf8String(fd, string + "\n");
     } else if (serializationMode === "advanced") {
-      $assert(false); // TODO
+      $debug(process.pid, "Pipe#writeAdvanced", message);
+      $assert(false, `TODO: serialization mode: advanced`);
     } else {
-      $assert(false); // unsupported serialization mode
+      $assert(false, `unsupported serialization mode: ${serializationMode}`);
     }
 
     if (err === 0) {
@@ -1913,6 +1910,15 @@ function _forkChild(fd, serializationMode) {
 
     process.nextTick(finish);
   };
+}
+
+function channel_writeUtf8String(fd: number, message: string) {
+  try {
+    FsModule.writeFileSync(fd, message);
+    return 0;
+  } catch (e) {
+    return e;
+  }
 }
 
 // const messages = new Map();

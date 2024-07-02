@@ -5905,7 +5905,7 @@ pub const Expr = struct {
                 .e_number => |e| e.toJS(),
                 // .e_big_int => |e| e.toJS(ctx, exception),
 
-                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject),
+                .e_inlined_enum => |inlined| inlined.value.data.toJS(allocator, globalObject, .{}),
 
                 .e_identifier,
                 .e_import_identifier,

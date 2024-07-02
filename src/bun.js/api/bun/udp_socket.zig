@@ -280,7 +280,7 @@ pub const UDPSocket = struct {
 
     pub usingnamespace JSC.Codegen.JSUDPSocket;
 
-    pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) callconv(JSC.conv) ?*This {
+    pub fn constructor(globalThis: *JSGlobalObject, _: *CallFrame) ?*This {
         globalThis.throw("Cannot construct UDPSocket", .{});
         return null;
     }

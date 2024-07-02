@@ -353,7 +353,7 @@ pub const Expect = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         const arguments = callframe.arguments(2).slice();
         const value = if (arguments.len < 1) JSValue.jsUndefined() else arguments[0];
 
@@ -405,7 +405,7 @@ pub const Expect = struct {
     pub fn constructor(
         globalThis: *JSGlobalObject,
         _: *CallFrame,
-    ) callconv(JSC.conv) ?*Expect {
+    ) ?*Expect {
         globalThis.throw("expect() cannot be called with new", .{});
         return null;
     }
@@ -4456,36 +4456,36 @@ pub const Expect = struct {
         return ExpectStatic.create(globalThis, .{ .promise = .rejects });
     }
 
-    pub fn any(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn any(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectAny.call(globalThis, callFrame);
     }
 
-    pub fn anything(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn anything(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectAnything.call(globalThis, callFrame);
     }
 
-    pub fn closeTo(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn closeTo(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectCloseTo.call(globalThis, callFrame);
     }
 
-    pub fn objectContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn objectContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectObjectContaining.call(globalThis, callFrame);
     }
 
-    pub fn stringContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn stringContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectStringContaining.call(globalThis, callFrame);
     }
 
-    pub fn stringMatching(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn stringMatching(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectStringMatching.call(globalThis, callFrame);
     }
 
-    pub fn arrayContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn arrayContaining(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         return ExpectArrayContaining.call(globalThis, callFrame);
     }
 
     /// Implements `expect.extend({ ... })`
-    pub fn extend(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn extend(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
@@ -4518,7 +4518,7 @@ pub const Expect = struct {
                 // Even though they point to the same native functions for all matchers,
                 // multiple instances are created because each instance will hold the matcher_fn as a property
 
-                const wrapper_fn = Bun__JSWrappingFunction__create(globalThis, matcher_name, &Expect.applyCustomMatcher, matcher_fn, true);
+                const wrapper_fn = Bun__JSWrappingFunction__create(globalThis, matcher_name, Expect.applyCustomMatcher, matcher_fn, true);
 
                 expect_proto.put(globalThis, matcher_name, wrapper_fn);
                 expect_constructor.put(globalThis, matcher_name, wrapper_fn);
@@ -4778,7 +4778,7 @@ pub const Expect = struct {
 
     pub const addSnapshotSerializer = notImplementedStaticFn;
 
-    pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn hasAssertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         _ = callFrame;
         defer globalThis.bunVM().autoGarbageCollect();
 
@@ -4787,7 +4787,7 @@ pub const Expect = struct {
         return .undefined;
     }
 
-    pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn assertions(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         defer globalThis.bunVM().autoGarbageCollect();
 
         const arguments_ = callFrame.arguments(1);
@@ -4826,7 +4826,7 @@ pub const Expect = struct {
         return .zero;
     }
 
-    pub fn notImplementedStaticFn(globalThis: *JSGlobalObject, _: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn notImplementedStaticFn(globalThis: *JSGlobalObject, _: *CallFrame) JSValue {
         globalThis.throw("Not implemented", .{});
         return .zero;
     }
@@ -4846,7 +4846,7 @@ pub const Expect = struct {
         vm.autoGarbageCollect();
     }
 
-    pub fn doUnreachable(globalThis: *JSGlobalObject, callframe: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn doUnreachable(globalThis: *JSGlobalObject, callframe: *CallFrame) JSValue {
         const arg = callframe.arguments(1).ptr[0];
 
         if (arg.isEmptyOrUndefinedOrNull()) {
@@ -4977,7 +4977,7 @@ pub const ExpectAnything = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, _: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, _: *CallFrame) JSValue {
         const anything = globalThis.bunVM().allocator.create(ExpectAnything) catch {
             globalThis.throwOutOfMemory();
             return .zero;
@@ -5005,7 +5005,7 @@ pub const ExpectStringMatching = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or (!args[0].isString() and !args[0].isRegExp())) {
@@ -5042,7 +5042,7 @@ pub const ExpectCloseTo = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(2).slice();
 
         if (args.len == 0 or !args[0].isNumber()) {
@@ -5089,7 +5089,7 @@ pub const ExpectObjectContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isObject()) {
@@ -5126,7 +5126,7 @@ pub const ExpectStringContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].isString()) {
@@ -5163,7 +5163,7 @@ pub const ExpectAny = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const _arguments = callFrame.arguments(1);
         const arguments: []const JSValue = _arguments.ptr[0.._arguments.len];
 
@@ -5220,7 +5220,7 @@ pub const ExpectArrayContaining = struct {
         VirtualMachine.get().allocator.destroy(this);
     }
 
-    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) callconv(JSC.conv) JSValue {
+    pub fn call(globalThis: *JSGlobalObject, callFrame: *CallFrame) JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args[0].jsType().isArray()) {

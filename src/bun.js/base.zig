@@ -931,10 +931,8 @@ pub fn DOMCall(
     comptime class_name: string,
     comptime Container: type,
     comptime functionName: string,
-    comptime ResultType: type,
     comptime dom_effect: DOMEffect,
 ) type {
-    _ = ResultType; // autofix
     return extern struct {
         const className = class_name;
         pub const is_dom_call = true;

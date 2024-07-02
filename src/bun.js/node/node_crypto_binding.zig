@@ -75,12 +75,16 @@ fn pbkdf2Sync(
     return out_arraybuffer;
 }
 
+const jsPbkdf2 = JSC.toJSHostFunction(pbkdf2);
+const jsPbkdf2Sync = JSC.toJSHostFunction(pbkdf2Sync);
+const jsRandomInt = JSC.toJSHostFunction(randomInt);
+
 pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 3);
 
-    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", JSC.toJSHostFunction(pbkdf2), 5, .{}));
-    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", JSC.toJSHostFunction(pbkdf2Sync), 5, .{}));
-    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", JSC.toJSHostFunction(randomInt), 2, .{}));
+    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", jsPbkdf2, 5, .{}));
+    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", jsPbkdf2Sync, 5, .{}));
+    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", jsRandomInt, 2, .{}));
 
     return crypto;
 }

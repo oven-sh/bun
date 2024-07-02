@@ -1603,7 +1603,7 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
@@ -1733,7 +1733,7 @@ pub const Interpreter = struct {
         return .undefined;
     }
 
-    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const value = callframe.argument(0);
         const str = bun.String.fromJS(value, globalThis);
 
@@ -1749,7 +1749,7 @@ pub const Interpreter = struct {
         return .undefined;
     }
 
-    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             globalThis.throwInvalidArguments("env must be an object", .{});

@@ -43,7 +43,7 @@ pub const ResourceUsage = struct {
     pub fn constructor(
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(JSC.conv) ?*Subprocess {
+    ) ?*Subprocess {
         return null;
     }
 
@@ -386,7 +386,7 @@ pub const Subprocess = struct {
     pub fn constructor(
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(JSC.conv) ?*Subprocess {
+    ) ?*Subprocess {
         return null;
     }
 

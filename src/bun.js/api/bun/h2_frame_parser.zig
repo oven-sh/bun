@@ -261,7 +261,7 @@ const SingleValueHeaders = bun.ComptimeStringMap(void, .{
     .{"x-content-type-options"},
 });
 
-pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     JSC.markBinding(@src());
     var settings: FullSettingsPayload = .{};
 
@@ -296,7 +296,7 @@ pub fn jsGetUnpackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.
     }
 }
 
-pub fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
+fn jsGetPackedSettings(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
     var settings: FullSettingsPayload = .{};
     const args_list = callframe.arguments(1);
 
@@ -2445,7 +2445,7 @@ pub const H2FrameParser = struct {
         return .zero;
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*H2FrameParser {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*H2FrameParser {
         const args_list = callframe.arguments(1);
         if (args_list.len < 1) {
             globalObject.throw("Expected 1 argument", .{});
@@ -2528,7 +2528,7 @@ pub const H2FrameParser = struct {
 
     pub fn finalize(
         this: *H2FrameParser,
-    ) callconv(.C) void {
+    ) void {
         log("finalize", .{});
         this.deinit();
     }
@@ -2537,7 +2537,7 @@ pub const H2FrameParser = struct {
 pub fn createNodeHttp2Binding(global: *JSC.JSGlobalObject) JSC.JSValue {
     return JSC.JSArray.create(global, &.{
         H2FrameParser.getConstructor(global),
-        JSC.JSFunction.create(global, "getPackedSettings", JSC.toJSHostFunction(jsGetPackedSettings), 0, .{}),
-        JSC.JSFunction.create(global, "getUnpackedSettings", JSC.toJSHostFunction(jsGetUnpackedSettings), 0, .{}),
+        JSC.JSFunction.create(global, "getPackedSettings", jsGetPackedSettings, 0, .{}),
+        JSC.JSFunction.create(global, "getUnpackedSettings", jsGetUnpackedSettings, 0, .{}),
     });
 }

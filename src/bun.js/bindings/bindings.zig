@@ -2684,7 +2684,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        comptime implementation: *const JSHostFunctionType,
+        comptime implementation: JSHostFunctionType,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -6420,43 +6420,6 @@ pub const WTF = struct {
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
     }
 };
-
-pub const Callback = struct {
-    // zig: Value,
-};
-
-pub fn Thenable(comptime name: []const u8, comptime Then: type, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void) type {
-    return struct {
-        pub fn resolve(
-            globalThis: [*c]JSGlobalObject,
-            callframe: ?*JSC.CallFrame,
-        ) callconv(.C) void {
-            @setRuntimeSafety(false);
-            const args_list = callframe.?.arguments(8);
-            onResolve(@as(*Then, @ptrCast(@alignCast(args_list.ptr[args_list.len - 1].asEncoded().asPtr))), globalThis, args_list.ptr[0]);
-        }
-
-        pub fn reject(
-            globalThis: [*c]JSGlobalObject,
-            callframe: ?*JSC.CallFrame,
-        ) callconv(.C) void {
-            @setRuntimeSafety(false);
-            const args_list = callframe.?.arguments(8);
-            onReject(@as(*Then, @ptrCast(@alignCast(args_list.ptr[args_list.len - 1].asEncoded().asPtr))), globalThis, args_list.ptr[0]);
-        }
-
-        pub fn then(ctx: *Then, this: JSValue, globalThis: *JSGlobalObject) void {
-            this._then(globalThis, ctx, resolve, reject);
-        }
-
-        comptime {
-            if (!JSC.is_bindgen) {
-                @export(resolve, name ++ "__resolve");
-                @export(reject, name ++ "__reject");
-            }
-        }
-    };
-}
 
 pub usingnamespace @import("./JSPropertyIterator.zig");
 

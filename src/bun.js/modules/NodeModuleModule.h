@@ -3,6 +3,8 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -539,17 +541,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
-  JSC::JSArray *builtinModules = JSC::JSArray::create(
-    vm,
-    globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous),
-    countof(builtinModuleNames)
-  );
+  MarkedArgumentBuffer args;
+  args.ensureCapacity(countof(builtinModuleNames));
 
   for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
-    builtinModules->putDirectIndex(globalObject, i, JSC::jsString(vm, String(builtinModuleNames[i])));
+    args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
   }
 
-  put(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
+
+  put(JSC::Identifier::fromString(vm, "builtinModules"_s), JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args)));
 }
 
 } // namespace Zig

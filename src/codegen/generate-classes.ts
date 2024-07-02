@@ -1643,7 +1643,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("finalize", classSymbolName(typeName, "finalize"));
       output += `
         pub fn ${classSymbolName(typeName, "finalize")}(thisValue: *${typeName}) callconv(JSC.conv) void {
-          if (comptime Environment.isDebug) zig("<d>~${typeName} 0x{x:8}<r>", .{@intFromPtr(thisValue)});
+          if (comptime Environment.enable_logs) zig("<d>~${typeName} 0x{x:8}<r>", .{@intFromPtr(thisValue)});
           @call(.always_inline, ${typeName}.finalize, .{thisValue});
         }
       `;
@@ -1653,7 +1653,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
-          if (comptime Environment.isDebug) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
+          if (comptime Environment.enable_logs) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
         }
       `;
@@ -1663,7 +1663,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("call", classSymbolName(typeName, "call"));
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) zig("${typeName}<d>({})<r>", .{callFrame});
+          if (comptime Environment.enable_logs) zig("${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame});
         }
       `;
@@ -1673,7 +1673,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("getInternalProperties", classSymbolName(typeName, "getInternalProperties"));
       output += `
         pub fn ${classSymbolName(typeName, "getInternalProperties")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.getInternalProperties, .{thisValue, globalObject, thisValue});
         }
       `;
@@ -1687,7 +1687,7 @@ const JavaScriptCoreBindings = struct {
         if (names.getter) {
           output += `
         pub fn ${names.getter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) zig("<r><blue>get<r> ${typeName}<d>.<r>${name}", .{});
+          if (comptime Environment.enable_logs) zig("<r><blue>get<r> ${typeName}<d>.<r>${name}", .{});
           return @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject});
         }
       `;
@@ -1696,7 +1696,7 @@ const JavaScriptCoreBindings = struct {
         if (names.setter) {
           output += `
         pub fn ${names.setter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
-          if (comptime Environment.isDebug) zig("<r><blue>set<r> ${typeName}<d>.<r>${name} = {}", .{value});
+          if (comptime Environment.enable_logs) zig("<r><blue>set<r> ${typeName}<d>.<r>${name} = {}", .{value});
           return @call(.always_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
         }
       `;
@@ -1716,7 +1716,7 @@ const JavaScriptCoreBindings = struct {
 
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
+          if (comptime Environment.enable_logs) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame});
         }
         `;
@@ -1732,7 +1732,7 @@ const JavaScriptCoreBindings = struct {
         if (names.getter) {
           output += `
         pub fn ${names.getter}(globalObject: *JSC.JSGlobalObject, ${thisValue ? "thisValue: JSC.JSValue," : ""} propertyName: JSC.JSValue) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.${getter}, .{globalObject, ${thisValue ? "thisValue," : ""} propertyName});
         }
         `;
@@ -1741,7 +1741,7 @@ const JavaScriptCoreBindings = struct {
         if (names.setter) {
           output += `
         pub fn ${names.setter}(globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, target: JSC.JSValue) callconv(JSC.conv) bool {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.${setter || accessor.setter}, .{thisValue, globalObject, target});
         }
         `;
@@ -1755,7 +1755,7 @@ const JavaScriptCoreBindings = struct {
           pub fn ${names.DOMJIT}(globalObject: *JSC.JSGlobalObject, thisValue: JSC.JSValue, ${args
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(JSC.conv) JSC.JSValue {
-            if (comptime Environment.isDebug) JSC.markBinding(@src());
+            if (comptime Environment.enable_logs) JSC.markBinding(@src());
             return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
@@ -1763,7 +1763,7 @@ const JavaScriptCoreBindings = struct {
 
           output += `
         pub fn ${names.fn}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.${fn}, .{globalObject, callFrame});
         }
         `;
@@ -1775,7 +1775,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("structuredClone", symbolName(typeName, "onStructuredCloneSerialize"));
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneSerialize")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, writeBytes: WriteBytesFn) callconv(JSC.conv) void {
-        if (comptime Environment.isDebug) JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) JSC.markBinding(@src());
         @call(.always_inline, ${typeName}.onStructuredCloneSerialize, .{thisValue, globalObject, ctx, writeBytes});
       }
       `;
@@ -1784,7 +1784,7 @@ const JavaScriptCoreBindings = struct {
         exports.set("structuredClone_transferable", symbolName(typeName, "onStructuredCloneTransfer"));
         output += `
         pub fn ${exports.get("structuredClone_transferable")}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ctx: *anyopaque, write: WriteBytesFn) callconv(JSC.conv) void {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.enable_logs) JSC.markBinding(@src());
           @call(.always_inline, ${typeName}.onStructuredCloneTransfer, .{thisValue, globalObject, ctx, write});
         }
         `;
@@ -1794,7 +1794,7 @@ const JavaScriptCoreBindings = struct {
 
       output += `
       pub fn ${symbolName(typeName, "onStructuredCloneDeserialize")}(globalObject: *JSC.JSGlobalObject, ptr: [*]u8, end: [*]u8) callconv(JSC.conv) JSC.JSValue {
-        if (comptime Environment.isDebug) JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) JSC.markBinding(@src());
         return @call(.always_inline, ${typeName}.onStructuredCloneDeserialize, .{globalObject, ptr, end});
       }
       `;

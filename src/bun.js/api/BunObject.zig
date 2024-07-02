@@ -2721,7 +2721,7 @@ pub const Crypto = struct {
             }
         }
 
-        pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) ?*CryptoHasher {
+        pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*CryptoHasher {
             const arguments = callframe.arguments(2);
             if (arguments.len == 0) {
                 globalThis.throwInvalidArguments("Expected an algorithm name as an argument", .{});
@@ -2875,7 +2875,7 @@ pub const Crypto = struct {
             };
         }
 
-        pub fn finalize(this: *CryptoHasher) callconv(.C) void {
+        pub fn finalize(this: *CryptoHasher) void {
             switch (this.*) {
                 .evp => |*inner| {
                     // https://github.com/oven-sh/bun/issues/3250
@@ -2972,7 +2972,7 @@ pub const Crypto = struct {
             }
         }
 
-        fn constructor(algorithm: ZigString) callconv(JSC.conv) ?*CryptoHasher {
+        fn constructor(algorithm: ZigString) ?*CryptoHasher {
             inline for (algo_map) |item| {
                 if (bun.strings.eqlComptime(algorithm.slice(), item[0])) {
                     return CryptoHasher.new(.{ .zig = .{
@@ -3136,7 +3136,7 @@ pub const Crypto = struct {
                 }
             }
 
-            pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*@This() {
+            pub fn constructor(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
                 const this = bun.default_allocator.create(@This()) catch return null;
 
                 this.* = .{ .hashing = Hasher.init() };
@@ -3237,7 +3237,7 @@ pub const Crypto = struct {
                 return encoding.encodeWithSize(globalThis, Hasher.digest, output_digest_slice);
             }
 
-            pub fn finalize(this: *@This()) callconv(.C) void {
+            pub fn finalize(this: *@This()) void {
                 VirtualMachine.get().allocator.destroy(this);
             }
         };
@@ -3924,7 +3924,7 @@ pub const FFIObject = struct {
         }
     }
 
-    pub const dom_call = JSC.DOMCall("FFI", @This(), "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties));
+    pub const dom_call = JSC.DOMCall("FFI", "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties));
 
     pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
@@ -3944,18 +3944,18 @@ pub const FFIObject = struct {
 
     pub const Reader = struct {
         pub const DOMCalls = .{
-            .u8 = JSC.DOMCall("Reader", @This(), "u8", i32, JSC.DOMEffect.forRead(.World)),
-            .u16 = JSC.DOMCall("Reader", @This(), "u16", i32, JSC.DOMEffect.forRead(.World)),
-            .u32 = JSC.DOMCall("Reader", @This(), "u32", i32, JSC.DOMEffect.forRead(.World)),
-            .ptr = JSC.DOMCall("Reader", @This(), "ptr", i52, JSC.DOMEffect.forRead(.World)),
-            .i8 = JSC.DOMCall("Reader", @This(), "i8", i32, JSC.DOMEffect.forRead(.World)),
-            .i16 = JSC.DOMCall("Reader", @This(), "i16", i32, JSC.DOMEffect.forRead(.World)),
-            .i32 = JSC.DOMCall("Reader", @This(), "i32", i32, JSC.DOMEffect.forRead(.World)),
-            .i64 = JSC.DOMCall("Reader", @This(), "i64", i64, JSC.DOMEffect.forRead(.World)),
-            .u64 = JSC.DOMCall("Reader", @This(), "u64", u64, JSC.DOMEffect.forRead(.World)),
-            .intptr = JSC.DOMCall("Reader", @This(), "intptr", i52, JSC.DOMEffect.forRead(.World)),
-            .f32 = JSC.DOMCall("Reader", @This(), "f32", f64, JSC.DOMEffect.forRead(.World)),
-            .f64 = JSC.DOMCall("Reader", @This(), "f64", f64, JSC.DOMEffect.forRead(.World)),
+            .u8 = JSC.DOMCall("Reader", "u8", i32, JSC.DOMEffect.forRead(.World)),
+            .u16 = JSC.DOMCall("Reader", "u16", i32, JSC.DOMEffect.forRead(.World)),
+            .u32 = JSC.DOMCall("Reader", "u32", i32, JSC.DOMEffect.forRead(.World)),
+            .ptr = JSC.DOMCall("Reader", "ptr", i52, JSC.DOMEffect.forRead(.World)),
+            .i8 = JSC.DOMCall("Reader", "i8", i32, JSC.DOMEffect.forRead(.World)),
+            .i16 = JSC.DOMCall("Reader", "i16", i32, JSC.DOMEffect.forRead(.World)),
+            .i32 = JSC.DOMCall("Reader", "i32", i32, JSC.DOMEffect.forRead(.World)),
+            .i64 = JSC.DOMCall("Reader", "i64", i64, JSC.DOMEffect.forRead(.World)),
+            .u64 = JSC.DOMCall("Reader", "u64", u64, JSC.DOMEffect.forRead(.World)),
+            .intptr = JSC.DOMCall("Reader", "intptr", i52, JSC.DOMEffect.forRead(.World)),
+            .f32 = JSC.DOMCall("Reader", "f32", f64, JSC.DOMEffect.forRead(.World)),
+            .f64 = JSC.DOMCall("Reader", "f64", f64, JSC.DOMEffect.forRead(.World)),
         };
 
         pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
@@ -4768,7 +4768,7 @@ pub const JSZlib = struct {
 pub usingnamespace @import("./bun/subprocess.zig");
 
 const InternalTestingAPIs = struct {
-    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn BunInternalFunction__syntaxHighlighter(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);

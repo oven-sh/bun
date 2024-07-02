@@ -909,6 +909,7 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormData;
     // std::unique_ptr<IsoSubspace> m_subspaceForDOMFormDataIterator;
     std::unique_ptr<IsoSubspace> m_subspaceForDOMURL;
+    std::unique_ptr<IsoSubspace> m_subspaceForJSAsyncPromise;
 };
 } // namespace WebCore
 

@@ -688,14 +688,14 @@ pub const WriteFileWaitFromLockedValueTask = struct {
             .Error => |err| {
                 file_blob.detach();
                 _ = value.use();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
                 promise.reject(globalThis, err);
             },
             .Used => {
                 file_blob.detach();
                 _ = value.use();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
                 promise.reject(globalThis, ZigString.init("Body was used after it was consumed").toErrorInstance(globalThis));
             },
@@ -727,7 +727,7 @@ pub const WriteFileWaitFromLockedValueTask = struct {
                 }
 
                 file_blob.detach();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             },
             .Locked => {

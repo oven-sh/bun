@@ -17070,7 +17070,7 @@ fn NewParser_(
                                         const inlined = target.data.e_array.items.at(int).*;
                                         // ['a', , 'c'][1] -> undefined
                                         if (inlined.data == .e_missing) return p.newExpr(E.Undefined{}, inlined.loc);
-                                        assert(inlined.canBeInlinedFromPropertyAccess());
+                                        if (Environment.allow_assert) assert(inlined.canBeInlinedFromPropertyAccess());
                                         return inlined;
                                     }
                                 }

@@ -367,7 +367,7 @@ pub const PatchTask = struct {
         )) {
             .result => |fd| fd,
             .err => |e| {
-                return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
+                return try log.addErrorFmtNoLoc(this.manager.allocator, "failed adding bun tag: {}", .{e.withPath(buntagbuf[0 .. bun_tag_prefix.len + hashlen :0])});
             },
         };
         _ = bun.sys.close(buntagfd);
@@ -387,7 +387,7 @@ pub const PatchTask = struct {
             bun.toFD(this.callback.apply.cache_dir.fd),
             this.callback.apply.cache_dir_subpath,
             .{ .move_fallback = true },
-        ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "{}", .{e});
+        ).asErr()) |e| return try log.addErrorFmtNoLoc(this.manager.allocator, "renaming changes to cache dir: {}", .{e.withPath(this.callback.apply.cache_dir_subpath)});
     }
 
     pub fn calcHash(this: *PatchTask) ?u64 {

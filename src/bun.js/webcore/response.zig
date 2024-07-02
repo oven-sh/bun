@@ -122,6 +122,10 @@ pub const Response = struct {
         return this.init.status_code;
     }
 
+    pub inline fn statusText(this: *const Response) bun.String {
+        return this.init.status_text;
+    }
+
     pub fn redirectLocation(this: *const Response) ?[]const u8 {
         return this.header(.Location);
     }

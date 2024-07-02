@@ -261,6 +261,25 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
+    pub fn hasPrefix(this: ZigString, needle: []const u8) bool {
+        if (this.len == 0)
+            return false;
+        if (this.length() < needle.len)
+            return false;
+
+        if (this.is16Bit()) {
+            const u16_slice = this.utf16SliceAligned();
+            for (needle, 0..) |c, i| {
+                if (u16_slice[i] != c) {
+                    return false;
+                }
+            }
+            return true;
+        }
+
+        return strings.hasPrefix(this.slice(), needle);
+    }
+
     pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16SliceMaybeGlobal(this.utf16SliceAligned()[start_index..end_index], this.isGloballyAllocated());
@@ -2671,23 +2690,9 @@ pub const JSFunction = extern struct {
         constructor: ?*const JSHostFunctionType = null,
     };
 
-    extern fn JSFunction__createFromZig(
-        global: *JSGlobalObject,
-        fn_name: bun.String,
-        implementation: *const JSHostFunctionType,
-        arg_count: u32,
-        implementation_visibility: ImplementationVisibility,
-        intrinsic: Intrinsic,
-        constructor: ?*const JSHostFunctionType,
-    ) JSValue;
+    extern fn JSFunction__createFromZig(global: *JSGlobalObject, fn_name: bun.String, implementation: *const JSHostFunctionType, arg_count: u32, implementation_visibility: ImplementationVisibility, intrinsic: Intrinsic, constructor: ?*const JSHostFunctionType) JSValue;
 
-    pub fn create(
-        global: *JSGlobalObject,
-        fn_name: anytype,
-        implementation: *const JSHostFunctionType,
-        function_length: u32,
-        options: CreateJSFunctionOptions,
-    ) JSValue {
+    pub fn create(global: *JSGlobalObject, fn_name: anytype, implementation: *const JSHostFunctionType, function_length: u32, options: CreateJSFunctionOptions) JSValue {
         return JSFunction__createFromZig(
             global,
             switch (@TypeOf(fn_name)) {
@@ -3317,6 +3322,7 @@ pub const JSMap = opaque {
 };
 
 pub const JSValueReprInt = i64;
+
 pub const JSValue = enum(JSValueReprInt) {
     zero = 0,
     undefined = 0xa,
@@ -4578,6 +4584,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
+    }
+    pub inline fn isArray(this: JSValue) bool {
+        return this.isCell() and this.jsType().isArray();
     }
     pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
         const type_of_value = this.jsType();
@@ -5985,8 +5994,8 @@ pub const CallFrame = opaque {
 
     fn Arguments(comptime max: usize) type {
         return struct {
-            ptr: [max]JSC.JSValue,
-            len: usize,
+            ptr: [max]JSC.JSValue = .{.undefined} ** max,
+            len: usize = 0,
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
                 var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
                 args[0..comptime i].* = ptr[0..i].*;
@@ -6007,7 +6016,7 @@ pub const CallFrame = opaque {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
-            0 => .{ .ptr = undefined, .len = 0 },
+            0 => .{},
             inline 1...8 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };
@@ -6062,6 +6071,9 @@ pub const EncodedJSValue = extern union {
 pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
+
+pub const JSBuiltinFunctionType = fn (*JSGlobalObject) callconv(.C) JSValue;
+pub const JSBuiltinFunctionPtr = *const JSHostFunctionType;
 
 pub const JSArray = opaque {
     // TODO(@paperdave): this can throw

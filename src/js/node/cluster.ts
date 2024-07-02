@@ -1,40 +1,42 @@
 // Hardcoded module "node:cluster"
-// This is a stub
-// We leave it in here to provide a better error message
-// TODO: implement node cluster
-const EventEmitter = require("node:events");
-const { throwNotImplemented } = require("internal/shared");
 
-// TODO: is it okay for this to be a class?
-class Cluster extends EventEmitter {
-  isWorker = false;
-  isPrimary = true;
-  isMaster = true;
-  workers = {};
-  settings = {};
-  SCHED_NONE = 1;
-  SCHED_RR = 2;
-  schedulingPolicy = 2;
+const child_process = require("node:child_process");
 
-  Worker = function Worker() {
-    throwNotImplemented("node:cluster Worker", 2428);
-  };
+const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
+const NumberParseInt = Number.parseInt;
 
-  setupPrimary() {
-    throwNotImplemented("node:cluster", 2428);
-  }
+const childOrPrimary = ObjectPrototypeHasOwnProperty.$call(process.env, "NODE_UNIQUE_ID");
+const cluster = childOrPrimary ? require("internal/cluster/child") : require("internal/cluster/primary");
+export default cluster;
 
-  setupMaster() {
-    throwNotImplemented("node:cluster", 2428);
-  }
+//
+//
 
-  fork() {
-    throwNotImplemented("node:cluster", 2428);
-  }
-
-  disconnect() {
-    throwNotImplemented("node:cluster", 2428);
+function initializeClusterIPC() {
+  if (process.argv[1] && process.env.NODE_UNIQUE_ID) {
+    cluster._setupWorker();
+    // Make sure it's not accidentally inherited by child processes.
+    delete process.env.NODE_UNIQUE_ID;
   }
 }
 
-export default new Cluster();
+function setupChildProcessIpcChannel() {
+  if (process.env.NODE_CHANNEL_FD) {
+    const fd = NumberParseInt(process.env.NODE_CHANNEL_FD, 10);
+    $assert(fd >= 0);
+
+    // Make sure it's not accidentally inherited by child processes.
+    delete process.env.NODE_CHANNEL_FD;
+
+    const serializationMode = process.env.NODE_CHANNEL_SERIALIZATION_MODE || "json";
+    delete process.env.NODE_CHANNEL_SERIALIZATION_MODE;
+
+    child_process._forkChild(fd, serializationMode);
+    $assert(process.send);
+  }
+}
+
+if (Bun.isMainThread) {
+  setupChildProcessIpcChannel();
+  initializeClusterIPC();
+}

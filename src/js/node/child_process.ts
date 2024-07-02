@@ -2,12 +2,22 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
+const FsModule = require("node:fs");
+
+const { ErrnoException } = require("internal/errors");
+
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const ERR_IPC_CHANNEL_CLOSED = $zig("node_error_binding.zig", "ERR_IPC_CHANNEL_CLOSED");
+const ERR_INVALID_HANDLE_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_HANDLE_TYPE");
+const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
+const ERR_MISSING_ARGS = $zig("node_error_binding.zig", "ERR_MISSING_ARGS");
 
 var NetModule;
 
+const JSONStringify = JSON.stringify;
+
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
-var ObjectDefineProperty = Object.defineProperty;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
@@ -21,7 +31,6 @@ var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
 
-// var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
@@ -104,17 +113,6 @@ var ReadableFromWeb;
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-function spawnTimeoutFunction(child, timeoutHolder) {
-  var timeoutId = timeoutHolder.timeoutId;
-  if (timeoutId > -1) {
-    try {
-      child.kill(killSignal);
-    } catch (err) {
-      child.emit("error", err);
-    }
-    timeoutHolder.timeoutId = -1;
-  }
-}
 /**
  * Spawns a new process using the given `file`.
  * @param {string} file
@@ -149,7 +147,7 @@ function spawn(file, args, options) {
 
   const timeout = options.timeout;
   if (timeout && timeout > 0) {
-    let timeoutId = setTimeout(() => {
+    let timeoutId: Timer | null = setTimeout(() => {
       if (timeoutId) {
         timeoutId = null;
 
@@ -266,7 +264,7 @@ function execFile(file, args, options, callback) {
 
   let cmd = file;
 
-  function exitHandler(code, signal) {
+  function exitHandler(code = 0, signal?: number | null) {
     if (exited) return;
     exited = true;
 
@@ -998,7 +996,6 @@ class ChildProcess extends EventEmitter {
   #closesNeeded = 1;
   #closesGot = 0;
 
-  connected = false;
   signalCode = null;
   exitCode = null;
   spawnfile;
@@ -1200,6 +1197,12 @@ class ChildProcess extends EventEmitter {
     return (this.#stdioObject ??= this.#createStdioObject());
   }
 
+  get connected() {
+    const handle = this.#handle;
+    if (handle === null) return false;
+    return handle.connected ?? false;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -1226,21 +1229,29 @@ class ChildProcess extends EventEmitter {
     const bunStdio = getBunStdioFromOptions(stdio);
     const argv0 = file || options.argv0;
 
-    // TODO: better ipc support
-    const ipc = $isJSArray(stdio) && stdio[3] === "ipc";
-    var env = options.envPairs || undefined;
+    const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
+    var env = options.envPairs || process.env;
+
+    if (has_ipc) {
+      // Let child process know about opened IPC channel
+      if (env === undefined) env = {};
+      else validateObject(env, "options.envPairs");
+
+      // env.NODE_CHANNEL_FD = `3`;
+      // env.NODE_CHANNEL_SERIALIZATION_MODE = serialization;
+    }
+
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;
     const stdioCount = stdio.length;
     const hasSocketsToEagerlyLoad = stdioCount >= 3;
-    this.#closesNeeded = 1;
 
     this.#handle = Bun.spawn({
       cmd: spawnargs,
       stdio: bunStdio,
       cwd: options.cwd || undefined,
-      env: env || process.env,
+      env: env,
       detached: typeof detachedOption !== "undefined" ? !!detachedOption : false,
       onExit: (handle, exitCode, signalCode, err) => {
         if (hasSocketsToEagerlyLoad) {
@@ -1258,7 +1269,8 @@ class ChildProcess extends EventEmitter {
         );
       },
       lazy: true,
-      ipc: ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      onDisconnect: () => this.#disconnect(),
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,
@@ -1270,9 +1282,10 @@ class ChildProcess extends EventEmitter {
 
     onSpawnNT(this);
 
-    if (ipc) {
+    if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
+      this.#closesNeeded += 1;
     }
 
     if (hasSocketsToEagerlyLoad) {
@@ -1283,6 +1296,10 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message) {
+    if (message?.cmd?.startsWith("NODE_")) {
+      this.emit("internalMessage", message);
+      return;
+    }
     this.emit("message", message);
   }
 
@@ -1326,11 +1343,13 @@ class ChildProcess extends EventEmitter {
 
   #disconnect() {
     if (!this.connected) {
-      this.emit("error", new TypeError("Process was closed while trying to send message"));
+      this.emit("error", ERR_IPC_DISCONNECTED());
       return;
     }
-    this.connected = false;
     this.#handle.disconnect();
+    $assert(!this.connected);
+    process.nextTick(() => this.emit("disconnect"));
+    this.#maybeClose();
   }
 
   kill(sig?) {
@@ -1777,6 +1796,123 @@ function genericNodeError(message, options) {
   return err;
 }
 
+function _forkChild(fd, serializationMode) {
+  process.send = function (message, handle, options, callback) {
+    if (typeof handle === "function") {
+      callback = handle;
+      handle = undefined;
+      options = undefined;
+    } else if (typeof options === "function") {
+      callback = options;
+      options = undefined;
+    } else if (options !== undefined) {
+      validateObject(options, "options");
+    }
+
+    options = { swallowErrors: false, ...options };
+
+    if (this.connected) {
+      return this._send(message, handle, options, callback);
+    }
+    const ex = ERR_IPC_CHANNEL_CLOSED();
+    if (typeof callback === "function") {
+      process.nextTick(callback, ex);
+    } else {
+      process.nextTick(() => this.emit("error", ex));
+    }
+    return false;
+  };
+
+  process._send = function (message, handle, options, callback) {
+    $assert(this.connected);
+
+    if (message === undefined) throw ERR_MISSING_ARGS("message");
+
+    // Non-serializable messages should not reach the remote
+    // end point; as any failure in the stringification there
+    // will result in error message that is weakly consumable.
+    // So perform a final check on message prior to sending.
+    if (
+      typeof message !== "string" &&
+      typeof message !== "object" &&
+      typeof message !== "number" &&
+      typeof message !== "boolean"
+    ) {
+      throw ERR_INVALID_ARG_TYPE("message", "string, object, number, or boolean", message);
+    }
+
+    // Support legacy function signature
+    if (typeof options === "boolean") {
+      options = { swallowErrors: options };
+    }
+
+    let err;
+
+    if (serializationMode === "json") {
+      const string = JSONStringify(message);
+      try {
+        FsModule.writeFileSync(fd, string + "\n");
+        err = 0;
+      } catch (e) {
+        err = e;
+      }
+    } else if (serializationMode === "advanced") {
+      $assert(false); // TODO
+    } else {
+      $assert(false); // unsupported serialization mode
+    }
+
+    if (err === 0) {
+      if (typeof callback === "function") {
+        process.nextTick(callback, null);
+      }
+    } else {
+      if (!options.swallowErrors) {
+        const ex = new ErrnoException(err, "write");
+        if (typeof callback === "function") {
+          process.nextTick(callback, ex);
+        } else {
+          process.nextTick(() => this.emit("error", ex));
+        }
+      }
+    }
+
+    return true;
+  };
+
+  process.disconnect = function () {
+    if (!this.connected) {
+      this.emit("error", ERR_IPC_DISCONNECTED());
+      return;
+    }
+
+    // // Do not allow any new messages to be written.
+    // this.connected = false;
+    // connected is a getter
+
+    // If there are no queued messages, disconnect immediately. Otherwise,
+    // postpone the disconnect so that it happens internally after the
+    // queue is flushed.
+    // if (!this._handleQueue) this._disconnect();
+    this._disconnect();
+  };
+
+  process._disconnect = function () {
+    // $assert(!this.connected);
+
+    let fired = false;
+    function finish() {
+      if (fired) return;
+      fired = true;
+
+      FsModule.closeSync(fd);
+      process.emit("disconnect");
+    }
+
+    process.nextTick(finish);
+  };
+}
+
 // const messages = new Map();
 
 // Utility function for registering the error codes. Only used here. Exported
@@ -1943,12 +2079,6 @@ function ERR_UNKNOWN_SIGNAL(name) {
   return err;
 }
 
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
-
 function ERR_INVALID_OPT_VALUE(name, value) {
   const err = new TypeError(`The value "${value}" is invalid for option "${name}"`);
   err.code = "ERR_INVALID_OPT_VALUE";
@@ -1994,4 +2124,5 @@ export default {
   spawnSync,
   execFileSync,
   execSync,
+  _forkChild,
 };

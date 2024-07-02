@@ -302,10 +302,10 @@ pub const FDImpl = packed struct {
 
     // If a non-number is given, returns null.
     // If the given number is not an fd (negative), an error is thrown and error.JSException is returned.
-    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
+    pub fn fromJSValidated(value: JSValue, global: *JSC.JSGlobalObject, syscall: ?bun.sys.Tag, exception_ref: JSC.C.ExceptionRef) !?FDImpl {
         if (!value.isInt32()) return null;
         const fd = value.asInt32();
-        if (!JSC.Node.Valid.fileDescriptor(fd, global, exception_ref)) {
+        if (!JSC.Node.Valid.fileDescriptor(fd, global, syscall, exception_ref)) {
             return error.JSException;
         }
 

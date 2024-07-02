@@ -2,12 +2,15 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
+const cluster = require("node:cluster");
 
 const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
+
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -116,23 +119,16 @@ function isValidTLSArray(obj) {
   return false;
 }
 
-class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor(name, expected, actual) {
-    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
 }
 function validateFunction(callable: any, field: string) {
   if (typeof callable !== "function") {
-    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
+    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
   }
 
   return callable;
@@ -527,6 +523,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     this[serverSymbol] = Bun.serve<any>({
       tls,
       port,
+      reusePort: !cluster.isPrimary,
       hostname: host,
       unix: socketPath,
       // Bindings to be used for WS Server

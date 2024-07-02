@@ -5,6 +5,8 @@ const { isTypedArray } = require("node:util/types");
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+
 const tls = require("node:tls");
 const net = require("node:net");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
@@ -999,9 +1001,7 @@ class ClientHttp2Session extends Http2Session {
       payload = payload || Buffer.alloc(8);
     }
     if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
-      const error = new TypeError("ERR_INVALID_ARG_TYPE: payload must be a Buffer or TypedArray");
-      error.code = "ERR_INVALID_ARG_TYPE";
-      throw error;
+      throw ERR_INVALID_ARG_TYPE("payload", "Buffer or TypedArray", payload);
     }
     const parser = this.#parser;
     if (!parser) return false;

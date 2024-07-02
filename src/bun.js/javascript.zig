@@ -389,37 +389,8 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
-pub export fn Bun__Process__send(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) JSValue {
-    JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
-    }
-    const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
-    }
-}
-
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
-}
-
-pub export fn Bun__Process__disconnect(
-    globalObject: *JSGlobalObject,
-    callFrame: *JSC.CallFrame,
-) JSValue {
-    JSC.markBinding(@src());
-    _ = callFrame;
-    _ = globalObject;
-    return .undefined;
 }
 
 /// When IPC environment variables are passed, the socket is not immediately opened,
@@ -924,19 +895,19 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
-        if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
-            const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
-                IPC.Mode.fromString(mode_kv.value.value) orelse .json
+        if (map.map.get("NODE_CHANNEL_FD")) |kv| {
+            const mode = if (map.map.get("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
+                IPC.Mode.fromString(mode_kv.value) orelse .json
             else
                 .json;
-            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
+            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value, @tagName(mode) });
             if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value, mode);
+                this.initIPCInstance(kv.value, mode);
             } else {
-                if (std.fmt.parseInt(i32, kv.value.value, 10)) |fd| {
+                if (std.fmt.parseInt(i32, kv.value, 10)) |fd| {
                     this.initIPCInstance(bun.toFD(fd), mode);
                 } else |_| {
-                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value.value});
+                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value});
                 }
             }
         }
@@ -3589,6 +3560,7 @@ pub const VirtualMachine = struct {
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
+    extern fn Process__emitInternalMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
 
     pub const IPCInstanceUnion = union(enum) {
@@ -3626,6 +3598,16 @@ pub const VirtualMachine = struct {
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
                     if (this.globalThis) |global| {
+                        if (data.isObject()) {
+                            if (data.get(global, "cmd")) |prop| {
+                                if (prop.isString()) {
+                                    if (prop.toString(global).getZigString(global).hasPrefix("NODE_")) {
+                                        Process__emitInternalMessageEvent(global, data);
+                                        return;
+                                    }
+                                }
+                            }
+                        }
                         Process__emitMessageEvent(global, data);
                     }
                 },
@@ -3633,6 +3615,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
+            Output.scoped(.IPC, false)("IPCInstance#handleIPCClose\n", .{});
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;

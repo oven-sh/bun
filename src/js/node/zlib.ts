@@ -2,6 +2,8 @@
 
 const stream = require("node:stream");
 
+const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
@@ -4591,12 +4593,6 @@ var require_lib = __commonJS({
     util.inherits(Unzip, Zlib);
   },
 });
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
-  return err;
-}
 
 // zlib.js
 export default require_lib();

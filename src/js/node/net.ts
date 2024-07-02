@@ -32,6 +32,9 @@ var IPv4Reg;
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
 
+const DEFAULT_IPV4_ADDR = "0.0.0.0";
+const DEFAULT_IPV6_ADDR = "::";
+
 function isIPv4(s) {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
 }
@@ -1024,6 +1027,78 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
+// Returns handle if it can be created, or error code if it can't
+function _createServerHandle(address, port, addressType?, fd?, flags?) {
+  let err = 0;
+  // Assign handle in listen, and clean up if bind or listen fails
+  let handle;
+
+  let isTCP = false;
+  if (typeof fd === "number" && fd >= 0) {
+    try {
+      handle = createHandle(fd, true);
+    } catch (e) {
+      // Not a fd we can listen on.  This will trigger an error.
+      $debug("listen invalid fd=%d:", fd, e.message);
+      return UV_EINVAL;
+    }
+
+    err = handle.open(fd);
+    if (err) return err;
+
+    $assert(!address && !port);
+  } else if (port === -1 && addressType === -1) {
+    handle = new Pipe(PipeConstants.SERVER);
+    if (isWindows) {
+      const instances = NumberParseInt(process.env.NODE_PENDING_PIPE_INSTANCES);
+      if (!NumberIsNaN(instances)) {
+        handle.setPendingInstances(instances);
+      }
+    }
+  } else {
+    handle = new TCP(TCPConstants.SERVER);
+    isTCP = true;
+  }
+
+  if (address || port || isTCP) {
+    debug("bind to", address || "any");
+    if (!address) {
+      // Try binding to ipv6 first
+      err = handle.bind6(DEFAULT_IPV6_ADDR, port, flags);
+      if (err) {
+        handle.close();
+        // Fallback to ipv4
+        return _createServerHandle(DEFAULT_IPV4_ADDR, port);
+      }
+    } else if (addressType === 6) {
+      err = handle.bind6(address, port, flags);
+    } else {
+      err = handle.bind(address, port);
+    }
+  }
+
+  if (err) {
+    handle.close();
+    return err;
+  }
+
+  return handle;
+}
+
+function createHandle(fd, is_server) {
+  validateInt32(fd, "fd", 0);
+  const type = guessHandleType(fd);
+  if (type === "PIPE") {
+    return new Pipe(is_server ? PipeConstants.SERVER : PipeConstants.SOCKET);
+  }
+
+  if (type === "TCP") {
+    return new TCP(is_server ? TCPConstants.SERVER : TCPConstants.SOCKET);
+  }
+
+  throw new ERR_INVALID_FD_TYPE(type);
+}
+
 // TODO:
 class BlockList {
   constructor() {}
@@ -1046,6 +1121,7 @@ export default {
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
   _normalizeArgs: normalizeArgs,
+  _createServerHandle,
 
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),

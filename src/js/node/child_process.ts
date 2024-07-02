@@ -759,6 +759,8 @@ function fork(modulePath, args = [], options) {
     throw ERR_CHILD_PROCESS_IPC_REQUIRED("options.stdio");
   }
 
+  options.env ??= {};
+  options.env.BUN_CLUSTER = 1;
   return spawn(options.execPath, args, options);
 }
 

@@ -36,7 +36,8 @@ function setupChildProcessIpcChannel() {
   }
 }
 
-if (Bun.isMainThread) {
+if (Bun.isMainThread && process.env.BUN_CLUSTER) {
   setupChildProcessIpcChannel();
   initializeClusterIPC();
+  delete process.env.BUN_CLUSTER;
 }

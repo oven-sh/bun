@@ -408,7 +408,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);

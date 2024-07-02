@@ -1706,7 +1706,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            try http.HTTPThread.init();
+            http.HTTPThread.init();
             var node = try get(
                 allocator,
                 global,

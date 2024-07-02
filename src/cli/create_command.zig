@@ -241,7 +241,7 @@ pub const CreateCommand = struct {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;

@@ -563,7 +563,7 @@ pub const Resolver = struct {
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
-            bun.HTTPThread.init() catch unreachable;
+            bun.HTTPThread.init();
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,

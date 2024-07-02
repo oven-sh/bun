@@ -8196,7 +8196,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         if (cli.global) {
             var explicit_global_dir: string = "";

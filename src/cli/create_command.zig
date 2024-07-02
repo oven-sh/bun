@@ -241,7 +241,7 @@ pub const CreateCommand = struct {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
@@ -1999,7 +1999,7 @@ pub const Example = struct {
         var is_expected_content_type = false;
         var content_type: string = "";
         for (response.headers) |header| {
-            if (strings.eqlInsensitive(header.name, "content-type")) {
+            if (strings.eqlCaseInsensitiveASCII(header.name, "content-type", true)) {
                 content_type = header.value;
 
                 if (strings.eqlComptime(header.value, "application/x-gzip")) {

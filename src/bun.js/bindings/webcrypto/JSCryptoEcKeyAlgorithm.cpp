@@ -29,7 +29,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -43,7 +42,7 @@ template<> CryptoEcKeyAlgorithm convertDictionary<CryptoEcKeyAlgorithm>(JSGlobal
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoEcKeyAlgorithm result;
     JSValue nameValue;
@@ -51,28 +50,28 @@ template<> CryptoEcKeyAlgorithm convertDictionary<CryptoEcKeyAlgorithm>(JSGlobal
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "CryptoEcKeyAlgorithm", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoEcKeyAlgorithm"_s, "DOMString"_s);
+        return {};
     }
     JSValue namedCurveValue;
     if (isNullOrUndefined)
         namedCurveValue = jsUndefined();
     else {
         namedCurveValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "namedCurve"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!namedCurveValue.isUndefined()) {
         result.namedCurve = convert<IDLDOMString>(lexicalGlobalObject, namedCurveValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "namedCurve", "CryptoEcKeyAlgorithm", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "namedCurve"_s, "CryptoEcKeyAlgorithm"_s, "DOMString"_s);
+        return {};
     }
     return result;
 }
@@ -85,10 +84,10 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), nameValue);
     auto namedCurveValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.namedCurve);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "namedCurve"_s), namedCurveValue);
     return result;
 }

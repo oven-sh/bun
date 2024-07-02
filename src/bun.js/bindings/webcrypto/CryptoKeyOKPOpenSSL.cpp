@@ -46,19 +46,19 @@ std::optional<CryptoKeyPair> CryptoKeyOKP::platformGeneratePair(CryptoAlgorithmI
     if (namedCurve != NamedCurve::Ed25519)
         return {};
 
-    uint8_t public_key[ED25519_PUBLIC_KEY_LEN], private_key[ED25519_PRIVATE_KEY_LEN];
+    Vector<uint8_t> public_key(ED25519_PUBLIC_KEY_LEN), private_key(ED25519_PRIVATE_KEY_LEN);
 
     bool isEd25519 = identifier == CryptoAlgorithmIdentifier::Ed25519;
     if (isEd25519) {
-        ED25519_keypair(public_key, private_key);
+        ED25519_keypair(public_key.data(), private_key.data());
     } else {
-        X25519_keypair(public_key, private_key);
+        X25519_keypair(public_key.data(), private_key.data());
     }
 
     bool isPublicKeyExtractable = true;
-    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, Vector<uint8_t>(public_key), isPublicKeyExtractable, usages);
+    auto publicKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Public, WTFMove(public_key), isPublicKeyExtractable, usages);
     ASSERT(publicKey);
-    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key, isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
+    auto privateKey = CryptoKeyOKP::create(identifier, namedCurve, CryptoKeyType::Private, Vector<uint8_t>(std::span { private_key.data(), isEd25519 ? (unsigned int)ED25519_PRIVATE_KEY_LEN : (unsigned int)X25519_PRIVATE_KEY_LEN }), extractable, usages);
     ASSERT(privateKey);
     return CryptoKeyPair { WTFMove(publicKey), WTFMove(privateKey) };
 }

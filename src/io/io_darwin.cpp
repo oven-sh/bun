@@ -96,7 +96,7 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker) {
     );
     
     switch (kr) {
-        case KERN_SUCCESS: {
+        case MACH_MSG_SUCCESS: {
             return true;
         }
         
@@ -112,7 +112,7 @@ extern "C" bool io_darwin_schedule_wakeup(mach_port_t waker) {
         }
 
         default: {
-            ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %d", kr);
+            ASSERT_NOT_REACHED_WITH_MESSAGE("mach_msg failed with %x", kr);
             return false;
         }
     }

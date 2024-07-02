@@ -54,7 +54,7 @@ template<> CryptoAlgorithmParameters convertDictionary<CryptoAlgorithmParameters
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
         RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "CryptoAlgorithmParameters", "DOMString");
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoAlgorithmParameters"_s, "DOMString"_s);
         return {};
     }
     return result;

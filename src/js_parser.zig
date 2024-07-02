@@ -206,6 +206,49 @@ const Substitution = union(enum) {
     continue_: Expr,
 };
 
+/// Concatenate two `E.String`s, mutating BOTH inputs
+/// unless `has_inlined_enum_poison` is set.
+///
+/// Currently inlined enum poison refers to where mutation would cause output
+/// bugs due to inlined enum values sharing `E.String`s. If a new use case
+/// besides inlined enums comes up to set this to true, please rename the
+/// variable and document it.
+fn joinStrings(left: *const E.String, right: *const E.String, has_inlined_enum_poison: bool) E.String {
+    var new = if (has_inlined_enum_poison)
+        // Inlined enums can be shared by multiple call sites. In
+        // this case, we need to ensure that the ENTIRE rope is
+        // cloned. In other situations, the lhs doesn't have any
+        // other owner, so it is fine to mutate `lhs.data.end.next`.
+        //
+        // Consider the following case:
+        //   const enum A {
+        //     B = "a" + "b",
+        //     D = B + "d",
+        //   };
+        //   console.log(A.B, A.D);
+        left.cloneRopeNodes()
+    else
+        left.*;
+
+    // Similarly, the right side has to be cloned for an enum rope too.
+    //
+    // Consider the following case:
+    //   const enum A {
+    //     B = "1" + "2",
+    //     C = ("3" + B) + "4",
+    //   };
+    //   console.log(A.B, A.C);
+    const rhs_clone = Expr.Data.Store.append(E.String, if (has_inlined_enum_poison)
+        right.cloneRopeNodes()
+    else
+        right.*);
+
+    new.push(rhs_clone);
+    new.prefer_template = new.prefer_template or rhs_clone.prefer_template;
+
+    return new;
+}
+
 /// Transforming the left operand into a string is not safe if it comes from a
 /// nested AST node.
 const FoldStringAdditionKind = enum {
@@ -221,11 +264,12 @@ const FoldStringAdditionKind = enum {
 // the input AST in the case of rope strings
 fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: FoldStringAdditionKind) ?Expr {
     // "See through" inline enum constants
-    // TODO: implement foldAdditionPreProcess to fold some more things
+    // TODO: implement foldAdditionPreProcess to fold some more things :)
     var lhs = l.unwrapInlined();
     var rhs = r.unwrapInlined();
 
     if (kind != .nested_left) {
+        // See comment on `FoldStringAdditionKind` for examples
         switch (rhs.data) {
             .e_string, .e_template => {
                 if (lhs.toStringExprWithoutSideEffects(allocator)) |str| {
@@ -237,55 +281,47 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
     }
 
     switch (lhs.data) {
-        // "bar" + "baz" => "barbaz"
         .e_string => |left| {
             if (rhs.toStringExprWithoutSideEffects(allocator)) |str| {
                 rhs = str;
             }
 
-            if (rhs.data == .e_string and left.isUTF8() and rhs.data.e_string.isUTF8()) {
-                const has_inlined_enum_poison =
-                    l.data == .e_inlined_enum or
-                    r.data == .e_inlined_enum;
+            if (left.isUTF8()) {
+                switch (rhs.data) {
+                    // "bar" + "baz" => "barbaz"
+                    .e_string => |right| {
+                        if (right.isUTF8()) {
+                            const has_inlined_enum_poison =
+                                l.data == .e_inlined_enum or
+                                r.data == .e_inlined_enum;
 
-                var new = if (has_inlined_enum_poison)
-                    // Inlined enums can be shared by multiple call sites. In
-                    // this case, we need to ensure that the ENTIRE rope is
-                    // cloned. In other situations, the lhs doesn't have any
-                    // other owner, so it is fine to mutate `lhs.data.end.next`.
-                    //
-                    // Consider the following case:
-                    //   const enum A {
-                    //     B = "a" + "b",
-                    //     D = B + "d",
-                    //   };
-                    //   console.log(A.B, A.D);
-                    //
-                    lhs.data.e_string.cloneRopeNodes()
-                else
-                    lhs.data.e_string.*;
+                            return Expr.init(E.String, joinStrings(
+                                left,
+                                right,
+                                has_inlined_enum_poison,
+                            ), lhs.loc);
+                        }
+                    },
+                    // "bar" + `baz${bar}` => `barbaz${bar}`
+                    .e_template => |right| {
+                        if (right.head.isUTF8()) {
+                            return Expr.init(E.Template, E.Template{
+                                .parts = right.parts,
+                                .head = .{ .cooked = joinStrings(
+                                    left,
+                                    &right.head.cooked,
+                                    l.data == .e_inlined_enum,
+                                ) },
+                            }, l.loc);
+                        }
+                    },
+                    else => {
+                        // other constant-foldable ast nodes would have been converted to .e_string
+                    },
+                }
 
-                // Similarly, the right side has to be cloned for an enum rope too.
-                // Consider the following case:
-                //   const enum A {
-                //     B = "1" + "2",
-                //     C = ("3" + B) + "4",
-                //   };
-                //   console.log(A.B, A.C);
-                //
-                const rhs_clone = Expr.Data.Store.append(E.String, if (has_inlined_enum_poison)
-                    rhs.data.e_string.cloneRopeNodes()
-                else
-                    rhs.data.e_string.*);
-
-                new.push(rhs_clone);
-                new.prefer_template = new.prefer_template or rhs_clone.prefer_template;
-
-                return Expr.init(E.String, new, lhs.loc);
-            }
-
-            if (rhs.data == .e_template) {
-                // TODO:
+                // "'x' + `y${z}`" => "`xy${z}`"
+                if (rhs.data == .e_template and rhs.data.e_template.tag == null) {}
             }
 
             if (left.len() == 0 and rhs.knownPrimitive() == .string) {
@@ -295,23 +331,90 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
             return null;
         },
 
-        .e_template => {
-            // TODO:
-        },
+        .e_template => |left| {
+            // "`${x}` + 0" => "`${x}` + '0'"
+            if (rhs.toStringExprWithoutSideEffects(allocator)) |str| {
+                rhs = str;
+            }
 
-        .e_binary => |bin| {
-            if (bin.op == .bin_add) {
-                if (foldStringAddition(bin.left, bin.right, allocator, .nested_left)) |nested| {
-                    return Expr.init(E.Binary, .{
-                        .left = nested,
-                        .right = r, // un-unwrap this
-                        .op = .bin_add,
-                    }, lhs.loc);
+            if (left.tag == null) {
+                switch (rhs.data) {
+                    // `foo${bar}` + "baz" => `foo${bar}baz`
+                    .e_string => |right| {
+                        if (right.isUTF8()) {
+                            // Mutation of this node is fine because it will be not
+                            // be shared by other places. Note that e_template will
+                            // be treated by enums as strings, but will not be
+                            // inlined unless they could be converted into
+                            // .e_string.
+                            if (left.parts.len > 0) {
+                                const i = left.parts.len - 1;
+                                const last = left.parts[i];
+                                if (last.tail.isUTF8()) {
+                                    left.parts[i].tail = .{ .cooked = joinStrings(
+                                        &last.tail.cooked,
+                                        right,
+                                        r.data == .e_inlined_enum,
+                                    ) };
+                                }
+                            } else {
+                                if (left.head.isUTF8()) {
+                                    left.head = .{ .cooked = joinStrings(
+                                        &left.head.cooked,
+                                        right,
+                                        r.data == .e_inlined_enum,
+                                    ) };
+                                }
+                            }
+
+                            return lhs;
+                        }
+                    },
+                    // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
+                    .e_template => |right| {
+                        if (right.tag == null and right.head.isUTF8()) {
+                            if (left.parts.len > 0) {
+                                const i = left.parts.len - 1;
+                                const last = left.parts[i];
+                                if (last.tail.isUTF8() and right.head.isUTF8()) {
+                                    left.parts[i].tail = .{ .cooked = joinStrings(
+                                        &last.tail.cooked,
+                                        &right.head.cooked,
+                                        r.data == .e_inlined_enum,
+                                    ) };
+
+                                    left.parts = if (right.parts.len == 0)
+                                        left.parts
+                                    else
+                                        std.mem.concat(
+                                            allocator,
+                                            E.TemplatePart,
+                                            &.{ left.parts, right.parts },
+                                        ) catch bun.outOfMemory();
+                                }
+                            } else {
+                                if (left.head.isUTF8() and right.head.isUTF8()) {
+                                    left.head = .{ .cooked = joinStrings(
+                                        &left.head.cooked,
+                                        &right.head.cooked,
+                                        r.data == .e_inlined_enum,
+                                    ) };
+                                    left.parts = right.parts;
+                                }
+                            }
+                        }
+                        return lhs;
+                    },
+                    else => {
+                        // other constant-foldable ast nodes would have been converted to .e_string
+                    },
                 }
             }
         },
 
-        else => {},
+        else => {
+            // other constant-foldable ast nodes would have been converted to .e_string
+        },
     }
 
     if (rhs.data.as(.e_string)) |right| {
@@ -3086,7 +3189,14 @@ pub const Parser = struct {
         var p: JavaScriptParser = undefined;
         try JavaScriptParser.init(this.allocator, this.log, this.source, this.define, this.lexer, this.options, &p);
         p.lexer.track_comments = this.options.features.minify_identifiers;
-        p.should_fold_typescript_constant_expressions = this.options.features.should_fold_typescript_constant_expressions;
+        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
+        // Let's enable this flag file-wide
+        if (p.options.features.minify_syntax or
+            p.options.features.inlining)
+        {
+            p.should_fold_typescript_constant_expressions = true;
+        }
+
         defer p.lexer.deinit();
         const result: js_ast.Result = undefined;
         _ = result;
@@ -3219,7 +3329,15 @@ pub const Parser = struct {
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
-        p.should_fold_typescript_constant_expressions = self.options.features.should_fold_typescript_constant_expressions;
+
+        // Instead of doing "should_fold_typescript_constant_expressions or features.minify_syntax"
+        // Let's enable this flag file-wide
+        if (p.options.features.minify_syntax or
+            p.options.features.inlining)
+        {
+            p.should_fold_typescript_constant_expressions = true;
+        }
+
         defer p.lexer.deinit();
 
         var binary_expression_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
@@ -6730,10 +6848,6 @@ fn NewParser_(
                 p.recordUsage(p.runtime_imports.__HMRClient.?.ref);
             }
 
-            if (p.options.features.minify_syntax) {
-                p.should_fold_typescript_constant_expressions = true;
-            }
-
             //  "React.createElement" and "createElement" become:
             //      import { createElement } from 'react';
             //  "Foo.Bar.createElement" becomes:
@@ -7551,7 +7665,7 @@ fn NewParser_(
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                 return p.newExpr(E.Number{
-                                    .value = @floatFromInt((floatToInt32(vals[0]) & floatToInt32(vals[1])) & 31),
+                                    .value = @floatFromInt((floatToInt32(vals[0]) & floatToInt32(vals[1]))),
                                 }, v.loc);
                             }
                         }
@@ -7560,7 +7674,7 @@ fn NewParser_(
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                 return p.newExpr(E.Number{
-                                    .value = @floatFromInt((floatToInt32(vals[0]) | floatToInt32(vals[1])) & 31),
+                                    .value = @floatFromInt((floatToInt32(vals[0]) | floatToInt32(vals[1]))),
                                 }, v.loc);
                             }
                         }
@@ -7569,7 +7683,7 @@ fn NewParser_(
                         if (p.should_fold_typescript_constant_expressions) {
                             if (Expr.extractNumericValues(e_.left.data, e_.right.data)) |vals| {
                                 return p.newExpr(E.Number{
-                                    .value = @floatFromInt((floatToInt32(vals[0]) ^ floatToInt32(vals[1])) & 31),
+                                    .value = @floatFromInt((floatToInt32(vals[0]) ^ floatToInt32(vals[1]))),
                                 }, v.loc);
                             }
                         }
@@ -7577,7 +7691,7 @@ fn NewParser_(
                     // ---------------------------------------------------------------------------------------------------
                     .bin_assign => {
                         // Optionally preserve the name
-                        if (@as(Expr.Tag, e_.left.data) == .e_identifier) {
+                        if (e_.left.data == .e_identifier) {
                             e_.right = p.maybeKeepExprSymbolName(e_.right, p.symbols.items[e_.left.data.e_identifier.ref.innerIndex()].original_name, was_anonymous_named_expr);
                         }
                     },
@@ -16945,7 +17059,9 @@ fn NewParser_(
                                 } else if (target.data.as(.e_array)) |array| {
                                     // [x][0] -> x
                                     if (array.items.len == 1 and number.value == 0) {
-                                        return target.data.e_array.items.at(0).*;
+                                        const inlined = target.data.e_array.items.at(0).*;
+                                        if (inlined.canBeInlinedFromPropertyAccess())
+                                            return inlined;
                                     }
 
                                     // ['a', 'b', 'c'][1] -> 'b'
@@ -16954,6 +17070,7 @@ fn NewParser_(
                                         const inlined = target.data.e_array.items.at(int).*;
                                         // ['a', , 'c'][1] -> undefined
                                         if (inlined.data == .e_missing) return p.newExpr(E.Undefined{}, inlined.loc);
+                                        assert(inlined.canBeInlinedFromPropertyAccess());
                                         return inlined;
                                     }
                                 }
@@ -17373,6 +17490,18 @@ fn NewParser_(
                         .type_attribute = e_.type_attribute,
                     };
 
+                    // We want to forcefully fold constants inside of imports
+                    // even when minification is disabled, so that if we have an
+                    // import based on a string template, it does not cause a
+                    // bundle error. This is especially relevant for bundling NAPI
+                    // modules with 'bun build --compile':
+                    //
+                    // const binding = await import(`./${process.platform}-${process.arch}.node`);
+                    //
+                    const prev_should_fold_typescript_constant_expressions = true;
+                    defer p.should_fold_typescript_constant_expressions = prev_should_fold_typescript_constant_expressions;
+                    p.should_fold_typescript_constant_expressions = true;
+
                     e_.expr = p.visitExpr(e_.expr);
                     return p.import_transposer.maybeTransposeIf(e_.expr, state);
                 },
@@ -17441,8 +17570,23 @@ fn NewParser_(
                     {
                         const old_ce = p.options.ignore_dce_annotations;
                         defer p.options.ignore_dce_annotations = old_ce;
-                        if (is_macro_ref)
+                        const old_should_fold_typescript_constant_expressions = p.should_fold_typescript_constant_expressions;
+                        defer p.should_fold_typescript_constant_expressions = old_should_fold_typescript_constant_expressions;
+
+                        // We want to forcefully fold constants inside of
+                        // certain calls even when minification is disabled, so
+                        // that if we have an import based on a string template,
+                        // it does not cause a bundle error. This is relevant for
+                        // macros, as they require constant known values, but also
+                        // for `require` and `require.resolve`, as they go through
+                        // the module resolver.
+                        if (is_macro_ref or
+                            e_.target.data == .e_require_call_target or
+                            e_.target.data == .e_require_resolve_call_target)
+                        {
                             p.options.ignore_dce_annotations = true;
+                            p.should_fold_typescript_constant_expressions = true;
+                        }
 
                         for (e_.args.slice()) |*arg| {
                             arg.* = p.visitExpr(arg.*);
@@ -17547,8 +17691,7 @@ fn NewParser_(
                             const copied = Expr{ .loc = expr.loc, .data = .{ .e_call = e_ } };
                             const start_error_count = p.log.msgs.items.len;
                             p.macro_call_count += 1;
-                            const macro_result =
-                                p.options.macro_context.call(
+                            const macro_result = p.options.macro_context.call(
                                 record.path.text,
                                 p.source.path.sourceDir(),
                                 p.log,

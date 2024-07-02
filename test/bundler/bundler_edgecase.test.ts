@@ -1212,7 +1212,19 @@ describe("bundler", () => {
         capture(-5 >> 1)
       `,
     },
+    minifySyntax: true,
     capture: ["105", "105", "1", "1", "1", "191397248", "-5", "-3"],
+  });
+  itBundled("edgecase/ConstantFoldingBitwiseCoersion", {
+    files: {
+      "/entry.ts": `
+        capture(0 | 0)
+        capture(12582912 | 0)
+        capture(0xc00000 | 0)
+      `,
+    },
+    minifySyntax: true,
+    capture: ["0", "12582912", "12582912"],
   });
   itBundled("edgecase/EnumInliningNanBoxedEncoding", {
     files: {

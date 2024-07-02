@@ -2585,7 +2585,7 @@ pub const E = struct {
 
     pub const Template = struct {
         tag: ?ExprNodeIndex = null,
-        parts: []TemplatePart = &([_]TemplatePart{}),
+        parts: []TemplatePart = &.{},
         head: Contents,
 
         pub const Contents = union(Tag) {
@@ -2596,6 +2596,10 @@ pub const E = struct {
                 cooked,
                 raw,
             };
+
+            pub fn isUTF8(contents: Contents) bool {
+                return contents == .cooked and contents.cooked.isUTF8();
+            }
         };
 
         /// "`a${'b'}c`" => "`abc`"

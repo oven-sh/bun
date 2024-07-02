@@ -2875,7 +2875,6 @@ pub const ParseTask = struct {
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
-        opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;

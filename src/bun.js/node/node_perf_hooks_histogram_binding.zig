@@ -13,17 +13,23 @@ pub const RecordableHistogram = struct {
     exceeds: u64 = 4,
     stddev: f64 = 5, // todo: make this optional
     count: u64 = 6,
-    percentilesInternal: std.AutoHashMap(f32, f32) = std.AutoHashMap(f32, f32).init(bun.default_allocator),
+    _percentiles: std.AutoHashMap(f32, f32) = std.AutoHashMap(f32, f32).init(bun.default_allocator),
 
     const This = @This();
 
     //todo: these should also be explicit functions, IE both .max and .max() work
     pub const min = getter(.min);
+    pub const setMin = setter(.min);
     pub const max = getter(.max);
+    pub const setMax = setter(.max);
     pub const mean = getter(.mean);
+    pub const setMean = setter(.mean);
     pub const exceeds = getter(.exceeds);
+    pub const setExceeds = setter(.exceeds);
     pub const stddev = getter(.stddev);
+    pub const setStddev = setter(.stddev);
     pub const count = getter(.count);
+    pub const setCount = setter(.count);
 
     // we need a special getter for percentiles because it's a hashmap
     pub const percentiles = @as(
@@ -139,22 +145,60 @@ pub const RecordableHistogram = struct {
         return .undefined;
     }
 
-    const PropertyGetter = fn (this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
+    const PropertyGetter = fn (this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
     fn getter(comptime field: meta.FieldEnum(This)) PropertyGetter {
         return struct {
-            pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
                 const v = @field(this, @tagName(field));
-                return globalObject.toJS(v, .temporary);
+                return globalThis.toJS(v, .temporary);
             }
         }.callback;
     }
 
-    pub const value = getter(.value);
+    const PropertySetter = fn (this: *This, globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool;
+    fn setter(comptime field: meta.FieldEnum(This)) PropertySetter {
+        return struct {
+            pub fn callback(
+                this: *This,
+                globalThis: *JSC.JSGlobalObject,
+                value: JSC.JSValue,
+            ) callconv(.C) bool {
+                const fieldType = @TypeOf(@field(this, @tagName(field)));
+                switch (fieldType) {
+                    u64, i64 => |T| {
+                        if (!value.isNumber()) {
+                            globalThis.throwInvalidArguments("Expected a number", .{}); // protect users from themselves
+                            return false;
+                        }
+                        @field(this, @tagName(field)) = value.to(T);
+                        return true;
+                    },
+                    f64 => {
+                        if (!value.isNumber()) {
+                            globalThis.throwInvalidArguments("Expected a number", .{});
+                            return false;
+                        }
+                        @field(this, @tagName(field)) = value.asNumber();
+                        return true;
+                    },
+                    bool => {
+                        if (!value.isBoolean()) {
+                            globalThis.throwInvalidArguments("Expected a boolean", .{});
+                            return false;
+                        }
+                        @field(this, @tagName(field)) = value.to(bool);
+                        return true;
+                    },
+                    else => @compileError("Unsupported setter field type"), // protect us from ourselves
+                }
+            }
+        }.callback;
+    }
 
     // since we create this with bun.new, we need to have it be destroyable
     // our node.classes.ts has finalize=true to generate the call to finalize
     pub fn finalize(this: *This) callconv(.C) void {
-        this.percentilesInternal.deinit();
+        this._percentiles.deinit();
         bun.destroy(this);
     }
 };

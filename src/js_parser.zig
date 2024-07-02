@@ -5879,6 +5879,7 @@ fn NewParser_(
                     if (scope.ts_namespace) |ts_namespace| {
                         if (ts_namespace.exported_members.get(name)) |member| {
                             if (member.data.isEnum() == ts_namespace.is_enum_scope) {
+                                declare_loc = member.loc;
                                 // If this is an identifier from a sibling TypeScript namespace, then we're
                                 // going to have to generate a property access instead of a simple reference.
                                 // Lazily-generate an identifier that represents this property access.
@@ -5890,9 +5891,9 @@ fn NewParser_(
                                         .namespace_ref = ts_namespace.arg_ref,
                                         .alias = name,
                                     };
-                                    declare_loc = member.loc;
                                     break :brk ref;
                                 }
+                                break :brk gop.value_ptr.*;
                             }
                         }
                     }
@@ -6097,6 +6098,12 @@ fn NewParser_(
                             }
                         }
                     }
+
+                    return p.newExpr(E.Dot{
+                        .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
+                        .name = ns_alias.alias,
+                        .name_loc = loc,
+                    }, loc);
                 }
             }
 
@@ -10921,11 +10928,10 @@ fn NewParser_(
             try p.lexer.next();
 
             // Generate the namespace object
-            var arg_ref: Ref = undefined;
             const exported_members = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export);
             const ts_namespace = bun.create(p.allocator, js_ast.TSNamespaceScope, .{
                 .exported_members = exported_members,
-                .is_enum_scope = true,
+                .is_enum_scope = false,
                 .arg_ref = Ref.None,
             });
             const ns_member_data = js_ast.TSNamespaceMember.Data{ .namespace = exported_members };
@@ -11067,6 +11073,7 @@ fn NewParser_(
                 return p.s(S.TypeScript{}, loc);
             }
 
+            var arg_ref = Ref.None;
             if (!opts.is_typescript_declare) {
                 // Avoid a collision with the namespace closure argument variable if the
                 // namespace exports a symbol with the same name as the namespace itself:

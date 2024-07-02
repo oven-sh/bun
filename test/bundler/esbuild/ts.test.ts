@@ -1776,7 +1776,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceLet", {
-    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1794,7 +1793,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceFunction", {
-    todo: true,
     files: {
       "/function.ts": /* ts */ `
         export namespace x { export function y() {} }
@@ -1812,14 +1810,13 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceClass", {
-    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export class y {} }
         export namespace x { export let z = y }
       `,
     },
-    entryPoints: ["/function.ts"],
+    entryPoints: ["/let.ts"],
     bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
@@ -1830,7 +1827,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceNamespace", {
-    todo: true,
     files: {
       "/namespace.ts": /* ts */ `
         export namespace x { export namespace y { 0 } }
@@ -1848,7 +1844,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceEnum", {
-    todo: true,
     files: {
       "/enum.ts": /* ts */ `
         export namespace x { export enum y {} }
@@ -1867,7 +1862,6 @@ describe("bundler", () => {
     minifySyntax: false, // intentionally disabled. enum inlining always happens
   });
   itBundled("ts/SiblingEnum", {
-    todo: true,
     files: {
       "/number.ts": /* ts */ `
         (0, eval)('globalThis.y = 1234');
@@ -2031,7 +2025,6 @@ describe("bundler", () => {
   });
   itBundled("ts/EnumJSX", {
     // Blocking:
-    // - ts namespace bugs (identifier in ts sibling namespace does not resolve)
     // - jsx bugs (configuration does not seem to be respected)
     todo: true,
     files: {

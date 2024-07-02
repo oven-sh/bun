@@ -28,7 +28,6 @@
 #include "JSDOMConvertStrings.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -42,7 +41,7 @@ template<> CryptoAlgorithmAesKeyParams convertDictionary<CryptoAlgorithmAesKeyPa
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmAesKeyParams result;
     JSValue nameValue;
@@ -50,28 +49,28 @@ template<> CryptoAlgorithmAesKeyParams convertDictionary<CryptoAlgorithmAesKeyPa
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "AesKeyParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "AesKeyParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue lengthValue;
     if (isNullOrUndefined)
         lengthValue = jsUndefined();
     else {
         lengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "length"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!lengthValue.isUndefined()) {
         result.length = convert<IDLEnforceRangeAdaptor<IDLUnsignedShort>>(lexicalGlobalObject, lengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length", "AesKeyParams", "unsigned short");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length"_s, "AesKeyParams"_s, "unsigned short"_s);
+        return {};
     }
     return result;
 }

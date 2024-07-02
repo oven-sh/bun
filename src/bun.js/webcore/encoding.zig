@@ -413,7 +413,7 @@ pub const TextDecoder = struct {
     fatal: bool = false,
     encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-    pub fn finalize(this: *TextDecoder) callconv(.C) void {
+    pub fn finalize(this: *TextDecoder) void {
         bun.default_allocator.destroy(this);
     }
 
@@ -422,13 +422,13 @@ pub const TextDecoder = struct {
     pub fn getIgnoreBOM(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
     // pub fn setIgnoreBOM(
     //     this: *TextDecoder,
     //     _: *JSC.JSGlobalObject,
-    // ) callconv(.C) JSC.JSValue {
+    // )  JSC.JSValue {
     //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
     //     return true;
     // }
@@ -447,7 +447,7 @@ pub const TextDecoder = struct {
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.fatal);
     }
 
@@ -455,7 +455,7 @@ pub const TextDecoder = struct {
     pub fn getEncoding(
         this: *TextDecoder,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
     }
     const Vector16 = std.meta.Vector(16, u16);
@@ -585,7 +585,7 @@ pub const TextDecoder = struct {
         return out.toJS(ctx.ptr());
     }
 
-    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -613,7 +613,7 @@ pub const TextDecoder = struct {
         return this.decodeSlice(globalThis, array_buffer.slice(), false);
     }
 
-    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
+    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) JSValue {
         return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 
@@ -703,7 +703,7 @@ pub const TextDecoder = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*TextDecoder {
+    ) ?*TextDecoder {
         var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 

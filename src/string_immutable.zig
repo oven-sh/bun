@@ -749,10 +749,6 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
-pub inline fn eqlInsensitive(self: string, other: anytype) bool {
-    return std.ascii.eqlIgnoreCase(self, other);
-}
-
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLenWithType(u8, self, alt, true);
 }

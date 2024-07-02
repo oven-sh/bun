@@ -137,7 +137,7 @@ const HTTP = bun.http;
 const MutableString = bun.MutableString;
 const Global = bun.Global;
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
-    try HTTP.HTTPThread.init();
+    HTTP.HTTPThread.init();
     var refresher = bun.Progress{};
 
     {

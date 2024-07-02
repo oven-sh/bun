@@ -1557,7 +1557,7 @@ pub const ares_addr_port_node = struct_ares_addr_port_node;
 pub export fn Bun__canonicalizeIP(
     ctx: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) callconv(JSC.conv) JSC.JSValue {
     JSC.markBinding(@src());
 
     const globalThis = ctx.ptr();

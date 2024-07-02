@@ -14,7 +14,7 @@ import { sliceSourceCode } from "./builtin-parser";
 import { applyGlobalReplacements, define } from "./replacements";
 import { cap, fmtCPPCharArray, low, writeIfNotChanged } from "./helpers";
 import { createAssertClientJS, createLogClientJS } from "./client-js";
-import { getJS2NativeDTS } from "./js2native-generator";
+import { getJS2NativeDTS } from "./generate-js2native";
 
 const PARALLEL = false;
 const KEEP_TMP = true;

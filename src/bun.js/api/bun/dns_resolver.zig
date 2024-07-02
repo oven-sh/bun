@@ -1562,7 +1562,7 @@ pub const InternalDNS = struct {
     var dns_cache_errors: usize = 0;
     var getaddrinfo_calls: usize = 0;
 
-    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, 6);
         object.put(globalObject, JSC.ZigString.static("cacheHitsCompleted"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
         object.put(globalObject, JSC.ZigString.static("cacheHitsInflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
@@ -1633,7 +1633,7 @@ pub const InternalDNS = struct {
         return req;
     }
 
-    pub fn prefetchFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn prefetchFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 1) {
@@ -2252,7 +2252,7 @@ pub const DNSResolver = struct {
         });
     };
 
-    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolve", 2, arguments.len);
@@ -2337,7 +2337,7 @@ pub const DNSResolver = struct {
         }
     }
 
-    pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("reverse", 2, arguments.len);
@@ -2402,7 +2402,7 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn lookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn lookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("lookup", 2, arguments.len);
@@ -2472,7 +2472,7 @@ pub const DNSResolver = struct {
         };
     }
 
-    pub fn resolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveSrv", 2, arguments.len);
@@ -2503,7 +2503,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
-    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
@@ -2529,7 +2529,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
-    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
@@ -2560,7 +2560,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
-    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
@@ -2586,7 +2586,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
-    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
@@ -2617,7 +2617,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
-    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
@@ -2648,7 +2648,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
-    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
@@ -2679,7 +2679,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
-    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
@@ -2710,7 +2710,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
-    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
@@ -2831,7 +2831,7 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         _ = callframe;
 
         var vm = globalThis.bunVM();
@@ -2917,7 +2917,7 @@ pub const DNSResolver = struct {
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    pub fn lookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn lookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 2) {
             globalThis.throwNotEnoughArguments("lookupService", 3, arguments.len);

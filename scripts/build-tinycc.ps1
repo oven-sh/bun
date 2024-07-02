@@ -24,7 +24,7 @@ try {
 
   # TODO: -MT
   Run clang-cl @($env:CFLAGS -split ' ') libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c"
-  Run lib "tcc.obj" "-OUT:tcc.lib"
+  Run llvm-lib "tcc.obj" "-OUT:tcc.lib"
 
   Copy-Item tcc.obj $BUN_DEPS_OUT_DIR/tcc.lib
 

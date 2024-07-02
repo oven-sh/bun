@@ -74,3 +74,19 @@ it("can use the console iterator more than once", async () => {
   expect(await new Response(stdout).text()).toBe('["hello","world"]["another"]');
   proc.kill(0);
 });
+
+// https://github.com/oven-sh/bun/issues/7541
+it("can use console[Symbol.asyncIterator]", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), import.meta.dir + "/" + "console-symbol-iterator-run.ts"],
+    stdin: "pipe",
+    stdout: "pipe",
+    env: bunEnv,
+  });
+  const { stdout, stdin } = proc;
+  stdin.write("hello\nworld\nbreak\nhello\nworld\nbreak\n");
+  await stdin.end();
+
+  expect(await new Response(stdout).text()).toBe('["FIRSThello","world"]["FIRSThello","world"]');
+  proc.kill(0);
+});

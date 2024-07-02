@@ -1625,7 +1625,6 @@ const JavaScriptCoreBindings = struct {
       exports.set("estimatedSize", symbolName(typeName, "estimatedSize"));
       output += `
         pub fn ${symbolName(typeName, "estimatedSize")}(thisValue: *${typeName}) callconv(JSC.conv) usize {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.estimatedSize, .{thisValue});
         }
       `;
@@ -1635,7 +1634,6 @@ const JavaScriptCoreBindings = struct {
       exports.set("hasPendingActivity", symbolName(typeName, "hasPendingActivity"));
       output += `
         pub fn ${symbolName(typeName, "hasPendingActivity")}(thisValue: *${typeName}) callconv(JSC.conv) bool {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
           return @call(.always_inline, ${typeName}.hasPendingActivity, .{thisValue});
         }
       `;
@@ -1645,7 +1643,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("finalize", classSymbolName(typeName, "finalize"));
       output += `
         pub fn ${classSymbolName(typeName, "finalize")}(thisValue: *${typeName}) callconv(JSC.conv) void {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("<d>~${typeName} 0x{x:8}<r>", .{@intFromPtr(thisValue)});
           @call(.always_inline, ${typeName}.finalize, .{thisValue});
         }
       `;
@@ -1655,7 +1653,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("construct", classSymbolName(typeName, "construct"));
       output += `
         pub fn ${classSymbolName(typeName, "construct")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*${typeName} {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("<r><blue>new<r> ${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.constructor, .{globalObject, callFrame});
         }
       `;
@@ -1665,7 +1663,7 @@ const JavaScriptCoreBindings = struct {
       exports.set("call", classSymbolName(typeName, "call"));
       output += `
         pub fn ${classSymbolName(typeName, "call")}(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("${typeName}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.call, .{globalObject, callFrame});
         }
       `;
@@ -1689,7 +1687,7 @@ const JavaScriptCoreBindings = struct {
         if (names.getter) {
           output += `
         pub fn ${names.getter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("<r><blue>get<r> ${typeName}<d>.<r>${name}", .{});
           return @call(.always_inline, ${typeName}.${getter}, .{this, ${thisValue ? "thisValue," : ""} globalObject});
         }
       `;
@@ -1698,7 +1696,7 @@ const JavaScriptCoreBindings = struct {
         if (names.setter) {
           output += `
         pub fn ${names.setter}(this: *${typeName}, ${thisValue ? "thisValue: JSC.JSValue," : ""} globalObject: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("<r><blue>set<r> ${typeName}<d>.<r>${name} = {}", .{value});
           return @call(.always_inline, ${typeName}.${setter}, .{this, ${thisValue ? "thisValue," : ""} globalObject, value});
         }
       `;
@@ -1711,7 +1709,6 @@ const JavaScriptCoreBindings = struct {
           pub fn ${names.DOMJIT}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, ${args
             .map(ZigDOMJITArgTypeDefinition)
             .join(", ")}) callconv(JSC.conv) JSC.JSValue {
-            if (comptime Environment.isDebug) JSC.markBinding(@src());
             return @call(.always_inline, ${typeName}.${DOMJITName(fn)}, .{thisValue, globalObject, ${args.map((_, i) => `arg${i}`).join(", ")}});
           }
           `;
@@ -1719,7 +1716,7 @@ const JavaScriptCoreBindings = struct {
 
           output += `
         pub fn ${names.fn}(thisValue: *${typeName}, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-          if (comptime Environment.isDebug) JSC.markBinding(@src());
+          if (comptime Environment.isDebug) zig("<d>${typeName}.<r>${name}<d>({})<r>", .{callFrame});
           return @call(.always_inline, ${typeName}.${fn}, .{thisValue, globalObject, callFrame});
         }
         `;
@@ -2052,6 +2049,7 @@ const JSC = bun.JSC;
 const Classes = JSC.GeneratedClassesList;
 const Environment = bun.Environment;
 const std = @import("std");
+const zig = bun.Output.scoped(.zig, true);
 
 pub const StaticGetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) JSC.JSValue;
 pub const StaticSetterType = fn(*JSC.JSGlobalObject, JSC.JSValue, JSC.JSValue, JSC.JSValue) callconv(JSC.conv) bool;

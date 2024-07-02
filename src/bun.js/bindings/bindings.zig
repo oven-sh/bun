@@ -5979,6 +5979,34 @@ pub const CallFrame = opaque {
 
     pub const name = "JSC::CallFrame";
 
+    pub fn format(frame: *CallFrame, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const args = frame.argumentsPtr()[0..frame.argumentsCount()];
+
+        for (args[0..@min(args.len, 4)], 0..) |arg, i| {
+            if (i != 0) {
+                try writer.writeAll(", ");
+            }
+            switch (arg) {
+                .zero => try writer.writeAll("<empty>"),
+                .undefined => try writer.writeAll("undefined"),
+                .null => try writer.writeAll("null"),
+                .true => try writer.writeAll("true"),
+                .false => try writer.writeAll("false"),
+                else => {
+                    if (arg.isNumber()) {
+                        try writer.writeAll("number");
+                    } else {
+                        try writer.writeAll(@tagName(arg.jsType()));
+                    }
+                },
+            }
+        }
+
+        if (args.len > 4) {
+            try writer.print(", ... {d} more", .{args.len - 4});
+        }
+    }
+
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
         return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__firstArgument;
     }

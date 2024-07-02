@@ -92,7 +92,7 @@ describe("readline.clearScreenDown()", () => {
     // Verify that clearScreenDown() throws on invalid callback.
     assert.throws(() => {
       readline.clearScreenDown(writable, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }, "ERR_INVALID_ARG_TYPE");
   });
 
   it("should that clearScreenDown() does not throw on null or undefined stream", done => {
@@ -140,7 +140,7 @@ describe("readline.clearLine()", () => {
     // Verify that clearLine() throws on invalid callback.
     assert.throws(() => {
       readline.clearLine(writable, 0, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }, "ERR_INVALID_ARG_TYPE");
   });
 
   it("should not throw on null or undefined stream", done => {
@@ -190,7 +190,7 @@ describe("readline.moveCursor()", () => {
     // Verify that moveCursor() throws on invalid callback.
     assert.throws(() => {
       readline.moveCursor(writable, 1, 1, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }, "ERR_INVALID_ARG_TYPE");
   });
 
   it("should not throw on null or undefined stream", done => {
@@ -283,7 +283,7 @@ describe("readline.cursorTo()", () => {
     // Verify that cursorTo() throws on invalid callback.
     assert.throws(() => {
       readline.cursorTo(writable, 1, 1, null);
-    }, /ERR_INVALID_ARG_TYPE/);
+    }, "ERR_INVALID_ARG_TYPE");
   });
 
   it("should throw if x or y is NaN", () => {

@@ -1880,6 +1880,16 @@ static JSValue constructStdin(VM& vm, JSObject* processObject)
     RELEASE_AND_RETURN(scope, result);
 }
 
+static JSValue constructProcessSend(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("send"_s), Bun__Process__send, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
+}
+
 #if OS(WINDOWS)
 #define getpid _getpid
 #endif
@@ -2839,6 +2849,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   revision                         constructRevision                                   PropertyCallback
   setSourceMapsEnabled             Process_stubEmptyFunction                           Function 1
   setUncaughtExceptionCaptureCallback Process_setUncaughtExceptionCaptureCallback      Function 1
+  send                             constructProcessSend                                PropertyCallback
   stderr                           constructStderr                                     PropertyCallback
   stdin                            constructStdin                                      PropertyCallback
   stdout                           constructStdout                                     PropertyCallback

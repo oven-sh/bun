@@ -174,7 +174,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{}\n", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
@@ -183,7 +183,7 @@ pub const PackageManagerCommand = struct {
 
             Output.flush();
             Output.disableBuffering();
-            try Output.writer().print("{}", .{load_lockfile.ok.lockfile.fmtMetaHash()});
+            try Output.writer().print("{}\n", .{load_lockfile.ok.lockfile.fmtMetaHash()});
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
@@ -249,6 +249,7 @@ pub const PackageManagerCommand = struct {
             }
 
             Output.writer().writeAll(outpath) catch {};
+            try Output.writer().print("\n", .{});
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "default-trusted")) {
             try DefaultTrustedCommand.exec();

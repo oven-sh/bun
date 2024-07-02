@@ -6,7 +6,7 @@ pub const RecordableHistogram = struct {
     allocator: *std.mem.Allocator,
     lowest_trackable_value: u64,
     highest_trackable_value: u64,
-    significant_figures: u32,
+    significant_figures: u64,
     sub_bucket_count: u64,
     sub_bucket_half_count: u64,
     unit_magnitude: u64,
@@ -86,8 +86,8 @@ pub const RecordableHistogram = struct {
     }
 
     fn get_bucket_index(self: *const RecordableHistogram, value: u64) u64 {
-        const pow2ceiling = 64 - std.math.clz(value | self.sub_bucket_mask);
-        return pow2ceiling - self.unit_magnitude - (@intFromFloat(u64, std.math.ceil(std.math.log2(self.sub_bucket_half_count))) + 1);
+        const pow2ceiling = 64 - @clz(value | self.sub_bucket_mask);
+        return pow2ceiling - self.unit_magnitude - (@as(u64, @intFromFloat(std.math.ceil(std.math.log2(@as(f64, @floatFromInt(self.sub_bucket_half_count)))) + 1)));
     }
 
     fn get_sub_bucket_index(self: *const RecordableHistogram, value: u64, bucket_index: u64) u64 {
@@ -95,9 +95,9 @@ pub const RecordableHistogram = struct {
     }
 
     fn get_counts_index(self: *const RecordableHistogram, bucket_index: u64, sub_bucket_index: u64) usize {
-        const bucket_base_index = (bucket_index + 1) << @intFromFloat(u64, std.math.ceil(std.math.log2(self.sub_bucket_half_count)));
+        const bucket_base_index = (bucket_index + 1) << @as(u64, @intFromFloat(std.math.ceil(@as(f64, @floatFromInt(self.sub_bucket_half_count)))));
         const offset_in_bucket = sub_bucket_index - self.sub_bucket_half_count;
-        return @intCast(usize, bucket_base_index + offset_in_bucket);
+        return @as(usize, bucket_base_index + offset_in_bucket);
     }
 };
 

@@ -52,10 +52,15 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Proces
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /Zi'
+$CFLAGS = '/O2 /Zi '
 # $CFLAGS = '/O2 /Z7 /MT'
-$CXXFLAGS = '/O2 /Zi'
+$CXXFLAGS = '/O2 /Zi '
 # $CXXFLAGS = '/O2 /Z7 /MT'
+
+if ($env:USE_LTO -eq "1") {
+  $CXXFLAGS += " -fuse-ld=lld -Xclang -emit-llvm-bc "
+  $CFLAGS += " -fuse-ld=lld -Xclang -emit-llvm-bc "
+}
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
 $env:CPU_TARGET = $CPU_NAME
@@ -70,7 +75,9 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=$CFLAGS",
   "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
+  "-DCMAKE_AR=llvm-lib"
 )
+$env:AR = "llvm-lib"
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS

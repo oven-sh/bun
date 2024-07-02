@@ -22,7 +22,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
-🟢 Fully implemented.
+🟡 Implemented but not battle-tested.
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 

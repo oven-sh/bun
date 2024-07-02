@@ -43,7 +43,7 @@ pub const Bunfig = struct {
         &.{ "online", OfflineMode.online },
     });
 
-    const Parser = struct {
+    pub const Parser = struct {
         json: js_ast.Expr,
         source: *const logger.Source,
         log: *logger.Log,
@@ -382,39 +382,20 @@ pub const Bunfig = struct {
                     }
 
                     if (_bun.get("scopes")) |scopes| {
-                        var registry_map = install.scoped orelse std.mem.zeroes(Api.NpmRegistryMap);
+                        var registry_map = install.scoped orelse Api.NpmRegistryMap{};
                         try this.expect(scopes, .e_object);
-                        const count = scopes.data.e_object.properties.len + registry_map.registries.len;
 
-                        var registries = try std.ArrayListUnmanaged(Api.NpmRegistry).initCapacity(this.allocator, count);
-                        registries.appendSliceAssumeCapacity(registry_map.registries);
-
-                        var names = try std.ArrayListUnmanaged(string).initCapacity(this.allocator, count);
-                        names.appendSliceAssumeCapacity(registry_map.scopes);
+                        try registry_map.scopes.ensureUnusedCapacity(this.allocator, scopes.data.e_object.properties.len);
 
                         for (scopes.data.e_object.properties.slice()) |prop| {
                             const name_ = prop.key.?.asString(this.allocator) orelse continue;
                             const value = prop.value orelse continue;
                             if (name_.len == 0) continue;
                             const name = if (name_[0] == '@') name_[1..] else name_;
-                            var index = names.items.len;
-                            for (names.items, 0..) |comparator, i| {
-                                if (strings.eql(name, comparator)) {
-                                    index = i;
-                                    break;
-                                }
-                            }
-
-                            if (index == names.items.len) {
-                                names.items.len += 1;
-                                registries.items.len += 1;
-                            }
-                            names.items[index] = name;
-                            registries.items[index] = try this.parseRegistry(value);
+                            const registry = try this.parseRegistry(value);
+                            try registry_map.scopes.put(this.allocator, name, registry);
                         }
 
-                        registry_map.registries = registries.items;
-                        registry_map.scopes = names.items;
                         install.scoped = registry_map;
                     }
 

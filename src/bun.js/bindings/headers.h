@@ -164,7 +164,6 @@ CPP_DECL JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* ar
 CPP_DECL JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toSyntaxErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0);

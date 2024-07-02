@@ -1191,7 +1191,7 @@ pub fn transformSync(
     var out = JSC.ZigString.init(buffer_writer.written);
     out.setOutputEncoding();
 
-    return out.toValueGC(globalThis);
+    return out.toJS(globalThis);
 }
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
@@ -1234,8 +1234,8 @@ fn namedImportsToJS(
         if (record.is_internal) continue;
 
         array.ensureStillAlive();
-        const path = JSC.ZigString.init(record.path.text).toValueGC(global);
-        const kind = JSC.ZigString.init(record.kind.label()).toValueGC(global);
+        const path = JSC.ZigString.init(record.path.text).toJS(global);
+        const kind = JSC.ZigString.init(record.kind.label()).toJS(global);
         array.putIndex(global, @as(u32, @truncate(i)), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 

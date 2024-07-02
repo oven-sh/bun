@@ -233,26 +233,26 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.default).toValueGC(globalThis);
+        return ZigString.init(Properties.UTF8.default).toJS(globalThis);
     }
     pub fn getCredentials(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.include).toValueGC(globalThis);
+        return ZigString.init(Properties.UTF8.include).toJS(globalThis);
     }
     pub fn getDestination(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init("").toValueGC(globalThis);
+        return ZigString.init("").toJS(globalThis);
     }
 
     pub fn getIntegrity(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.Empty.toValueGC(globalThis);
+        return ZigString.Empty.toJS(globalThis);
     }
 
     pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
@@ -281,7 +281,7 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
+        return ZigString.init(Properties.UTF8.navigate).toJS(globalThis);
     }
 
     pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -309,7 +309,7 @@ pub const Request = struct {
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.follow).toValueGC(globalThis);
+        return ZigString.init(Properties.UTF8.follow).toJS(globalThis);
     }
     pub fn getReferrer(
         this: *Request,
@@ -317,17 +317,17 @@ pub const Request = struct {
     ) callconv(.C) JSC.JSValue {
         if (this._headers) |headers_ref| {
             if (headers_ref.get("referrer", globalObject)) |referrer| {
-                return ZigString.init(referrer).toValueGC(globalObject);
+                return ZigString.init(referrer).toJS(globalObject);
             }
         }
 
-        return ZigString.init("").toValueGC(globalObject);
+        return ZigString.init("").toJS(globalObject);
     }
     pub fn getReferrerPolicy(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
     ) callconv(.C) JSC.JSValue {
-        return ZigString.init("").toValueGC(globalThis);
+        return ZigString.init("").toJS(globalThis);
     }
     pub fn getUrl(
         this: *Request,

@@ -3315,7 +3315,7 @@ pub const Blob = struct {
         jsThis: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
-    ) callconv(JSC.conv) bool {
+    ) bool {
         // by default we don't have a name so lets allow it to be set undefined
         if (value.isEmptyOrUndefinedOrNull()) {
             this.name.deref();
@@ -3556,7 +3556,7 @@ pub const Blob = struct {
         return blob_;
     }
 
-    pub fn finalize(this: *Blob) callconv(.C) void {
+    pub fn finalize(this: *Blob) void {
         this.deinit();
     }
 

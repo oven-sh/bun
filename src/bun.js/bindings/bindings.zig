@@ -5612,11 +5612,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 
-    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: isize) JSValue;
+    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: usize) JSValue;
 
     /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
     pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
-        return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
+        return Bun__JSValue__deserialize(global, bytes.ptr, bytes.len);
     }
 
     extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;

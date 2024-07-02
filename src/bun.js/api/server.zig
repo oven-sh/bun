@@ -1411,7 +1411,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
         allocator: std.mem.Allocator,
         req: *uws.Request,
-        signal: ?*JSC.WebCore.AbortSignal = null,
+        signal: JSC.Strong = .{},
         method: HTTP.Method,
 
         flags: NewFlags(debug_mode) = .{},
@@ -1449,6 +1449,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
+
+        pub fn getSignal(this: *const RequestContext) ?*JSC.WebCore.AbortSignal {
+            if (this.signal.get()) |js_signal| {
+                return js_signal.as(JSC.WebCore.AbortSignal);
+            }
+            return null;
+        }
 
         pub inline fn isAsync(this: *const RequestContext) bool {
             return this.defer_deinit_until_callback_completes == null;
@@ -1841,6 +1848,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return true;
         }
 
+        /// Check if we are aborted and signal the abort if we are
+        /// The signal ref will be cleaned up
+        /// Returns true if we are aborted
+        fn checkAndCleanAbortSignal(this: *RequestContext) bool {
+            if (this.getSignal()) |signal| {
+                var _signal = this.signal;
+                this.signal = .{};
+                defer _signal.deinit();
+                if (this.flags.aborted and !signal.aborted()) {
+                    const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
+                    reason.ensureStillAlive();
+                    _ = signal.signal(reason);
+                    return true;
+                }
+            }
+            return false;
+        }
+
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             assert(this.resp == resp);
             assert(!this.flags.aborted);
@@ -1857,17 +1882,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             // if signal is not aborted, abort the signal
-            if (this.signal) |signal| {
-                this.signal = null;
-                if (!signal.aborted()) {
-                    const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                    reason.ensureStillAlive();
-                    _ = signal.signal(reason);
-                    any_js_calls = true;
-                }
-                _ = signal.unref();
+            if (this.checkAndCleanAbortSignal()) {
+                any_js_calls = true;
             }
-
             //if have sink, call onAborted on sink
             if (this.sink) |wrapper| {
                 wrapper.sink.abort();
@@ -1947,15 +1964,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             // if signal is not aborted, abort the signal
-            if (this.signal) |signal| {
-                this.signal = null;
-                if (this.flags.aborted and !signal.aborted()) {
-                    const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
-                    reason.ensureStillAlive();
-                    _ = signal.signal(reason);
-                }
-                _ = signal.unref();
-            }
+            _ = this.checkAndCleanAbortSignal();
 
             if (this.request_body) |body| {
                 ctxLog("finalizeWithoutDeinit: request_body != null", .{});
@@ -6231,14 +6240,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
-            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
-            ctx.signal = signal;
-
             request_object.* = .{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .https = ssl_enabled,
-                .signal = signal.ref(),
+                .signal = null,
                 .body = body.ref(),
             };
 
@@ -6301,6 +6307,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             const request_value = args[0];
             request_value.ensureStillAlive();
+            // keep a strong ref so we can signal when the request is aborted (We need to keep JS alive not only the native part)
+            ctx.signal = JSC.Strong.create(Request.getSignalFromJS(request_value, this.globalThis), this.globalThis);
 
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
@@ -6349,15 +6357,12 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
-            var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
-            ctx.signal = signal;
-
             request_object.* = .{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
-                .signal = signal.ref(),
+                .signal = null,
                 .body = body.ref(),
             };
             ctx.upgrade_context = upgrade_ctx;
@@ -6369,6 +6374,9 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
+            // keep a strong ref so we can signal when the request is aborted (We need to keep JS alive not only the native part)
+            ctx.signal = JSC.Strong.create(Request.getSignalFromJS(request_value, this.globalThis), this.globalThis);
+
             const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
             defer {
                 if (!ctx.didUpgradeWebSocket()) {}

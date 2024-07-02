@@ -1221,10 +1221,48 @@ describe("bundler", () => {
         capture(0 | 0)
         capture(12582912 | 0)
         capture(0xc00000 | 0)
+        capture(Infinity | 0)
+        capture(-Infinity | 0)
+        capture(NaN | 0)
+        // u32 limits
+        capture(-4294967295 | 0)
+        capture(-4294967296 | 0)
+        capture(-4294967297 | 0)
+        capture(4294967295 | 0)
+        capture(4294967296 | 0)
+        capture(4294967297 | 0)
+        // i32 limits
+        capture(-2147483647 | 0)
+        capture(-2147483648 | 0)
+        capture(-2147483649 | 0)
+        capture(2147483647 | 0)
+        capture(2147483648 | 0)
+        capture(2147483649 | 0)
+        capture(0.5 | 0)
       `,
     },
     minifySyntax: true,
-    capture: ["0", "12582912", "12582912"],
+    capture: [
+      "0",
+      "12582912",
+      "12582912",
+      "0",
+      "0",
+      "0",
+      "1",
+      "0",
+      "-1",
+      "-1",
+      "0",
+      "1",
+      "-2147483647",
+      "-2147483648",
+      "2147483647",
+      "2147483647",
+      "-2147483648",
+      "-2147483647",
+      "0",
+    ],
   });
   itBundled("edgecase/EnumInliningNanBoxedEncoding", {
     files: {

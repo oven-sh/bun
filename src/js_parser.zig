@@ -24007,7 +24007,7 @@ fn floatToInt32(f: f64) i32 {
 
     const uint: u32 = @intFromFloat(@mod(@abs(f), 4294967296));
     const int: i32 = @bitCast(uint);
-    return if (f < 0) -int else int;
+    return if (f < 0) @as(i32, 0) -% int else int;
 }
 
 fn floatToUInt32(f: f64) u32 {

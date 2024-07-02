@@ -1537,8 +1537,10 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
   });
 
   it("CommonJS", () => {
-    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
-    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi" + 123);\n');
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
+
+    // note: even if minify syntax is off, constant folding must happen within require calls
+    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi123");\n');
 
     expect(nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
     expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');

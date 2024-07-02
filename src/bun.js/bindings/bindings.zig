@@ -6099,8 +6099,10 @@ pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
         return Function;
     }
 
-    if (comptime @TypeOf(Function) == JSHostFunctionPtr) {
-        return Function;
+    if (@TypeOf(Function) == fn (*JSGlobalObject, *CallFrame) JSValue) {
+        // These may coerce to both, but we want to force it to be this kind.
+    } else if (@TypeOf(Function) == *const fn (*JSGlobalObject, *CallFrame) JSValue) {
+        @compileLog(Function, "use JSC.toJSHostFunction(Function) instead of JSC.toJSHostFunction(&Function)");
     }
 
     return struct {

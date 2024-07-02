@@ -22,3 +22,5 @@ const response = await fetch("https://bun.sh/api", {
 
 const body = await response.json();
 ```
+
+`BUN_CONFIG_MAX_HTTP_REQUESTS=65535` is a required environment variable for NodeJS like functionality of parallel large volume requests. Limited by default to `256`

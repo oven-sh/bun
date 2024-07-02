@@ -2294,6 +2294,9 @@ pub const Command = struct {
                         \\  <d>Install the most recent canary version of Bun<r>
                         \\  <b><green>bun upgrade --canary<r>
                         \\
+                        \\  <d>Install last stable version of Bun<r>
+                        \\  <b><green>bun upgrade --stable<r>
+                        \\
                         \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
                         \\
                     ;

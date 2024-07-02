@@ -3615,8 +3615,8 @@ pub fn hasEqSignAsciiSlow(str: []const u8) ?u32 {
 }
 
 pub const CmdEnvIter = struct {
-    env: *const std.StringArrayHashMap([:0]const u8),
-    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+    env: *const bun.StringArrayHashMap([:0]const u8),
+    iter: bun.StringArrayHashMap([:0]const u8).Iterator,
 
     const Entry = struct {
         key: Key,
@@ -3643,7 +3643,7 @@ pub const CmdEnvIter = struct {
         }
     };
 
-    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+    pub fn fromEnv(env: *const bun.StringArrayHashMap([:0]const u8)) CmdEnvIter {
         const iter = env.iterator();
         return .{
             .env = env,

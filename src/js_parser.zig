@@ -22714,7 +22714,7 @@ fn NewParser_(
             for (p.top_level_enums.items) |ref| {
                 const entry = p.ref_to_ts_namespace_member.getEntry(ref).?;
                 const namespace = entry.value_ptr.namespace;
-                var inner_map: std.StringHashMapUnmanaged(InlinedEnumValue) = .{};
+                var inner_map: bun.StringHashMapUnmanaged(InlinedEnumValue) = .{};
                 try inner_map.ensureTotalCapacity(allocator, @intCast(namespace.count()));
                 for (namespace.keys(), namespace.values()) |key, val| {
                     switch (val.data) {

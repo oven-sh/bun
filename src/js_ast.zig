@@ -6619,7 +6619,7 @@ pub const Ast = struct {
     pub const NamedImports = std.ArrayHashMap(Ref, NamedImport, RefHashCtx, true);
     pub const NamedExports = bun.StringArrayHashMap(NamedExport);
     pub const ConstValuesMap = std.ArrayHashMapUnmanaged(Ref, Expr, RefHashCtx, false);
-    pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, std.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
+    pub const TsEnumsMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(InlinedEnumValue), RefHashCtx, false);
 
     pub fn fromParts(parts: []Part) Ast {
         return Ast{
@@ -6925,7 +6925,7 @@ pub const TSNamespaceScope = struct {
     /// generated proxy symbols that represent the property access "x3.y". This
     /// map is unique per namespace block because "x3" is the argument symbol that
     /// is specific to that particular namespace block.
-    property_accesses: std.StringArrayHashMapUnmanaged(Ref) = .{},
+    property_accesses: bun.StringArrayHashMapUnmanaged(Ref) = .{},
 
     /// Even though enums are like namespaces and both enums and namespaces allow
     /// implicit references to properties of sibling scopes, they behave like
@@ -6955,7 +6955,7 @@ pub const TSNamespaceScope = struct {
     is_enum_scope: bool,
 };
 
-pub const TSNamespaceMemberMap = std.StringArrayHashMapUnmanaged(TSNamespaceMember);
+pub const TSNamespaceMemberMap = bun.StringArrayHashMapUnmanaged(TSNamespaceMember);
 
 pub const TSNamespaceMember = struct {
     loc: logger.Loc,
@@ -7251,7 +7251,7 @@ pub const Part = struct {
     };
 
     pub const SymbolUseMap = std.ArrayHashMapUnmanaged(Ref, Symbol.Use, RefHashCtx, false);
-    pub const SymbolPropertyUseMap = std.ArrayHashMapUnmanaged(Ref, std.StringHashMapUnmanaged(Symbol.Use), RefHashCtx, false);
+    pub const SymbolPropertyUseMap = std.ArrayHashMapUnmanaged(Ref, bun.StringHashMapUnmanaged(Symbol.Use), RefHashCtx, false);
 
     pub fn jsonStringify(self: *const Part, writer: anytype) !void {
         return writer.write(self.stmts);

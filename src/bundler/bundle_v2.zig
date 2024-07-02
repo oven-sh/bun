@@ -9132,7 +9132,7 @@ const LinkerContext = struct {
             const DuplicateEntry = struct {
                 sources: std.ArrayListUnmanaged(*Chunk) = .{},
             };
-            var duplicates_map: std.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
+            var duplicates_map: bun.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
 
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing

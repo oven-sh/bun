@@ -250,7 +250,7 @@ ${iniInner.join("\n")}
 
   await makeTest([["_authToken", "skibidi"]], result => {
     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-    expect(result.default_registry_token).toEqual("Default registry token: skibidi");
+    expect(result.default_registry_token).toEqual("skibidi");
   });
 
   await makeTest(
@@ -301,18 +301,32 @@ module.exports = function lmao() {
     expect(stderr).not.toContain("Unable to authenticate");
   });
 
+  type EnvMap =
+    | Omit<
+        {
+          [key: string]: string;
+        },
+        "dotEnv"
+      >
+    | { dotEnv?: Record<string, string> };
+
   function registryConfigOptionTest(
     name: string,
     _opts: Record<string, string> | (() => Promise<Record<string, string>>),
-    _env?: Record<string, string> | (() => Promise<Record<string, string>>),
+    _env?: EnvMap | (() => Promise<EnvMap>),
   ) {
     it(`sets scoped registry option: ${name}`, async () => {
       await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
 
       await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
 
-      const env = _env ? (typeof _env === "function" ? await _env() : _env) : {};
+      const { dotEnv, ...env } = _env ? (typeof _env === "function" ? await _env() : _env) : {};
       const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
+      const dotEnvInner = dotEnv
+        ? Object.entries(dotEnv)
+            .map(([k, v]) => `${k}=${v}`)
+            .join("\n")
+        : "";
 
       const ini = /* ini */ `
 registry = http://localhost:${port}/
@@ -321,6 +335,7 @@ ${Object.keys(opts)
   .join("\n")}
 `;
 
+      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
       await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
       await Bun.$`echo ${JSON.stringify({
         name: "private-pkg-dont-touch",
@@ -374,6 +389,16 @@ module.exports = function lmao() {
     },
     {
       SUPER_SECRET_PASSWORD: "verysecure",
+    },
+  );
+  registryConfigOptionTest(
+    "username and password with .env variable password",
+    async () => {
+      await generateRegistryUser("gandalf421", "verysecure");
+      return { username: "gandalf420", _password: "${SUPER_SECRET_PASSWORD}" };
+    },
+    {
+      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
     },
   );
 });

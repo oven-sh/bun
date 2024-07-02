@@ -25,7 +25,7 @@ import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync } from "harness";
+import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
 import * as zlib from "node:zlib";
 
@@ -156,6 +156,28 @@ describe("node:http", () => {
       });
       await promise;
       server.close();
+    });
+
+    it("should use the provided port", async () => {
+      const server = http.createServer(() => {});
+      const random_port = randomPort();
+      server.listen(random_port);
+      const { port } = server.address();
+      expect(port).toEqual(random_port);
+      server.close();
+    });
+
+    it("should assign a random port when undefined", async () => {
+      const server1 = http.createServer(() => {});
+      const server2 = http.createServer(() => {});
+      server1.listen(undefined);
+      server2.listen(undefined);
+      const { port: port1 } = server1.address();
+      const { port: port2 } = server2.address();
+      expect(port1).not.toEqual(port2);
+      expect(port1).toBeWithin(1024, 65535);
+      server1.close();
+      server2.close();
     });
 
     it("option method should be uppercase (#7250)", async () => {

@@ -12,7 +12,7 @@ Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. T
   }
 ```
 
-By default, Bun will install the latest version of all dependencies and metadependencies, according to the ranges specified in each package's `package.json`. Let's say you have a project with one dependency, `foo`, which in turn has a dependency on `bar`. This means `bar` is a _metadependency_ of our project.
+By default, Bun will install the latest version of all dependencies and metadependencies, according to the ranges specified in each package's `package.json`. Let's say we have a project with one dependency, `foo`, which in turn has a dependency on `bar`. This means `bar` is a _metadependency_ of our project.
 
 ```json#package.json
 {

@@ -700,86 +700,142 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "yellow", ED ++ "33m" },
 });
 const RESET: string = "\x1b[0m";
+const ColorFormatter = struct {
+    enabled: []const u8,
+    disabled: []const u8,
+
+    pub fn parse(comptime fmt: string) *const ColorFormatter {
+        return comptime value: {
+            var fmts: [2][fmt.len * 4]u8 = undefined;
+            var fmts_i = [2]usize{ 0, 0 };
+
+            @setEvalBranchQuota(9999);
+            var i: usize = 0;
+            const len = fmt.len;
+            while (i < len) {
+                const c = fmt[i];
+                switch (c) {
+                    '\\' => {
+                        i += 1;
+                        if (i < len) {
+                            switch (fmt[i]) {
+                                '<', '>' => {
+                                    fmts[0][fmts_i[0]] = fmt[i];
+                                    fmts[1][fmts_i[1]] = fmt[i];
+                                    fmts_i[0] += 1;
+                                    fmts_i[1] += 1;
+                                    i += 1;
+                                },
+                                else => {
+                                    const pair = .{ '\\', fmt[i] };
+                                    fmts[0][fmts_i[0] .. fmts_i[0] + 2][0..2].* = pair;
+                                    fmts[1][fmts_i[1] .. fmts_i[1] + 2][0..2].* = pair;
+                                    fmts_i[0] += 2;
+                                    fmts_i[1] += 2;
+                                    i += 1;
+                                },
+                            }
+                        }
+                    },
+                    '>' => {
+                        i += 1;
+                    },
+                    '{' => {
+                        const initial_i = i;
+                        while (len > i and fmt[i] != '}') {
+                            i += 1;
+                        }
+
+                        const stride = i - initial_i;
+                        const chunk = fmt[initial_i..i];
+                        @memcpy(fmts[0][fmts_i[0] .. fmts_i[0] + stride], chunk);
+                        @memcpy(fmts[1][fmts_i[1] .. fmts_i[1] + stride], chunk);
+                        fmts_i[0] += stride;
+                        fmts_i[1] += stride;
+                    },
+                    '<' => {
+                        i += 1;
+
+                        var is_reset = fmt[i] == '/';
+                        if (is_reset) i += 1;
+                        const start: usize = i;
+                        while (i < len and fmt[i] != '>') {
+                            i += 1;
+                        }
+
+                        const color_name = fmt[start..i];
+                        const color_str = color_picker: {
+                            if (color_map.get(color_name)) |color_name_literal| {
+                                break :color_picker color_name_literal;
+                            } else if (std.mem.eql(u8, color_name, "r")) {
+                                is_reset = true;
+                                break :color_picker "";
+                            } else {
+                                @compileError("Invalid color name passed: " ++ color_name);
+                            }
+                        };
+
+                        const color_to_copy: []const u8 = if (is_reset) RESET else color_str;
+                        fmts[0][fmts_i[0] .. fmts_i[0] + color_to_copy.len].* = color_to_copy[0..].*;
+                        fmts_i[0] += color_to_copy.len;
+                    },
+
+                    else => {
+                        const initial_i = i;
+                        while (i < len and switch (fmt[i]) {
+                            '\\', '>', '{', '<' => false,
+                            else => true,
+                        }) {
+                            i += 1;
+                        }
+
+                        const stride = i - initial_i;
+                        @memcpy(fmts[0][fmts_i[0] .. fmts_i[0] + stride], fmt[initial_i..i]);
+                        @memcpy(fmts[1][fmts_i[1] .. fmts_i[1] + stride], fmt[initial_i..i]);
+                        fmts_i[0] += stride;
+                        fmts_i[1] += stride;
+                    },
+                }
+            }
+
+            const len1 = fmts_i[0];
+            const len2 = fmts_i[1];
+            // The one with colors will always be longer than the one without colors
+            // Therefore, we can assume if they're the same length, there were no colors in the string.
+            if (len1 == len2) {
+                const buf = fmts[0][0..len1].*;
+                break :value &.{
+                    .enabled = buf[0..len1],
+                    .disabled = buf[0..len1],
+                };
+            }
+
+            const outbuf = brk: {
+                var buf: [len1 + len2]u8 = undefined;
+                buf[0..len1].* = fmts[0][0..len1].*;
+                buf[len1..].* = fmts[1][0..len2].*;
+                break :brk buf;
+            };
+
+            break :value &.{
+                .enabled = outbuf[0..len1],
+                .disabled = outbuf[len1 .. len1 + len2],
+            };
+        };
+    }
+};
+
 pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
     if (comptime bun.fast_debug_build_mode)
         return fmt;
 
-    comptime var new_fmt: [fmt.len * 4]u8 = undefined;
-    comptime var new_fmt_i: usize = 0;
+    const formatted = ColorFormatter.parse(fmt);
 
-    @setEvalBranchQuota(9999);
-    comptime var i: usize = 0;
-    comptime while (i < fmt.len) {
-        const c = fmt[i];
-        switch (c) {
-            '\\' => {
-                i += 1;
-                if (i < fmt.len) {
-                    switch (fmt[i]) {
-                        '<', '>' => {
-                            new_fmt[new_fmt_i] = fmt[i];
-                            new_fmt_i += 1;
-                            i += 1;
-                        },
-                        else => {
-                            new_fmt[new_fmt_i] = '\\';
-                            new_fmt_i += 1;
-                            new_fmt[new_fmt_i] = fmt[i];
-                            new_fmt_i += 1;
-                            i += 1;
-                        },
-                    }
-                }
-            },
-            '>' => {
-                i += 1;
-            },
-            '{' => {
-                while (fmt.len > i and fmt[i] != '}') {
-                    new_fmt[new_fmt_i] = fmt[i];
-                    new_fmt_i += 1;
-                    i += 1;
-                }
-            },
-            '<' => {
-                i += 1;
-                var is_reset = fmt[i] == '/';
-                if (is_reset) i += 1;
-                const start: usize = i;
-                while (i < fmt.len and fmt[i] != '>') {
-                    i += 1;
-                }
-
-                const color_name = fmt[start..i];
-                const color_str = color_picker: {
-                    if (color_map.get(color_name)) |color_name_literal| {
-                        break :color_picker color_name_literal;
-                    } else if (std.mem.eql(u8, color_name, "r")) {
-                        is_reset = true;
-                        break :color_picker "";
-                    } else {
-                        @compileError("Invalid color name passed: " ++ color_name);
-                    }
-                };
-
-                if (is_enabled) {
-                    for (if (is_reset) RESET else color_str) |ch| {
-                        new_fmt[new_fmt_i] = ch;
-                        new_fmt_i += 1;
-                    }
-                }
-            },
-
-            else => {
-                new_fmt[new_fmt_i] = fmt[i];
-                new_fmt_i += 1;
-                i += 1;
-            },
-        }
-    };
-
-    const fmt_data = comptime new_fmt[0..new_fmt_i].*;
-    return &fmt_data;
+    if (is_enabled) {
+        return formatted.enabled;
+    } else {
+        return formatted.disabled;
+    }
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {

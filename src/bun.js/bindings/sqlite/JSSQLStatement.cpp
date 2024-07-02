@@ -174,7 +174,8 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
     if (UNLIKELY(!castedThis)) {                                                                                 \
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s)); \
         return JSValue::encode(jsUndefined());                                                                   \
-    }
+    }                                                                                                            \
+    auto thisAliveScope = EnsureStillAliveScope(castedThis);
 
 #define DO_REBIND(param)                                                                                                \
     if (param.isObject()) {                                                                                             \
@@ -1179,6 +1180,9 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementSerialize, (JSC::JSGlobalObject * lexical
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected attached database name"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+
+    EnsureStillAliveScope thisAliveScope(thisObject);
+
     sqlite3_int64 length = -1;
     unsigned char* data = sqlite3_serialize(db, attachedName.utf8().data(), &length, 0);
     if (UNLIKELY(data == nullptr && length)) {
@@ -1227,6 +1231,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementLoadExtensionFunction, (JSC::JSGlobalObje
         return JSValue::encode(JSC::jsUndefined());
     }
 
+    EnsureStillAliveScope thisAliveScope(thisObject);
+
     auto entryPointStr = callFrame->argumentCount() > 2 && callFrame->argument(2).isString() ? callFrame->argument(2).toWTFString(lexicalGlobalObject) : String();
     const char* entryPoint = entryPointStr.length() == 0 ? NULL : entryPointStr.utf8().data();
     char* error;
@@ -1260,6 +1266,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+    auto thisAliveScope = EnsureStillAliveScope(thisObject);
 
     if (callFrame->argumentCount() < 2) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected at least 2 arguments"_s));
@@ -1280,8 +1287,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteFunction, (JSC::JSGlobalObject * l
 
     JSC::JSValue internalFlagsValue = callFrame->argument(1);
     JSC::JSValue diffValue = callFrame->argument(2);
-
     JSC::JSValue sqlValue = callFrame->argument(3);
+
     if (UNLIKELY(!sqlValue.isString())) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQL string"_s));
         return JSValue::encode(JSC::jsUndefined());
@@ -1416,6 +1423,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementIsInTransactionFunction, (JSC::JSGlobalOb
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+    EnsureStillAliveScope thisAliveScope(thisObject);
 
     JSC::JSValue dbNumber = callFrame->argument(0);
 
@@ -1452,6 +1460,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
         return JSValue::encode(JSC::jsUndefined());
     }
+
+    EnsureStillAliveScope thisAliveScope(thisObject);
 
     JSC::JSValue dbNumber = callFrame->argument(0);
     JSC::JSValue sqlValue = callFrame->argument(1);
@@ -1520,6 +1530,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     JSSQLStatement* sqlStatement = JSSQLStatement::create(
         reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject), statement, databases()[handle], memoryChange);
 
+    EnsureStillAliveScope sqlAliveScope(sqlStatement);
     if (internalFlagsValue.isInt32()) {
         const int32_t internalFlags = internalFlagsValue.asInt32();
         sqlStatement->m_bindingNames.trimLeadingPrefix = (internalFlags & kStrictFlag) != 0;
@@ -1529,6 +1540,16 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementPrepareStatementFunction, (JSC::JSGlobalO
     if (bindings.isObject()) {
         auto* castedThis = sqlStatement;
         DO_REBIND(bindings)
+
+        if (UNLIKELY(scope.exception())) {
+            // The SQLSttaement will never be returned
+            // So let's free it now.
+            castedThis->stmt = nullptr;
+            sqlite3_clear_bindings(statement);
+            sqlite3_finalize(statement);
+
+            return JSValue::encode(jsUndefined());
+        }
     }
     return JSValue::encode(JSValue(sqlStatement));
 }
@@ -1554,6 +1575,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
         return JSValue::encode(jsUndefined());
     }
 
+    EnsureStillAliveScope thisAliveScope(constructor);
     if (callFrame->argumentCount() < 1) {
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected 1 argument"_s));
         return JSValue::encode(jsUndefined());
@@ -1646,6 +1668,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementCloseStatementFunction, (JSC::JSGlobalObj
         return JSValue::encode(jsUndefined());
     }
 
+    EnsureStillAliveScope thisAliveScope(constructor);
+
     JSValue dbNumber = callFrame->argument(0);
     JSValue throwOnError = callFrame->argument(1);
     if (!dbNumber.isNumber()) {
@@ -1696,6 +1720,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
         throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected 2 arguments"_s));
         return JSValue::encode(jsUndefined());
     }
+
+    EnsureStillAliveScope thisAliveScope(thisObject);
 
     JSValue dbNumber = callFrame->argument(0);
     JSValue databaseFileName = callFrame->argument(1);
@@ -1965,6 +1991,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionAll, (JSC::JSGlob
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2043,6 +2074,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
     if (callFrame->argumentCount() > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2085,6 +2121,8 @@ JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChe
 
     auto* stmt = castedThis->stmt;
     CHECK_PREPARED_JIT
+
+    EnsureStillAliveScope thisAliveScope(castedThis);
 
     int statusCode = sqlite3_reset(stmt);
     if (UNLIKELY(statusCode != SQLITE_OK)) {
@@ -2144,6 +2182,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRows, (JSC::JSGlo
     if (count > 0) {
         auto arg0 = callFrame->argument(0);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int status = sqlite3_step(stmt);
@@ -2223,6 +2266,12 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     if (callFrame->argumentCount() > 1) {
         auto arg0 = callFrame->argument(1);
         DO_REBIND(arg0);
+
+        if (UNLIKELY(scope.exception())) {
+            sqlite3_clear_bindings(stmt);
+            sqlite3_reset(stmt);
+            return JSValue::encode(jsUndefined());
+        }
     }
 
     int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);

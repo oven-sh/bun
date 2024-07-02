@@ -20,6 +20,7 @@
 
 #include "config.h"
 #include "JSBufferEncodingType.h"
+#include "wtf/Forward.h"
 
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSString.h>
@@ -59,7 +60,7 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
     if (UNLIKELY(!str))
         return std::nullopt;
 
-    auto encoding = str->value(&lexicalGlobalObject);
+    String encoding = str->value(&lexicalGlobalObject);
     switch (encoding.length()) {
     case 0: {
         return BufferEncodingType::utf8;
@@ -128,9 +129,9 @@ template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType
 
     return std::nullopt;
 }
-template<> const char* expectedEnumerationValues<BufferEncodingType>()
+template<> ASCIILiteral expectedEnumerationValues<BufferEncodingType>()
 {
-    return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\"";
+    return "\"utf8\", \"ucs2\", \"utf16le\", \"latin1\", \"ascii\", \"base64\", \"base64url\", \"hex\""_s;
 }
 
 } // namespace WebCore

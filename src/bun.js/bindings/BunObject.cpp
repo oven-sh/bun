@@ -25,18 +25,36 @@
 #include "DOMJITIDLType.h"
 #include "DOMJITIDLTypeFilter.h"
 #include "Exception.h"
-#include "BunObject+exports.h"
 #include "JSDOMException.h"
 #include "JSDOMConvert.h"
 #include "wtf/Compiler.h"
 #include "PathInlines.h"
+#include "wtf/text/ASCIILiteral.h"
+#include "BunObject+exports.h"
+
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
+BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
+BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 
 namespace Bun {
 
 using namespace JSC;
 using namespace WebCore;
 
-extern "C" JSC::EncodedJSValue Bun__fetch(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
 extern "C" bool has_bun_garbage_collector_flag_enabled;
 
 static JSValue BunObject_getter_wrap_ArrayBufferSink(VM& vm, JSObject* bunObject)
@@ -219,12 +237,12 @@ JSC_DECLARE_HOST_FUNCTION(functionConcatTypedArrays);
 
 static JSValue constructBunVersion(VM& vm, JSObject*)
 {
-    return JSC::jsString(vm, makeString(Bun__version + 1));
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version + 1)));
 }
 
 static JSValue constructBunRevision(VM& vm, JSObject*)
 {
-    return JSC::jsString(vm, makeString(Bun__version_sha));
+    return JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__version_sha)));
 }
 
 static JSValue constructIsMainThread(VM&, JSObject* object)
@@ -274,23 +292,6 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 
     return bunShell;
 }
-
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookup);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolve);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSrv);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveTxt);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveSoa);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNaptr);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveMx);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCaa);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveNs);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolvePtr);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__resolveCname);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getServers);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__reverse);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
 {
@@ -389,7 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(functionBunEscapeHTML, (JSC::JSGlobalObject * lexicalGl
     if (!length)
         RELEASE_AND_RETURN(scope, JSValue::encode(string));
 
-    auto resolvedString = string->value(lexicalGlobalObject);
+    String resolvedString = string->value(lexicalGlobalObject);
     JSC::EncodedJSValue encodedInput = JSValue::encode(string);
     if (!resolvedString.is8Bit()) {
         const auto span = resolvedString.span16();

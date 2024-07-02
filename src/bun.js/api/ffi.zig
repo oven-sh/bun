@@ -424,7 +424,7 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
         return .undefined;
     }

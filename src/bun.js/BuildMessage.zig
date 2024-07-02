@@ -22,12 +22,12 @@ pub const BuildMessage = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*BuildMessage {
+    ) ?*BuildMessage {
         globalThis.throw("BuildMessage is not constructable", .{});
         return null;
     }
 
-    pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getNotes(this: *BuildMessage, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         const notes: []const logger.Data = this.msg.notes orelse &[_]logger.Data{};
         const array = JSC.JSValue.createEmptyArray(globalThis, notes.len);
         for (notes, 0..) |note, i| {
@@ -81,7 +81,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return this.toStringFn(globalThis);
     }
 
@@ -89,7 +89,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const args_ = callframe.arguments(1);
         const args = args_.ptr[0..args_.len];
         if (args.len > 0) {
@@ -110,7 +110,7 @@ pub const BuildMessage = struct {
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var object = JSC.JSValue.createEmptyObject(globalThis, 4);
         object.put(globalThis, ZigString.static("name"), ZigString.init("BuildMessage").toJS(globalThis));
         object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
@@ -163,7 +163,7 @@ pub const BuildMessage = struct {
     }
 
     // https://github.com/oven-sh/bun/issues/2375#issuecomment-2121530202
-    pub fn getColumn(this: *BuildMessage, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getColumn(this: *BuildMessage, _: *JSC.JSGlobalObject) JSC.JSValue {
         if (this.msg.data.location) |location| {
             return JSC.JSValue.jsNumber(@max(location.column - 1, 0));
         }
@@ -171,7 +171,7 @@ pub const BuildMessage = struct {
         return JSC.JSValue.jsNumber(@as(i32, 0));
     }
 
-    pub fn getLine(this: *BuildMessage, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getLine(this: *BuildMessage, _: *JSC.JSGlobalObject) JSC.JSValue {
         if (this.msg.data.location) |location| {
             return JSC.JSValue.jsNumber(@max(location.line - 1, 0));
         }
@@ -182,25 +182,25 @@ pub const BuildMessage = struct {
     pub fn getPosition(
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return BuildMessage.generatePositionObject(this.msg, globalThis);
     }
 
     pub fn getMessage(
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return ZigString.init(this.msg.data.text).toJS(globalThis);
     }
 
     pub fn getLevel(
         this: *BuildMessage,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return ZigString.init(this.msg.kind.string()).toJS(globalThis);
     }
 
-    pub fn finalize(this: *BuildMessage) callconv(.C) void {
+    pub fn finalize(this: *BuildMessage) void {
         this.msg.deinit(bun.default_allocator);
     }
 };

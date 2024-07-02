@@ -310,7 +310,7 @@ pub const Blob = struct {
 
     const StructuredCloneWriter = struct {
         ctx: *anyopaque,
-        impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void,
+        impl: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(JSC.conv) void,
 
         pub const WriteError = error{};
         pub fn write(this: StructuredCloneWriter, bytes: []const u8) WriteError!usize {
@@ -352,8 +352,8 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         ctx: *anyopaque,
-        writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(.C) void,
-    ) callconv(.C) void {
+        writeBytes: *const fn (*anyopaque, ptr: [*]const u8, len: u32) callconv(JSC.conv) void,
+    ) void {
         _ = globalThis;
 
         const Writer = std.io.Writer(StructuredCloneWriter, StructuredCloneWriter.WriteError, StructuredCloneWriter.write);
@@ -372,7 +372,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         ctx: *anyopaque,
         write: *const fn (*anyopaque, ptr: [*]const u8, len: usize) callconv(.C) void,
-    ) callconv(.C) void {
+    ) void {
         _ = write;
         _ = ctx;
         _ = this;
@@ -515,7 +515,7 @@ pub const Blob = struct {
         globalThis: *JSC.JSGlobalObject,
         ptr: [*]u8,
         end: [*]u8,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const total_length: usize = @intFromPtr(end) - @intFromPtr(ptr);
         var buffer_stream = std.io.fixedBufferStream(ptr[0..total_length]);
         const reader = buffer_stream.reader();
@@ -920,7 +920,7 @@ pub const Blob = struct {
     pub fn writeFile(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments);
         defer args.deinit();
@@ -1377,7 +1377,7 @@ pub const Blob = struct {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, JSC.JSValue.jsNumber(written));
     }
 
-    pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(.C) bool {
+    pub export fn JSDOMFile__hasInstance(_: JSC.JSValue, _: *JSC.JSGlobalObject, value: JSC.JSValue) callconv(JSC.conv) bool {
         JSC.markBinding(@src());
         const blob = value.as(Blob) orelse return false;
         return blob.is_jsdom_file;
@@ -1386,7 +1386,7 @@ pub const Blob = struct {
     pub export fn JSDOMFile__construct(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Blob {
+    ) callconv(JSC.conv) ?*Blob {
         JSC.markBinding(@src());
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
@@ -1496,7 +1496,7 @@ pub const Blob = struct {
         this.reported_estimated_size = size + (this.content_type.len * @intFromBool(this.content_type_allocated));
     }
 
-    pub fn estimatedSize(this: *Blob) callconv(.C) usize {
+    pub fn estimatedSize(this: *Blob) usize {
         return this.reported_estimated_size;
     }
 
@@ -1510,7 +1510,7 @@ pub const Blob = struct {
     pub fn constructBunFile(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(2).slice();
         var args = JSC.Node.ArgumentsSlice.init(vm, arguments);
@@ -2843,7 +2843,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const thisValue = callframe.this();
         if (Blob.streamGetCached(thisValue)) |cached| {
             return cached;
@@ -2886,7 +2886,7 @@ pub const Blob = struct {
     pub fn toStreamWithOffset(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const this = callframe.this().as(Blob) orelse @panic("this is not a Blob");
         const args = callframe.arguments(1).slice();
 
@@ -2908,7 +2908,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -2929,7 +2929,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -2952,7 +2952,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -2963,7 +2963,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -2974,7 +2974,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
@@ -3006,7 +3006,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSPromise.resolvedPromiseValue(globalThis, this.getExistsSync());
     }
 
@@ -3014,7 +3014,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var arguments_ = callframe.arguments(1);
         var arguments = arguments_.ptr[0..arguments_.len];
 
@@ -3151,7 +3151,7 @@ pub const Blob = struct {
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const allocator = bun.default_allocator;
         var arguments_ = callframe.arguments(3);
         var args = arguments_.ptr[0..arguments_.len];
@@ -3278,7 +3278,7 @@ pub const Blob = struct {
     pub fn getType(
         this: *Blob,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.content_type.len > 0) {
             if (this.content_type_allocated) {
                 return ZigString.init(this.content_type).toJS(globalThis);
@@ -3298,7 +3298,7 @@ pub const Blob = struct {
         this: *Blob,
         _: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.name.tag != .Dead) return this.name.toJS(globalThis);
 
         if (this.getFileName()) |path| {
@@ -3315,7 +3315,7 @@ pub const Blob = struct {
         jsThis: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
         value: JSValue,
-    ) callconv(.C) bool {
+    ) callconv(JSC.conv) bool {
         // by default we don't have a name so lets allow it to be set undefined
         if (value.isEmptyOrUndefinedOrNull()) {
             this.name.deref();
@@ -3356,7 +3356,7 @@ pub const Blob = struct {
     pub fn getLastModified(
         this: *Blob,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.store) |store| {
             if (store.data == .file) {
                 // last_modified can be already set during read.
@@ -3403,7 +3403,7 @@ pub const Blob = struct {
         }
     }
 
-    pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getSize(this: *Blob, _: *JSC.JSGlobalObject) JSValue {
         if (this.size == Blob.max_size) {
             this.resolveSize();
             if (this.size == Blob.max_size and this.store != null) {
@@ -3490,7 +3490,7 @@ pub const Blob = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Blob {
+    ) ?*Blob {
         const allocator = bun.default_allocator;
         var blob: Blob = undefined;
         var arguments = callframe.arguments(2);

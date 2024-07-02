@@ -8,6 +8,6 @@ String convertEnumerationToString(BufferEncodingType);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, BufferEncodingType);
 
 template<> std::optional<BufferEncodingType> parseEnumeration<BufferEncodingType>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> const char* expectedEnumerationValues<BufferEncodingType>();
+template<> WTF::ASCIILiteral expectedEnumerationValues<BufferEncodingType>();
 
 } // namespace WebCore

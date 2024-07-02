@@ -8196,7 +8196,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         if (cli.global) {
             var explicit_global_dir: string = "";
@@ -14195,7 +14195,7 @@ pub const bun_install_js_bindings = struct {
         return obj;
     }
 
-    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
         defer log.deinit();

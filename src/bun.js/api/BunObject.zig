@@ -3924,7 +3924,7 @@ pub const FFIObject = struct {
         }
     }
 
-    pub const dom_call = JSC.DOMCall("FFI", "ptr", f64, JSC.DOMEffect.forRead(.TypedArrayProperties));
+    pub const dom_call = JSC.DOMCall("FFI", @This(), "ptr", JSC.DOMEffect.forRead(.TypedArrayProperties));
 
     pub fn toJS(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, comptime std.meta.fieldNames(@TypeOf(fields)).len + 2);
@@ -3944,18 +3944,18 @@ pub const FFIObject = struct {
 
     pub const Reader = struct {
         pub const DOMCalls = .{
-            .u8 = JSC.DOMCall("Reader", "u8", i32, JSC.DOMEffect.forRead(.World)),
-            .u16 = JSC.DOMCall("Reader", "u16", i32, JSC.DOMEffect.forRead(.World)),
-            .u32 = JSC.DOMCall("Reader", "u32", i32, JSC.DOMEffect.forRead(.World)),
-            .ptr = JSC.DOMCall("Reader", "ptr", i52, JSC.DOMEffect.forRead(.World)),
-            .i8 = JSC.DOMCall("Reader", "i8", i32, JSC.DOMEffect.forRead(.World)),
-            .i16 = JSC.DOMCall("Reader", "i16", i32, JSC.DOMEffect.forRead(.World)),
-            .i32 = JSC.DOMCall("Reader", "i32", i32, JSC.DOMEffect.forRead(.World)),
-            .i64 = JSC.DOMCall("Reader", "i64", i64, JSC.DOMEffect.forRead(.World)),
-            .u64 = JSC.DOMCall("Reader", "u64", u64, JSC.DOMEffect.forRead(.World)),
-            .intptr = JSC.DOMCall("Reader", "intptr", i52, JSC.DOMEffect.forRead(.World)),
-            .f32 = JSC.DOMCall("Reader", "f32", f64, JSC.DOMEffect.forRead(.World)),
-            .f64 = JSC.DOMCall("Reader", "f64", f64, JSC.DOMEffect.forRead(.World)),
+            .u8 = JSC.DOMCall("Reader", @This(), "u8", JSC.DOMEffect.forRead(.World)),
+            .u16 = JSC.DOMCall("Reader", @This(), "u16", JSC.DOMEffect.forRead(.World)),
+            .u32 = JSC.DOMCall("Reader", @This(), "u32", JSC.DOMEffect.forRead(.World)),
+            .ptr = JSC.DOMCall("Reader", @This(), "ptr", JSC.DOMEffect.forRead(.World)),
+            .i8 = JSC.DOMCall("Reader", @This(), "i8", JSC.DOMEffect.forRead(.World)),
+            .i16 = JSC.DOMCall("Reader", @This(), "i16", JSC.DOMEffect.forRead(.World)),
+            .i32 = JSC.DOMCall("Reader", @This(), "i32", JSC.DOMEffect.forRead(.World)),
+            .i64 = JSC.DOMCall("Reader", @This(), "i64", JSC.DOMEffect.forRead(.World)),
+            .u64 = JSC.DOMCall("Reader", @This(), "u64", JSC.DOMEffect.forRead(.World)),
+            .intptr = JSC.DOMCall("Reader", @This(), "intptr", JSC.DOMEffect.forRead(.World)),
+            .f32 = JSC.DOMCall("Reader", @This(), "f32", JSC.DOMEffect.forRead(.World)),
+            .f64 = JSC.DOMCall("Reader", @This(), "f64", JSC.DOMEffect.forRead(.World)),
         };
 
         pub fn toJS(globalThis: *JSC.JSGlobalObject) JSC.JSValue {

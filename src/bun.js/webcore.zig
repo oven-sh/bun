@@ -691,7 +691,7 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*Crypto {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*Crypto {
         globalThis.throw("Crypto is not constructable", .{});
         return null;
     }

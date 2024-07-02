@@ -10474,8 +10474,8 @@ pub const Interpreter = struct {
             /// threadpool.
             const EbusyState = struct {
                 tasks: std.ArrayListUnmanaged(*ShellCpTask) = .{},
-                absolute_targets: std.StringArrayHashMapUnmanaged(void) = .{},
-                absolute_srcs: std.StringArrayHashMapUnmanaged(void) = .{},
+                absolute_targets: bun.StringArrayHashMapUnmanaged(void) = .{},
+                absolute_srcs: bun.StringArrayHashMapUnmanaged(void) = .{},
 
                 pub fn deinit(this: *EbusyState) void {
                     // The tasks themselves are freed in `ignoreEbusyErrorIfPossible()`
@@ -12013,8 +12013,8 @@ fn closefd(fd: bun.FileDescriptor) void {
 }
 
 const CmdEnvIter = struct {
-    env: *const std.StringArrayHashMap([:0]const u8),
-    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+    env: *const bun.StringArrayHashMap([:0]const u8),
+    iter: bun.StringArrayHashMap([:0]const u8).Iterator,
 
     const Entry = struct {
         key: Key,
@@ -12041,7 +12041,7 @@ const CmdEnvIter = struct {
         }
     };
 
-    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+    pub fn fromEnv(env: *const bun.StringArrayHashMap([:0]const u8)) CmdEnvIter {
         const iter = env.iterator();
         return .{
             .env = env,

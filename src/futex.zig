@@ -13,7 +13,7 @@ const Futex = @This();
 const target = builtin.target;
 const single_threaded = builtin.single_threaded;
 
-const assert = @import("root").bun.assert;
+const assert = bun.assert;
 const testing = std.testing;
 
 const Atomic = std.atomic.Value;

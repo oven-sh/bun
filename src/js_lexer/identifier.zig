@@ -1851,7 +1851,7 @@ pub const JumpTableInline = struct {
 //             }
 //         }
 
-//         std.debug.print(
+//         .print(
 //             \\---- Unicode text -----
 //             \\
 //             \\Timings (sum of running {d} times each, lower is better):
@@ -1988,7 +1988,7 @@ pub const JumpTableInline = struct {
 //             }
 //         }
 
-//         std.debug.print(
+//         (
 //             \\---- ASCII text -----
 //             \\
 //             \\Timings (sum of running {d} times each, lower is better):

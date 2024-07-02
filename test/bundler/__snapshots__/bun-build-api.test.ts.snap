@@ -1,13 +1,5 @@
 // Bun Snapshot v1, https://goo.gl/fbAQLP
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"e4885a8bc2de343a"`;
-
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"cb8abf3391c2971f"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"e4885a8bc2de343a"`;
-
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
-
 exports[`Bun.build Bun.write(BuildArtifact) 1`] = `
 "var __defProp = Object.defineProperty;
 var __export = (target, all) => {
@@ -24,11 +16,7 @@ var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
 __export(exports_fn, {
-  fn: () => {
-    {
-      return fn;
-    }
-  }
+  fn: () => fn
 });
 function fn(a) {
   return a + 42;
@@ -60,11 +48,7 @@ var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
 __export(exports_fn, {
-  fn: () => {
-    {
-      return fn;
-    }
-  }
+  fn: () => fn
 });
 function fn(a) {
   return a + 42;
@@ -79,6 +63,14 @@ NS.then(({ fn: fn2 }) => {
 });
 "
 `;
+
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"3f0ccbb87bbfe04c"`;
+
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"aba9c75f86b1a251"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"3f0ccbb87bbfe04c"`;
+
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __defProp = Object.defineProperty;
@@ -96,11 +88,7 @@ var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
 __export(exports_fn, {
-  fn: () => {
-    {
-      return fn;
-    }
-  }
+  fn: () => fn
 });
 function fn(a) {
   return a + 42;

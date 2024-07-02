@@ -46,8 +46,6 @@ pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
 
-pub const log_allocations = false;
-
 pub const CSSInJSImportBehavior = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was

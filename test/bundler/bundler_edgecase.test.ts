@@ -1169,6 +1169,138 @@ describe("bundler", () => {
       expect(count, "should only emit two constructors: " + content).toBe(2);
     },
   });
+  itBundled("edgecase/EnumInliningRopeStringPoison", {
+    files: {
+      "/entry.ts": `
+        const enum A1 {
+          B = "1" + "2",
+          C = "3" + B,
+        };
+        console.log(A1.B, A1.C);
+
+        const enum A2 {
+          B = "1" + "2",
+          C = ("3" + B) + "4",
+        };
+        console.log(A2.B, A2.C);
+      `,
+    },
+    run: {
+      stdout: "12 312\n12 3124",
+    },
+  });
+  itBundled("edgecase/ProtoNullProtoInlining", {
+    files: {
+      "/entry.ts": `
+        console.log({ __proto__: null }.__proto__ !== void 0)
+      `,
+    },
+    run: {
+      stdout: "false",
+    },
+  });
+  itBundled("edgecase/ConstantFoldingShiftOperations", {
+    files: {
+      "/entry.ts": `
+        capture(421 >> -542)
+        capture(421 >>> -542)
+        capture(1 << 32)
+        capture(1 >> 32)
+        capture(1 >>> 32)
+        capture(47849312 << 34)
+        capture(-9 >> 1)
+        capture(-5 >> 1)
+      `,
+    },
+    minifySyntax: true,
+    capture: ["105", "105", "1", "1", "1", "191397248", "-5", "-3"],
+  });
+  itBundled("edgecase/ConstantFoldingBitwiseCoersion", {
+    files: {
+      "/entry.ts": `
+        capture(0 | 0)
+        capture(12582912 | 0)
+        capture(0xc00000 | 0)
+        capture(Infinity | 0)
+        capture(-Infinity | 0)
+        capture(NaN | 0)
+        // u32 limits
+        capture(-4294967295 | 0)
+        capture(-4294967296 | 0)
+        capture(-4294967297 | 0)
+        capture(4294967295 | 0)
+        capture(4294967296 | 0)
+        capture(4294967297 | 0)
+        // i32 limits
+        capture(-2147483647 | 0)
+        capture(-2147483648 | 0)
+        capture(-2147483649 | 0)
+        capture(2147483647 | 0)
+        capture(2147483648 | 0)
+        capture(2147483649 | 0)
+        capture(0.5 | 0)
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "0",
+      "12582912",
+      "12582912",
+      "0",
+      "0",
+      "0",
+      "1",
+      "0",
+      "-1",
+      "-1",
+      "0",
+      "1",
+      "-2147483647",
+      "-2147483648",
+      "2147483647",
+      "2147483647",
+      "-2147483648",
+      "-2147483647",
+      "0",
+    ],
+  });
+  itBundled("edgecase/EnumInliningNanBoxedEncoding", {
+    files: {
+      "/main.ts": `
+        import { Enum } from './other.ts';
+        capture(Enum.a);
+        capture(Enum.b);
+        capture(Enum.c);
+        capture(Enum.d);
+        capture(Enum.e);
+        capture(Enum.f);
+        capture(Enum.g);
+      `,
+      "/other.ts": `
+        export const enum Enum {
+          a = 0,
+          b = NaN,
+          c = (0 / 0) + 1,
+          d = Infinity,
+          e = -Infinity,
+          f = 3e450,
+          // https://float.exposed/0xffefffffffffffff
+          g = -1.79769313486231570815e+308,
+        }
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "0 /* a */",
+      "NaN /* b */",
+      "NaN /* c */",
+      "1 / 0 /* d */",
+      "-1 / 0 /* e */",
+      "1 / 0 /* f */",
+      // should probably fix this
+      "-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 /* g */",
+    ],
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

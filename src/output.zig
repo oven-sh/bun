@@ -354,7 +354,7 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
     if (Output.isEmojiEnabled()) {

@@ -19,9 +19,7 @@ for (const [banned, suggestion] of Object.entries(BANNED)) {
   if (banned.length === 0) continue;
   // Run git grep to find occurrences of std.debug.assert in .zig files
   // .nothrow() is here since git will exit with non-zero if no matches are found.
-  let stdout = await $`git grep -n -F "${banned}" "src/**/**.zig" | grep -v -F '//' | grep -v -F bench`
-    .nothrow()
-    .text();
+  let stdout = await $`git grep -n -F "${banned}" "src/**.zig" | grep -v -F '//' | grep -v -F bench`.nothrow().text();
 
   stdout = stdout.trim();
   if (stdout.length === 0) continue;

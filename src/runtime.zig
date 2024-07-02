@@ -244,7 +244,6 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
@@ -286,7 +285,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .should_fold_typescript_constant_expressions,
             .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,

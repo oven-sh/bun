@@ -3722,7 +3722,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         ctx: *Ctx,
         verbose: bool = false,
 
-        tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();

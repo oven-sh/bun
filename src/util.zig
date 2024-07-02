@@ -256,22 +256,22 @@ pub fn Batcher(comptime Type: type) type {
             return @This(){ .head = all };
         }
 
-        pub inline fn done(this: *@This()) void {
-            bun.assert(this.head.len == 0);
+        pub fn done(this: *@This()) void {
+            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
         }
 
-        pub inline fn eat(this: *@This(), value: Type) *Type {
+        pub fn eat(this: *@This(), value: Type) *Type {
             return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
         }
 
-        pub inline fn eat1(this: *@This(), value: Type) []Type {
+        pub fn eat1(this: *@This(), value: Type) []Type {
             var prev = this.head[0..1];
             prev[0] = value;
             this.head = this.head[1..];
             return prev;
         }
 
-        pub inline fn next(this: *@This(), values: anytype) []Type {
+        pub fn next(this: *@This(), values: anytype) []Type {
             this.head[0..values.len].* = values;
             const prev = this.head[0..values.len];
             this.head = this.head[values.len..];

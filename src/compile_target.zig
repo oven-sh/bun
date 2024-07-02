@@ -12,7 +12,7 @@ const Output = bun.Output;
 const CompileTarget = @This();
 
 os: Environment.OperatingSystem = Environment.os,
-arch: Environment.Archictecture = Environment.arch,
+arch: Environment.Architecture = Environment.arch,
 baseline: bool = !Environment.enableSIMD,
 version: bun.Semver.Version = .{
     .major = @truncate(Environment.version.major),
@@ -340,7 +340,7 @@ pub fn from(input_: []const u8) CompileTarget {
         const token = splitter.next() orelse break;
         if (token.len == 0) continue;
 
-        if (Environment.Archictecture.names.get(token)) |arch| {
+        if (Environment.Architecture.names.get(token)) |arch| {
             this.arch = arch;
             found_arch = true;
             continue;

@@ -4186,18 +4186,18 @@ public:
         offset = end;
 
         // the proper singular spelling is parenthesis
-        auto openingParenthese = line.reverseFind('(');
-        auto closingParenthese = line.reverseFind(')');
+        auto openingParentheses = line.reverseFind('(');
+        auto closingParentheses = line.reverseFind(')');
 
-        if (openingParenthese > closingParenthese)
-            openingParenthese = WTF::notFound;
+        if (openingParentheses > closingParentheses)
+            openingParentheses = WTF::notFound;
 
-        if (closingParenthese == WTF::notFound || closingParenthese == WTF::notFound) {
+        if (closingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             offset = stack.length();
             return false;
         }
 
-        auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
+        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -4270,7 +4270,7 @@ public:
         }
     done_block:
 
-        StringView functionName = line.substring(0, openingParenthese - 1);
+        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "<anonymous>"_s) {
             functionName = StringView();

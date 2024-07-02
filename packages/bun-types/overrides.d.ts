@@ -1,6 +1,7 @@
 export {};
 
 import type { Env, PathLike, BunFile } from "bun";
+import type { Modifiers, ForegroundColors, BackgroundColors } from "util";
 
 declare global {
   namespace NodeJS {
@@ -61,4 +62,41 @@ declare module "tls" {
   }
 
   function connect(options: BunConnectionOptions, secureConnectListener?: () => void): TLSSocket;
+}
+
+declare module "util" {
+  /**
+   * This function returns a formatted text considering the `format` passed.
+   *
+   * ```js
+   * const { styleText } = require('node:util');
+   * const errorMessage = styleText('red', 'Error! Error!');
+   * console.log(errorMessage);
+   * ```
+   *
+   * `util.inspect.colors` also provides text formats such as `italic`, and `underline` and you can combine both:
+   *
+   * ```js
+   * console.log(
+   *   util.styleText(['underline', 'italic'], 'My italic underlined message'),
+   * );
+   * ```
+   *
+   * When passing an array of formats, the order of the format applied is left to right so the following style
+   * might overwrite the previous one.
+   *
+   * ```js
+   * console.log(
+   *   util.styleText(['red', 'green'], 'text'), // green
+   * );
+   * ```
+   *
+   * The full list of formats can be found in [modifiers](https://nodejs.org/docs/latest-v20.x/api/util.html#modifiers).
+   * @param format A text format or an Array of text formats defined in `util.inspect.colors`.
+   * @param text The text to to be formatted.
+   */
+  export function styleText(
+    format: ForegroundColors | BackgroundColors | Modifiers | Array<ForegroundColors | BackgroundColors | Modifiers>,
+    text: string,
+  ): string;
 }

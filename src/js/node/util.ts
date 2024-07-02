@@ -263,20 +263,41 @@ var toUSVString = input => {
   return (input + "").toWellFormed();
 };
 
+function validateCodes(codes, style) {
+  if (codes == null) {
+    const e = new Error(
+      `The value "${typeof style === "symbol" ? style.description : style}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
+    );
+    e.code = "ERR_INVALID_ARG_VALUE";
+    throw e;
+  }
+}
+
 function styleText(format, text) {
   if (typeof text !== "string") {
     const e = new Error(`The text argument must be of type string. Received type ${typeof text}`);
     e.code = "ERR_INVALID_ARG_TYPE";
     throw e;
   }
-  const formatCodes = inspect.colors[format];
-  if (formatCodes == null) {
-    const e = new Error(
-      `The value "${typeof format === "symbol" ? format.description : format}" is invalid for argument 'format'. Reason: must be one of: ${Object.keys(inspect.colors).join(", ")}`,
-    );
-    e.code = "ERR_INVALID_ARG_VALUE";
-    throw e;
+
+  if (Array.isArray(format)) {
+    if (format.length > 0) {
+      let left = "",
+        right = "";
+      for (const style of format) {
+        const codes = inspect.colors[style];
+        validateCodes(codes, style);
+        left += `\u001b[${codes[0]}m`;
+        right = `\u001b[${codes[1]}m` + right;
+      }
+      return left + text + right;
+    } else {
+      return text;
+    }
   }
+
+  const formatCodes = inspect.colors[format];
+  validateCodes(formatCodes, format);
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 

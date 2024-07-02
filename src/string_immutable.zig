@@ -749,10 +749,6 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
-pub inline fn eqlInsensitive(self: string, other: anytype) bool {
-    return std.ascii.eqlIgnoreCase(self, other);
-}
-
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLenWithType(u8, self, alt, true);
 }
@@ -2570,8 +2566,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @intFromPtr(remaining.ptr) - @intFromPtr(latin1.ptr);
-                        @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
-                        buf.items.len = copy_len;
+                        buf.appendSliceAssumeCapacity(latin1[0..copy_len]);
                         any_needs_escape = true;
                         inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {

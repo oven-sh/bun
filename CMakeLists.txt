@@ -2,8 +2,9 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.17")
-set(WEBKIT_TAG 5bbfe7e880090b9d0b5feaf3563e85957dd7b10d)
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+set(Bun_VERSION "1.1.18")
+set(WEBKIT_TAG 00e8a32b3ca72cefae683cd65140428ff1d4ff09)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -13,6 +14,8 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 
 # Should not start with v
 # Used in process.version, process.versions.node, napi, and elsewhere
@@ -614,7 +617,7 @@ set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
 if(NOT BUN_DEPS_OUT_DIR)
-    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
+    set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
 endif()
 
 set(BUN_RAW_SOURCES, "")
@@ -1117,8 +1120,12 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
+    if(USE_LTO)
+        target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc")
+    endif()
+
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def")
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC

@@ -172,7 +172,7 @@ pub const TrustCommand = struct {
     fn printErrorZeroUntrustedDependenciesFound(trust_all: bool, packages_to_trust: []const string) void {
         Output.print("\n", .{});
         if (trust_all) {
-            Output.errGeneric("0 scripts ran. This means all dependencies are already trusted or non have scripts.", .{});
+            Output.errGeneric("0 scripts ran. This means all dependencies are already trusted or none have scripts.", .{});
         } else {
             Output.errGeneric("0 scripts ran. The following packages are already trusted, don't have scripts to run, or don't exist:\n\n", .{});
             for (packages_to_trust) |arg| {
@@ -264,7 +264,7 @@ pub const TrustCommand = struct {
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     if (comptime Environment.allow_assert) {
-                        bun.assert(package_id != Install.invalid_package_id);
+                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
@@ -329,14 +329,9 @@ pub const TrustCommand = struct {
             pm.scripts_node = &scripts_node;
         }
 
-        var depth = scripts_at_depth.count();
-        while (depth > 0) {
-            depth -= 1;
-            const _entry = scripts_at_depth.get(depth);
-            if (comptime bun.Environment.allow_assert) {
-                bun.assert(_entry != null);
-            }
-            if (_entry) |entry| {
+        {
+            var iter = std.mem.reverseIterator(scripts_at_depth.values());
+            while (iter.next()) |entry| {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
@@ -387,7 +382,7 @@ pub const TrustCommand = struct {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         const names = package_names_to_add.keys();
         if (comptime Environment.allow_assert) {
-            bun.assert(names.len > 0);
+            bun.assertWithLocation(names.len > 0, @src());
         }
 
         // could be null if these are the first packages to be trusted
@@ -399,10 +394,9 @@ pub const TrustCommand = struct {
 
         Output.print("\n", .{});
 
-        depth = scripts_at_depth.count();
-        while (depth > 0) {
-            depth -= 1;
-            if (scripts_at_depth.get(depth)) |entry| {
+        {
+            var iter = std.mem.reverseIterator(scripts_at_depth.values());
+            while (iter.next()) |entry| {
                 for (entry.items) |info| {
                     const resolution = pm.lockfile.packages.items(.resolution)[info.package_id];
                     if (info.skip) {
@@ -443,7 +437,7 @@ pub const TrustCommand = struct {
         pm.root_package_json_file.close();
 
         if (comptime Environment.allow_assert) {
-            bun.assert(total_scripts_ran > 0);
+            bun.assertWithLocation(total_scripts_ran > 0, @src());
         }
 
         Output.pretty(" <green>{d}<r> script{s} ran across {d} package{s} ", .{

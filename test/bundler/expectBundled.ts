@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
-import { bunEnv, bunExe, joinP } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
@@ -13,7 +13,7 @@ import * as esbuild from "esbuild";
 import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
-function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   // https://github.com/tc39/proposal-string-cooked#motivation
   let single_string = String.raw({ raw: str }, ...args);
   single_string = single_string.trim();
@@ -564,7 +564,8 @@ function expectBundled(
         cwd: root,
       });
       if (!installProcess.success) {
-        throw new Error("Failed to install dependencies");
+        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+        throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
     for (const [file, contents] of Object.entries(files)) {
@@ -1546,7 +1547,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      opts.snapshotSourceMap ? 20_000 : undefined,
+      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
     );
   }
   return ref;

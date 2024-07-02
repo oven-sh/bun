@@ -986,7 +986,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1007,7 +1007,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getBody(
             this: *Type,
             globalThis: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             var body: *Body.Value = this.getBodyValue();
 
             if (body.* == .Used) {
@@ -1020,7 +1020,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getBodyUsed(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             return JSValue.jsBoolean(
                 switch (this.getBodyValue().*) {
                     .Used => true,
@@ -1040,7 +1040,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1070,7 +1070,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1093,7 +1093,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1116,7 +1116,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1172,7 +1172,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             return this.getBlobWithoutCallFrame(globalObject);
         }
 
@@ -1357,14 +1357,14 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         var args = callframe.arguments(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return JSValue.jsUndefined();
     }
 
-    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callframe.arguments(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         const err = args.ptr[0];

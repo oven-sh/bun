@@ -83,7 +83,7 @@ pub fn has(this: *ObjectURLRegistry, pathname: []const u8) bool {
     return this.map.contains(uuid);
 }
 
-export fn Bun__createObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn Bun__createObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalObject.throwNotEnoughArguments("createObjectURL", 1, arguments.len);
@@ -99,7 +99,7 @@ export fn Bun__createObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JS
     return str.transferToJS(globalObject);
 }
 
-export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1);
     if (arguments.len < 1) {
         globalObject.throwNotEnoughArguments("revokeObjectURL", 1, arguments.len);

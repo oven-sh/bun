@@ -59,6 +59,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
+pub const ini = @import("./ini.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -733,9 +734,9 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirNoRenamingOrDeletingWindows(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
-    const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
     return res.asDir();
 }
 
@@ -800,7 +801,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlInsensitive(line[0..key_end], key)) {
+            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -810,6 +811,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
+}
+
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
 }
 
 pub const FDHashMapContext = struct {
@@ -1277,7 +1283,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+pub fn getFdPath(fd_: anytype, buf: *[MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {

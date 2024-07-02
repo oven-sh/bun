@@ -97,8 +97,10 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
   if (!server.start(reinterpret_cast<const char *>(host), port)) {
     throwVMError(
         globalObject, scope,
-        createError(globalObject, "Failed to start server \""_s + host + ":"_s +
-                                      port + "\". Is port already in use?"_s));
+        createError(globalObject,
+                    makeString("Failed to start server \""_s,
+                               reinterpret_cast<const unsigned char *>(host),
+                               ":"_s, port, "\". Is port already in use?"_s)));
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
 

@@ -1,6 +1,5 @@
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
-import { AddressInfo } from "ws";
 import { it, expect } from "bun:test";
 import { tls as COMMON_CERT_ } from "harness";
 
@@ -16,18 +15,11 @@ it("should work with alpnProtocols", done => {
       rejectUnauthorized: false,
     });
 
-    const timeout = setTimeout(() => {
-      socket?.end();
-      done("timeout");
-    }, 3000);
-
     socket.on("error", err => {
-      clearTimeout(timeout);
       done(err);
     });
 
     socket.on("secureConnect", () => {
-      clearTimeout(timeout);
       done(socket?.alpnProtocol === "http/1.1" ? undefined : "alpnProtocol is not http/1.1");
       socket?.end();
       socket = null;

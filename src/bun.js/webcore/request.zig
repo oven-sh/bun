@@ -232,30 +232,30 @@ pub const Request = struct {
     pub fn getCache(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.default).toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.default).toJS(globalThis);
     }
     pub fn getCredentials(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.include).toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.include).toJS(globalThis);
     }
     pub fn getDestination(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init("").toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init("").toJS(globalThis);
     }
 
     pub fn getIntegrity(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.Empty.toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.Empty.toJS(globalThis);
     }
 
-    pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getSignal(this: *Request, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         // Already have an C++ instance
         if (this.signal) |signal| {
             return signal.toJS(globalThis);
@@ -273,15 +273,15 @@ pub const Request = struct {
     pub fn getMethod(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return bun.String.static(@tagName(this.method)).toJS(globalThis);
     }
 
     pub fn getMode(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.navigate).toValue(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.navigate).toJS(globalThis);
     }
 
     pub fn finalizeWithoutDeinit(this: *Request) void {
@@ -308,31 +308,31 @@ pub const Request = struct {
     pub fn getRedirect(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init(Properties.UTF8.follow).toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init(Properties.UTF8.follow).toJS(globalThis);
     }
     pub fn getReferrer(
         this: *Request,
         globalObject: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         if (this._headers) |headers_ref| {
             if (headers_ref.get("referrer", globalObject)) |referrer| {
-                return ZigString.init(referrer).toValueGC(globalObject);
+                return ZigString.init(referrer).toJS(globalObject);
             }
         }
 
-        return ZigString.init("").toValueGC(globalObject);
+        return ZigString.init("").toJS(globalObject);
     }
     pub fn getReferrerPolicy(
         _: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init("").toValueGC(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init("").toJS(globalThis);
     }
     pub fn getUrl(
         this: *Request,
         globalObject: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         this.ensureURL() catch {
             globalObject.throw("Failed to join URL", .{});
             return .zero;
@@ -708,7 +708,7 @@ pub const Request = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Request {
+    ) ?*Request {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
@@ -732,7 +732,7 @@ pub const Request = struct {
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
         return cloned.toJS(globalThis);
     }
@@ -796,7 +796,7 @@ pub const Request = struct {
     pub fn getHeaders(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return this.ensureFetchHeaders(globalThis).toJS(globalThis);
     }
 

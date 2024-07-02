@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { ESBUILD, itBundled } from "./expectBundled";
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {

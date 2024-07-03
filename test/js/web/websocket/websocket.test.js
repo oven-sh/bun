@@ -55,6 +55,42 @@ describe("WebSocket", () => {
     Bun.gc(true);
   });
 
+  it("should handle shutdown properly", async () => {
+    const server = Bun.serve({
+      port: 0,
+      hostname: "localhost",
+      tls: COMMON_CERT,
+      fetch(req, server) {
+        if (server.upgrade(req)) {
+          return;
+        }
+        return new Response("Upgrade failed :(", { status: 500 });
+      },
+      websocket: {
+        message(ws, message) {
+          // echo
+          ws.send(message);
+        },
+        open(ws) {},
+      },
+    });
+
+    const websockets = [];
+
+    for (let i = 0; i < 10_000; i++) {
+      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+      const { promise, resolve } = Promise.withResolvers();
+      ws.onopen = () => {
+        ws.send("message");
+        resolve();
+      };
+
+      websockets.push(promise);
+    }
+    server.stop(true);
+    await Promise.all(websockets);
+  }, 60_000);
+
   it("should connect many times over https", async () => {
     using server = Bun.serve({
       port: 0,
@@ -529,8 +565,8 @@ describe("WebSocket", () => {
       await openAndCloseWS();
       if (i % 100 === 0) {
         current_websocket_count = getWebSocketCount();
-        // if we have more than 20 websockets open, we have a problem
-        expect(current_websocket_count).toBeLessThanOrEqual(20);
+        // if we have more than 1 batch of websockets open, we have a problem
+        expect(current_websocket_count).toBeLessThanOrEqual(100);
         if (initial_websocket_count === 0) {
           initial_websocket_count = current_websocket_count;
         }

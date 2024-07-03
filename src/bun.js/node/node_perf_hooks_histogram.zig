@@ -8,7 +8,14 @@ pub const HistogramOptions = struct {
 
 // Zig port of High Dynamic Range (HDR) Histogram algorithm
 // Only supports recording values for now
-pub const Histogram = struct {
+pub const HDRHistogram = struct {
+
+    // visible to user
+    min: u64,
+    max: u64,
+    total_count: u64 = 6,
+
+    // internals
     allocator: std.mem.Allocator,
     lowest_trackable_value: u64,
     highest_trackable_value: u64,
@@ -20,15 +27,10 @@ pub const Histogram = struct {
     sub_bucket_mask: u64,
     bucket_count: u64,
     counts: []u64,
-    total_count: u64,
-    min_value: u64,
-    max_value: u64,
 
-    pub fn deinit(self: *Histogram) void {
-        self.allocator.free(self.counts);
-    }
+    const This = @This();
 
-    pub fn init(allocator: std.mem.Allocator, options: HistogramOptions) !Histogram {
+    pub fn init(allocator: std.mem.Allocator, options: HistogramOptions) !This {
         // dummy input: lowest=1, highest=1000, sigfig=3
 
         // Validate input
@@ -76,7 +78,7 @@ pub const Histogram = struct {
             counts[i] = 0;
         }
 
-        return Histogram{
+        return This{
             .allocator = allocator,
             .lowest_trackable_value = options.lowest_trackable_value,
             .highest_trackable_value = options.highest_trackable_value,
@@ -89,38 +91,42 @@ pub const Histogram = struct {
             .bucket_count = bucket_count,
             .counts = counts,
             .total_count = 0,
-            .min_value = std.math.maxInt(u64),
-            .max_value = 0,
+            .min = std.math.maxInt(u64),
+            .max = 0,
         };
     }
 
-    pub fn record_value(self: *Histogram, value: u64, count: u64) void {
+    pub fn deinit(self: *This) void {
+        self.allocator.free(self.counts);
+    }
+
+    pub fn record_value(self: *This, value: u64, quanity: u64) void {
         if (value < self.lowest_trackable_value or value > self.highest_trackable_value) return;
         const counts_index = self.calculate_index(value);
         if (counts_index >= self.counts.len) return;
-        self.counts[counts_index] += count;
-        self.total_count += count;
-        if (self.min_value > value) self.min_value = value;
-        if (self.max_value < value) self.max_value = value;
+        self.counts[counts_index] += quanity;
+        self.total_count += quanity;
+        if (self.min > value) self.min = value;
+        if (self.max < value) self.max = value;
     }
 
-    fn calculate_index(self: *const Histogram, value: u64) usize {
+    fn calculate_index(self: *const This, value: u64) usize {
         const bucket_index = self.get_bucket_index(value);
         const sub_bucket_index = self.get_sub_bucket_index(value, bucket_index);
         return self.get_counts_index(bucket_index, sub_bucket_index);
     }
 
-    fn get_counts_index(self: *const Histogram, bucket_index: u64, sub_bucket_index: u64) usize {
+    fn get_counts_index(self: *const This, bucket_index: u64, sub_bucket_index: u64) usize {
         const bucket_base_index = (bucket_index + 1) << self.sub_bucket_half_count_magnitude;
         return @as(usize, bucket_base_index + sub_bucket_index - self.sub_bucket_half_count);
     }
 
-    fn get_bucket_index(self: *const Histogram, value: u64) u8 {
+    fn get_bucket_index(self: *const This, value: u64) u8 {
         const pow2ceiling = 64 - @clz(value | self.sub_bucket_mask);
         return pow2ceiling - self.unit_magnitude - (self.sub_bucket_half_count_magnitude + 1);
     }
 
-    fn get_sub_bucket_index(self: *const Histogram, value: u64, bucket_index: u8) u64 {
+    fn get_sub_bucket_index(self: *const This, value: u64, bucket_index: u8) u64 {
         return value >> @as(u6, @intCast(bucket_index + self.unit_magnitude));
     }
 };
@@ -130,24 +136,24 @@ test "record_value" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 1000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     histogram.record_value(1, 1);
     try std.testing.expect(histogram.total_count == 1);
-    try std.testing.expect(histogram.min_value == 1);
-    try std.testing.expect(histogram.max_value == 1);
+    try std.testing.expect(histogram.min == 1);
+    try std.testing.expect(histogram.max == 1);
     try std.testing.expect(histogram.counts.len == 2048);
     try std.testing.expect(histogram.counts[1] == 1);
     histogram.record_value(1, 1);
     try std.testing.expect(histogram.total_count == 2);
-    try std.testing.expect(histogram.min_value == 1);
-    try std.testing.expect(histogram.max_value == 1);
+    try std.testing.expect(histogram.min == 1);
+    try std.testing.expect(histogram.max == 1);
     try std.testing.expect(histogram.counts[1] == 2);
     histogram.record_value(100, 1);
     histogram.record_value(900, 1);
     try std.testing.expect(histogram.total_count == 4);
-    try std.testing.expect(histogram.min_value == 1);
-    try std.testing.expect(histogram.max_value == 900);
+    try std.testing.expect(histogram.min == 1);
+    try std.testing.expect(histogram.max == 900);
     try std.testing.expect(histogram.counts[1] == 2);
     try std.testing.expect(histogram.counts[100] == 1);
     try std.testing.expect(histogram.counts[900] == 1);
@@ -158,7 +164,7 @@ test "record_value_multiple_buckets" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 10000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     histogram.record_value(1, 1);
     histogram.record_value(2, 1);
@@ -169,8 +175,8 @@ test "record_value_multiple_buckets" {
     histogram.record_value(100, 1);
     histogram.record_value(1000, 1);
     try std.testing.expect(histogram.total_count == 8);
-    try std.testing.expect(histogram.min_value == 1);
-    try std.testing.expect(histogram.max_value == 1000);
+    try std.testing.expect(histogram.min == 1);
+    try std.testing.expect(histogram.max == 1000);
     try std.testing.expect(histogram.counts[1] == 1);
     try std.testing.expect(histogram.counts[2] == 1);
     try std.testing.expect(histogram.counts[3] == 1);
@@ -187,7 +193,7 @@ test "init sigfig=3 lowest=1 highest=1000" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 1000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
     try std.testing.expect(histogram.highest_trackable_value == highest_trackable_value);
@@ -205,7 +211,7 @@ test "init sigfig=3 lowest=1 highest=10_000" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 10_000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
     try std.testing.expect(histogram.highest_trackable_value == highest_trackable_value);
@@ -223,7 +229,7 @@ test "init sigfig=4 lowest=1 highest=10_000" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 10_000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     //&{lowestDiscernibleValue:1 highestTrackableValue:10000 unitMagnitude:0 significantFigures:4 subBucketHalfCountMagnitude:14 subBucketHalfCount:16384 subBucketMask:32767 subBucketCount:32768 bucketCount:1 countsLen:32768 totalCount:0 counts
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
@@ -242,7 +248,7 @@ test "init sigfig=4 lowest=5 highest=1000" {
     const lowest_trackable_value = 5;
     const highest_trackable_value = 1000;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
     try std.testing.expect(histogram.highest_trackable_value == highest_trackable_value);
@@ -260,7 +266,7 @@ test "init sigfig=5 lowest=10 highest=200" {
     const lowest_trackable_value = 10;
     const highest_trackable_value = 200;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
     try std.testing.expect(histogram.highest_trackable_value == highest_trackable_value);
@@ -279,7 +285,7 @@ test "init sigfig=3 lowest=1 highest=9007199254740991" {
     const lowest_trackable_value = 1;
     const highest_trackable_value = 9007199254740991;
     const allocator = std.testing.allocator;
-    var histogram = try Histogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
+    var histogram = try HDRHistogram.init(allocator, .{ .lowest_trackable_value = lowest_trackable_value, .highest_trackable_value = highest_trackable_value, .significant_figures = significant_figures });
     defer histogram.deinit();
     try std.testing.expect(histogram.lowest_trackable_value == lowest_trackable_value);
     try std.testing.expect(histogram.highest_trackable_value == highest_trackable_value);

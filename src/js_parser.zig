@@ -20171,7 +20171,7 @@ fn NewParser_(
 
                         const is_assign_target = p.options.features.minify_syntax and bun.js_lexer.isIdentifier(value.name);
 
-                        const name_as_e_string = if (is_assign_target or !has_string_value)
+                        const name_as_e_string = if (!is_assign_target or !has_string_value)
                             p.newExpr(value.nameAsEString(allocator), value.loc)
                         else
                             null;

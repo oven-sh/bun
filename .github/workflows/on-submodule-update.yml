@@ -19,7 +19,6 @@ jobs:
       - name: Checkout current
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.head.sha }}
           sparse-checkout: |
             src
       - name: Hash generated versions list
@@ -29,7 +28,7 @@ jobs:
       - name: Checkout base
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.event.pull_request.base.sha }}
+          ref: ${{ github.base_ref }}
           sparse-checkout: |
             src
       - name: Hash base

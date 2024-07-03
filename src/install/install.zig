@@ -9970,56 +9970,62 @@ pub const PackageManager = struct {
 
         // may or may not be the package json we are editing
         const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-        var root_package_json_path_buf: bun.PathBuffer = undefined;
-        @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
-        @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
-        const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
-        root_package_json_path_buf[root_package_json_path.len] = 0;
-        const root_package_json_pathZ = root_package_json_path_buf[0..root_package_json_path.len :0];
 
-        const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
-            .parse_err => |err| {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
-                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                    root_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .read_err => |err| {
-                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                    manager.original_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .entry => |entry| entry,
+        var root_package_json_path_buf: bun.PathBuffer = undefined;
+        const root_package_json_source, const root_package_json_path = brk: {
+            @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+            @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
+            const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+            root_package_json_path_buf[root_package_json_path.len] = 0;
+
+            // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
+            // https://github.com/oven-sh/bun/issues/12288
+            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+                .parse_err => |err| {
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                        },
+                    }
+                    Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                        root_package_json_path,
+                        @errorName(err),
+                    });
+                    Global.crash();
+                },
+                .read_err => |err| {
+                    Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                        manager.original_package_json_path,
+                        @errorName(err),
+                    });
+                    Global.crash();
+                },
+                .entry => |entry| entry,
+            };
+
+            if (not_in_workspace_root) |stuff| {
+                try PackageJSONEditor.editPatchedDependencies(
+                    manager,
+                    &root_package_json.root,
+                    stuff.patch_key,
+                    stuff.patchfile_path,
+                );
+                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
+                buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
+                var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
+
+                _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+                root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
+            }
+
+            break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
         };
 
-        if (not_in_workspace_root) |stuff| {
-            try PackageJSONEditor.editPatchedDependencies(
-                manager,
-                &root_package_json.root,
-                stuff.patch_key,
-                stuff.patchfile_path,
-            );
-            var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
-            try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
-            buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
-            var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
-
-            _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
-                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-                Global.crash();
-            };
-            root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
-        }
-
-        try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
+        try manager.installWithManager(ctx, root_package_json_source, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
             for (updates) |request| {
@@ -10078,7 +10084,10 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.write_package_json) {
-            const source, const path = if (manager.options.patch_features == .commit) .{ root_package_json.source.contents, root_package_json_pathZ } else .{ new_package_json_source, manager.original_package_json_path };
+            const source, const path = if (manager.options.patch_features == .commit)
+                .{ root_package_json_source, root_package_json_path }
+            else
+                .{ new_package_json_source, manager.original_package_json_path };
 
             // Now that we've run the install step
             // We can save our in-memory package.json to disk

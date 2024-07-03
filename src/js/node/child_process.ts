@@ -1799,6 +1799,7 @@ function genericNodeError(message, options) {
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
 
+  const old_process_send = process.send;
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {
       callback = handle;
@@ -1852,11 +1853,10 @@ function _forkChild(fd, serializationMode) {
 
     if (serializationMode === "json") {
       const string = JSONStringify(message);
-      $debug(process.pid, "Pipe#writeJson", string);
       err = channel_writeUtf8String(fd, string + "\n");
     } else if (serializationMode === "advanced") {
-      $debug(process.pid, "Pipe#writeAdvanced", message);
-      $assert(false, `TODO: serialization mode: advanced`);
+      old_process_send(message);
+      err = 0;
     } else {
       $assert(false, `unsupported serialization mode: ${serializationMode}`);
     }

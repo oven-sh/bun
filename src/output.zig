@@ -412,12 +412,6 @@ pub fn flush() void {
     }
 }
 
-pub fn flushStderr() void {
-    if (Environment.isNative and source_set) {
-        source.buffered_error_stream.flush() catch {};
-    }
-}
-
 pub const ElapsedFormatter = struct {
     colors: bool,
     duration_ns: u64 = 0,

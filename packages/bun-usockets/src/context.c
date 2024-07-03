@@ -20,7 +20,6 @@
 #include <stdlib.h>
 #include <string.h>
 #include <errno.h>
-
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
@@ -44,7 +43,7 @@ int us_raw_root_certs(struct us_cert_string_t**out){
 void us_listen_socket_close(int ssl, struct us_listen_socket_t *ls) {
     /* us_listen_socket_t extends us_socket_t so we close in similar ways */
     if (!us_socket_is_closed(0, &ls->s)) {
-        us_internal_socket_context_unlink_listen_socket(ls->s.context, ls);
+        us_internal_socket_context_unlink_listen_socket(ssl, ls->s.context, ls);
         us_poll_stop((struct us_poll_t *) &ls->s, ls->s.context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) &ls->s));
 
@@ -77,7 +76,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     }
 }
 
-void us_internal_socket_context_unlink_listen_socket(struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
+void us_internal_socket_context_unlink_listen_socket(int ssl, struct us_socket_context_t *context, struct us_listen_socket_t *ls) {
     /* We have to properly update the iterator used to sweep sockets for timeouts */
     if (ls == (struct us_listen_socket_t *) context->iterator) {
         context->iterator = ls->s.next;
@@ -95,9 +94,10 @@ void us_internal_socket_context_unlink_listen_socket(struct us_socket_context_t 
             ls->s.next->prev = ls->s.prev;
         }
     }
+    us_socket_context_unref(ssl, context);
 }
 
-void us_internal_socket_context_unlink_socket(struct us_socket_context_t *context, struct us_socket_t *s) {
+void us_internal_socket_context_unlink_socket(int ssl, struct us_socket_context_t *context, struct us_socket_t *s) {
     /* We have to properly update the iterator used to sweep sockets for timeouts */
     if (s == context->iterator) {
         context->iterator = s->next;
@@ -115,6 +115,7 @@ void us_internal_socket_context_unlink_socket(struct us_socket_context_t *contex
             s->next->prev = s->prev;
         }
     }
+    us_socket_context_unref(ssl, context);
 }
 
 /* We always add in the top, so we don't modify any s.next */
@@ -126,6 +127,7 @@ void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *c
         context->head_listen_sockets->s.prev = &ls->s;
     }
     context->head_listen_sockets = ls;
+    context->ref_count++;
 }
 
 /* We always add in the top, so we don't modify any s.next */
@@ -137,6 +139,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
         context->head_sockets->prev = s;
     }
     context->head_sockets = s;
+    context->ref_count++;
 }
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {
@@ -231,6 +234,7 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
     struct us_socket_context_t *context = us_calloc(1, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
     context->is_low_prio = default_is_low_prio_handler;
+    context->ref_count = 1;
 
     us_internal_loop_link(loop, context);
 
@@ -252,6 +256,7 @@ struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop
     struct us_socket_context_t *context = us_calloc(1, sizeof(struct us_socket_context_t) + context_ext_size);
     context->loop = loop;
     context->is_low_prio = default_is_low_prio_handler;
+    context->ref_count = 1;
 
     us_internal_loop_link(loop, context);
 
@@ -272,7 +277,8 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
 }
 
 
-void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
+
+void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us again with SSL=false */
@@ -285,7 +291,25 @@ void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
      * This is the opposite order compared to when creating the context - SSL code is cleaning up before non-SSL */
 
     us_internal_loop_unlink(context->loop, context);
-    us_free(context);
+    /* Link this context to the close-list and let it be deleted after this iteration */
+    context->next = context->loop->data.closed_context_head;
+    context->loop->data.closed_context_head = context;
+}
+
+void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
+    context->ref_count++;
+}
+
+uint32_t us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
+    uint32_t count = --context->ref_count;
+    if (count == 0) {
+        us_internal_socket_context_free(ssl, context);
+    }
+    return count;
+}
+
+void us_socket_context_free(int ssl, struct us_socket_context_t *context) {
+    us_socket_context_unref(ssl, context);
 }
 
 struct us_listen_socket_t *us_socket_context_listen(int ssl, struct us_socket_context_t *context, const char *host, int port, int options, int socket_ext_size) {
@@ -709,7 +733,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 
     if (s->low_prio_state != 1) {
         /* This properly updates the iterator if in on_timeout */
-        us_internal_socket_context_unlink_socket(s->context, s);
+        us_internal_socket_context_unlink_socket(ssl, s->context, s);
     }
 
 

@@ -35,6 +35,7 @@ pub const InternalLoopData = extern struct {
     last_write_failed: i32,
     head: ?*SocketContext,
     iterator: ?*SocketContext,
+    closed_context_head: ?*SocketContext,
     recv_buf: [*]u8,
     send_buf: [*]u8,
     ssl_data: ?*anyopaque,
@@ -1406,6 +1407,8 @@ pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, op
 pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
 pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_ref(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_unref(ssl: i32, context: ?*SocketContext) u32;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;

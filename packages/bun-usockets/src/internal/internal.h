@@ -144,7 +144,7 @@ void us_internal_free_loop_ssl_data(struct us_loop_t *loop);
 /* Socket context related */
 void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
                                             struct us_socket_t *s);
-void us_internal_socket_context_unlink_socket(
+void us_internal_socket_context_unlink_socket(int ssl,
     struct us_socket_context_t *context, struct us_socket_t *s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
@@ -244,12 +244,13 @@ struct us_listen_socket_t {
 /* Listen sockets are keps in their own list */
 void us_internal_socket_context_link_listen_socket(
     struct us_socket_context_t *context, struct us_listen_socket_t *s);
-void us_internal_socket_context_unlink_listen_socket(
+void us_internal_socket_context_unlink_listen_socket(int ssl,
     struct us_socket_context_t *context, struct us_listen_socket_t *s);
 
 struct us_socket_context_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_loop_t *loop;
   uint32_t global_tick;
+  uint32_t ref_count;
   unsigned char timestamp;
   unsigned char long_timestamp;
   struct us_socket_t *head_sockets;
@@ -280,7 +281,8 @@ struct us_internal_ssl_socket_t;
 typedef void (*us_internal_on_handshake_t)(
     struct us_internal_ssl_socket_t *, int success,
     struct us_bun_verify_error_t verify_error, void *custom_data);
-
+    
+void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context);
 /* SNI functions */
 void us_internal_ssl_socket_context_add_server_name(
     struct us_internal_ssl_socket_context_t *context,

@@ -115,15 +115,18 @@ extern "C" void Bun__untrackFFIFunction(Zig::GlobalObject* globalObject, JSC::En
 }
 extern "C" JSC::EncodedJSValue Bun__CreateFFIFunctionValue(Zig::GlobalObject* globalObject, const ZigString* symbolName, unsigned argCount, Zig::FFIFunction functionPointer, bool strong, bool addPtrField)
 {
-    auto* function = Bun__CreateFFIFunction(globalObject, symbolName, argCount, functionPointer, strong);
     if (addPtrField) {
+        auto* function = Zig::JSFFIFunction::createForFFI(globalObject->vm(), globalObject, argCount, symbolName != nullptr ? Zig::toStringCopy(*symbolName) : String(), reinterpret_cast<Bun::CFFIFunction>(functionPointer));
         auto& vm = globalObject->vm();
         // We should only expose the "ptr" field when it's a JSCallback for bun:ffi.
         // Not for internal usages of this function type.
         // We should also consider a separate JSFunction type for our usage to not have this branch in the first place...
         function->putDirect(vm, JSC::Identifier::fromString(vm, String(MAKE_STATIC_STRING_IMPL("ptr"))), JSC::jsNumber(bitwise_cast<double>(functionPointer)), JSC::PropertyAttribute::ReadOnly | 0);
+
+        return JSC::JSValue::encode(function);
     }
-    return JSC::JSValue::encode(function);
+
+    return Bun__CreateFFIFunctionWithDataValue(globalObject, symbolName, argCount, functionPointer, strong, nullptr);
 }
 
 namespace Zig {
@@ -131,7 +134,7 @@ using namespace JSC;
 
 const ClassInfo JSFFIFunction::s_info = { "Function"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSFFIFunction) };
 
-JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, FFIFunction&& function)
+JSFFIFunction::JSFFIFunction(VM& vm, NativeExecutable* executable, JSGlobalObject* globalObject, Structure* structure, CFFIFunction&& function)
     : Base(vm, executable, globalObject, structure)
     , m_function(WTFMove(function))
 {
@@ -157,11 +160,32 @@ void JSFFIFunction::finishCreation(VM& vm, NativeExecutable* executable, unsigne
 
 JSFFIFunction* JSFFIFunction::create(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, FFIFunction FFIFunction, Intrinsic intrinsic, NativeFunction nativeConstructor)
 {
-
     NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, intrinsic, FFIFunction, nullptr, name);
-
     Structure* structure = globalObject->FFIFunctionStructure();
-    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, WTFMove(FFIFunction));
+    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTFMove(FFIFunction)));
+    function->finishCreation(vm, executable, length, name);
+    return function;
+}
+
+#if OS(WINDOWS)
+
+JSC_DEFINE_HOST_FUNCTION(JSFFIFunction::trampoline, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    const auto* function = jsCast<JSFFIFunction*>(callFrame->jsCallee());
+    return function->function()(globalObject, callFrame);
+}
+
+#endif
+
+JSFFIFunction* JSFFIFunction::createForFFI(VM& vm, Zig::GlobalObject* globalObject, unsigned length, const String& name, CFFIFunction FFIFunction)
+{
+#if OS(WINDOWS)
+    NativeExecutable* executable = vm.getHostFunction(trampoline, ImplementationVisibility::Public, NoIntrinsic, trampoline, nullptr, name);
+#else
+    NativeExecutable* executable = vm.getHostFunction(FFIFunction, ImplementationVisibility::Public, NoIntrinsic, FFIFunction, nullptr, name);
+#endif
+    Structure* structure = globalObject->FFIFunctionStructure();
+    JSFFIFunction* function = new (NotNull, allocateCell<JSFFIFunction>(vm)) JSFFIFunction(vm, executable, globalObject, structure, reinterpret_cast<CFFIFunction>(WTFMove(FFIFunction)));
     function->finishCreation(vm, executable, length, name);
     return function;
 }

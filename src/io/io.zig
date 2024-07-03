@@ -25,40 +25,43 @@ pub const Loop = struct {
     active: usize = 0,
 
     var loop: Loop = undefined;
-    var has_loaded_loop: bool = false;
+
+    fn load() void {
+        loop = Loop{
+            .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
+        };
+        if (comptime Environment.isLinux) {
+            loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+
+            {
+                var epoll = std.mem.zeroes(std.os.linux.epoll_event);
+                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                epoll.data.ptr = @intFromPtr(&loop);
+                const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
+
+                switch (bun.C.getErrno(rc)) {
+                    .SUCCESS => {},
+                    else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
+                }
+            }
+        }
+        var thread = std.Thread.spawn(.{
+            .allocator = bun.default_allocator,
+
+            // smaller thread, since it's not doing much.
+            .stack_size = 1024 * 1024 * 2,
+        }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
+        thread.detach();
+    }
+    var once = std.once(load);
 
     pub fn get() *Loop {
         if (Environment.isWindows) {
             @panic("Do not use this API on windows");
         }
 
-        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .monotonic)) {
-            loop = Loop{
-                .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
-            };
-            if (comptime Environment.isLinux) {
-                loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+        once.call();
 
-                {
-                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
-                    epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
-
-                    switch (bun.C.getErrno(rc)) {
-                        .SUCCESS => {},
-                        else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
-                    }
-                }
-            }
-            var thread = std.Thread.spawn(.{
-                .allocator = bun.default_allocator,
-
-                // smaller thread, since it's not doing much.
-                .stack_size = 1024 * 1024 * 2,
-            }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
-            thread.detach();
-        }
         return &loop;
     }
 

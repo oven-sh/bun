@@ -18,7 +18,7 @@ class JSGlobalObject;
 
 namespace Zig {
 
-using NativeFunctionPtr = JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+using NativeFunctionPtr = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 /**
  * Subclass of JSC::JSFunction that holds an additional single native JSFunction as property.

@@ -29,7 +29,6 @@
 #include "JSDOMConvertStrings.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -43,7 +42,7 @@ template<> CryptoAlgorithmRsaKeyGenParams convertDictionary<CryptoAlgorithmRsaKe
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmRsaKeyGenParams result;
     JSValue nameValue;
@@ -51,42 +50,42 @@ template<> CryptoAlgorithmRsaKeyGenParams convertDictionary<CryptoAlgorithmRsaKe
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "RsaKeyGenParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "RsaKeyGenParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue modulusLengthValue;
     if (isNullOrUndefined)
         modulusLengthValue = jsUndefined();
     else {
         modulusLengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "modulusLength"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!modulusLengthValue.isUndefined()) {
         result.modulusLength = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, modulusLengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "modulusLength", "RsaKeyGenParams", "unsigned long");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "modulusLength"_s, "RsaKeyGenParams"_s, "unsigned long"_s);
+        return {};
     }
     JSValue publicExponentValue;
     if (isNullOrUndefined)
         publicExponentValue = jsUndefined();
     else {
         publicExponentValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "publicExponent"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicExponentValue.isUndefined()) {
         result.publicExponent = convert<IDLUint8Array>(lexicalGlobalObject, publicExponentValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicExponent", "RsaKeyGenParams", "Uint8Array");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicExponent"_s, "RsaKeyGenParams"_s, "Uint8Array"_s);
+        return {};
     }
     return result;
 }

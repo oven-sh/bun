@@ -35,11 +35,11 @@ SourceOrigin toSourceOrigin(const String& sourceURL, bool isBuiltin)
 
     if (isBuiltin) {
         if (sourceURL.startsWith("node:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://node/", sourceURL.substring(5))));
+            return SourceOrigin(WTF::URL(makeString("builtin://node/"_s, sourceURL.substring(5))));
         } else if (sourceURL.startsWith("bun:"_s)) {
-            return SourceOrigin(WTF::URL(makeString("builtin://bun/", sourceURL.substring(4))));
+            return SourceOrigin(WTF::URL(makeString("builtin://bun/"_s, sourceURL.substring(4))));
         } else {
-            return SourceOrigin(WTF::URL(makeString("builtin://", sourceURL)));
+            return SourceOrigin(WTF::URL(makeString("builtin://"_s, sourceURL)));
         }
     }
 
@@ -73,8 +73,8 @@ Ref<SourceProvider> SourceProvider::create(
     Zig::GlobalObject* globalObject,
     ResolvedSource& resolvedSource,
     JSC::SourceProviderSourceType sourceType,
-    bool isBuiltin
-) {
+    bool isBuiltin)
+{
     auto string = resolvedSource.source_code.toWTFString(BunString::ZeroCopy);
     auto sourceURLString = resolvedSource.source_url.toWTFString(BunString::ZeroCopy);
 
@@ -111,8 +111,9 @@ Ref<SourceProvider> SourceProvider::create(
     return provider;
 }
 
-SourceProvider::~SourceProvider() {
-    if(m_resolvedSource.already_bundled) {
+SourceProvider::~SourceProvider()
+{
+    if (m_resolvedSource.already_bundled) {
         BunString str = Bun::toString(sourceURL());
         Bun__removeSourceProviderSourceMap(m_globalObject->bunVM(), this, &str);
     }
@@ -155,7 +156,6 @@ void SourceProvider::cacheBytecode(const BytecodeCacheGenerator& generator)
     if (update)
         m_cachedBytecode->addGlobalUpdate(*update);
 }
-
 
 void SourceProvider::commitCachedBytecode()
 {
@@ -245,7 +245,8 @@ int SourceProvider::readCache(JSC::VM& vm, const JSC::SourceCode& sourceCode)
     // }
 }
 
-extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider) {
+extern "C" BunString ZigSourceProvider__getSourceSlice(SourceProvider* provider)
+{
     return Bun::toStringView(provider->source());
 }
 

@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const HDR = @import("./hdr_histogram.zig");
 const meta = bun.meta;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
@@ -13,40 +14,65 @@ pub const RecordableHistogram = struct {
     exceeds: u64 = 4,
     stddev: f64 = 5, // todo: make this optional
     count: u64 = 6,
-    _percentiles: std.AutoHashMap(f32, f32) = std.AutoHashMap(f32, f32).init(bun.default_allocator),
+    _histogram: HDR.Histogram = undefined, // contains most of the implementation
 
     const This = @This();
 
     //todo: these should also be explicit functions, IE both .max and .max() work
-    pub const min = getter(.min);
-    pub const setMin = setter(.min);
-    pub const max = getter(.max);
-    pub const setMax = setter(.max);
     pub const mean = getter(.mean);
     pub const setMean = setter(.mean);
     pub const exceeds = getter(.exceeds);
     pub const setExceeds = setter(.exceeds);
     pub const stddev = getter(.stddev);
     pub const setStddev = setter(.stddev);
-    pub const count = getter(.count);
-    pub const setCount = setter(.count);
+
+    pub const min = @as(
+        PropertyGetter,
+        struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+                return globalThis.toJS(this._histogram.min_value, .temporary);
+            }
+        }.callback,
+    );
+
+    pub const max = @as(
+        PropertyGetter,
+        struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+                return globalThis.toJS(this._histogram.max_value, .temporary);
+            }
+        }.callback,
+    );
+
+    pub const count = @as(
+        PropertyGetter,
+        struct {
+            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+                return globalThis.toJS(this._histogram.total_count, .temporary);
+            }
+        }.callback,
+    );
 
     // we need a special getter for percentiles because it's a hashmap
     pub const percentiles = @as(
         PropertyGetter,
         struct {
             pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-                _ = this;
                 _ = globalThis;
+                _ = this;
                 return .undefined;
             }
         }.callback,
     );
 
     pub fn record(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        _ = this;
-        _ = globalThis;
-        _ = callframe;
+        const args = callframe.arguments(1).slice();
+        if (args.len != 1) {
+            globalThis.throwInvalidArguments("Expected 1 argument", .{});
+            return .zero;
+        }
+        const value = args[0].to(u64);
+        this._histogram.record_value(value, 1);
         return .undefined;
     }
 
@@ -195,16 +221,25 @@ pub const RecordableHistogram = struct {
         }.callback;
     }
 
+    pub fn init(this: *This) !void {
+        this._histogram = try HDR.Histogram.init(bun.default_allocator, .{});
+    }
+
     // since we create this with bun.new, we need to have it be destroyable
     // our node.classes.ts has finalize=true to generate the call to finalize
     pub fn finalize(this: *This) callconv(.C) void {
-        this._percentiles.deinit();
+        this._histogram.deinit();
         bun.destroy(this);
     }
 };
 
 fn createHistogram(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    return bun.new(RecordableHistogram, .{}).toJS(globalThis);
+    var histogram = bun.new(RecordableHistogram, .{});
+    histogram.init() catch |err| {
+        globalThis.throwError(err, "failed to initialize histogram");
+        return .zero;
+    };
+    return histogram.toJS(globalThis);
 }
 
 pub fn createPerfHooksHistogramBinding(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {

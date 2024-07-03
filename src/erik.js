@@ -2,28 +2,48 @@
 // cannot use import statement outside a module, so we do:
 const { performance, createHistogram } = require("perf_hooks");
 
-const fn = duration => {
-  // sleep for duration ms
-  const start = performance.now();
-  while (performance.now() - start < duration) {}
+const fn = () => {
+  console.log("hello world");
 };
 
 let h = createHistogram();
+console.log("before", h);
 
 let wrapped = performance.timerify(fn, { histogram: h });
+wrapped();
+console.log("after", h);
 
-wrapped(100);
-console.log(h);
-console.log(h.percentiles.get(75));
-wrapped(400);
-console.log(h);
-console.log(h.percentiles.get(75));
-wrapped(400);
-console.log(h);
-console.log(h.percentiles.get(75));
-wrapped(400);
-console.log(h);
-console.log(h.percentiles.get(75));
+// wrapped(400);
+// console.log(h);
+
+// h.percentiles.forEach((value, key) => {
+//   console.log(key, value);
+// });
+
+// const { performance, PerformanceObserver } = require("node:perf_hooks");
+
+// function someFunction() {
+//   console.log("hello world");
+// }
+
+// const wrapped = performance.timerify(someFunction);
+
+// const obs = new PerformanceObserver(list => {
+//   for (const entry of list.getEntries()) {
+//     console.log(entry);
+//   }
+
+//   performance.clearMarks();
+//   performance.clearMeasures();
+//   obs.disconnect();
+// });
+// obs.observe({ entryTypes: ["function"] });
+
+// // A performance timeline entry will be created
+// wrapped();
+// wrapped();
+// wrapped();
+// wrapped();
 
 // erik todo
 // histogram

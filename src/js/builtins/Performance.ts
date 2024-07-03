@@ -15,7 +15,6 @@ export function timerify(fn: Function, options) {
     const end = performance.now();
 
     if (histogram) {
-      console.log("recorded");
       histogram.record(Math.ceil((end - start) * 1e6));
     }
     return result;

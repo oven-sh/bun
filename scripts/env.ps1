@@ -75,9 +75,16 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=$CFLAGS",
   "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
-  "-DCMAKE_AR=llvm-lib"
 )
-$env:AR = "llvm-lib"
+
+if ($env:USE_LTO -eq "1") {
+  if (Get-Command lld-lib -ErrorAction SilentlyContinue) { 
+    $AR = Get-Command lld-lib -ErrorAction SilentlyContinue
+    $env:AR = $AR
+    $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
+  }
+}
+
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS

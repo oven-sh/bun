@@ -125,7 +125,7 @@ static String encodeProtocolString(const String& protocol)
     StringBuilder builder;
     for (size_t i = 0; i < protocol.length(); i++) {
         if (protocol[i] < 0x20 || protocol[i] > 0x7E)
-            builder.append("\\u", hex(protocol[i], 4));
+            builder.append("\\u"_s, hex(protocol[i], 4));
         else if (protocol[i] == 0x5c)
             builder.append("\\\\"_s);
         else
@@ -265,7 +265,7 @@ static String resourceName(const URL& url)
     auto path = url.path();
     auto result = makeString(
         path,
-        path.isEmpty() ? "/" : "",
+        path.isEmpty() ? "/"_s : ""_s,
         url.queryWithLeadingQuestionMark());
     ASSERT(!result.isEmpty());
     ASSERT(!result.contains(' '));
@@ -1067,13 +1067,13 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         if (this->hasEventListeners(eventName)) {
             // the main reason for dispatching on a separate tick is to handle when you haven't yet attached an event listener
             this->incPendingActivityCount();
-            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData.data(), binaryData.size()), m_url.string()));
+            dispatchEvent(MessageEvent::create(eventName, ArrayBuffer::create(binaryData), m_url.string()));
             this->decPendingActivityCount();
             return;
         }
 
         if (auto* context = scriptExecutionContext()) {
-            auto arrayBuffer = JSC::ArrayBuffer::create(binaryData.data(), binaryData.size());
+            auto arrayBuffer = JSC::ArrayBuffer::create(binaryData);
             this->incPendingActivityCount();
             context->postTask([this, name = eventName, buffer = WTFMove(arrayBuffer), protectedThis = Ref { *this }](ScriptExecutionContext& context) {
                 ASSERT(scriptExecutionContext());
@@ -1113,7 +1113,7 @@ void WebSocket::didReceiveBinaryData(const AtomString& eventName, const std::spa
         }
 
         if (auto* context = scriptExecutionContext()) {
-            auto arrayBuffer = JSC::ArrayBuffer::tryCreate(binaryData.data(), binaryData.size());
+            auto arrayBuffer = JSC::ArrayBuffer::tryCreate(binaryData);
 
             this->incPendingActivityCount();
 

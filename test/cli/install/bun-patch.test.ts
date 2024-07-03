@@ -13,6 +13,163 @@ beforeAll(() => {
 
 describe("bun patch <pkg>", async () => {
   describe("workspace interactions", async () => {
+    /**
+     * @repo/eslint-config and @repo/typescript-config both depend on @types/ws@8.5.4
+     * so it should be hoisted to the root node_modules
+     */
+    describe("inside workspace with hoisting", async () => {
+      const args = [
+        ["node_modules/@types/ws", "node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/@types/ws"],
+      ];
+      for (const [arg, path] of args) {
+        test(arg, async () => {
+          const tempdir = tempDirWithFiles("lol", {
+            "package.json": JSON.stringify({
+              "name": "my-workspace",
+              private: "true",
+              version: "0.0.1",
+              "devDependencies": {
+                "@repo/ui": "*",
+                "@repo/eslint-config": "*",
+                "@repo/typescript-config": "*",
+              },
+              workspaces: ["packages/*"],
+            }),
+            packages: {
+              "eslint-config": {
+                "package.json": JSON.stringify({
+                  name: "@repo/eslint-config",
+                  "version": "0.0.0",
+                  dependencies: {
+                    "@types/ws": "8.5.4",
+                  },
+                  private: "true",
+                }),
+              },
+              "typescript-config": {
+                "package.json": JSON.stringify({
+                  "name": "@repo/typescript-config",
+                  "version": "0.0.0",
+                  dependencies: {
+                    "@types/ws": "8.5.4",
+                  },
+                  private: "true",
+                }),
+              },
+              "ui": {
+                "package.json": JSON.stringify({
+                  name: "@repo/ui",
+                  version: "0.0.0",
+                  private: "true",
+                  devDependencies: {
+                    "@repo/eslint-config": "*",
+                    "@repo/typescript-config": "*",
+                  },
+                }),
+              },
+            },
+          });
+
+          console.log("TEMPDIR", tempdir);
+
+          await $`${bunExe()} i`.env(bunEnv).cwd(tempdir);
+
+          let result = await $` ${bunExe()} patch ${arg}`.env(bunEnv).cwd(tempdir);
+          expect(result.stderr.toString()).not.toContain("error");
+          expect(result.stdout.toString()).toContain(`To patch @types/ws, edit the following folder:\n\n  ${path}\n`);
+
+          await $`echo LOL > ${path}/index.d.ts`.env(bunEnv).cwd(tempdir);
+
+          expectNoError(await $`${bunExe()} patch --commit ${arg}`.env(bunEnv).cwd(tempdir));
+
+          expect(await $`cat ${path}/index.d.ts`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
+
+          expect(
+            (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
+          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+        });
+      }
+    });
+
+    describe("inside workspace with multiple workspace packages with same dependency", async () => {
+      const args = [
+        ["node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
+        ["@types/ws@8.5.4", "node_modules/@repo/eslint-config/node_modules/@types/ws"],
+      ];
+      for (const [arg, path] of args) {
+        test(arg, async () => {
+          const tempdir = tempDirWithFiles("lol", {
+            "package.json": JSON.stringify({
+              "name": "my-workspace",
+              private: "true",
+              version: "0.0.1",
+              "devDependencies": {
+                "@repo/ui": "*",
+                "@repo/eslint-config": "*",
+                "@repo/typescript-config": "*",
+                "@types/ws": "7.4.7",
+              },
+              workspaces: ["packages/*"],
+            }),
+            packages: {
+              "eslint-config": {
+                "package.json": JSON.stringify({
+                  name: "@repo/eslint-config",
+                  "version": "0.0.0",
+                  dependencies: {
+                    "@types/ws": "8.5.4",
+                  },
+                  private: "true",
+                }),
+              },
+              "typescript-config": {
+                "package.json": JSON.stringify({
+                  "name": "@repo/typescript-config",
+                  "version": "0.0.0",
+                  dependencies: {
+                    "@types/ws": "8.5.4",
+                  },
+                  private: "true",
+                }),
+              },
+              "ui": {
+                "package.json": JSON.stringify({
+                  name: "@repo/ui",
+                  version: "0.0.0",
+                  private: "true",
+                  devDependencies: {
+                    "@repo/eslint-config": "*",
+                    "@repo/typescript-config": "*",
+                  },
+                }),
+              },
+            },
+          });
+
+          console.log("TEMPDIR", tempdir);
+
+          await $`${bunExe()} i`.env(bunEnv).cwd(tempdir);
+
+          let result = await $`cd packages/eslint-config; ${bunExe()} patch ${arg}`.env(bunEnv).cwd(tempdir);
+          expect(result.stderr.toString()).not.toContain("error");
+          expect(result.stdout.toString()).toContain(
+            `To patch @types/ws, edit the following folder:\n\n  ${tempdir}/${path}\n`,
+          );
+
+          await $`echo LOL > ${path}/index.d.ts`.env(bunEnv).cwd(tempdir);
+
+          expectNoError(await $`cd packages/eslint-config; ${bunExe()} patch --commit ${arg}`.env(bunEnv).cwd(tempdir));
+
+          expect(await $`cat ${path}/index.d.ts`.env(bunEnv).cwd(tempdir).text()).toEqual("LOL\n");
+
+          expect(
+            (await $`cat package.json`.cwd(tempdir).env(bunEnv).json()).patchedDependencies["@types/ws@8.5.4"],
+          ).toEqual("patches/@types%2Fws@8.5.4.patch");
+        });
+      }
+    });
+
     describe("inside workspace package", async () => {
       const args = [
         ["node_modules/@types/ws", "packages/eslint-config/node_modules/@types/ws"],
@@ -592,10 +749,10 @@ module.exports = function isEven() {
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
       });
 
-      await $`${bunExe()} run index.ts`
+      await $`${bunExe()} i`
         .env(bunEnv)
-        .cwd(filedir)
-        .then(o => expect(o.stderr.toString()).toBe(""));
+        .cwd(tempdir)
+        .then(o => expect(o.stderr.toString()).not.toContain("error"));
 
       const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
       expect(stderr.toString()).toBe("");
@@ -649,10 +806,10 @@ module.exports = function isOdd() {
         "index.ts": /* ts */ `import isEven from 'is-even'; console.log(isEven(420))`,
       });
 
-      await $`${bunExe()} run index.ts`
+      await $`${bunExe()} i`
         .env(bunEnv)
-        .cwd(filedir)
-        .then(o => expect(o.stderr.toString()).toBe(""));
+        .cwd(tempdir)
+        .then(o => expect(o.stderr.toString()).not.toContain("error"));
 
       const { stdout, stderr } = await $`${bunExe()} run index.ts`.env(bunEnv).cwd(tempdir);
       expect(stderr.toString()).toBe("");

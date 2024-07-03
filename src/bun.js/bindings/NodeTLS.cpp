@@ -11,7 +11,7 @@ namespace Bun {
 
 using namespace JSC;
 
-extern "C" JSC::EncodedJSValue Bun__canonicalizeIP(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+BUN_DECLARE_HOST_FUNCTION(Bun__canonicalizeIP);
 
 JSC::JSValue createNodeTLSBinding(Zig::GlobalObject* globalObject)
 {

@@ -6,8 +6,8 @@ const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYP
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
-const createBrotliEncoder = $zig("node_zlib_binding.zig", "createBrotliEncoder");
-const createBrotliDecoder = $zig("node_zlib_binding.zig", "createBrotliDecoder");
+const createBrotliEncoder = $newZigFunction("js_brotli.zig", "BrotliEncoder.create", 2);
+const createBrotliDecoder = $newZigFunction("js_brotli.zig", "BrotliDecoder.create", 2);
 
 function brotliCompress(buffer, opts, callback) {
   if (typeof opts === "function") {

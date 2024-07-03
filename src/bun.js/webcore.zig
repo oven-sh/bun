@@ -22,7 +22,7 @@ pub const Lifetime = enum {
 };
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -72,7 +72,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(
     return .undefined;
 }
 
-fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -210,7 +210,7 @@ pub const Prompt = struct {
     pub fn call(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
@@ -565,7 +565,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 2) {
@@ -598,7 +598,7 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         array_a: *JSC.JSUint8Array,
         array_b: *JSC.JSUint8Array,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const a = array_a.slice();
         const b = array_b.slice();
 
@@ -615,7 +615,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
@@ -637,7 +637,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         array: *JSC.JSUint8Array,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const slice = array.slice();
         randomData(globalThis, slice.ptr, slice.len);
         return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
@@ -666,7 +666,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -679,7 +679,7 @@ pub const Crypto = struct {
     pub fn randomUUIDWithoutTypeChecks(
         _: *Crypto,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -691,7 +691,7 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Crypto {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*Crypto {
         globalThis.throw("Crypto is not constructable", .{});
         return null;
     }

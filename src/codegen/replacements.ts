@@ -1,6 +1,6 @@
 import { LoaderKeys } from "../api/schema";
 import { sliceSourceCode } from "./builtin-parser";
-import { registerNativeCall } from "./js2native-generator";
+import { registerNativeCall } from "./generate-js2native";
 
 // This is a list of extra syntax replacements to do. Kind of like macros
 // These are only run on code itself, not string contents or comments.

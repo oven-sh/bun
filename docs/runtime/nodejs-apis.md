@@ -193,7 +193,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 
-🟡 Incomplete implementation of `base64` and `base64url` encodings.
+🟢 Fully implemented.
 
 ### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
 

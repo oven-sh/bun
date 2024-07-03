@@ -610,7 +610,7 @@ void SharedBufferBuilder::initialize(Ref<FragmentedSharedBuffer>&& buffer)
 
 RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
 {
-    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate(nullptr, 0);
+    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate({});
 }
 
 Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
@@ -626,7 +626,7 @@ Ref<SharedBuffer> SharedBufferBuilder::takeAsContiguous()
 RefPtr<ArrayBuffer> SharedBufferBuilder::takeAsArrayBuffer()
 {
     if (!m_buffer)
-        return ArrayBuffer::tryCreate(nullptr, 0);
+        return ArrayBuffer::tryCreate({});
     return take()->tryCreateArrayBuffer();
 }
 

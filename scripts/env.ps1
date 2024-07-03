@@ -58,8 +58,8 @@ $CXXFLAGS = '/O2 /Zi '
 # $CXXFLAGS = '/O2 /Z7 /MT'
 
 if ($env:USE_LTO -eq "1") {
-  $CXXFLAGS += " -fuse-ld=lld -Xclang -emit-llvm-bc "
-  $CFLAGS += " -fuse-ld=lld -Xclang -emit-llvm-bc "
+  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
+  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
 }
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };

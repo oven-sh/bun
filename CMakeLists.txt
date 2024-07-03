@@ -322,7 +322,7 @@ option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
-if (WIN32 AND USE_LTO)
+if(WIN32 AND USE_LTO)
     set(CMAKE_LINKER_TYPE LLD)
     set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 endif()
@@ -1083,10 +1083,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(LTO_LINK_FLAG "")
 
         if(USE_LTO)
-            target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc")
-        endif()
+            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
 
-        if(USE_LTO)
             # -emit-llvm seems to not be supported or under a different name on Windows.
             list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")

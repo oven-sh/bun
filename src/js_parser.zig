@@ -5820,24 +5820,6 @@ fn NewParser_(
             }
         }
 
-        pub fn deinit(parser: *P) void {
-            parser.allocated_names.deinit();
-            parser.scopes_for_current_part.deinit();
-            parser.symbols.deinit();
-            parser.ts_use_counts.deinit();
-            parser.declared_symbols.deinit();
-            parser.known_enum_values.deinit();
-            parser.import_records.deinit();
-            parser.import_records_for_current_part.deinit();
-            parser.export_star_import_records.deinit();
-            parser.import_items_for_namespace.deinit();
-            parser.named_imports.deinit();
-            parser.import_namespace_cc_map.deinit();
-            parser.scopes_in_order.deinit();
-            parser.temp_refs_to_declare.deinit();
-            parser.relocated_top_level_vars.deinit();
-        }
-
         pub fn findSymbol(p: *P, loc: logger.Loc, name: string) !FindSymbolResult {
             return findSymbolWithRecordUsage(p, loc, name, true);
         }
@@ -7200,7 +7182,7 @@ fn NewParser_(
                 }
             }
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.isDebug) {
                 // Enforce that scope locations are strictly increasing to help catch bugs
                 // where the pushed scopes are mismatched between the first and second passes
                 if (p.scopes_in_order.items.len > 0) {

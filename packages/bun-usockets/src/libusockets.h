@@ -15,7 +15,7 @@
  * limitations under the License.
  */
 // clang-format off
-
+#include <stdint.h>
 #ifndef us_calloc
 #define us_calloc calloc
 #endif
@@ -230,8 +230,11 @@ struct us_socket_context_t *us_create_socket_context(int ssl, struct us_loop_t *
 struct us_socket_context_t *us_create_bun_socket_context(int ssl, struct us_loop_t *loop,
     int ext_size, struct us_bun_socket_context_options_t options);
 
-/* Delete resources allocated at creation time. */
+/* Delete resources allocated at creation time (will call unref now and only free when ref count == 0). */
 void us_socket_context_free(int ssl, struct us_socket_context_t *context);
+void us_socket_context_ref(int ssl, struct us_socket_context_t *context);
+uint32_t us_socket_context_unref(int ssl, struct us_socket_context_t *context);
+
 struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t *context);
 /* Setters of various async callbacks */
 void us_socket_context_on_open(int ssl, struct us_socket_context_t *context,

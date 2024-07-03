@@ -1463,7 +1463,7 @@ void us_internal_ssl_socket_context_free(
     sni_free(context->sni, sni_hostname_destructor);
   }
 
-  us_socket_context_free(0, &context->sc);
+  us_internal_socket_context_free(0, &context->sc);
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(

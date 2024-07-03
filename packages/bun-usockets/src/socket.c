@@ -137,7 +137,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     c->closed = 1;
 
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
-        us_internal_socket_context_unlink_socket(s->context, s);
+        us_internal_socket_context_unlink_socket(ssl, s->context, s);
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
@@ -172,7 +172,7 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->next = 0;
             s->low_prio_state = 0;
         } else {
-            us_internal_socket_context_unlink_socket(s->context, s);
+            us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
         #ifdef LIBUS_USE_KQUEUE
             // kqueue automatically removes the fd from the set on close
@@ -222,7 +222,7 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
             s->next = 0;
             s->low_prio_state = 0;
         } else {
-            us_internal_socket_context_unlink_socket(s->context, s);
+            us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
 

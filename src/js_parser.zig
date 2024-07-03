@@ -402,8 +402,8 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                     left.parts = right.parts;
                                 }
                             }
+                            return lhs;
                         }
-                        return lhs;
                     },
                     else => {
                         // other constant-foldable ast nodes would have been converted to .e_string
@@ -11927,13 +11927,10 @@ fn NewParser_(
 
                 // Parse the name
                 if (p.lexer.token == .t_string_literal) {
-                    value.name = p.lexer.toEString();
+                    value.name = p.lexer.toUTF8EString().data;
+                    needs_symbol = js_lexer.isIdentifier(value.name);
                 } else if (p.lexer.isIdentifierOrKeyword()) {
-                    const id = p.lexer.identifier;
-                    value.name = if (bun.strings.isAllASCII(id))
-                        .{ .data = id }
-                    else
-                        E.String.init(try bun.strings.toUTF16AllocForReal(p.allocator, id, false, false));
+                    value.name = p.lexer.identifier;
                     needs_symbol = true;
                 } else {
                     try p.lexer.expect(.t_identifier);
@@ -11942,7 +11939,7 @@ fn NewParser_(
 
                 // Identifiers can be referenced by other values
                 if (!opts.is_typescript_declare and needs_symbol) {
-                    value.ref = try p.declareSymbol(.other, value.loc, try value.name.string(p.allocator));
+                    value.ref = try p.declareSymbol(.other, value.loc, value.name);
                 }
 
                 // Parse the initializer
@@ -11953,7 +11950,7 @@ fn NewParser_(
 
                 values.append(value) catch unreachable;
 
-                exported_members.put(p.allocator, value.name.data, .{
+                exported_members.put(p.allocator, value.name, .{
                     .loc = value.loc,
                     .data = .enum_property,
                 }) catch bun.outOfMemory();
@@ -20108,7 +20105,6 @@ fn NewParser_(
 
                     // Create an assignment for each enum value
                     for (data.values) |*value| {
-                        // gotta allocate here so it lives after this function stack frame goes poof
                         const name = value.name;
 
                         var has_string_value = false;
@@ -20126,8 +20122,7 @@ fn NewParser_(
 
                             switch (underlying_value.data) {
                                 .e_number => |num| {
-                                    const name_str = name.string(allocator) catch bun.outOfMemory();
-                                    exported_members.getPtr(name_str).?.data = .{ .enum_number = num.value };
+                                    exported_members.getPtr(name).?.data = .{ .enum_number = num.value };
 
                                     p.ref_to_ts_namespace_member.put(
                                         p.allocator,
@@ -20140,8 +20135,7 @@ fn NewParser_(
                                 .e_string => |str| {
                                     has_string_value = true;
 
-                                    const name_str = name.string(allocator) catch bun.outOfMemory();
-                                    exported_members.getPtr(name_str).?.data = .{ .enum_string = str };
+                                    exported_members.getPtr(name).?.data = .{ .enum_string = str };
 
                                     p.ref_to_ts_namespace_member.put(
                                         p.allocator,
@@ -20164,8 +20158,7 @@ fn NewParser_(
 
                             next_numeric_value = num + 1;
 
-                            const name_str = name.string(allocator) catch bun.outOfMemory();
-                            exported_members.getPtr(name_str).?.data = .{ .enum_number = num };
+                            exported_members.getPtr(name).?.data = .{ .enum_number = num };
 
                             p.ref_to_ts_namespace_member.put(
                                 p.allocator,
@@ -20176,7 +20169,14 @@ fn NewParser_(
                             value.value = p.newExpr(E.Undefined{}, value.loc);
                         }
 
-                        const assign_target = if (p.options.features.minify_syntax and value.name.isIdentifier(p.allocator))
+                        const is_assign_target = p.options.features.minify_syntax and bun.js_lexer.isIdentifier(value.name);
+
+                        const name_as_e_string = if (is_assign_target or !has_string_value)
+                            p.newExpr(value.nameAsEString(allocator), value.loc)
+                        else
+                            null;
+
+                        const assign_target = if (is_assign_target)
                             // "Enum.Name = value"
                             Expr.assign(
                                 p.newExpr(E.Dot{
@@ -20184,7 +20184,7 @@ fn NewParser_(
                                         E.Identifier{ .ref = data.arg },
                                         value.loc,
                                     ),
-                                    .name = value.name.slice(p.allocator),
+                                    .name = value.name,
                                     .name_loc = value.loc,
                                 }, value.loc),
                                 value.value.?,
@@ -20197,10 +20197,7 @@ fn NewParser_(
                                         E.Identifier{ .ref = data.arg },
                                         value.loc,
                                     ),
-                                    .index = p.newExpr(
-                                        value.name,
-                                        value.loc,
-                                    ),
+                                    .index = name_as_e_string.?,
                                 }, value.loc),
                                 value.value.?,
                             );
@@ -20221,7 +20218,7 @@ fn NewParser_(
                                         ),
                                         .index = assign_target,
                                     }, value.loc),
-                                    p.newExpr(value.name, value.loc),
+                                    name_as_e_string.?,
                                 ),
                             ) catch bun.outOfMemory();
                             p.recordUsage(data.arg);

@@ -2320,6 +2320,16 @@ pub const E = struct {
             return .{ .data = value };
         }
 
+        /// E.String containing non-ascii characters may not fully work.
+        /// https://github.com/oven-sh/bun/issues/11963
+        /// More investigation is needed.
+        pub fn initReEncodeUTF8(utf8: []const u8, allocator: std.mem.Allocator) String {
+            return if (bun.strings.isAllASCII(utf8))
+                init(utf8)
+            else
+                init(bun.strings.toUTF16AllocForReal(allocator, utf8, false, false) catch bun.outOfMemory());
+        }
+
         pub fn slice16(this: *const String) []const u16 {
             bun.assert(this.is_utf16);
             return @as([*]const u16, @ptrCast(@alignCast(this.data.ptr)))[0..this.data.len];
@@ -6016,8 +6026,12 @@ pub const Expr = struct {
 pub const EnumValue = struct {
     loc: logger.Loc,
     ref: Ref,
-    name: E.String,
+    name: []const u8,
     value: ?ExprNodeIndex,
+
+    pub fn nameAsEString(enum_value: EnumValue, allocator: std.mem.Allocator) E.String {
+        return E.String.initReEncodeUTF8(enum_value.name, allocator);
+    }
 };
 
 pub const S = struct {

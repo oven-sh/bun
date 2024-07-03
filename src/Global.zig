@@ -171,18 +171,7 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Output.flush();
-        std.debug.panic(fmt, args);
-    }
-}
+pub const panic = Output.panic; // deprecated
 
 pub fn notimpl() noreturn {
     @setCold(true);

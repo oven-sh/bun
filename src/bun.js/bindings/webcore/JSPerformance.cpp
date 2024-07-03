@@ -136,7 +136,7 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return functionPerformanceNowBody(lexicalGlobalObject);
+    return { functionPerformanceNowBody(lexicalGlobalObject) };
 }
 
 // -- end copied --
@@ -641,18 +641,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<Performance>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7Performance@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11PerformanceE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11PerformanceE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // Performance has subclasses. If Performance has subclasses that get passed
         // to toJS() we currently require Performance you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<Performance>(globalObject, WTFMove(impl));

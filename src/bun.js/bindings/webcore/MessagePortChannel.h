@@ -63,7 +63,7 @@ public:
 #if !LOG_DISABLED
     String logString() const
     {
-        return makeString(m_ports[0].logString(), ":", m_ports[1].logString());
+        return makeString(m_ports[0].logString(), ":"_s, m_ports[1].logString());
     }
 #endif
 

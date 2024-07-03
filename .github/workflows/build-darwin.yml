@@ -21,8 +21,6 @@ on:
         required: true
       assertions:
         type: boolean
-      zig-optimize:
-        type: string
       canary:
         type: boolean
       no-cache:
@@ -191,7 +189,6 @@ jobs:
       arch: ${{ inputs.arch }}
       cpu: ${{ inputs.cpu }}
       assertions: ${{ inputs.assertions }}
-      zig-optimize: ${{ inputs.zig-optimize }}
       canary: ${{ inputs.canary }}
       no-cache: ${{ inputs.no-cache }}
   link:

@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -45,7 +44,7 @@ template<> CryptoAlgorithmHmacKeyParams convertDictionary<CryptoAlgorithmHmacKey
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmHmacKeyParams result;
     JSValue nameValue;
@@ -53,39 +52,39 @@ template<> CryptoAlgorithmHmacKeyParams convertDictionary<CryptoAlgorithmHmacKey
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "HmacKeyParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "HmacKeyParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue hashValue;
     if (isNullOrUndefined)
         hashValue = jsUndefined();
     else {
         hashValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "hash"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!hashValue.isUndefined()) {
         result.hash = convert<IDLUnion<IDLObject, IDLDOMString>>(lexicalGlobalObject, hashValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "hash", "HmacKeyParams", "(object or DOMString)");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "hash"_s, "HmacKeyParams"_s, "(object or DOMString)"_s);
+        return {};
     }
     JSValue lengthValue;
     if (isNullOrUndefined)
         lengthValue = jsUndefined();
     else {
         lengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "length"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!lengthValue.isUndefined()) {
         result.length = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, lengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }

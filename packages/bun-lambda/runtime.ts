@@ -290,7 +290,7 @@ function formatBody(body?: string, isBase64Encoded?: boolean): string | null {
   if (!isBase64Encoded) {
     return body;
   }
-  return Buffer.from(body).toString("base64");
+  return Buffer.from(body, "base64").toString("utf8");
 }
 
 type HttpEventV1 = {

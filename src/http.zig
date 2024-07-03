@@ -748,8 +748,6 @@ const Queue = UnboundedQueue(AsyncHTTP, .next);
 const ShutdownQueue = UnboundedQueue(AsyncHTTP, .next);
 
 pub const HTTPThread = struct {
-    var http_thread_loaded: std.atomic.Value(bool) = std.atomic.Value(bool).init(false);
-
     loop: *JSC.MiniEventLoop,
     http_context: NewHTTPContext(false),
     https_context: NewHTTPContext(true),
@@ -769,11 +767,7 @@ pub const HTTPThread = struct {
 
     const threadlog = Output.scoped(.HTTPThread, true);
 
-    pub fn init() !void {
-        if (http_thread_loaded.swap(true, .seq_cst)) {
-            return;
-        }
-
+    fn initOnce() void {
         http_thread = .{
             .loop = undefined,
             .http_context = .{
@@ -785,14 +779,19 @@ pub const HTTPThread = struct {
             .timer = std.time.Timer.start() catch unreachable,
         };
 
-        const thread = try std.Thread.spawn(
+        const thread = std.Thread.spawn(
             .{
                 .stack_size = bun.default_thread_stack_size,
             },
             onStart,
             .{},
-        );
+        ) catch |err| Output.panic("Failed to start HTTP Client thread: {s}", .{@errorName(err)});
         thread.detach();
+    }
+    var init_once = std.once(initOnce);
+
+    pub fn init() void {
+        init_once.call();
     }
 
     pub fn onStart() void {
@@ -2045,7 +2044,7 @@ pub const AsyncHTTP = struct {
     }
 
     pub fn sendSync(this: *AsyncHTTP, comptime _: bool) anyerror!picohttp.Response {
-        try HTTPThread.init();
+        HTTPThread.init();
 
         var ctx = try bun.default_allocator.create(SingleHTTPChannel);
         ctx.* = SingleHTTPChannel.init();

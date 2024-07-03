@@ -59,7 +59,9 @@ jobs:
           issue-number: ${{ github.event.pull_request.number }}
           edit-mode: replace
           body: |
-            ⚠️ **Warning:** @${{ github.actor }} has updated submodules. If this was intentional, please ignore this message. If not, please undo changes to submodules and rebase your branch.
+            ⚠️ **Warning:** @${{ github.actor }}, this PR has changes to submodule versions. 
+
+            If this change was intentional, please ignore this message. If not, please undo changes to submodules and rebase your branch.
 
             <!-- generated-comment submodule-updated -->
       - name: Add labels

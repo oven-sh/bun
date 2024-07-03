@@ -9842,7 +9842,7 @@ pub const PackageManager = struct {
             },
             .entry => |entry| entry,
         };
-        const original_indentation = current_package_json.indentation;
+        const current_package_json_indent = current_package_json.indentation;
 
         // If there originally was a newline at the end of their package.json, preserve it
         // so that we don't cause unnecessary diffs in their git history.
@@ -9984,7 +9984,9 @@ pub const PackageManager = struct {
             &package_json_writer,
             current_package_json.root,
             &current_package_json.source,
-            .{},
+            .{
+                .indent = current_package_json_indent,
+            },
         ) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
@@ -10015,7 +10017,14 @@ pub const PackageManager = struct {
 
             // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
             // https://github.com/oven-sh/bun/issues/12288
-            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                root_package_json_path,
+                .{
+                    .guess_indentation = true,
+                },
+            )) {
                 .parse_err => |err| {
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
@@ -10056,7 +10065,7 @@ pub const PackageManager = struct {
                     root_package_json.root,
                     &root_package_json.source,
                     .{
-                        .indent = original_indentation,
+                        .indent = root_package_json.indentation,
                     },
                 ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
@@ -10119,7 +10128,7 @@ pub const PackageManager = struct {
                 new_package_json,
                 &source,
                 .{
-                    .indent = original_indentation,
+                    .indent = current_package_json_indent,
                 },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});

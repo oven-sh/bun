@@ -10910,12 +10910,8 @@ fn NewParser_(
             try p.lexer.next();
 
             // Generate the namespace object
-            const exported_members = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export);
-            const ts_namespace = bun.create(p.allocator, js_ast.TSNamespaceScope, .{
-                .exported_members = exported_members,
-                .is_enum_scope = false,
-                .arg_ref = Ref.None,
-            });
+            const ts_namespace = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export, false);
+            const exported_members = ts_namespace.exported_members;
             const ns_member_data = js_ast.TSNamespaceMember.Data{ .namespace = exported_members };
 
             // Declare the namespace and create the scope
@@ -11882,12 +11878,8 @@ fn NewParser_(
 
             // Generate the namespace object
             var arg_ref: Ref = undefined;
-            const exported_members = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export);
-            const ts_namespace = bun.create(p.allocator, js_ast.TSNamespaceScope, .{
-                .exported_members = exported_members,
-                .is_enum_scope = true,
-                .arg_ref = Ref.None,
-            });
+            const ts_namespace = p.getOrCreateExportedNamespaceMembers(name_text, opts.is_export, true);
+            const exported_members = ts_namespace.exported_members;
             const enum_member_data = js_ast.TSNamespaceMember.Data{ .namespace = exported_members };
 
             // Declare the enum and create the scope
@@ -12033,27 +12025,54 @@ fn NewParser_(
         // Generate a TypeScript namespace object for this namespace's scope. If this
         // namespace is another block that is to be merged with an existing namespace,
         // use that earlier namespace's object instead.
-        pub fn getOrCreateExportedNamespaceMembers(p: *P, name: []const u8, is_export: bool) *js_ast.TSNamespaceMemberMap {
-            // Merge with a sibling namespace from the same scope
-            if (p.current_scope.members.get(name)) |existing_member| {
-                if (p.ref_to_ts_namespace_member.get(existing_member.ref)) |member_data| {
-                    if (member_data == .namespace)
-                        return member_data.namespace;
-                }
-            }
+        pub fn getOrCreateExportedNamespaceMembers(p: *P, name: []const u8, is_export: bool, is_enum_scope: bool) *js_ast.TSNamespaceScope {
+            const map = brk: {
 
-            // Merge with a sibling namespace from a different scope
-            if (is_export) {
-                if (p.current_scope.ts_namespace) |ns| {
-                    if (ns.exported_members.get(name)) |member| {
-                        if (member.data == .namespace)
-                            return member.data.namespace;
+                // Merge with a sibling namespace from the same scope
+                if (p.current_scope.members.get(name)) |existing_member| {
+                    if (p.ref_to_ts_namespace_member.get(existing_member.ref)) |member_data| {
+                        if (member_data == .namespace)
+                            break :brk member_data.namespace;
                     }
                 }
+
+                // Merge with a sibling namespace from a different scope
+                if (is_export) {
+                    if (p.current_scope.ts_namespace) |ns| {
+                        if (ns.exported_members.get(name)) |member| {
+                            if (member.data == .namespace)
+                                break :brk member.data.namespace;
+                        }
+                    }
+                }
+
+                break :brk null;
+            };
+
+            if (map) |existing| {
+                return bun.create(p.allocator, js_ast.TSNamespaceScope, .{
+                    .exported_members = existing,
+                    .is_enum_scope = is_enum_scope,
+                    .arg_ref = Ref.None,
+                });
             }
 
             // Otherwise, generate a new namespace object
-            return bun.create(p.allocator, js_ast.TSNamespaceMemberMap, .{});
+            // Batch the allocation of the namespace object and the map into a single allocation.
+            const Pair = struct {
+                map: js_ast.TSNamespaceMemberMap,
+                scope: js_ast.TSNamespaceScope,
+            };
+
+            var pair = p.allocator.create(Pair) catch bun.outOfMemory();
+            pair.map = .{};
+            pair.scope = .{
+                .exported_members = &pair.map,
+                .is_enum_scope = is_enum_scope,
+                .arg_ref = Ref.None,
+            };
+
+            return &pair.scope;
         }
 
         fn parseExportClause(p: *P) !ExportClauseResult {

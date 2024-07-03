@@ -743,7 +743,7 @@ pub const Subprocess = struct {
         _ = globalThis;
         _ = callframe;
         const ipc_data = this.ipc_maybe() orelse return .undefined;
-        ipc_data.socket.close(.normal);
+        ipc_data.close();
         this.ipc_data = null;
         return .undefined;
     }

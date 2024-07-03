@@ -281,6 +281,10 @@ const SocketIPCData = struct {
 
         return true;
     }
+
+    pub fn close(this: *SocketIPCData) void {
+        this.socket.close(.normal);
+    }
 };
 
 /// Used on Windows

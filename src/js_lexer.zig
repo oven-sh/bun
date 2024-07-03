@@ -1231,13 +1231,17 @@ fn NewLexer_(
 
                         if (comptime json_options.guess_indentation) {
                             if (lexer.indent_info.first_newline and lexer.code_point == '\n') {
-                                lexer.indent_info.first_newline = false;
-
                                 while (lexer.code_point == '\n' or lexer.code_point == '\r') {
                                     lexer.step();
                                 }
 
-                                if (lexer.code_point != ' ' and lexer.code_point != '\t') continue;
+                                if (lexer.code_point != ' ' and lexer.code_point != '\t') {
+                                    // try to get the next one. this handles cases where the file starts
+                                    // with a newline
+                                    continue;
+                                }
+
+                                lexer.indent_info.first_newline = false;
 
                                 const indent_character = lexer.code_point;
                                 var count: usize = 0;

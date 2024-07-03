@@ -15,8 +15,6 @@ disable = false
 disableManifest = false
 ```
 
-{% /details %}
-
 ## Minimizing re-downloads
 
 Bun strives to avoid re-downloading packages multiple times. When installing a package, if the cache already contains a version in the range specified by `package.json`, Bun will use the cached package instead of downloading it again.

@@ -1800,7 +1800,6 @@ function genericNodeError(message, options) {
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
 
-  const old_process_send = process.send;
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {
       callback = handle;
@@ -1858,7 +1857,8 @@ function _forkChild(fd, serializationMode) {
       }
     } else {
       if (!options.swallowErrors) {
-        const ex = new Error("write");
+        const ex = new Error("process.send() failed");
+        ex.syscall = "write";
         if (typeof callback === "function") {
           process.nextTick(callback, ex);
         } else {
@@ -1901,15 +1901,6 @@ function _forkChild(fd, serializationMode) {
 
     process.nextTick(finish);
   };
-}
-
-function channel_writeUtf8String(fd: number, message: string) {
-  try {
-    FsModule.writeFileSync(fd, message);
-    return 0;
-  } catch (e) {
-    return e;
-  }
 }
 
 // const messages = new Map();

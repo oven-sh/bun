@@ -378,7 +378,7 @@ module.exports = function lmao() {
   );
 });
 
-describe.only("package.json indentation", async () => {
+describe("package.json indentation", async () => {
   test("works for root and workspace packages", async () => {
     await Promise.all([
       // 5 space indentation

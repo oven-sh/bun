@@ -55,6 +55,17 @@ describe("bundler", () => {
     minifySyntax: true,
     target: "bun",
   });
+  itBundled("minify/StringAdditionFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        capture("Objects are not valid as a React child (found: " + (childString === "[object Object]" ? "object with keys {" + Object.keys(node).join(", ") + "}" : childString) + "). " + "If you meant to render a collection of children, use an array " + "instead.")
+      `,
+    },
+    capture: [
+      '"Objects are not valid as a React child (found: " + (childString === "[object Object]" ? "object with keys {" + Object.keys(node).join(", ") + "}" : childString) + "). If you meant to render a collection of children, use an array instead."',
+    ],
+    minifySyntax: true,
+  });
   itBundled("minify/FunctionExpressionRemoveName", {
     todo: true,
     files: {
@@ -156,8 +167,8 @@ describe("bundler", () => {
       "NaN",
       "1 / 0",
       "-1 / 0",
-      "~(1 / 0)",
-      "~(-1 / 0)",
+      "-1",
+      "-1",
     ],
     minifySyntax: true,
   });
@@ -180,22 +191,7 @@ describe("bundler", () => {
         capture(~-Infinity);
       `,
     },
-    capture: [
-      "1/0",
-      "-1/0",
-      "1/0",
-      "-1/0",
-      "1/0",
-      "-1/0",
-      "NaN",
-      "NaN",
-      "NaN",
-      "NaN",
-      "1/0",
-      "1/0",
-      "~(1/0)",
-      "~(-1/0)",
-    ],
+    capture: ["1/0", "-1/0", "1/0", "-1/0", "1/0", "-1/0", "NaN", "NaN", "NaN", "NaN", "1/0", "1/0", "-1", "-1"],
     minifySyntax: true,
     minifyWhitespace: true,
   });

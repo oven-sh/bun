@@ -6,7 +6,8 @@ const mem = std.mem;
 const math = std.math;
 const testing = std.testing;
 
-const assert = @import("root").bun.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 
 pub fn AutoHashMap(comptime K: type, comptime V: type, comptime max_load_percentage: comptime_int) type {
     return HashMap(K, V, std.hash_map.AutoContext(K), max_load_percentage);

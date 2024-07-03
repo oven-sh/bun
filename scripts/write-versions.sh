@@ -1,7 +1,7 @@
 #!/bin/bash
 set -exo pipefail
 
-WEBKIT_VERSION=$(git rev-parse HEAD:./src/bun.js/WebKit)
+WEBKIT_VERSION=$(grep 'set(WEBKIT_TAG' "CMakeLists.txt" | awk '{print $2}' | cut -f 1 -d ')')
 MIMALLOC_VERSION=$(git rev-parse HEAD:./src/deps/mimalloc)
 LIBARCHIVE_VERSION=$(git rev-parse HEAD:./src/deps/libarchive)
 PICOHTTPPARSER_VERSION=$(git rev-parse HEAD:./src/deps/picohttpparser)

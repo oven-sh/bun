@@ -16,9 +16,9 @@ pub const ERR_CHILD_CLOSED_BEFORE_REPLY = createSimpleError(createError, .ERR_CH
 
 fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCode, comptime message: string) JSC.JSBuiltinFunctionType {
     const R = struct {
-        pub fn cbb(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+        pub fn cbb(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
             const S = struct {
-                fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+                fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
                     _ = callframe;
                     return createFn(globalThis, code, message, .{});
                 }
@@ -29,9 +29,9 @@ fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCo
     return R.cbb;
 }
 
-pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(3);
             if (arguments.len < 2) {
                 globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 2, arguments.len);
@@ -46,9 +46,9 @@ pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValu
     return JSC.JSFunction.create(global, "ERR_INVALID_ARG_TYPE", S.cb, 3, .{});
 }
 
-pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(3);
             bun.debugAssert(arguments.len > 0); // At least one arg needs to be specified
             const args = arguments.slice();

@@ -6146,7 +6146,7 @@ pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
 
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
-pub const JSBuiltinFunctionType = fn (*JSGlobalObject) callconv(.C) JSValue;
+pub const JSBuiltinFunctionType = fn (*JSGlobalObject) callconv(JSC.conv) JSValue;
 pub const JSBuiltinFunctionPtr = *const JSHostFunctionType;
 
 pub const JSArray = opaque {

@@ -6,9 +6,9 @@ const string = bun.string;
 const Output = bun.Output;
 const ZigString = JSC.ZigString;
 
-pub fn directIpcSend(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn directIpcSend(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("directIpcSend", 1, arguments.len);

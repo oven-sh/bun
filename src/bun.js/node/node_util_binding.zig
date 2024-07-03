@@ -7,9 +7,9 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
 
-pub fn guessHandleType(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn guessHandleType(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("guessHandleType", 1, arguments.len);
@@ -82,9 +82,9 @@ fn uv_guess_handle(file: uv.uv_file) uv.uv_handle_type {
     return .unknown;
 }
 
-pub fn internalErrorName(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+pub fn internalErrorName(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
     const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(1).slice();
             if (arguments.len < 1) {
                 globalThis.throwNotEnoughArguments("internalErrorName", 1, arguments.len);

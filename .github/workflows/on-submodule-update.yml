@@ -20,7 +20,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           sparse-checkout: |
-            src/generated_versions_list.zig
+            src
       - name: Hash generated versions list
         id: hash
         run: |
@@ -30,7 +30,7 @@ jobs:
         with:
           ref: ${{ github.event.pull_request.base.sha }}
           sparse-checkout: |
-            src/generated_versions_list.zig
+            src
       - name: Hash base
         id: base
         run: |

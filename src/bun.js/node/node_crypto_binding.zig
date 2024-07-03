@@ -12,30 +12,25 @@ const EVP = Crypto.EVP;
 const PBKDF2 = EVP.PBKDF2;
 const JSValue = JSC.JSValue;
 
-pub fn randomInt(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-            const arguments = callframe.arguments(2).slice();
+fn randomInt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    const arguments = callframe.arguments(2).slice();
 
-            var at_least: u52 = 0;
-            var at_most: u52 = std.math.maxInt(u52);
+    var at_least: u52 = 0;
+    var at_most: u52 = std.math.maxInt(u52);
 
-            //min, max
-            if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
-            if (!arguments[1].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[1]);
-            at_least = arguments[0].to(u52);
-            at_most = arguments[1].to(u52);
+    //min, max
+    if (!arguments[0].isNumber()) return globalThis.throwInvalidArgumentTypeValue("min", "safe integer", arguments[0]);
+    if (!arguments[1].isNumber()) return globalThis.throwInvalidArgumentTypeValue("max", "safe integer", arguments[1]);
+    at_least = arguments[0].to(u52);
+    at_most = arguments[1].to(u52);
 
-            return JSC.JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
-        }
-    };
-    return JSC.JSFunction.create(global, "randomInt", &S.cb, 2, .{});
+    return JSC.JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
 }
 
-pub fn pbkdf2(
+fn pbkdf2(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     const arguments = callframe.arguments(5);
 
     const data = PBKDF2.fromJS(globalThis, arguments.slice(), true) orelse {
@@ -47,10 +42,10 @@ pub fn pbkdf2(
     return job.promise.value();
 }
 
-pub fn pbkdf2Sync(
+fn pbkdf2Sync(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     const arguments = callframe.arguments(5);
 
     var data = PBKDF2.fromJS(globalThis, arguments.slice(), false) orelse {
@@ -80,12 +75,16 @@ pub fn pbkdf2Sync(
     return out_arraybuffer;
 }
 
-pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+const jsPbkdf2 = JSC.toJSHostFunction(pbkdf2);
+const jsPbkdf2Sync = JSC.toJSHostFunction(pbkdf2Sync);
+const jsRandomInt = JSC.toJSHostFunction(randomInt);
+
+pub fn createNodeCryptoBindingZig(global: *JSC.JSGlobalObject) JSC.JSValue {
     const crypto = JSC.JSValue.createEmptyObject(global, 3);
 
-    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", &pbkdf2, 5, .{}));
-    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", &pbkdf2Sync, 5, .{}));
-    crypto.put(global, bun.String.init("randomInt"), randomInt(global));
+    crypto.put(global, bun.String.init("pbkdf2"), JSC.JSFunction.create(global, "pbkdf2", jsPbkdf2, 5, .{}));
+    crypto.put(global, bun.String.init("pbkdf2Sync"), JSC.JSFunction.create(global, "pbkdf2Sync", jsPbkdf2Sync, 5, .{}));
+    crypto.put(global, bun.String.init("randomInt"), JSC.JSFunction.create(global, "randomInt", jsRandomInt, 2, .{}));
 
     return crypto;
 }

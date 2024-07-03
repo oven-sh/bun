@@ -1091,7 +1091,7 @@ pub const TextChunk = struct {
         this: *TextChunk,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.text_chunk == null)
             return JSValue.jsUndefined();
         this.text_chunk.?.remove();
@@ -1101,17 +1101,17 @@ pub const TextChunk = struct {
     pub fn getText(
         this: *TextChunk,
         global: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.text_chunk == null)
             return JSValue.jsUndefined();
         return ZigString.init(this.text_chunk.?.getContent().slice()).withEncoding().toJS(global);
     }
 
-    pub fn removed(this: *TextChunk, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn removed(this: *TextChunk, _: *JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.text_chunk.?.isRemoved());
     }
 
-    pub fn lastInTextNode(this: *TextChunk, _: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn lastInTextNode(this: *TextChunk, _: *JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.text_chunk.?.isLastInTextNode());
     }
 
@@ -1135,7 +1135,7 @@ pub const DocType = struct {
     pub fn name(
         this: *DocType,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.doctype == null)
             return JSValue.jsUndefined();
         const str = this.doctype.?.getName().slice();
@@ -1147,7 +1147,7 @@ pub const DocType = struct {
     pub fn systemId(
         this: *DocType,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.doctype == null)
             return JSValue.jsUndefined();
 
@@ -1160,7 +1160,7 @@ pub const DocType = struct {
     pub fn publicId(
         this: *DocType,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.doctype == null)
             return JSValue.jsUndefined();
 
@@ -1273,7 +1273,7 @@ pub const Comment = struct {
         this: *Comment,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         this.comment.?.remove();
@@ -1283,7 +1283,7 @@ pub const Comment = struct {
     pub fn getText(
         this: *Comment,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.comment == null)
             return JSValue.jsNull();
         return this.comment.?.getText().toJS(globalObject);
@@ -1309,7 +1309,7 @@ pub const Comment = struct {
     pub fn removed(
         this: *Comment,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.comment == null)
             return JSValue.jsUndefined();
         return JSValue.jsBoolean(this.comment.?.isRemoved());
@@ -1395,7 +1395,7 @@ pub const EndTag = struct {
         this: *EndTag,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.end_tag == null)
             return JSValue.jsUndefined();
 
@@ -1406,7 +1406,7 @@ pub const EndTag = struct {
     pub fn getName(
         this: *EndTag,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.end_tag == null)
             return JSValue.jsUndefined();
 
@@ -1444,7 +1444,7 @@ pub const AttributeIterator = struct {
 
     pub usingnamespace JSC.Codegen.JSAttributeIterator;
 
-    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn next(this: *AttributeIterator, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
         const done_label = JSC.ZigString.static("done");
         const value_label = JSC.ZigString.static("value");
 
@@ -1470,7 +1470,7 @@ pub const AttributeIterator = struct {
         ));
     }
 
-    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn getThis(_: *AttributeIterator, _: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         return callFrame.this();
     }
 };
@@ -1669,7 +1669,7 @@ pub const Element = struct {
         this: *Element,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 
@@ -1682,14 +1682,14 @@ pub const Element = struct {
         this: *Element,
         _: *JSGlobalObject,
         callFrame: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 
         this.element.?.removeAndKeepContent();
         return callFrame.this();
     }
-    pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getTagName(this: *Element, globalObject: *JSGlobalObject) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 
@@ -1700,7 +1700,7 @@ pub const Element = struct {
         this: *Element,
         global: *JSGlobalObject,
         value: JSValue,
-    ) callconv(.C) bool {
+    ) bool {
         if (this.element == null)
             return false;
 
@@ -1718,7 +1718,7 @@ pub const Element = struct {
     pub fn getRemoved(
         this: *Element,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
         return JSValue.jsBoolean(this.element.?.isRemoved());
@@ -1727,7 +1727,7 @@ pub const Element = struct {
     pub fn getSelfClosing(
         this: *Element,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
         return JSValue.jsBoolean(this.element.?.isSelfClosing());
@@ -1736,7 +1736,7 @@ pub const Element = struct {
     pub fn getCanHaveContent(
         this: *Element,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
         return JSValue.jsBoolean(this.element.?.canHaveContent());
@@ -1745,7 +1745,7 @@ pub const Element = struct {
     pub fn getNamespaceURI(
         this: *Element,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
         var str = bun.String.createUTF8(std.mem.span(this.element.?.namespaceURI()));
@@ -1756,7 +1756,7 @@ pub const Element = struct {
     pub fn getAttributes(
         this: *Element,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.element == null)
             return JSValue.jsUndefined();
 

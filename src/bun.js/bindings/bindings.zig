@@ -2684,7 +2684,7 @@ pub const JSFunction = extern struct {
     pub fn create(
         global: *JSGlobalObject,
         fn_name: anytype,
-        implementation: *const JSHostFunctionType,
+        comptime implementation: JSHostFunctionType,
         function_length: u32,
         options: CreateJSFunctionOptions,
     ) JSValue {
@@ -3236,7 +3236,7 @@ pub const JSGlobalObject = extern struct {
     };
 };
 
-pub const JSNativeFn = *const fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSNativeFn = JSHostFunctionPtr;
 
 pub const JSArrayIterator = struct {
     i: u32 = 0,
@@ -4625,6 +4625,10 @@ pub const JSValue = enum(JSValueReprInt) {
         };
     }
 
+    pub fn toJSString(globalObject: *JSC.JSGlobalObject, slice_: []const u8) JSC.JSValue {
+        return JSC.ZigString.init(slice_).withEncoding().toJS(globalObject);
+    }
+
     pub fn asCell(this: JSValue) *JSCell {
         return cppFn("asCell", .{this});
     }
@@ -5975,6 +5979,34 @@ pub const CallFrame = opaque {
 
     pub const name = "JSC::CallFrame";
 
+    pub fn format(frame: *CallFrame, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const args = frame.argumentsPtr()[0..frame.argumentsCount()];
+
+        for (args[0..@min(args.len, 4)], 0..) |arg, i| {
+            if (i != 0) {
+                try writer.writeAll(", ");
+            }
+            switch (arg) {
+                .zero => try writer.writeAll("<empty>"),
+                .undefined => try writer.writeAll("undefined"),
+                .null => try writer.writeAll("null"),
+                .true => try writer.writeAll("true"),
+                .false => try writer.writeAll("false"),
+                else => {
+                    if (arg.isNumber()) {
+                        try writer.writeAll("number");
+                    } else {
+                        try writer.writeAll(@tagName(arg.jsType()));
+                    }
+                },
+            }
+        }
+
+        if (args.len > 4) {
+            try writer.print(", ... {d} more", .{args.len - 4});
+        }
+    }
+
     pub fn argumentsPtr(self: *const CallFrame) [*]const JSC.JSValue {
         return @as([*]align(alignment) const JSC.JSValue, @ptrCast(@alignCast(self))) + Sizes.Bun_CallFrame__firstArgument;
     }
@@ -6059,8 +6091,44 @@ pub const EncodedJSValue = extern union {
     asPtr: ?*anyopaque,
     asDouble: f64,
 };
-pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
+pub const JSHostFunctionType = fn (*JSGlobalObject, *CallFrame) callconv(JSC.conv) JSValue;
+pub const JSHostFunctionTypeWithCCallConvForAssertions = fn (*JSGlobalObject, *CallFrame) callconv(.C) JSValue;
 pub const JSHostFunctionPtr = *const JSHostFunctionType;
+pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
+    if (comptime @TypeOf(Function) == JSHostFunctionType) {
+        return Function;
+    }
+
+    if (@TypeOf(Function) == fn (*JSGlobalObject, *CallFrame) JSValue) {
+        // These may coerce to both, but we want to force it to be this kind.
+    } else if (@TypeOf(Function) == *const fn (*JSGlobalObject, *CallFrame) JSValue) {
+        @compileLog(Function, "use JSC.toJSHostFunction(Function) instead of JSC.toJSHostFunction(&Function)");
+    }
+
+    return struct {
+        pub fn function(
+            globalThis: *JSC.JSGlobalObject,
+            callframe: *JSC.CallFrame,
+        ) callconv(JSC.conv) JSC.JSValue {
+            comptime {
+                const Fn = @TypeOf(Function);
+                var FnTypeInfo = @typeInfo(Fn);
+                if (FnTypeInfo == .Pointer) {
+                    FnTypeInfo = @typeInfo(std.meta.Child(Fn));
+                }
+
+                if (bun.Environment.isWindows) {
+                    if (FnTypeInfo.Fn.calling_convention == .C) {
+                        @compileLog(Function, "use callconv(JSC.conv) instead of callconv(.C), or don't set a callconv on the function.");
+                    }
+                }
+            }
+
+            return @call(.always_inline, Function, .{ globalThis, callframe });
+        }
+    }.function;
+}
+
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
 pub const JSArray = opaque {
@@ -6081,7 +6149,7 @@ const private = struct {
         *JSGlobalObject,
         ?*const ZigString,
         argCount: u32,
-        function: *const anyopaque,
+        function: JSHostFunctionPtr,
         strong: bool,
         data: *anyopaque,
     ) JSValue;
@@ -6089,7 +6157,7 @@ const private = struct {
         globalObject: *JSGlobalObject,
         symbolName: ?*const ZigString,
         argCount: u32,
-        functionPointer: *const anyopaque,
+        functionPointer: JSHostFunctionPtr,
         strong: bool,
     ) *anyopaque;
 
@@ -6111,28 +6179,23 @@ const private = struct {
     pub extern fn Bun__FFIFunction_setDataPtr(JSValue, ?*anyopaque) void;
 };
 
-pub fn NewFunctionPtr(globalObject: *JSGlobalObject, symbolName: ?*const ZigString, argCount: u32, comptime functionPointer: anytype, strong: bool) *anyopaque {
-    JSC.markBinding(@src());
-    return private.Bun__CreateFFIFunction(globalObject, symbolName, argCount, @as(*const anyopaque, @ptrCast(&functionPointer)), strong);
-}
-
 pub fn NewFunction(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    functionPointer: JSHostFunctionPtr,
+    comptime functionPointer: anytype,
     strong: bool,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, strong, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), strong, false);
 }
 
 pub fn createCallback(
     globalObject: *JSGlobalObject,
     symbolName: ?*const ZigString,
     argCount: u32,
-    functionPointer: JSHostFunctionPtr,
+    comptime functionPointer: anytype,
 ) JSValue {
-    return NewRuntimeFunction(globalObject, symbolName, argCount, functionPointer, false, false);
+    return NewRuntimeFunction(globalObject, symbolName, argCount, toJSHostFunction(functionPointer), false, false);
 }
 
 pub fn NewRuntimeFunction(
@@ -6170,7 +6233,7 @@ pub fn NewFunctionWithData(
         globalObject,
         symbolName,
         argCount,
-        @as(*const anyopaque, @ptrCast(&functionPointer)),
+        toJSHostFunction(functionPointer),
         strong,
         data,
     );
@@ -6357,43 +6420,6 @@ pub const WTF = struct {
         WTF__copyLCharsFromUCharSource(destination, source.ptr, source.len);
     }
 };
-
-pub const Callback = struct {
-    // zig: Value,
-};
-
-pub fn Thenable(comptime name: []const u8, comptime Then: type, comptime onResolve: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void, comptime onReject: fn (*Then, globalThis: *JSGlobalObject, result: JSValue) void) type {
-    return struct {
-        pub fn resolve(
-            globalThis: [*c]JSGlobalObject,
-            callframe: ?*JSC.CallFrame,
-        ) callconv(.C) void {
-            @setRuntimeSafety(false);
-            const args_list = callframe.?.arguments(8);
-            onResolve(@as(*Then, @ptrCast(@alignCast(args_list.ptr[args_list.len - 1].asEncoded().asPtr))), globalThis, args_list.ptr[0]);
-        }
-
-        pub fn reject(
-            globalThis: [*c]JSGlobalObject,
-            callframe: ?*JSC.CallFrame,
-        ) callconv(.C) void {
-            @setRuntimeSafety(false);
-            const args_list = callframe.?.arguments(8);
-            onReject(@as(*Then, @ptrCast(@alignCast(args_list.ptr[args_list.len - 1].asEncoded().asPtr))), globalThis, args_list.ptr[0]);
-        }
-
-        pub fn then(ctx: *Then, this: JSValue, globalThis: *JSGlobalObject) void {
-            this._then(globalThis, ctx, resolve, reject);
-        }
-
-        comptime {
-            if (!JSC.is_bindgen) {
-                @export(resolve, name ++ "__resolve");
-                @export(reject, name ++ "__reject");
-            }
-        }
-    };
-}
 
 pub usingnamespace @import("./JSPropertyIterator.zig");
 

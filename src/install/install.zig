@@ -8039,7 +8039,7 @@ pub const PackageManager = struct {
         comptime subcommand: Subcommand,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         if (cli.global) {
             var explicit_global_dir: string = "";
@@ -9813,56 +9813,62 @@ pub const PackageManager = struct {
 
         // may or may not be the package json we are editing
         const top_level_dir_without_trailing_slash = strings.withoutTrailingSlash(FileSystem.instance.top_level_dir);
-        var root_package_json_path_buf: bun.PathBuffer = undefined;
-        @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
-        @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
-        const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
-        root_package_json_path_buf[root_package_json_path.len] = 0;
-        const root_package_json_pathZ = root_package_json_path_buf[0..root_package_json_path.len :0];
 
-        const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
-            .parse_err => |err| {
-                switch (Output.enable_ansi_colors) {
-                    inline else => |enable_ansi_colors| {
-                        manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
-                    },
-                }
-                Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
-                    root_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .read_err => |err| {
-                Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
-                    manager.original_package_json_path,
-                    @errorName(err),
-                });
-                Global.crash();
-            },
-            .entry => |entry| entry,
+        var root_package_json_path_buf: bun.PathBuffer = undefined;
+        const root_package_json_source, const root_package_json_path = brk: {
+            @memcpy(root_package_json_path_buf[0..top_level_dir_without_trailing_slash.len], top_level_dir_without_trailing_slash);
+            @memcpy(root_package_json_path_buf[top_level_dir_without_trailing_slash.len..][0.."/package.json".len], "/package.json");
+            const root_package_json_path = root_package_json_path_buf[0 .. top_level_dir_without_trailing_slash.len + "/package.json".len];
+            root_package_json_path_buf[root_package_json_path.len] = 0;
+
+            // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
+            // https://github.com/oven-sh/bun/issues/12288
+            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+                .parse_err => |err| {
+                    switch (Output.enable_ansi_colors) {
+                        inline else => |enable_ansi_colors| {
+                            manager.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), enable_ansi_colors) catch {};
+                        },
+                    }
+                    Output.errGeneric("failed to parse package.json \"{s}\": {s}", .{
+                        root_package_json_path,
+                        @errorName(err),
+                    });
+                    Global.crash();
+                },
+                .read_err => |err| {
+                    Output.errGeneric("failed to read package.json \"{s}\": {s}", .{
+                        manager.original_package_json_path,
+                        @errorName(err),
+                    });
+                    Global.crash();
+                },
+                .entry => |entry| entry,
+            };
+
+            if (not_in_workspace_root) |stuff| {
+                try PackageJSONEditor.editPatchedDependencies(
+                    manager,
+                    &root_package_json.root,
+                    stuff.patch_key,
+                    stuff.patchfile_path,
+                );
+                var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
+                try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
+                buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
+                var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
+
+                _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
+                    Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
+                    Global.crash();
+                };
+                root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
+            }
+
+            break :brk .{ root_package_json.source.contents, root_package_json_path_buf[0..root_package_json_path.len :0] };
         };
 
-        if (not_in_workspace_root) |stuff| {
-            try PackageJSONEditor.editPatchedDependencies(
-                manager,
-                &root_package_json.root,
-                stuff.patch_key,
-                stuff.patchfile_path,
-            );
-            var buffer_writer2 = try JSPrinter.BufferWriter.init(manager.allocator);
-            try buffer_writer2.buffer.list.ensureTotalCapacity(manager.allocator, root_package_json.source.contents.len + 1);
-            buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
-            var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
-
-            _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
-                Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
-                Global.crash();
-            };
-            root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
-        }
-
-        try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
+        try manager.installWithManager(ctx, root_package_json_source, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
             for (updates) |request| {
@@ -9921,7 +9927,10 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.write_package_json) {
-            const source, const path = if (manager.options.patch_features == .commit) .{ root_package_json.source.contents, root_package_json_pathZ } else .{ new_package_json_source, manager.original_package_json_path };
+            const source, const path = if (manager.options.patch_features == .commit)
+                .{ root_package_json_source, root_package_json_path }
+            else
+                .{ new_package_json_source, manager.original_package_json_path };
 
             // Now that we've run the install step
             // We can save our in-memory package.json to disk
@@ -9995,6 +10004,16 @@ pub const PackageManager = struct {
         }
     }
 
+    fn nodeModulesFolderForDependencyIDs(iterator: *Lockfile.Tree.Iterator, ids: []const IdPair) !?Lockfile.Tree.NodeModulesFolder {
+        while (iterator.nextNodeModulesFolder(null)) |node_modules| {
+            for (ids) |id| {
+                _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, id[0]) orelse continue;
+                return node_modules;
+            }
+        }
+        return null;
+    }
+
     fn nodeModulesFolderForDependencyID(iterator: *Lockfile.Tree.Iterator, dependency_id: DependencyID) !?Lockfile.Tree.NodeModulesFolder {
         while (iterator.nextNodeModulesFolder(null)) |node_modules| {
             _ = std.mem.indexOfScalar(DependencyID, node_modules.dependencies, dependency_id) orelse continue;
@@ -10004,65 +10023,154 @@ pub const PackageManager = struct {
         return null;
     }
 
-    fn pkgDepIdForNameAndVersion(
+    const IdPair = struct { DependencyID, PackageID };
+
+    fn pkgInfoForNameAndVersion(
         lockfile: *Lockfile,
+        iterator: *Lockfile.Tree.Iterator,
         pkg_maybe_version_to_patch: []const u8,
         name: []const u8,
         version: ?[]const u8,
-    ) struct { PackageID, DependencyID } {
+    ) struct { PackageID, Lockfile.Tree.NodeModulesFolder } {
+        var sfb = std.heap.stackFallback(@sizeOf(IdPair) * 4, lockfile.allocator);
+        var pairs = std.ArrayList(IdPair).initCapacity(sfb.get(), 8) catch bun.outOfMemory();
+        defer pairs.deinit();
+
         const name_hash = String.Builder.stringHash(name);
 
         const strbuf = lockfile.buffers.string_bytes.items;
 
-        const dependency_id: DependencyID, const pkg_id: PackageID = brk: {
-            var buf: [1024]u8 = undefined;
-            const dependencies = lockfile.buffers.dependencies.items;
+        var buf: [1024]u8 = undefined;
+        const dependencies = lockfile.buffers.dependencies.items;
 
-            var matches_found: u32 = 0;
-            var maybe_first_match: ?struct { DependencyID, PackageID } = null;
-            for (dependencies, 0..) |dep, dep_id| {
-                if (dep.name_hash != name_hash) continue;
-                matches_found += 1;
-                const pkg_id = lockfile.buffers.resolutions.items[dep_id];
-                if (pkg_id == invalid_package_id) continue;
-                const pkg = lockfile.packages.get(pkg_id);
-                if (version) |v| {
-                    const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
-                    if (std.mem.eql(u8, label, v)) break :brk .{ @intCast(dep_id), pkg_id };
-                } else maybe_first_match = .{ @intCast(dep_id), pkg_id };
+        for (dependencies, 0..) |dep, dep_id| {
+            if (dep.name_hash != name_hash) continue;
+            const pkg_id = lockfile.buffers.resolutions.items[dep_id];
+            if (pkg_id == invalid_package_id) continue;
+            const pkg = lockfile.packages.get(pkg_id);
+            if (version) |v| {
+                const label = std.fmt.bufPrint(buf[0..], "{}", .{pkg.resolution.fmt(strbuf, .posix)}) catch @panic("Resolution name too long");
+                if (std.mem.eql(u8, label, v)) {
+                    pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+                }
+            } else {
+                pairs.append(.{ @intCast(dep_id), pkg_id }) catch bun.outOfMemory();
+            }
+        }
+
+        if (pairs.items.len == 0) {
+            Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
+            Global.crash();
+            return;
+        }
+
+        // user supplied a version e.g. `is-even@1.0.0`
+        if (version != null) {
+            if (pairs.items.len == 1) {
+                const dep_id, const pkg_id = pairs.items[0];
+                const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
+                    Output.prettyError(
+                        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                        .{pkg_maybe_version_to_patch},
+                    );
+                    Global.crash();
+                };
+                return .{
+                    pkg_id,
+                    folder,
+                };
             }
 
-            const first_match = maybe_first_match orelse {
-                Output.prettyErrorln("\n<r><red>error<r>: package <b>{s}<r> not found<r>", .{pkg_maybe_version_to_patch});
+            // we found multiple dependents of the supplied pkg + version
+            // the final package in the node_modules might be hoisted
+            // so we are going to try looking for each dep id in node_modules
+            _, const pkg_id = pairs.items[0];
+            const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
+                Output.prettyError(
+                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                    .{pkg_maybe_version_to_patch},
+                );
                 Global.crash();
-                return;
             };
 
-            if (matches_found > 1) {
-                Output.prettyErrorln(
-                    "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
-                    .{name},
+            return .{
+                pkg_id,
+                folder,
+            };
+        }
+
+        // Otherwise the user did not supply a version, just the pkg name
+
+        // Only one match, let's use it
+        if (pairs.items.len == 1) {
+            const dep_id, const pkg_id = pairs.items[0];
+            const folder = (try nodeModulesFolderForDependencyID(iterator, dep_id)) orelse {
+                Output.prettyError(
+                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                    .{pkg_maybe_version_to_patch},
                 );
-                var i: usize = 0;
-                const pkg_hashes = lockfile.packages.items(.name_hash);
-                while (i < lockfile.packages.len) {
-                    if (std.mem.indexOfScalar(u64, pkg_hashes[i..], name_hash)) |idx| {
-                        defer i += idx + 1;
-                        const pkg_id = i + idx;
-                        const pkg = lockfile.packages.get(pkg_id);
-                        if (!std.mem.eql(u8, pkg.name.slice(strbuf), name)) continue;
-
-                        Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
-                    } else break;
-                }
                 Global.crash();
-                return;
-            }
+            };
+            return .{
+                pkg_id,
+                folder,
+            };
+        }
 
-            break :brk .{ first_match[0], first_match[1] };
+        // Otherwise we have multiple matches
+        //
+        // There are two cases:
+        // a) the multiple matches are all the same underlying package (this happens because there could be multiple dependents of the same package)
+        // b) the matches are actually different packages, we'll prompt the user to select which one
+
+        _, const pkg_id = pairs.items[0];
+        const count = count: {
+            var count: u32 = 0;
+            for (pairs.items) |pair| {
+                if (pair[1] == pkg_id) count += 1;
+            }
+            break :count count;
         };
 
-        return .{ pkg_id, dependency_id };
+        // Disambiguate case a) from b)
+        if (count == pairs.items.len) {
+            // It may be hoisted, so we'll try the first one that matches
+            const folder = (try nodeModulesFolderForDependencyIDs(iterator, pairs.items)) orelse {
+                Output.prettyError(
+                    "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
+                    .{pkg_maybe_version_to_patch},
+                );
+                Global.crash();
+            };
+            return .{
+                pkg_id,
+                folder,
+            };
+        }
+
+        Output.prettyErrorln(
+            "\n<r><red>error<r>: Found multiple versions of <b>{s}<r>, please specify a precise version from the following list:<r>\n",
+            .{name},
+        );
+        var i: usize = 0;
+        while (i < pairs.items.len) : (i += 1) {
+            _, const pkgid = pairs.items[i];
+            if (pkgid == invalid_package_id)
+                continue;
+
+            const pkg = lockfile.packages.get(pkgid);
+
+            Output.prettyError("  {s}@<blue>{}<r>\n", .{ pkg.name.slice(strbuf), pkg.resolution.fmt(strbuf, .posix) });
+
+            if (i + 1 < pairs.items.len) {
+                for (pairs.items[i + 1 ..]) |*p| {
+                    if (p[1] == pkgid) {
+                        p[1] = invalid_package_id;
+                    }
+                }
+            }
+        }
+        Global.crash();
     }
 
     const PatchArgKind = enum {
@@ -10218,17 +10326,7 @@ pub const PackageManager = struct {
             .name_and_version => brk: {
                 const pkg_maybe_version_to_patch = argument;
                 const name, const version = Dependency.splitNameAndVersion(pkg_maybe_version_to_patch);
-                const result = pkgDepIdForNameAndVersion(manager.lockfile, pkg_maybe_version_to_patch, name, version);
-                const pkg_id = result[0];
-                const dependency_id = result[1];
-
-                const folder = (try nodeModulesFolderForDependencyID(&iterator, dependency_id)) orelse {
-                    Output.prettyError(
-                        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                        .{pkg_maybe_version_to_patch},
-                    );
-                    Global.crash();
-                };
+                const pkg_id, const folder = pkgInfoForNameAndVersion(manager.lockfile, &iterator, pkg_maybe_version_to_patch, name, version);
 
                 const pkg = manager.lockfile.packages.get(pkg_id);
                 const pkg_name = pkg.name.slice(strbuf);
@@ -10314,6 +10412,7 @@ pub const PackageManager = struct {
                 out_dir: if (bun.Environment.isWindows) []const u16 else void,
                 buf1: if (bun.Environment.isWindows) []u16 else void,
                 buf2: if (bun.Environment.isWindows) []u16 else void,
+                tmpdir_in_node_modules: if (bun.Environment.isWindows) std.fs.Dir else void,
             ) !u32 {
                 var real_file_count: u32 = 0;
 
@@ -10328,10 +10427,10 @@ pub const PackageManager = struct {
                     const openFile = std.fs.Dir.openFile;
                     const createFile = std.fs.Dir.createFile;
 
-                    // - rename node_modules/$PKG/$FILE -> node_modules/$PKG/$TMPNAME
-                    // - create node_modules/$PKG/$FILE
-                    // - copy: cache/$PKG/$FILE -> node_modules/$PKG/$FILE
-                    // - unlink: $TMPDIR/$FILE
+                    // 1. rename original file in node_modules to tmp_dir_in_node_modules
+                    // 2. create the file again
+                    // 3. copy cache flie to the newly re-created file
+                    // 4. profit
                     if (comptime bun.Environment.isWindows) {
                         var tmpbuf: [1024]u8 = undefined;
                         const basename = bun.strings.fromWPath(pathbuf2[0..], entry.basename);
@@ -10347,7 +10446,7 @@ pub const PackageManager = struct {
                         if (bun.sys.renameatConcurrently(
                             bun.toFD(destination_dir_.fd),
                             entrypathZ,
-                            bun.toFD(destination_dir_.fd),
+                            bun.toFD(tmpdir_in_node_modules.fd),
                             tmpname,
                             .{ .move_fallback = true },
                         ).asErr()) |e| {
@@ -10427,6 +10526,15 @@ pub const PackageManager = struct {
                 Global.crash();
             }
             out_dir = buf2[0..outlen];
+            var tmpbuf: [1024]u8 = undefined;
+            const tmpname = bun.span(bun.fs.FileSystem.instance.tmpname("tffbp", tmpbuf[0..], bun.fastRandom()) catch |e| {
+                Output.prettyError("<r><red>error<r>: copying file {s}", .{@errorName(e)});
+                Global.crash();
+            });
+            const temp_folder_in_node_modules = try node_modules_folder.makeOpenPath(tmpname, .{});
+            defer {
+                node_modules_folder.deleteTree(tmpname) catch {};
+            }
             _ = try FileCopier.copy(
                 node_modules_folder,
                 &walker,
@@ -10434,11 +10542,13 @@ pub const PackageManager = struct {
                 out_dir,
                 &buf1,
                 &buf2,
+                temp_folder_in_node_modules,
             );
         } else if (Environment.isPosix) {
             _ = try FileCopier.copy(
                 node_modules_folder,
                 &walker,
+                {},
                 {},
                 {},
                 {},
@@ -10615,19 +10725,8 @@ pub const PackageManager = struct {
             },
             .name_and_version => brk: {
                 const name, const version = Dependency.splitNameAndVersion(argument);
-                const result = pkgDepIdForNameAndVersion(lockfile, argument, name, version);
-                const pkg_id: PackageID = result[0];
-                const dependency_id: DependencyID = result[1];
-                const node_modules = (try nodeModulesFolderForDependencyID(
-                    &iterator,
-                    dependency_id,
-                )) orelse {
-                    Output.prettyError(
-                        "<r><red>error<r>: could not find the folder for <b>{s}<r> in node_modules<r>\n<r>",
-                        .{argument},
-                    );
-                    Global.crash();
-                };
+                const pkg_id, const node_modules = pkgInfoForNameAndVersion(lockfile, &iterator, argument, name, version);
+
                 const changes_dir = bun.path.joinZBuf(pathbuf[0..], &[_][]const u8{
                     node_modules.relative_path,
                     name,
@@ -13926,7 +14025,7 @@ pub const bun_install_js_bindings = struct {
         return obj;
     }
 
-    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsParseLockfile(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         const allocator = bun.default_allocator;
         var log = logger.Log.init(allocator);
         defer log.deinit();

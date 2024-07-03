@@ -11,6 +11,7 @@
 #include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "wtf/Forward.h"
 
 namespace Bun {
 
@@ -78,7 +79,7 @@ JSValue initializeInternalModuleFromDisk(
     WTF::String fileBase,
     const WTF::String& urlString)
 {
-    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "/"_s, WTFMove(fileBase));
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
         INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);

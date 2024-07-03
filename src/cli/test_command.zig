@@ -741,7 +741,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         bun.JSC.initialize();
-        HTTPThread.init() catch {};
+        HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);

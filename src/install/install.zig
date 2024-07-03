@@ -10019,6 +10019,8 @@ pub const PackageManager = struct {
             root_package_json.source.contents = try manager.allocator.dupe(u8, package_json_writer2.ctx.writtenWithoutTrailingZero());
         }
 
+        const root_source_contents = root_package_json.source.contents;
+
         try manager.installWithManager(ctx, root_package_json.source.contents, log_level);
 
         if (subcommand == .update or subcommand == .add or subcommand == .link) {
@@ -10078,7 +10080,10 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.do.write_package_json) {
-            const source, const path = if (manager.options.patch_features == .commit) .{ root_package_json.source.contents, root_package_json_pathZ } else .{ new_package_json_source, manager.original_package_json_path };
+            const source, const path = if (manager.options.patch_features == .commit)
+                .{ root_source_contents, root_package_json_pathZ }
+            else
+                .{ new_package_json_source, manager.original_package_json_path };
 
             // Now that we've run the install step
             // We can save our in-memory package.json to disk

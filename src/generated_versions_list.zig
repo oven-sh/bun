@@ -11,4 +11,4 @@ pub const tinycc = "ab631362d839333660a265d3084d8ff060b96753";
 pub const lolhtml = "8d4c273ded322193d017042d1f48df2766b0f88b";
 pub const c_ares = "d1722e6e8acaf10eb73fa995798a9cd421d9f85e";
 pub const zstd = "794ea1b0afca0f020f4e57b6732332231fb23c70";
-pub const lshpack = "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4b0";
+pub const lshpack = "3d0f1fc1d6e66a642e7a98c55deb38aa986eb4bd";

@@ -11,7 +11,7 @@ pub fn directIpcSend(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
             const arguments = callframe.arguments(1);
             if (arguments.len < 1) {
-                globalThis.throwNotEnoughArguments("raw_process_send", 1, arguments.len);
+                globalThis.throwNotEnoughArguments("directIpcSend", 1, arguments.len);
                 return .zero;
             }
             const vm = globalThis.bunVM();
@@ -24,5 +24,5 @@ pub fn directIpcSend(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
             }
         }
     };
-    return JSC.JSFunction.create(global, "raw_process_send", S.cb, 3, .{});
+    return JSC.JSFunction.create(global, "directIpcSend", S.cb, 3, .{});
 }

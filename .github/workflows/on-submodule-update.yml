@@ -4,7 +4,7 @@ permissions:
   issues: write
 
 on:
-  pull_request:
+  pull_request_target:
     paths:
       - "src/generated_versions_list.zig"
       - ".github/workflows/on-submodule-update.yml"

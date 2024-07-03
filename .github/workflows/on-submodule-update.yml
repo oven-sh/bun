@@ -1,8 +1,5 @@
 name: Comment on updated submodule
 
-permissions:
-  issues: write
-
 on:
   pull_request_target:
     paths:
@@ -14,6 +11,10 @@ jobs:
     name: Comment
     runs-on: ubuntu-latest
     if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
     steps:
       - name: Checkout current
         uses: actions/checkout@v4

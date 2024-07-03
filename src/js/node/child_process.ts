@@ -11,6 +11,7 @@ const ERR_IPC_CHANNEL_CLOSED = $zig("node_error_binding.zig", "ERR_IPC_CHANNEL_C
 const ERR_INVALID_HANDLE_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_HANDLE_TYPE");
 const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
 const ERR_MISSING_ARGS = $zig("node_error_binding.zig", "ERR_MISSING_ARGS");
+const directIpcSend = $zig("node_child_process_binding.zig", "directIpcSend");
 
 var NetModule;
 
@@ -1849,25 +1850,15 @@ function _forkChild(fd, serializationMode) {
       options = { swallowErrors: options };
     }
 
-    let err;
+    const good = directIpcSend(message);
 
-    if (serializationMode === "json") {
-      const string = JSONStringify(message);
-      err = channel_writeUtf8String(fd, string + "\n");
-    } else if (serializationMode === "advanced") {
-      old_process_send(message);
-      err = 0;
-    } else {
-      $assert(false, `unsupported serialization mode: ${serializationMode}`);
-    }
-
-    if (err === 0) {
+    if (good) {
       if (typeof callback === "function") {
         process.nextTick(callback, null);
       }
     } else {
       if (!options.swallowErrors) {
-        const ex = new ErrnoException(err, "write");
+        const ex = new Error("write");
         if (typeof callback === "function") {
           process.nextTick(callback, ex);
         } else {

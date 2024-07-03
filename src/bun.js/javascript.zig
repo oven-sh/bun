@@ -401,7 +401,7 @@ pub export fn Bun__Process__send(
     const vm = globalObject.bunVM();
     if (vm.getIPCInstance()) |ipc_instance| {
         const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
+        return if (success) .true else .zero;
     } else {
         globalObject.throw("IPC Socket is no longer open.", .{});
         return .zero;

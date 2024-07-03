@@ -8,7 +8,6 @@ const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYP
 const ERR_IPC_CHANNEL_CLOSED = $zig("node_error_binding.zig", "ERR_IPC_CHANNEL_CLOSED");
 const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
 const ERR_MISSING_ARGS = $zig("node_error_binding.zig", "ERR_MISSING_ARGS");
-const directIpcSend = $zig("node_child_process_binding.zig", "directIpcSend");
 
 var NetModule;
 
@@ -1794,6 +1793,7 @@ function genericNodeError(message, options) {
 
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
+  const directIpcSend = process.send;
 
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {

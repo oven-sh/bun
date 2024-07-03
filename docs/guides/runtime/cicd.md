@@ -13,7 +13,7 @@ jobs:
     steps:
       # ...
       - uses: actions/checkout@v4
-+     - uses: oven-sh/setup-bun@v1
++     - uses: oven-sh/setup-bun@v2
 
       # run any `bun` or `bunx` command
 +     - run: bun install

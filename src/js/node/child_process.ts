@@ -1797,6 +1797,8 @@ function genericNodeError(message, options) {
 }
 
 function _forkChild(fd, serializationMode) {
+  if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
+
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {
       callback = handle;

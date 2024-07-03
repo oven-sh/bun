@@ -4,18 +4,13 @@ const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const FsModule = require("node:fs");
 
-const { ErrnoException } = require("internal/errors");
-
 const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 const ERR_IPC_CHANNEL_CLOSED = $zig("node_error_binding.zig", "ERR_IPC_CHANNEL_CLOSED");
-const ERR_INVALID_HANDLE_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_HANDLE_TYPE");
 const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
 const ERR_MISSING_ARGS = $zig("node_error_binding.zig", "ERR_MISSING_ARGS");
 const directIpcSend = $zig("node_child_process_binding.zig", "directIpcSend");
 
 var NetModule;
-
-const JSONStringify = JSON.stringify;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;

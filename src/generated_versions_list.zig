@@ -1,7 +1,7 @@
 // AUTO-GENERATED FILE. Created via .scripts/write-versions.sh
 
 pub const boringssl =
- "29a2cd359458c9384694b75456026e4b57e3e567";
+    "29a2cd359458c9384694b75456026e4b57e3e567";
 pub const libarchive = "313aa1fa10b657de791e3202c168a6c833bc3543";
 pub const mimalloc = "4c283af60cdae205df5a872530c77e2a6a307d43";
 pub const picohttpparser = "066d2b1e9ab820703db0837a7255d92d30f0c9f5";

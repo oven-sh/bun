@@ -1859,155 +1859,399 @@ pub const SideEffects = enum(u1) {
         };
     }
 
+    /// This is responsible for simplifying an unused expression that may or may not
+    /// have side effects into a smaller expression. For example, this is where
+    /// calls with .can_be_unwrapped_if_unused get unwrapped. A `null` return value
+    /// implies E.Missing, aka "remove this expression"
+    ///
+    /// Since this is run on many expressions and, more specifically, binary comma
+    /// expressions, a recursive approach will easily stack overflow with large,
+    /// minified files. See: https://github.com/oven-sh/bun/issues/5398
+    ///
+    /// This approach uses a parse-shared "SimplifyState", which heap-allocates
+    /// a stack of expressions, and will re-use this heap across simplifications.
     pub fn simpifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
+        comptime assert(@typeInfo(@TypeOf(p)) == .Pointer);
         if (!p.options.features.dead_code_elimination) return expr;
-        switch (expr.data) {
-            .e_null,
-            .e_undefined,
-            .e_missing,
-            .e_boolean,
-            .e_number,
-            .e_big_int,
-            .e_string,
-            .e_this,
-            .e_reg_exp,
-            .e_function,
-            .e_arrow,
-            .e_import_meta,
-            .e_inlined_enum,
-            => {
-                return null;
-            },
 
-            .e_dot => |dot| {
-                if (dot.can_be_removed_if_unused) {
-                    return null;
-                }
-            },
-            .e_identifier => |ident| {
-                if (ident.must_keep_due_to_with_stmt) {
-                    return expr;
-                }
+        return switch (SimplifyState.nonRecursive(p, expr)) {
+            .keep => expr,
+            .remove => null,
+            .recursive => {
+                var state: SimplifyState = p.simplify_state.get();
+                defer p.simplify_state.release(&state);
 
-                if (ident.can_be_removed_if_unused or p.symbols.items[ident.ref.innerIndex()].kind != .unbound) {
-                    return null;
-                }
-            },
-            .e_if => |__if__| {
-                __if__.yes = simpifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
-                __if__.no = simpifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
+                state.exprs.append(bun.failing_allocator, expr) catch unreachable;
+                state.current = state.pushDependencies(0, &expr, p.allocator) catch bun.outOfMemory();
 
-                // "foo() ? 1 : 2" => "foo()"
-                if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
-                    return simpifyUnusedExpr(p, __if__.test_);
-                }
+                bun.assert(state.exprs.len > 1); // should be more than one dependency
+                bun.assert(state.current.parent_index == 0);
+                bun.assert(state.current.children_count > 0);
+                bun.assert(state.current.offset == 0);
 
-                // "foo() ? 1 : bar()" => "foo() || bar()"
-                if (__if__.yes.isEmpty()) {
-                    return Expr.joinWithLeftAssociativeOp(
-                        .bin_logical_or,
-                        __if__.test_,
-                        __if__.no,
-                        p.allocator,
-                    );
-                }
-
-                // "foo() ? bar() : 2" => "foo() && bar()"
-                if (__if__.no.isEmpty()) {
-                    return Expr.joinWithLeftAssociativeOp(
-                        .bin_logical_and,
-                        __if__.test_,
-                        __if__.yes,
-                        p.allocator,
-                    );
-                }
-            },
-            .e_unary => |un| {
-                // These operators must not have any type conversions that can execute code
-                // such as "toString" or "valueOf". They must also never throw any exceptions.
-                switch (un.op) {
-                    .un_void, .un_not => {
-                        return simpifyUnusedExpr(p, un.value);
-                    },
-                    .un_typeof => {
-                        // "typeof x" must not be transformed into if "x" since doing so could
-                        // cause an exception to be thrown. Instead we can just remove it since
-                        // "typeof x" is special-cased in the standard to never throw.
-                        if (std.meta.activeTag(un.value.data) == .e_identifier) {
-                            return null;
-                        }
-
-                        return simpifyUnusedExpr(p, un.value);
-                    },
-
-                    else => {},
-                }
-            },
-
-            .e_call => |call| {
-
-                // A call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simpifyUnusedExpr, p.allocator);
+                while (true) {
+                    if (state.current.children_count == 0) {
+                        if (state.finishExpr(p, p.allocator) catch bun.outOfMemory() == .stop)
+                            break;
+                    } else {
+                        state.startExpr(p, p.allocator) catch bun.outOfMemory();
                     }
                 }
-            },
 
-            .e_binary => |bin| {
-                switch (bin.op) {
-                    // These operators must not have any type conversions that can execute code
-                    // such as "toString" or "valueOf". They must also never throw any exceptions.
-                    .bin_strict_eq, .bin_strict_ne, .bin_comma => {
-                        return Expr.joinWithComma(
-                            simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-                            simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+                bun.assert(state.nodes.len == 0);
+
+                return state.exprs.at(0).*;
+            },
+        };
+    }
+
+    const SimplifyState = struct {
+        /// This is a list of all `Expr`s involved in the simplification process
+        exprs: ExprList,
+        /// This is a list of all current attempts to simplify a node
+        nodes: NodeList,
+        current: Node,
+
+        // / Used to ensure we do not visit an expression twice
+        // debug_state_map: if (Environment.isDebug)
+        //     std.ArrayListUnmanaged(DebugState)
+        // else
+        //     struct {} = .{},
+
+        // todo: compress
+        const Node = struct {
+            /// Number of children after this node to consideer
+            children_count: u32,
+            offset: u32,
+            /// Depends on the expression type
+            /// - e_object: does this have any spreads?
+            flag: bool,
+            /// Index of the unvisited root expression
+            parent_index: u32,
+        };
+
+        // TODO: benchmark ArrayListUnmanaged here. it probably does better in the general case.
+        const ExprList = std.SegmentedList(Expr, 128);
+        const NodeList = std.SegmentedList(Node, 32);
+
+        // const DebugState = struct {
+        //     visited: bool = false,
+        //     is_node_root: bool = false,
+        // };
+
+        /// We want to re-use memory from simpifyUnusedExpr across invocations,
+        /// since freeing it will likely do nothing since the parser uses an arena.
+        /// However, storing the entire state is useless as the segmented lists
+        /// take up a lot of extra bytes which will always be unused outside of
+        /// `simplifyUnusedExpr`. This 'SharedMemory' stores just the reused
+        /// allocations from SegmentedList.
+        const SharedMemory = struct {
+            /// Memory sharing requires an exclusive lock, which is OK because
+            /// simplifyUnusedExpr is not recursive.
+            lock: std.debug.SafetyLock = .{},
+            exprs: [][*]Expr = &.{},
+            nodes: [][*]Node = &.{},
+
+            /// The `SimplifyState` is not fully initialized
+            pub fn get(shared_memory: *SharedMemory) SimplifyState {
+                shared_memory.lock.lock();
+                return .{
+                    .exprs = .{ .dynamic_segments = shared_memory.exprs },
+                    .nodes = .{ .dynamic_segments = shared_memory.nodes },
+                    .current = undefined,
+                };
+            }
+
+            pub fn release(shared_memory: *SharedMemory, state: *SimplifyState) void {
+                shared_memory.lock.unlock();
+                shared_memory.exprs = state.exprs.dynamic_segments;
+                shared_memory.nodes = state.nodes.dynamic_segments;
+
+                if (Environment.isDebug)
+                    state.* = undefined;
+            }
+        };
+
+        const ChildrenSlice = struct {
+            expr_list: *ExprList,
+            offset: u32,
+            len: if (Environment.isDebug) u32 else u0 = 0,
+
+            pub fn at(slice: ChildrenSlice, n: u32) Expr {
+                if (Environment.isDebug)
+                    bun.assert(n < slice.len);
+
+                return slice.expr_list.at(slice.offset + n).*;
+            }
+
+            pub fn next(slice: *ChildrenSlice) Expr {
+                defer {
+                    slice.offset += 1;
+                    if (Environment.isDebug)
+                        slice.len -= 1;
+                }
+                return slice.expr_list.at(slice.offset).*;
+            }
+        };
+
+        pub fn pushDependencies(
+            state: *SimplifyState,
+            parent_index: u32,
+            expr: *const Expr,
+            allocator: Allocator,
+        ) !Node {
+            var flag = false;
+            const offset = state.exprs.len - 1;
+            const children_count: u32 = switch (expr.data) {
+                else => |tag| Output.panic("SimplifyState.pushDependencies unexpected state: {s}", .{@tagName(tag)}),
+
+                inline .e_call, .e_new => |call| len: {
+                    bun.assert(call.can_be_unwrapped_if_unused); // if false, visiting is useless
+                    bun.assert(call.args.len > 0); // if zero, should have already returned .remove
+                    const args = call.args.slice();
+                    try state.exprs.appendSlice(allocator, args);
+                    break :len @intCast(args.len);
+                },
+
+                .e_if => |ternary| len: {
+                    try state.exprs.appendSlice(allocator, &.{
+                        ternary.test_,
+                        ternary.yes,
+                        ternary.no,
+                    });
+                    break :len 3;
+                },
+
+                .e_unary => |unary| len: {
+                    try state.exprs.append(allocator, unary.value);
+                    break :len 1;
+                },
+
+                .e_binary => |bin| len: {
+                    try state.exprs.appendSlice(allocator, &.{
+                        bin.left,
+                        bin.right,
+                    });
+                    break :len 2;
+                },
+
+                .e_array => |obj| len: {
+                    var count: u32 = 0;
+                    const items = obj.items.slice();
+                    for (items) |prop| {
+                        // Spread properties must always be evaluated
+                        if (prop.data != .e_spread) {
+                            try state.exprs.append(allocator, prop);
+                            count += 1;
+                        }
+                    }
+                    break :len count;
+                },
+
+                .e_object => |obj| len: {
+                    var count: u32 = 0;
+                    const properties = obj.properties.slice();
+                    for (properties) |prop| {
+                        if (prop.kind != .spread) {
+                            try state.exprs.append(allocator, prop.value.?);
+                            count += 1;
+                        } else {
+                            // Mark there to be a spread
+                            flag = true;
+                        }
+                    }
+                    break :len count;
+                },
+            };
+            return .{
+                .parent_index = parent_index,
+                .children_count = children_count,
+                .offset = @intCast(offset),
+                .flag = flag,
+            };
+        }
+
+        fn startExpr(state: *SimplifyState, p: anytype, allocator: Allocator) !void {
+            bun.assert(state.current.children_count > 0); // already visited
+
+            const i = state.current.offset + state.current.children_count;
+            const expr = state.exprs.at(i);
+
+            switch (nonRecursive(p, expr.*)) {
+                inline .keep, .remove => |tag| {
+                    if (tag == .remove) {
+                        expr.* = Expr.empty;
+                    }
+                },
+                .recursive => {
+                    // push a new `node`
+                    try state.nodes.append(allocator, state.current);
+                    state.current = try state.pushDependencies(i, expr, allocator);
+                },
+            }
+
+            state.current.children_count -= 1;
+        }
+
+        const FinishResult = enum { stop, @"continue" };
+
+        fn finishExpr(state: *SimplifyState, p: anytype, allocator: Allocator) !FinishResult {
+            bun.assert(state.current.children_count == 0); // already visited
+            const expr = state.exprs.at(state.current.parent_index);
+
+            var children: ChildrenSlice = .{
+                .expr_list = &state.exprs,
+                .offset = state.current.offset,
+
+                // this approach is very stupid,
+                // however having a length for this slice will catch bugs
+                .len = if (bun.Environment.isDebug) count_for_debug: {
+                    var debug_sfa = std.heap.stackFallback(4096, bun.default_allocator);
+                    const debug_temp_alloc = debug_sfa.get();
+                    var fake_state: SimplifyState = .{
+                        .exprs = .{},
+                        .nodes = undefined, // not used
+                        .current = undefined, // not used
+                    };
+                    defer fake_state.exprs.deinit(debug_temp_alloc);
+                    _ = fake_state.exprs.addOne(debug_temp_alloc) catch bun.outOfMemory();
+                    const node = fake_state.pushDependencies(
+                        0,
+                        expr,
+                        debug_temp_alloc,
+                    ) catch bun.outOfMemory();
+                    break :count_for_debug node.children_count;
+                } else 0,
+            };
+            expr.* = finishExprWithChildren(
+                p,
+                allocator,
+                expr,
+                state.current.flag,
+                &children,
+            );
+            bun.assert(children.len == 0);
+            state.current = state.nodes.pop() orelse return .stop;
+            return .@"continue";
+        }
+
+        /// `children` in this context is the visited children, which were
+        /// pushed in `pushDependencies`. The exact contents and length are
+        /// dependant on what was pushed
+        fn finishExprWithChildren(p: anytype, allocator: Allocator, original: *Expr, flag: bool, children: *ChildrenSlice) Expr {
+            if (Environment.isDebug) {
+                bun.assert(nonRecursive(p, original.*) == .recursive);
+                bun.assert(p.options.features.dead_code_elimination);
+            }
+
+            switch (original.data) {
+                else => |tag| Output.panic("SimplifyState.finishExprWithChildren unexpected state: {s}", .{@tagName(tag)}),
+
+                inline .e_call, .e_new => |call| {
+                    var result = children.next();
+                    for (1..call.args.len) |_| {
+                        result = Expr.joinWithComma(original.*, children.next(), allocator);
+                    }
+                    return result;
+                },
+
+                .e_binary => |bin| {
+                    const left = children.at(0);
+                    const right = children.at(1);
+
+                    switch (bin.op) {
+                        // These operators must not have any type conversions that can execute code
+                        // such as "toString" or "valueOf". They must also never throw any exceptions.
+                        .bin_strict_eq,
+                        .bin_strict_ne,
+                        .bin_comma,
+                        => {
+                            return Expr.joinWithComma(left, right, allocator);
+                        },
+
+                        // We can simplify "==" and "!=" even though they can call "toString" and/or
+                        // "valueOf" if we can statically determine that the types of both sides are
+                        // primitives. In that case there won't be any chance for user-defined
+                        // "toString" and/or "valueOf" to be called.
+                        .bin_loose_eq,
+                        .bin_loose_ne,
+                        => {
+                            if (Environment.isDebug)
+                                bun.assert(isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data));
+
+                            return Expr.joinWithComma(left, right, allocator);
+                        },
+
+                        .bin_logical_and,
+                        .bin_logical_or,
+                        .bin_nullish_coalescing,
+                        => {
+                            bin.right = right;
+
+                            // Preserve short-circuit behavior: the left expression is only unused if
+                            // the right expression can be completely removed. Otherwise, the left
+                            // expression is important for the branch.
+                            if (bin.right.isEmpty())
+                                return bin.left;
+
+                            return original.*;
+                        },
+
+                        else => {
+                            bun.assert(false);
+                            return original.*;
+                        },
+                    }
+                },
+
+                .e_unary => return children.at(0),
+
+                .e_if => |ternary| {
+                    ternary.yes = children.at(1);
+                    ternary.no = children.at(2);
+
+                    // "foo() ? 1 : 2" => "foo()"
+                    if (ternary.yes.isEmpty() and ternary.no.isEmpty()) {
+                        return children.at(0);
+                    }
+
+                    // "foo() ? 1 : bar()" => "foo() || bar()"
+                    if (ternary.yes.isEmpty()) {
+                        return Expr.joinWithLeftAssociativeOp(
+                            .bin_logical_or,
+                            ternary.test_,
+                            ternary.no,
                             p.allocator,
                         );
-                    },
+                    }
 
-                    // We can simplify "==" and "!=" even though they can call "toString" and/or
-                    // "valueOf" if we can statically determine that the types of both sides are
-                    // primitives. In that case there won't be any chance for user-defined
-                    // "toString" and/or "valueOf" to be called.
-                    .bin_loose_eq,
-                    .bin_loose_ne,
-                    => {
-                        if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
-                            return Expr.joinWithComma(simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
-                        }
-                    },
+                    // "foo() ? bar() : 2" => "foo() && bar()"
+                    if (ternary.no.isEmpty()) {
+                        return Expr.joinWithLeftAssociativeOp(
+                            .bin_logical_and,
+                            ternary.test_,
+                            ternary.yes,
+                            p.allocator,
+                        );
+                    }
 
-                    .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
-                        bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
-                        // Preserve short-circuit behavior: the left expression is only unused if
-                        // the right expression can be completely removed. Otherwise, the left
-                        // expression is important for the branch.
+                    return original.*;
+                },
 
-                        if (bin.right.isEmpty())
-                            return simpifyUnusedExpr(p, bin.left);
-                    },
+                .e_object => |obj| {
+                    // Objects with "..." spread expressions can't be unwrapped because the
+                    // "..." triggers code evaluation via getters. In that case, just trim
+                    // the other items instead and leave the object expression there.
+                    var properties_slice = obj.properties.slice();
+                    if (flag) {
+                        var end: usize = 0;
 
-                    else => {},
-                }
-            },
-
-            .e_object => {
-                // Objects with "..." spread expressions can't be unwrapped because the
-                // "..." triggers code evaluation via getters. In that case, just trim
-                // the other items instead and leave the object expression there.
-                var properties_slice = expr.data.e_object.properties.slice();
-                var end: usize = 0;
-                for (properties_slice) |spread| {
-                    end = 0;
-                    if (spread.kind == .spread) {
                         // Spread properties must always be evaluated
-                        for (properties_slice) |prop_| {
-                            var prop = prop_;
-                            if (prop_.kind != .spread) {
-                                const value = simpifyUnusedExpr(p, prop.value.?);
-                                if (value != null) {
+                        for (properties_slice) |prop_orig| {
+                            var prop = prop_orig;
+                            if (prop.kind != .spread) {
+                                const value = children.next();
+                                if (value.data != .e_missing) {
                                     prop.value = value;
                                 } else if (!prop.flags.contains(.is_computed)) {
                                     continue;
@@ -2016,95 +2260,421 @@ pub const SideEffects = enum(u1) {
                                 }
                             }
 
-                            properties_slice[end] = prop_;
+                            properties_slice[end] = prop_orig;
                             end += 1;
                         }
 
                         properties_slice = properties_slice[0..end];
-                        expr.data.e_object.properties = G.Property.List.init(properties_slice);
-                        return expr;
+                        obj.properties = G.Property.List.init(properties_slice);
+                        return original.*;
                     }
-                }
 
-                var result = Expr.init(E.Missing, E.Missing{}, expr.loc);
-
-                // Otherwise, the object can be completely removed. We only need to keep any
-                // object properties with side effects. Apply this simplification recursively.
-                for (properties_slice) |prop| {
-                    if (prop.flags.contains(.is_computed)) {
-                        // Make sure "ToString" is still evaluated on the key
-                        result = result.joinWithComma(
-                            p.newExpr(
-                                E.Binary{
+                    // Otherwise, the object can be completely removed. We only need to keep any
+                    // object properties with side effects. Apply this simplification recursively.
+                    var result = Expr.empty;
+                    for (properties_slice) |prop| {
+                        if (prop.flags.contains(.is_computed)) {
+                            // Make sure "ToString" is still evaluated on the key
+                            result = result.joinWithComma(
+                                p.newExpr(E.Binary{
                                     .op = .bin_add,
                                     .left = prop.key.?,
                                     .right = p.newExpr(E.String{}, prop.key.?.loc),
-                                },
-                                prop.key.?.loc,
-                            ),
-                            p.allocator,
-                        );
-                    }
-                    result = result.joinWithComma(
-                        simpifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
-                        p.allocator,
-                    );
-                }
-
-                return result;
-            },
-            .e_array => {
-                var items = expr.data.e_array.items.slice();
-
-                for (items) |item| {
-                    if (item.data == .e_spread) {
-                        var end: usize = 0;
-                        for (items) |item__| {
-                            const item_ = item__;
-                            if (item_.data != .e_missing) {
-                                items[end] = item_;
-                                end += 1;
-                            }
-
-                            expr.data.e_array.items = ExprNodeList.init(items[0..end]);
-                            return expr;
+                                }, prop.key.?.loc),
+                                p.allocator,
+                            );
                         }
-                    }
-                }
-
-                // Otherwise, the array can be completely removed. We only need to keep any
-                // array items with side effects. Apply this simplification recursively.
-                return Expr.joinAllWithCommaCallback(
-                    items,
-                    @TypeOf(p),
-                    p,
-                    comptime simpifyUnusedExpr,
-                    p.allocator,
-                );
-            },
-
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simpifyUnusedExpr,
-                            p.allocator,
-                        );
+                        result = result.joinWithComma(children.next(), p.allocator);
                     }
 
-                    return null;
-                }
-            },
-            else => {},
+                    return result;
+                },
+            }
         }
 
-        return expr;
-    }
+        const FirstPass = enum {
+            /// This node cannot be removed
+            keep,
+            /// This node can be removed entirely
+            remove,
+            /// This node has children which must be resolved first,
+            /// in which the result can be a completely new expression.
+            recursive,
+        };
+
+        pub fn nonRecursive(p: anytype, expr: Expr) FirstPass {
+            if (Environment.isDebug)
+                bun.assert(p.options.features.dead_code_elimination);
+
+            return switch (expr.data) {
+                .e_null,
+                .e_undefined,
+                .e_missing,
+                .e_boolean,
+                .e_number,
+                .e_big_int,
+                .e_string,
+                .e_this,
+                .e_reg_exp,
+                .e_function,
+                .e_arrow,
+                .e_import_meta,
+                => .remove,
+
+                .e_inlined_enum => |inlined| {
+                    bun.assert(inlined.value.data == .e_string or inlined.value.data == .e_number);
+                    return .remove;
+                },
+
+                .e_dot => |dot| if (dot.can_be_removed_if_unused)
+                    .remove
+                else
+                    .keep,
+
+                .e_identifier => |ident| {
+                    if (ident.must_keep_due_to_with_stmt)
+                        return .keep;
+
+                    if (ident.can_be_removed_if_unused or
+                        p.symbols.items[ident.ref.innerIndex()].kind != .unbound)
+                        return .remove;
+
+                    return .keep;
+                },
+
+                .e_unary => |un| switch (un.op) {
+                    .un_void,
+                    .un_not,
+                    => .recursive,
+
+                    .un_typeof => {
+                        // "typeof x" must not be transformed into if "x" since doing so could
+                        // cause an exception to be thrown. Instead we can just remove it since
+                        // "typeof x" is special-cased in the standard to never throw.
+                        if (un.value.data == .e_identifier) {
+                            return .remove;
+                        }
+
+                        return .recursive;
+                    },
+
+                    else => {
+                        // These operators must not have any type conversions that can execute code
+                        // such as "toString" or "valueOf". They must also never throw any exceptions.
+
+                        // Note that expressions like `-1` are not unary operands, as they are
+                        // already visited and converted into .e_number for example.
+                        return .keep;
+                    },
+                },
+
+                inline .e_new, .e_call => |call| {
+                    // A constructor call that has been marked "__PURE__" can be removed if all arguments
+                    // can be removed. The annotation causes us to ignore the target.
+                    if (call.can_be_unwrapped_if_unused) {
+                        if (call.args.len > 0) {
+                            return .recursive; // need to visit arguments
+                        }
+
+                        return .remove;
+                    }
+
+                    return .keep;
+                },
+
+                .e_binary => |bin| switch (bin.op) {
+                    .bin_strict_eq,
+                    .bin_strict_ne,
+                    .bin_comma,
+                    .bin_logical_and,
+                    .bin_logical_or,
+                    .bin_nullish_coalescing,
+                    => .recursive,
+
+                    // We can simplify "==" and "!=" even though they can call "toString" and/or
+                    // "valueOf" if we can statically determine that the types of both sides are
+                    // primitives. In that case there won't be any chance for user-defined
+                    // "toString" and/or "valueOf" to be called.
+                    .bin_loose_eq,
+                    .bin_loose_ne,
+                    => if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data))
+                        .recursive
+                    else
+                        .keep,
+
+                    else => .keep,
+                },
+
+                .e_if,
+                .e_object,
+                .e_array,
+                => .recursive,
+
+                else => .keep,
+            };
+        }
+    };
+
+    // pub fn simpifyUnusedExprInner(p: anytype, expr: Expr) SimplifyResult {
+    //     comptime assert(@typeInfo(@TypeOf(p)) == .Pointer);
+    //     bun.assert(p.options.features.dead_code_elimination);
+    //     switch (expr.data) {
+    //         .e_null,
+    //         .e_undefined,
+    //         .e_missing,
+    //         .e_boolean,
+    //         .e_number,
+    //         .e_big_int,
+    //         .e_string,
+    //         .e_this,
+    //         .e_reg_exp,
+    //         .e_function,
+    //         .e_arrow,
+    //         .e_import_meta,
+    //         => {
+    //             return null;
+    //         },
+
+    //         .e_dot => |dot| if (dot.can_be_removed_if_unused) {
+    //             return null;
+    //         },
+
+    //         .e_identifier => |ident| {
+    //             if (ident.must_keep_due_to_with_stmt) {
+    //                 return expr;
+    //             }
+
+    //             if (ident.can_be_removed_if_unused or
+    //                 p.symbols.items[ident.ref.innerIndex()].kind != .unbound)
+    //             {
+    //                 return null;
+    //             }
+    //         },
+
+    //         .e_if => |if_expr| {
+    //             if_expr.yes = simpifyUnusedExpr(p, if_expr.yes) orelse if_expr.yes.toEmpty();
+    //             if_expr.no = simpifyUnusedExpr(p, if_expr.no) orelse if_expr.no.toEmpty();
+
+    //             // "foo() ? 1 : 2" => "foo()"
+    //             if (if_expr.yes.isEmpty() and if_expr.no.isEmpty()) {
+    //                 return simpifyUnusedExpr(p, if_expr.test_);
+    //             }
+
+    //             // "foo() ? 1 : bar()" => "foo() || bar()"
+    //             if (if_expr.yes.isEmpty()) {
+    //                 return Expr.joinWithLeftAssociativeOp(
+    //                     .bin_logical_or,
+    //                     if_expr.test_,
+    //                     if_expr.no,
+    //                     p.allocator,
+    //                 );
+    //             }
+
+    //             // "foo() ? bar() : 2" => "foo() && bar()"
+    //             if (if_expr.no.isEmpty()) {
+    //                 return Expr.joinWithLeftAssociativeOp(
+    //                     .bin_logical_and,
+    //                     if_expr.test_,
+    //                     if_expr.yes,
+    //                     p.allocator,
+    //                 );
+    //             }
+    //         },
+
+    //         .e_unary => |un| {
+    //             // These operators must not have any type conversions that can execute code
+    //             // such as "toString" or "valueOf". They must also never throw any exceptions.
+    //             switch (un.op) {
+    //                 .un_void, .un_not => {
+    //                     return simpifyUnusedExpr(p, un.value);
+    //                 },
+    //                 .un_typeof => {
+    //                     // "typeof x" must not be transformed into if "x" since doing so could
+    //                     // cause an exception to be thrown. Instead we can just remove it since
+    //                     // "typeof x" is special-cased in the standard to never throw.
+    //                     if (un.value.data == .e_identifier) {
+    //                         return null;
+    //                     }
+
+    //                     return simpifyUnusedExpr(p, un.value);
+    //                 },
+
+    //                 else => {},
+    //             }
+    //         },
+
+    //         .e_call => |call| {
+    //             // A call that has been marked "__PURE__" can be removed if all arguments
+    //             // can be removed. The annotation causes us to ignore the target.
+    //             if (call.can_be_unwrapped_if_unused) {
+    //                 if (call.args.len > 0) {
+    //                     return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simpifyUnusedExpr, p.allocator);
+    //                 }
+    //             }
+    //         },
+
+    //         .e_binary => |bin| {
+    //             switch (bin.op) {
+    //                 // These operators must not have any type conversions that can execute code
+    //                 // such as "toString" or "valueOf". They must also never throw any exceptions.
+    //                 .bin_strict_eq, .bin_strict_ne, .bin_comma => {
+    //                     return Expr.joinWithComma(
+    //                         simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
+    //                         simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+    //                         p.allocator,
+    //                     );
+    //                 },
+
+    //                 // We can simplify "==" and "!=" even though they can call "toString" and/or
+    //                 // "valueOf" if we can statically determine that the types of both sides are
+    //                 // primitives. In that case there won't be any chance for user-defined
+    //                 // "toString" and/or "valueOf" to be called.
+    //                 .bin_loose_eq,
+    //                 .bin_loose_ne,
+    //                 => {
+    //                     if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
+    //                         return Expr.joinWithComma(
+    //                             simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
+    //                             simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
+    //                             p.allocator,
+    //                         );
+    //                     }
+    //                 },
+
+    //                 .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
+    //                     bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
+
+    //                     // Preserve short-circuit behavior: the left expression is only unused if
+    //                     // the right expression can be completely removed. Otherwise, the left
+    //                     // expression is important for the branch.
+    //                     if (bin.right.isEmpty())
+    //                         return simpifyUnusedExpr(p, bin.left);
+    //                 },
+
+    //                 else => {},
+    //             }
+    //         },
+
+    //         .e_new => |call| {
+    //             // A constructor call that has been marked "__PURE__" can be removed if all arguments
+    //             // can be removed. The annotation causes us to ignore the target.
+    //             if (call.can_be_unwrapped_if_unused) {
+    //                 if (call.args.len > 0) {
+    //                     return Expr.joinAllWithCommaCallback(
+    //                         call.args.slice(),
+    //                         @TypeOf(p),
+    //                         p,
+    //                         comptime simpifyUnusedExpr,
+    //                         p.allocator,
+    //                     );
+    //                 }
+
+    //                 return null;
+    //             }
+    //         },
+
+    //         else => {},
+    //     }
+
+    //     return expr;
+    // }
+
+    // fn simpifyUnusedExprInner(p: anytype, expr: Expr) ?Expr {
+    //     bun.assert(p.options.features.dead_code_elimination);
+    //     switch (expr.data) {
+    //         .e_object => {
+    //             // Objects with "..." spread expressions can't be unwrapped because the
+    //             // "..." triggers code evaluation via getters. In that case, just trim
+    //             // the other items instead and leave the object expression there.
+    //             var properties_slice = expr.data.e_object.properties.slice();
+    //             var end: usize = 0;
+    //             for (properties_slice) |spread| {
+    //                 end = 0;
+    //                 if (spread.kind == .spread) {
+    //                     // Spread properties must always be evaluated
+    //                     for (properties_slice) |prop_| {
+    //                         var prop = prop_;
+    //                         if (prop_.kind != .spread) {
+    //                             const value = simpifyUnusedExpr(p, prop.value.?);
+    //                             if (value != null) {
+    //                                 prop.value = value;
+    //                             } else if (!prop.flags.contains(.is_computed)) {
+    //                                 continue;
+    //                             } else {
+    //                                 prop.value = p.newExpr(E.Number{ .value = 0.0 }, prop.value.?.loc);
+    //                             }
+    //                         }
+
+    //                         properties_slice[end] = prop_;
+    //                         end += 1;
+    //                     }
+
+    //                     properties_slice = properties_slice[0..end];
+    //                     expr.data.e_object.properties = G.Property.List.init(properties_slice);
+    //                     return expr;
+    //                 }
+    //             }
+
+    //             var result = Expr.init(E.Missing, E.Missing{}, expr.loc);
+
+    //             // Otherwise, the object can be completely removed. We only need to keep any
+    //             // object properties with side effects. Apply this simplification recursively.
+    //             for (properties_slice) |prop| {
+    //                 if (prop.flags.contains(.is_computed)) {
+    //                     // Make sure "ToString" is still evaluated on the key
+    //                     result = result.joinWithComma(
+    //                         p.newExpr(
+    //                             E.Binary{
+    //                                 .op = .bin_add,
+    //                                 .left = prop.key.?,
+    //                                 .right = p.newExpr(E.String{}, prop.key.?.loc),
+    //                             },
+    //                             prop.key.?.loc,
+    //                         ),
+    //                         p.allocator,
+    //                     );
+    //                 }
+    //                 result = result.joinWithComma(
+    //                     simpifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
+    //                     p.allocator,
+    //                 );
+    //             }
+
+    //             return result;
+    //         },
+    //         .e_array => {
+    //             var items = expr.data.e_array.items.slice();
+
+    //             for (items) |item| {
+    //                 if (item.data == .e_spread) {
+    //                     var end: usize = 0;
+    //                     for (items) |item__| {
+    //                         const item_ = item__;
+    //                         if (item_.data != .e_missing) {
+    //                             items[end] = item_;
+    //                             end += 1;
+    //                         }
+
+    //                         expr.data.e_array.items = ExprNodeList.init(items[0..end]);
+    //                         return expr;
+    //                     }
+    //                 }
+    //             }
+
+    //             // Otherwise, the array can be completely removed. We only need to keep any
+    //             // array items with side effects. Apply this simplification recursively.
+    //             return Expr.joinAllWithCommaCallback(
+    //                 items,
+    //                 @TypeOf(p),
+    //                 p,
+    //                 comptime simpifyUnusedExpr,
+    //                 p.allocator,
+    //             );
+    //         },
+
+    //         else => @compileError(unreachable),
+    //     }
+    // }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
         switch (binding.data) {
@@ -5241,6 +5811,8 @@ fn NewParser_(
         // If this is true, then all top-level statements are wrapped in a try/catch
         will_wrap_module_in_try_catch_for_using: bool = false,
 
+        simplify_state: SideEffects.SimplifyState.SharedMemory = .{},
+
         const RecentlyVisitedTSNamespace = struct {
             ref: Ref = Ref.None,
             data: ?*js_ast.TSNamespaceMemberMap = null,
@@ -7444,7 +8016,8 @@ fn NewParser_(
                         // "(1, 2)" => "2"
                         // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                         if (p.options.features.minify_syntax) {
-                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse return e_.right;
+                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse
+                                return e_.right;
                         }
                     },
                     .bin_loose_eq => {
@@ -21830,6 +22403,9 @@ fn NewParser_(
         }
 
         fn keepStmtSymbolName(p: *P, loc: logger.Loc, ref: Ref, name: string) Stmt {
+            {
+                @compileError("this is unused but this usage of p.expr_list will crash");
+            }
             p.expr_list.ensureUnusedCapacity(2) catch unreachable;
             const start = p.expr_list.items.len;
             p.expr_list.appendAssumeCapacity(p.newExpr(E.Identifier{

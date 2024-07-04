@@ -397,4 +397,6 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+
+  const side_effect_simplification_situations = [["/* @__PURE__ */ 2(4, pass);", "pass;"]];
 });

@@ -143,9 +143,9 @@
     {
       "type": "lldb",
       "request": "launch",
-      "name": "bun run [file]",
+      "name": "bun build [file]",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": ["run", "${fileBasename}"],
+      "args": ["build", "${fileBasename}", "--minify"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",

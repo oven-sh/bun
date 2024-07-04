@@ -54,18 +54,9 @@ pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSVa
                 return createTypeError(globalThis, .ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{args[0].toString(globalThis)});
             }
             return switch (args.len) {
-                1 => return createTypeError(globalThis, .ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{
-                    args[0].toString(globalThis),
-                }),
-                2 => return createTypeError(globalThis, .ERR_MISSING_ARGS, "The \"{}\" and \"{}\" arguments must be specified", .{
-                    args[0].toString(globalThis),
-                    args[1].toString(globalThis),
-                }),
-                3 => return createTypeError(globalThis, .ERR_MISSING_ARGS, "The \"{}\", \"{}\", and \"{}\" arguments must be specified", .{
-                    args[0].toString(globalThis),
-                    args[1].toString(globalThis),
-                    args[2].toString(globalThis),
-                }),
+                1 => globalThis.ERR_MISSING_ARGS_1(args[0]),
+                2 => globalThis.ERR_MISSING_ARGS_2(args[0], args[1]),
+                3 => globalThis.ERR_MISSING_ARGS_3(args[0], args[1], args[2]),
                 else => unreachable,
             };
         }

@@ -396,10 +396,6 @@ pub export fn Bun__Process__send(
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
-    }
     const arguments = callFrame.arguments(4).slice();
     const message = arguments[0];
     const handle = arguments[1];
@@ -407,6 +403,19 @@ pub export fn Bun__Process__send(
     const callback = arguments[3];
 
     _ = handle;
+
+    if (message.isUndefined()) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(
+            ZigString.static("message").toJS(globalObject),
+        ));
+    }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
+            ZigString.static("message").toJS(globalObject),
+            ZigString.static("string, object, number, or boolean").toJS(globalObject),
+            message,
+        ));
+    }
 
     const vm = globalObject.bunVM();
     const ipc_instance = vm.getIPCInstance().?;

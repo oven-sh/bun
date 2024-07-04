@@ -3235,6 +3235,27 @@ pub const JSGlobalObject = extern struct {
         return this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ arg0, arg1, arg2 });
     }
 
+    pub fn ERR_MISSING_ARGS_1(this: *JSGlobalObject, arg1: JSValue) JSValue {
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{
+            arg1.toString(this),
+        });
+    }
+
+    pub fn ERR_MISSING_ARGS_2(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue) JSValue {
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" and \"{}\" arguments must be specified", .{
+            arg1.toString(this),
+            arg2.toString(this),
+        });
+    }
+
+    pub fn ERR_MISSING_ARGS_3(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\", \"{}\", and \"{}\" arguments must be specified", .{
+            arg1.toString(this),
+            arg2.toString(this),
+            arg3.toString(this),
+        });
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",

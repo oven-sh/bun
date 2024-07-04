@@ -1793,7 +1793,6 @@ function genericNodeError(message, options) {
 
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
-  const native_process_send = process.send;
 
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {
@@ -1819,32 +1818,6 @@ function _forkChild(fd, serializationMode) {
       process.nextTick(() => this.emit("error", ex));
     }
     return false;
-  };
-
-  process._send = function (message, handle, options, callback) {
-    $assert(this.connected);
-
-    if (message === undefined) throw ERR_MISSING_ARGS("message");
-
-    // Non-serializable messages should not reach the remote
-    // end point; as any failure in the stringification there
-    // will result in error message that is weakly consumable.
-    // So perform a final check on message prior to sending.
-    if (
-      typeof message !== "string" &&
-      typeof message !== "object" &&
-      typeof message !== "number" &&
-      typeof message !== "boolean"
-    ) {
-      throw ERR_INVALID_ARG_TYPE("message", "string, object, number, or boolean", message);
-    }
-
-    // Support legacy function signature
-    if (typeof options === "boolean") {
-      options = { swallowErrors: options };
-    }
-
-    return native_process_send(message, handle, options, callback);
   };
 }
 

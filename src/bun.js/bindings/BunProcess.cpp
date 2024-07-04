@@ -1912,11 +1912,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     auto global = jsCast<GlobalObject*>(globalObject);
 
     if (!Bun__GlobalObject__hasIPC(globalObject)) {
-        auto message = toZigString("IPC channel is already disconnected"_s);
-        auto error = JSC::JSValue::decode(ZigString__toErrorInstance(&message, globalObject)).getObject();
-        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String("ERR_IPC_DISCONNECTED"_s)), 0);
-
-        Process__emitErrorEvent(global, JSC::JSValue::encode(error));
+        Process__emitErrorEvent(global, JSC::JSValue::encode(global->ERR_IPC_DISCONNECTED()));
         return JSC::JSValue::encode(jsUndefined());
     }
 

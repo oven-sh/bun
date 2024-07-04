@@ -3916,6 +3916,20 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     return result;
 }
 
+JSC::JSValue GlobalObject::createErrorWithCode(ASCIILiteral code, ASCIILiteral message)
+{
+    auto& vm = this->vm();
+    auto string = toZigString(message);
+    auto error = JSC::JSValue::decode(ZigString__toErrorInstance(&string, this)).getObject();
+    error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
+    return error;
+}
+
+JSC::JSValue GlobalObject::ERR_IPC_DISCONNECTED()
+{
+    return this->createErrorWithCode("ERR_IPC_DISCONNECTED"_s, "IPC channel is already disconnected"_s);
+}
+
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
 

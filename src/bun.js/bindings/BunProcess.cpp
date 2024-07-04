@@ -116,9 +116,9 @@ extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
-BUN_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
 extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
 
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
@@ -1906,14 +1906,21 @@ JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject,
     return {};
 }
 
-JSC_DEFINE_HOST_FUNCTION(Bun__Process___disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    if (!Bun__GlobalObject__hasIPC(globalObject))
-        return JSC::JSValue::encode(jsUndefined());
-
     auto& vm = globalObject->vm();
-    auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
     auto global = jsCast<GlobalObject*>(globalObject);
+
+    if (!Bun__GlobalObject__hasIPC(globalObject)) {
+        auto message = toZigString("IPC channel is already disconnected"_s);
+        auto error = JSC::JSValue::decode(ZigString__toErrorInstance(&message, globalObject)).getObject();
+        error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String("ERR_IPC_DISCONNECTED"_s)), 0);
+
+        Process__emitErrorEvent(global, JSC::JSValue::encode(error));
+        return JSC::JSValue::encode(jsUndefined());
+    }
+
+    auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
     auto process = jsCast<Process*>(global->processObject());
 
     process->queueNextTick(vm, globalObject, finishFn);
@@ -1925,16 +1932,6 @@ static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
     auto* globalObject = processObject->globalObject();
     if (Bun__GlobalObject__hasIPC(globalObject)) {
         return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process__disconnect, ImplementationVisibility::Public);
-    } else {
-        return jsUndefined();
-    }
-}
-
-static JSValue constructProcessUDisconnect(VM& vm, JSObject* processObject)
-{
-    auto* globalObject = processObject->globalObject();
-    if (Bun__GlobalObject__hasIPC(globalObject)) {
-        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process___disconnect, ImplementationVisibility::Public);
     } else {
         return jsUndefined();
     }
@@ -2888,6 +2885,17 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
     }
 }
 
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(vm.propertyNames->error, args);
+    }
+}
+
 /* Source for Process.lut.h
 @begin processObjectTable
   abort                            Process_functionAbort                               Function 1
@@ -2906,7 +2914,6 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   cwd                              Process_functionCwd                                 Function 1
   debugPort                        processDebugPort                                    CustomAccessor
   disconnect                       constructProcessDisconnect                          PropertyCallback
-  _disconnect                      constructProcessUDisconnect                         PropertyCallback
   dlopen                           Process_functionDlopen                              Function 1
   emitWarning                      Process_emitWarning                                 Function 1
   env                              constructEnv                                        PropertyCallback

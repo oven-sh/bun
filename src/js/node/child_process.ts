@@ -1864,23 +1864,6 @@ function _forkChild(fd, serializationMode) {
 
     return true;
   };
-
-  process.disconnect = function () {
-    if (!this.connected) {
-      this.emit("error", ERR_IPC_DISCONNECTED());
-      return;
-    }
-
-    // // Do not allow any new messages to be written.
-    // this.connected = false;
-    // connected is a getter
-
-    // If there are no queued messages, disconnect immediately. Otherwise,
-    // postpone the disconnect so that it happens internally after the
-    // queue is flushed.
-    // if (!this._handleQueue) this._disconnect();
-    this._disconnect();
-  };
 }
 
 // const messages = new Map();

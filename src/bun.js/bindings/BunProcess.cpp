@@ -118,6 +118,8 @@ extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
+extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global);
+
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
 #if CPU(X86_64)
@@ -1892,6 +1894,52 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
     }
 }
 
+JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    assert(Bun__GlobalObject__hasIPC(globalObject));
+
+    close(3); // hardcoded ipc fd
+
+    auto global = jsCast<GlobalObject*>(globalObject);
+    Process__emitDisconnectEvent(global);
+
+    return {};
+}
+
+JSC_DEFINE_HOST_FUNCTION(Bun__Process___disconnect, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    if (!Bun__GlobalObject__hasIPC(globalObject))
+        return JSC::JSValue::encode(jsUndefined());
+
+    auto& vm = globalObject->vm();
+    auto finishFn = JSC::JSFunction::create(vm, globalObject, 0, String("finish"_s), processDisonnectFinish, ImplementationVisibility::Public);
+    auto global = jsCast<GlobalObject*>(globalObject);
+    auto process = jsCast<Process*>(global->processObject());
+
+    process->queueNextTick(vm, globalObject, finishFn);
+    return JSC::JSValue::encode(jsUndefined());
+}
+
+static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process__disconnect, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
+}
+
+static JSValue constructProcessUDisconnect(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        return JSC::JSFunction::create(vm, globalObject, 1, String("disconnect"_s), Bun__Process___disconnect, ImplementationVisibility::Public);
+    } else {
+        return jsUndefined();
+    }
+}
+
 #if OS(WINDOWS)
 #define getpid _getpid
 #endif
@@ -2857,6 +2905,8 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   cpuUsage                         Process_functionCpuUsage                            Function 1
   cwd                              Process_functionCwd                                 Function 1
   debugPort                        processDebugPort                                    CustomAccessor
+  disconnect                       constructProcessDisconnect                          PropertyCallback
+  _disconnect                      constructProcessUDisconnect                         PropertyCallback
   dlopen                           Process_functionDlopen                              Function 1
   emitWarning                      Process_emitWarning                                 Function 1
   env                              constructEnv                                        PropertyCallback

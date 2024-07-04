@@ -1881,21 +1881,6 @@ function _forkChild(fd, serializationMode) {
     // if (!this._handleQueue) this._disconnect();
     this._disconnect();
   };
-
-  process._disconnect = function () {
-    // $assert(!this.connected);
-
-    let fired = false;
-    function finish() {
-      if (fired) return;
-      fired = true;
-
-      FsModule.closeSync(fd);
-      process.emit("disconnect");
-    }
-
-    process.nextTick(finish);
-  };
 }
 
 // const messages = new Map();

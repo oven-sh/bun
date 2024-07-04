@@ -408,6 +408,16 @@ pub export fn Bun__Process__send(
     }
 }
 
+pub export fn Bun__Process__disconnect(
+    globalObject: *JSGlobalObject,
+    callFrame: *JSC.CallFrame,
+) callconv(JSC.conv) JSValue {
+    JSC.markBinding(@src());
+    _ = callFrame;
+    _ = globalObject;
+    return .undefined;
+}
+
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
     return str.eqlUTF8(globalObject.bunVM().main);
 }

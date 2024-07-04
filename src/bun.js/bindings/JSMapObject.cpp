@@ -13,17 +13,19 @@
 
 #include "ZigGlobalObject.h"
 
-extern "C" JSC::EncodedJSValue Bun__createMapFromDoubleUint64TupleArray(Zig::GlobalObject* globalObject, const double* doubles, size_t length)
+struct DoubleToIntMapKV {
+    double key;
+    uint64_t value;
+};
+
+extern "C" JSC::EncodedJSValue Bun__createMapFromDoubleUint64KVArray(Zig::GlobalObject* globalObject, const DoubleToIntMapKV* kvs, size_t length)
 {
     JSC::JSMap* map
         = JSC::JSMap::create(globalObject->vm(), globalObject->mapStructure());
 
-    for (size_t i = 0; i < length; i += 2) {
-        // we passed doubles in from Zig, with this doubles.appendSlice(&.{ percentile, @bitCast(val) });
-        // where percentile is a f64 and val is a u64
-        uint64_t value_as_u64;
-        std::memcpy(&value_as_u64, &doubles[i + 1], sizeof(double)); // cast double to u64
-        map->set(globalObject, JSC::jsDoubleNumber(doubles[i]), JSC::jsNumber(value_as_u64));
+    for (size_t i = 0; i < length; i++) {
+        map->set(globalObject, JSC::jsDoubleNumber(kvs[i].key), JSC::jsNumber(kvs[i].value));
     }
+
     return JSC::JSValue::encode(map);
 }

@@ -8,7 +8,7 @@ const JSValue = JSC.JSValue;
 // Wrapper around HRD Histogram
 pub const RecordableHistogram = struct {
     pub usingnamespace JSC.Codegen.JSRecordableHistogram;
-    hdrHist: HDRHistogram = undefined,
+    hdrHist: HDRHistogram,
 
     // RecordableHistogram specific internals
     delta_start: ?bun.timespec = null,
@@ -16,113 +16,84 @@ pub const RecordableHistogram = struct {
     const This = @This();
     const PropertyGetter = fn (this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue;
 
-    pub const min_fn = struct {
-        pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-            return globalThis.toJS(this.hdrHist.min, .temporary);
+    pub fn min(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return globalThis.toJS(this.hdrHist.min, .temporary);
+    }
+    pub const minBigInt = getterAsFn(min);
+
+    pub fn max(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return globalThis.toJS(this.hdrHist.max, .temporary);
+    }
+    pub const maxBigInt = getterAsFn(max);
+
+    pub fn count(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        return globalThis.toJS(this.hdrHist.total_count, .temporary);
+    }
+    pub const countBigInt = getterAsFn(count);
+
+    pub fn mean(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        if (this.hdrHist.mean()) |m| {
+            return globalThis.toJS(m, .temporary);
         }
-    };
-    pub const min = @as(PropertyGetter, min_fn.callback);
-    pub const minBigInt = getterAsFn(min_fn.callback);
+        return globalThis.toJS(std.math.nan(f64), .temporary);
+    }
 
-    const max_fn = struct {
-        pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-            return globalThis.toJS(this.hdrHist.max, .temporary);
+    pub fn stddev(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        if (this.hdrHist.stddev()) |sd| {
+            return globalThis.toJS(sd, .temporary);
         }
-    };
-    pub const max = @as(PropertyGetter, max_fn.callback);
-    pub const maxBigInt = getterAsFn(max_fn.callback);
+        return globalThis.toJS(std.math.nan(f64), .temporary);
+    }
 
-    const count_fn = struct {
-        pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-            return globalThis.toJS(this.hdrHist.total_count, .temporary);
+    pub fn percentile(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        const args = callframe.arguments(1).slice();
+        if (args.len != 1) {
+            globalThis.throwInvalidArguments("Expected 1 argument", .{});
+            return .zero;
         }
-    };
-    pub const count = @as(PropertyGetter, count_fn.callback);
-    pub const countBigInt = getterAsFn(count_fn.callback);
-
-    pub const mean = @as(
-        PropertyGetter,
-        struct {
-            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-                if (this.hdrHist.mean()) |m| {
-                    return globalThis.toJS(m, .temporary);
-                }
-                return globalThis.toJS(std.math.nan(f64), .temporary);
-            }
-        }.callback,
-    );
-
-    pub const stddev = @as(
-        PropertyGetter,
-        struct {
-            pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject) callconv(.C) JSValue {
-                if (this.hdrHist.stddev()) |sd| {
-                    return globalThis.toJS(sd, .temporary);
-                }
-                return globalThis.toJS(std.math.nan(f64), .temporary);
-            }
-        }.callback,
-    );
-
-    pub const percentile = struct {
-        pub fn callback(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-            const args = callframe.arguments(1).slice();
-            if (args.len != 1) {
-                globalThis.throwInvalidArguments("Expected 1 argument", .{});
-                return .zero;
-            }
-            const percent = args[0].getNumber() orelse {
-                globalThis.throwInvalidArguments("Expected a number", .{});
-                return .zero;
-            };
-            const value = this.hdrHist.value_at_percentile(percent) orelse return .undefined;
-            return globalThis.toJS(value, .temporary);
-        }
-    }.callback;
+        const percent = args[0].getNumber() orelse {
+            globalThis.throwInvalidArguments("Expected a number", .{});
+            return .zero;
+        };
+        const value = this.hdrHist.value_at_percentile(percent) orelse return .undefined;
+        return globalThis.toJS(value, .temporary);
+    }
     pub const percentileBigInt = percentile;
 
-    extern fn Bun__createMapFromDoubleUint64TupleArray(
-        globalObject: *JSC.JSGlobalObject,
-        doubles: [*]const f64,
-        length: usize,
-    ) JSC.JSValue;
+    pub fn percentiles(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
 
-    const percentiles_fn = struct {
-        pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+        // 2 arrays with percent and value
+        // make a cpp version of this file, extern C function. accepts array, length, creates search JSMap:: (search)
 
-            // 2 arrays with percent and value
-            // make a cpp version of this file, extern C function. accepts array, length, creates search JSMap:: (search)
+        // first get 100th percentile, and loop 0, 50, 75, 82.5, ... until we find the highest percentile
+        const maxPercentileValue = this.hdrHist.value_at_percentile(100) orelse return .undefined;
+        var percent: f64 = 0;
+        var stack_allocator = std.heap.stackFallback(4096, bun.default_allocator);
+        var kvs = std.ArrayList(JSValue.DoubleToIntMapKV).init(stack_allocator.get());
+        defer kvs.deinit();
 
-            // first get 100th percentile, and loop 0, 50, 75, 82.5, ... until we find the highest percentile
-            const maxPercentileValue = this.hdrHist.value_at_percentile(100) orelse return .undefined;
-            var percent: f64 = 0;
-            var stack_allocator = std.heap.stackFallback(4096, bun.default_allocator);
-            var doubles = std.ArrayList(f64).init(stack_allocator.get());
-            defer doubles.deinit();
-
-            while (true) {
-                if (this.hdrHist.value_at_percentile(percent)) |val| {
-                    doubles.appendSlice(&.{ percent, @bitCast(val) }) catch |err| {
-                        globalObject.throwError(err, "failed to append to array");
-                        return .undefined;
-                    };
-                    if (val >= maxPercentileValue) {
-                        break;
-                    }
+        while (true) {
+            if (this.hdrHist.value_at_percentile(percent)) |val| {
+                const kv = JSValue.DoubleToIntMapKV{ .key = percent, .value = val };
+                kvs.append(kv) catch |err| {
+                    globalObject.throwError(err, "failed to append to array");
+                    return .undefined;
+                };
+                if (val >= maxPercentileValue) {
+                    break;
                 }
-                percent += ((100 - percent) / 2);
             }
-
-            doubles.appendSlice(&.{ 100, @bitCast(maxPercentileValue) }) catch |err| {
-                globalObject.throwError(err, "failed to append max value to array");
-                return .undefined;
-            };
-
-            return Bun__createMapFromDoubleUint64TupleArray(globalObject, @as([*]const f64, @ptrCast(doubles.items)), doubles.items.len);
+            percent += ((100 - percent) / 2);
         }
-    };
-    pub const percentiles = @as(PropertyGetter, percentiles_fn.callback);
-    pub const percentilesBigInt = getterAsFn(percentiles_fn.callback);
+
+        kvs.append(JSValue.DoubleToIntMapKV{ .key = 100, .value = maxPercentileValue }) catch |err| {
+            globalObject.throwError(err, "failed to append max value to array");
+            return .undefined;
+        };
+
+        return globalObject.toJS(JSValue.createMapFromDoubleUint64KVArray(globalObject, kvs.items), .temporary);
+    }
+    pub const percentilesBigInt = getterAsFn(percentiles);
 
     //
     // additional functions
@@ -130,7 +101,7 @@ pub const RecordableHistogram = struct {
     // record duration in nanoseconds
     pub fn record(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(1).slice();
-        if (args.len != 1) {
+        if (args.len < 1) {
             globalThis.throwInvalidArguments("Expected 1 argument", .{});
             return .zero;
         }
@@ -208,11 +179,11 @@ pub const RecordableHistogram = struct {
 };
 
 fn createHistogram(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
-    var histogram = bun.new(RecordableHistogram, .{});
-    histogram.hdrHist = HDRHistogram.init(bun.default_allocator, .{}) catch |err| {
+    const hdrHist = HDRHistogram.init(bun.default_allocator, .{}) catch |err| {
         globalThis.throwError(err, "failed to initialize histogram");
         return .zero;
     };
+    var histogram = bun.new(RecordableHistogram, .{ .hdrHist = hdrHist });
     return histogram.toJS(globalThis);
 }
 

@@ -5119,6 +5119,17 @@ pub const JSValue = enum(JSValueReprInt) {
         return null;
     }
 
+    pub const DoubleToIntMapKV = extern struct {
+        key: f64,
+        value: u64,
+    };
+
+    extern fn Bun__createMapFromDoubleUint64KVArray(globalObject: *JSC.JSGlobalObject, array: [*]DoubleToIntMapKV, length: usize) JSValue;
+
+    pub fn createMapFromDoubleUint64KVArray(global: *JSC.JSGlobalObject, kvs: []DoubleToIntMapKV) JSValue {
+        return Bun__createMapFromDoubleUint64KVArray(global, kvs.ptr, kvs.len);
+    }
+
     /// Alias for getIfPropertyExists
     pub const getIfPropertyExists = get;
 

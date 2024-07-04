@@ -33,7 +33,7 @@ const X86CPUFeatures = packed struct(u8) {
 
     padding: u3 = 0,
 
-    usingnamespace Impl;
+    pub usingnamespace Impl;
 };
 const AArch64CPUFeatures = packed struct(u8) {
     neon: bool = false,
@@ -45,7 +45,7 @@ const AArch64CPUFeatures = packed struct(u8) {
 
     padding: u2 = 0,
 
-    usingnamespace Impl;
+    pub usingnamespace Impl;
 };
 
 pub const CPUFeatures = if (bun.Environment.isX64)

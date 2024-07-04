@@ -1793,32 +1793,6 @@ function genericNodeError(message, options) {
 
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
-
-  process.send = function (message, handle, options, callback) {
-    if (typeof handle === "function") {
-      callback = handle;
-      handle = undefined;
-      options = undefined;
-    } else if (typeof options === "function") {
-      callback = options;
-      options = undefined;
-    } else if (options !== undefined) {
-      validateObject(options, "options");
-    }
-
-    options = { swallowErrors: false, ...options };
-
-    if (this.connected) {
-      return this._send(message, handle, options, callback);
-    }
-    const ex = ERR_IPC_CHANNEL_CLOSED();
-    if (typeof callback === "function") {
-      process.nextTick(callback, ex);
-    } else {
-      process.nextTick(() => this.emit("error", ex));
-    }
-    return false;
-  };
 }
 
 // const messages = new Map();

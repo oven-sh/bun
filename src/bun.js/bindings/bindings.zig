@@ -3256,6 +3256,10 @@ pub const JSGlobalObject = extern struct {
         });
     }
 
+    pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
+        return this.createErrorInstanceWithCode(.ERR_IPC_CHANNEL_CLOSED, "Channel closed", .{});
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",
@@ -3274,6 +3278,31 @@ pub const JSGlobalObject = extern struct {
         // "createError",
         // "throwError",
     };
+
+    // returns false if it throws
+    pub fn validateObject(
+        this: *JSGlobalObject,
+        comptime arg_name: []const u8,
+        value: JSValue,
+        opts: struct {
+            allowArray: bool = false,
+            allowFunction: bool = false,
+            nullable: bool = false,
+        },
+    ) bool {
+        if ((!opts.nullable and value.isNull()) or
+            (!opts.allowArray and value.isArray()) or
+            (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
+        {
+            this.throwValue(this.ERR_INVALID_ARG_TYPE(
+                ZigString.static(arg_name).toJS(this),
+                ZigString.static("object").toJS(this),
+                value,
+            ));
+            return false;
+        }
+        return true;
+    }
 };
 
 pub const JSNativeFn = JSHostFunctionPtr;
@@ -6067,13 +6096,10 @@ pub const CallFrame = opaque {
             ptr: [max]JSC.JSValue = .{.undefined} ** max,
             len: usize = 0,
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
-                args[0..comptime i].* = ptr[0..i].*;
-
-                return @This(){
-                    .ptr = args,
-                    .len = i,
-                };
+                var args: @This() = .{};
+                args.ptr[0..comptime i].* = ptr[0..i].*;
+                args.len = i;
+                return args;
             }
 
             pub inline fn slice(self: *const @This()) []const JSValue {

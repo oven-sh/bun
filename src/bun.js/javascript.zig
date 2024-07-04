@@ -396,13 +396,49 @@ pub export fn Bun__Process__send(
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    const arguments = callFrame.arguments(4).slice();
-    const message = arguments[0];
-    const handle = arguments[1];
-    const options_ = arguments[2];
-    const callback = arguments[3];
+    const arguments = callFrame.arguments(4).ptr;
+    var message = arguments[0];
+    var handle = arguments[1];
+    var options_ = arguments[2];
+    var callback = arguments[3];
 
-    _ = handle;
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        if (!globalObject.validateObject("options", options_, .{})) return .zero;
+    }
+
+    const S = struct {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            const arguments_ = callframe.arguments(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+        var value: ?JSC.JSValue = null;
+    };
+
+    const process_queueNextTick1 = Bun__Process__queueNextTick1;
+
+    const vm = globalObject.bunVM();
+    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED();
+        if (callback.isFunction()) {
+            process_queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            if (S.value == null) {
+                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            }
+            process_queueNextTick1(zigGlobal, S.value.?, ex);
+        }
+        return .false;
+    };
 
     if (message.isUndefined()) {
         return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(
@@ -417,40 +453,22 @@ pub export fn Bun__Process__send(
         ));
     }
 
-    const vm = globalObject.bunVM();
-    const ipc_instance = vm.getIPCInstance().?;
     const good = ipc_instance.data.serializeAndSend(globalObject, message);
-    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
-    const process_queueNextTick1 = Bun__Process__queueNextTick1;
-
-    const S = struct {
-        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-            const arguments_ = callframe.arguments(1).slice();
-            const ex = arguments_[0];
-            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
-            return .undefined;
-        }
-        var value: ?JSC.JSValue = null;
-    };
 
     if (good) {
         if (callback.isFunction()) {
             process_queueNextTick1(zigGlobal, callback, .zero);
         }
     } else {
-        if (options_.getTruthy(globalObject, "swallowErrors")) |prop| {
-            if (prop.isBoolean() and !prop.toBoolean()) {
-                const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
-                ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
-                if (callback.isFunction()) {
-                    process_queueNextTick1(zigGlobal, callback, ex);
-                } else {
-                    if (S.value == null) {
-                        S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
-                    }
-                    process_queueNextTick1(zigGlobal, S.value.?, ex);
-                }
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            process_queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            if (S.value == null) {
+                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
             }
+            process_queueNextTick1(zigGlobal, S.value.?, ex);
         }
     }
 

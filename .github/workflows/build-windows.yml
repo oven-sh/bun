@@ -36,6 +36,7 @@ env:
   BUN_GARBAGE_COLLECTOR_LEVEL: 1
   BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1
   CI: true
+  USE_LTO: 1
 
 jobs:
   build-submodules:
@@ -87,6 +88,7 @@ jobs:
         env:
           CPU_TARGET: ${{ inputs.cpu }}
           CCACHE_DIR: ccache
+          USE_LTO: 1
         run: |
           .\scripts\env.ps1 ${{ contains(inputs.tag, '-baseline') && '-Baseline' || '' }}
           choco install -y nasm --version=2.16.01
@@ -172,6 +174,7 @@ jobs:
         env:
           CPU_TARGET: ${{ inputs.cpu }}
           CCACHE_DIR: ccache
+          USE_LTO: 1
         run: |
           # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
           $CANARY_REVISION = 0
@@ -181,6 +184,7 @@ jobs:
           cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DNO_CODEGEN=1 `
+            -DUSE_LTO=1 `
             -DNO_CONFIGURE_DEPENDS=1 `
             "-DCANARY=${CANARY_REVISION}" `
             -DBUN_CPP_ONLY=1 ${{ contains(inputs.tag, '-baseline') && '-DUSE_BASELINE_BUILD=1' || '' }}
@@ -276,6 +280,7 @@ jobs:
             -DNO_CONFIGURE_DEPENDS=1 `
             "-DCANARY=${CANARY_REVISION}" `
             -DBUN_LINK_ONLY=1 `
+            -DUSE_LTO=1 `
             "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../bun-deps)" `
             "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../bun-cpp/bun-cpp-objects.a)" `
             "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../bun-zig)" `

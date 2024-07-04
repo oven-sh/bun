@@ -191,7 +191,7 @@ pub fn createPerfHooksHistogramBinding(global: *JSC.JSGlobalObject) callconv(.C)
     return JSC.JSFunction.create(
         global,
         "createHistogram",
-        &createHistogram,
+        createHistogram,
         3, // function length
         .{},
     );

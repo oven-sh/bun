@@ -1,41 +1,47 @@
 const bun = @import("root").bun;
 const std = @import("std");
 
-const Impl = struct {
-    pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-        var is_first = true;
-        inline for (std.meta.fieldNames(@This())) |fieldName| {
-            const value = @field(self, fieldName);
-            if (value) {
-                if (!is_first)
-                    try writer.write(" ");
-                is_first = false;
-                try writer.writeAll(fieldName);
+fn Impl(comptime T: type) type {
+    return struct {
+        pub fn format(self: T, comptime _: []const u8, _: anytype, writer: anytype) !void {
+            var is_first = true;
+            inline for (std.meta.fieldNames(T)) |fieldName| {
+                const value = @field(self, fieldName);
+                if (value) {
+                    if (!is_first)
+                        try writer.write(" ");
+                    is_first = false;
+                    try writer.writeAll(fieldName);
+                }
             }
         }
-    }
 
-    pub fn isEmpty(self: @This()) bool {
-        return @as(u8, @bitCast(self)) == 0;
-    }
+        pub fn isEmpty(self: T) bool {
+            return @as(u8, @bitCast(self)) == 0;
+        }
 
-    pub fn get() @This() {
-        return @bitCast(bun_cpu_features());
-    }
-};
+        pub fn get() T {
+            return @bitCast(bun_cpu_features());
+        }
+    };
+}
 
 const X86CPUFeatures = packed struct(u8) {
+    none: bool = false,
+
     sse42: bool = false,
     popcnt: bool = false,
     avx: bool = false,
     avx2: bool = false,
     avx512: bool = false,
 
-    padding: u3 = 0,
+    padding: u2 = 0,
 
-    pub usingnamespace Impl;
+    pub usingnamespace Impl(@This());
 };
 const AArch64CPUFeatures = packed struct(u8) {
+    none: bool = false,
+
     neon: bool = false,
     fp: bool = false,
     aes: bool = false,
@@ -43,9 +49,9 @@ const AArch64CPUFeatures = packed struct(u8) {
     atomics: bool = false,
     sve: bool = false,
 
-    padding: u2 = 0,
+    padding: u1 = 0,
 
-    pub usingnamespace Impl;
+    pub usingnamespace Impl(@This());
 };
 
 pub const CPUFeatures = if (bun.Environment.isX64)

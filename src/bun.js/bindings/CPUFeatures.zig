@@ -67,13 +67,10 @@ else
             return .{};
         }
 
-        pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
-            _ = self; // autofix
-            _ = writer; // autofix
+        pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {
         }
 
-        pub fn isEmpty(self: @This()) bool {
-            _ = self; // autofix
+        pub fn isEmpty(_: @This()) bool {
             return true;
         }
     };

@@ -44,6 +44,7 @@ public:
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
     void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
     void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

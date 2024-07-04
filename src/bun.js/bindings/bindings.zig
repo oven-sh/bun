@@ -1133,6 +1133,7 @@ pub const DOMFormData = opaque {
         "createFromURLQuery",
     };
 };
+
 pub const FetchHeaders = opaque {
     pub const shim = Shimmer("WebCore", "FetchHeaders", @This());
 
@@ -3227,6 +3228,13 @@ pub const JSGlobalObject = extern struct {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
+    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
+        const arg0 = arg_name.toString(this).getZigString(this).slice();
+        const arg1 = etype.toString(this).getZigString(this).slice();
+        const arg2 = atype.jsTypeString(this).getZigString(this).slice();
+        return this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ arg0, arg1, arg2 });
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",
@@ -4593,6 +4601,9 @@ pub const JSValue = enum(JSValueReprInt) {
     }
     pub inline fn isArray(this: JSValue) bool {
         return this.isCell() and this.jsType().isArray();
+    }
+    pub inline fn isFunction(this: JSValue) bool {
+        return this.isCell() and this.jsType().isFunction();
     }
     pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
         const type_of_value = this.jsType();

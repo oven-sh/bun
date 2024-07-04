@@ -2611,9 +2611,31 @@ void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSVa
 {
     ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
     MarkedArgumentBuffer args;
-    args.append(value);
+    if (value != 0)
+        args.append(value);
     this->queueNextTick(vm, globalObject, args);
 }
+
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
+{
+    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer args;
+    if (value != 0) {
+        args.append(value);
+        if (arg1 != 0) {
+            args.append(arg1);
+        }
+    }
+    this->queueNextTick(vm, globalObject, args);
+}
+
+extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue value, EncodedJSValue arg1)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    auto& vm = globalObject->vm();
+    process->queueNextTick(vm, globalObject, JSValue::decode(value), JSValue::decode(arg1));
+}
+JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
 
 JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
 {

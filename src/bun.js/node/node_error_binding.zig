@@ -33,14 +33,11 @@ pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.
     const S = struct {
         fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
             const arguments = callframe.arguments(3);
-            if (arguments.len < 2) {
+            if (arguments.len < 3) {
                 globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 2, arguments.len);
                 return .zero;
             }
-            const arg0 = arguments.ptr[0].toString(globalThis).getZigString(globalThis).slice();
-            const arg1 = arguments.ptr[1].toString(globalThis).getZigString(globalThis).slice();
-            const arg2 = arguments.ptr[2].jsTypeString(globalThis).getZigString(globalThis).slice();
-            return createTypeError(globalThis, .ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ arg0, arg1, arg2 });
+            return globalThis.ERR_INVALID_ARG_TYPE(arguments.ptr[0], arguments.ptr[1], arguments.ptr[2]);
         }
     };
     return JSC.JSFunction.create(global, "ERR_INVALID_ARG_TYPE", S.cb, 3, .{});

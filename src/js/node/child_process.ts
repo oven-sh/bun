@@ -1793,7 +1793,7 @@ function genericNodeError(message, options) {
 
 function _forkChild(fd, serializationMode) {
   if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
-  const directIpcSend = process.send;
+  const native_process_send = process.send;
 
   process.send = function (message, handle, options, callback) {
     if (typeof handle === "function") {
@@ -1844,25 +1844,7 @@ function _forkChild(fd, serializationMode) {
       options = { swallowErrors: options };
     }
 
-    const good = directIpcSend(message);
-
-    if (good) {
-      if (typeof callback === "function") {
-        process.nextTick(callback, null);
-      }
-    } else {
-      if (!options.swallowErrors) {
-        const ex = new Error("process.send() failed");
-        ex.syscall = "write";
-        if (typeof callback === "function") {
-          process.nextTick(callback, ex);
-        } else {
-          process.nextTick(() => this.emit("error", ex));
-        }
-      }
-    }
-
-    return true;
+    return native_process_send(message, handle, options, callback);
   };
 }
 

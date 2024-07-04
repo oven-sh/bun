@@ -3,13 +3,13 @@ const std = @import("std");
 
 fn Impl(comptime T: type) type {
     return struct {
-        pub fn format(self: T, comptime _: []const u8, _: anytype, writer: anytype) !void {
+        pub fn format(this: T, comptime _: []const u8, _: anytype, writer: anytype) !void {
             var is_first = true;
             inline for (comptime std.meta.fieldNames(T)) |fieldName| {
                 if (comptime bun.strings.eqlComptime(fieldName, "padding") or bun.strings.eqlComptime(fieldName, "none"))
                     continue;
 
-                const value = @field(self, fieldName);
+                const value = @field(this, fieldName);
                 if (value) {
                     if (!is_first)
                         try writer.writeAll(" ");
@@ -19,12 +19,17 @@ fn Impl(comptime T: type) type {
             }
         }
 
-        pub fn isEmpty(self: T) bool {
-            return @as(u8, @bitCast(self)) == 0;
+        pub fn isEmpty(this: T) bool {
+            return @as(u8, @bitCast(this)) == 0;
         }
 
         pub fn get() T {
-            return @bitCast(bun_cpu_features());
+            const this: T = @bitCast(bun_cpu_features());
+
+            // sanity check
+            assert(this.none == false and this.padding == 0);
+
+            return this;
         }
     };
 }
@@ -75,3 +80,5 @@ else
     };
 
 extern "C" fn bun_cpu_features() u8;
+
+const assert = bun.assert;

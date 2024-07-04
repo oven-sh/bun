@@ -1,7 +1,7 @@
 const bun = @import("root").bun;
 const std = @import("std");
 
-const Formatter = struct {
+const Impl = struct {
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         var is_first = true;
         inline for (std.meta.fieldNames(@This())) |fieldName| {
@@ -14,6 +14,14 @@ const Formatter = struct {
             }
         }
     }
+
+    pub fn isEmpty(self: @This()) bool {
+        return @as(u8, @bitCast(self)) == 0;
+    }
+
+    pub fn get() @This() {
+        return @bitCast(bun_cpu_features());
+    }
 };
 
 const X86CPUFeatures = packed struct(u8) {
@@ -25,15 +33,7 @@ const X86CPUFeatures = packed struct(u8) {
 
     padding: u3 = 0,
 
-    pub fn isEmpty(self: AArch64CPUFeatures) bool {
-        return @as(u8, @bitCast(self)) == 0;
-    }
-
-    pub fn get() X86CPUFeatures {
-        return @bitCast(bun_cpu_features());
-    }
-
-    usingnamespace Formatter;
+    usingnamespace Impl;
 };
 const AArch64CPUFeatures = packed struct(u8) {
     neon: bool = false,
@@ -45,15 +45,7 @@ const AArch64CPUFeatures = packed struct(u8) {
 
     padding: u2 = 0,
 
-    pub fn isEmpty(self: AArch64CPUFeatures) bool {
-        return @as(u8, @bitCast(self)) == 0;
-    }
-
-    pub fn get() AArch64CPUFeatures {
-        return @bitCast(bun_cpu_features());
-    }
-
-    usingnamespace Formatter;
+    usingnamespace Impl;
 };
 
 pub const CPUFeatures = if (bun.Environment.isX64)

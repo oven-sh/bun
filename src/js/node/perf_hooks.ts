@@ -1,6 +1,8 @@
 // Hardcoded module "node:perf_hooks"
 const { throwNotImplemented } = require("internal/shared");
 
+const createHistogram = $zig("node_perf_hooks_histogram_binding.zig", "createPerfHooksHistogramBinding");
+
 var {
   Performance,
   PerformanceEntry,
@@ -161,9 +163,6 @@ export default {
   monitorEventLoopDelay() {
     throwNotImplemented("perf_hooks.monitorEventLoopDelay");
   },
-  createHistogram() {
-    const { createHistogram } = $zig("node_perf_hooks_histogram_binding.zig", "createPerfHooksHistogramBinding");
-    return createHistogram();
-  },
+  createHistogram,
   PerformanceResourceTiming,
 };

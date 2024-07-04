@@ -47,8 +47,8 @@ pub const RecordableHistogram = struct {
 
     pub fn percentile(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(1).slice();
-        if (args.len != 1) {
-            globalThis.throwInvalidArguments("Expected 1 argument", .{});
+        if (args.len < 1) {
+            globalThis.throwInvalidArguments("Expected query percent as argument", .{});
             return .zero;
         }
         const percent = args[0].getNumber() orelse {
@@ -75,8 +75,8 @@ pub const RecordableHistogram = struct {
         while (true) {
             if (this.hdrHist.value_at_percentile(percent)) |val| {
                 const kv = JSValue.DoubleToIntMapKV{ .key = percent, .value = val };
-                kvs.append(kv) catch |err| {
-                    globalObject.throwError(err, "failed to append to array");
+                kvs.append(kv) catch {
+                    globalObject.throwOutOfMemory();
                     return .undefined;
                 };
                 if (val >= maxPercentileValue) {
@@ -86,8 +86,8 @@ pub const RecordableHistogram = struct {
             percent += ((100 - percent) / 2);
         }
 
-        kvs.append(JSValue.DoubleToIntMapKV{ .key = 100, .value = maxPercentileValue }) catch |err| {
-            globalObject.throwError(err, "failed to append max value to array");
+        kvs.append(JSValue.DoubleToIntMapKV{ .key = 100, .value = maxPercentileValue }) catch {
+            globalObject.throwOutOfMemory();
             return .undefined;
         };
 
@@ -102,7 +102,7 @@ pub const RecordableHistogram = struct {
     pub fn record(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(1).slice();
         if (args.len < 1) {
-            globalThis.throwInvalidArguments("Expected 1 argument", .{});
+            globalThis.throwInvalidArguments("Expected the value to record as an argument", .{});
             return .zero;
         }
         const value = args[0].to(u64);
@@ -135,8 +135,8 @@ pub const RecordableHistogram = struct {
 
     pub fn add(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
         const args = callframe.arguments(1).slice();
-        if (args.len != 1) {
-            globalThis.throwInvalidArguments("Expected 1 argument", .{});
+        if (args.len < 1) {
+            globalThis.throwInvalidArguments("Expected other histogram to add as an argument", .{});
             return .zero;
         }
         const other = RecordableHistogram.fromJS(args[0]) orelse {
@@ -188,18 +188,11 @@ fn createHistogram(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(
 }
 
 pub fn createPerfHooksHistogramBinding(global: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
-    const histogram = JSC.JSValue.createEmptyObject(global, 1);
-    histogram.put(
+    return JSC.JSFunction.create(
         global,
-        bun.String.init("createHistogram"),
-        JSC.JSFunction.create(
-            global,
-            "createHistogram",
-            &createHistogram,
-            3, // function length
-            .{},
-        ),
+        "createHistogram",
+        &createHistogram,
+        3, // function length
+        .{},
     );
-
-    return histogram;
 }

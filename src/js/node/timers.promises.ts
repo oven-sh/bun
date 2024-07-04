@@ -123,10 +123,9 @@ function setImmediatePromise(value, options = {}) {
       signal.addEventListener("abort", onCancel);
     }
   });
-  if (typeof onCancel !== "undefined") {
-    returnValue.finally(() => signal.removeEventListener("abort", onCancel));
-  }
-  return returnValue;
+  return typeof onCancel !== "undefined"
+    ? returnValue.finally(() => signal.removeEventListener("abort", onCancel))
+    : returnValue;
 }
 
 function setIntervalPromise(after = 1, value, options = {}) {

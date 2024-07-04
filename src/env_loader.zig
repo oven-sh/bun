@@ -38,7 +38,7 @@ pub const Loader = struct {
     @".env": ?logger.Source = null,
 
     // only populated with files specified explicitely (e.g. --env-file arg)
-    custom_files_loaded: std.StringArrayHashMap(logger.Source),
+    custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
@@ -451,7 +451,7 @@ pub const Loader = struct {
         return Loader{
             .map = map,
             .allocator = allocator,
-            .custom_files_loaded = std.StringArrayHashMap(logger.Source).init(allocator),
+            .custom_files_loaded = bun.StringArrayHashMap(logger.Source).init(allocator),
         };
     }
 

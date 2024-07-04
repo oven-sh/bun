@@ -2124,20 +2124,6 @@ pub const Token = union(TokenTag) {
             .Eof => "EOF",
         };
     }
-
-    // pub fn debug(self: Token, buf: []const u8) void {
-    //     switch (self) {
-    //         .Var => |txt| {
-    //             std.debug.print("(var) {s}\n", .{buf[txt.start..txt.end]});
-    //         },
-    //         .Text => |txt| {
-    //             std.debug.print("(txt) {s}\n", .{buf[txt.start..txt.end]});
-    //         },
-    //         else => {
-    //             std.debug.print("{s}\n", .{@tagName(self)});
-    //         },
-    //     }
-    // }
 };
 
 pub const LexerAscii = NewLexer(.ascii);
@@ -3629,8 +3615,8 @@ pub fn hasEqSignAsciiSlow(str: []const u8) ?u32 {
 }
 
 pub const CmdEnvIter = struct {
-    env: *const std.StringArrayHashMap([:0]const u8),
-    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+    env: *const bun.StringArrayHashMap([:0]const u8),
+    iter: bun.StringArrayHashMap([:0]const u8).Iterator,
 
     const Entry = struct {
         key: Key,
@@ -3657,7 +3643,7 @@ pub const CmdEnvIter = struct {
         }
     };
 
-    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+    pub fn fromEnv(env: *const bun.StringArrayHashMap([:0]const u8)) CmdEnvIter {
         const iter = env.iterator();
         return .{
             .env = env,
@@ -4023,7 +4009,7 @@ const SPECIAL_CHARS_TABLE: std.bit_set.IntegerBitSet(256) = brk: {
     break :brk table;
 };
 pub fn assertSpecialChar(c: u8) void {
-    comptime bun.assert(@inComptime());
+    bun.assertComptime();
     bun.assert(SPECIAL_CHARS_TABLE.isSet(c));
 }
 /// Characters that need to be backslashed inside double quotes

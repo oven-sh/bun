@@ -74,7 +74,10 @@ describe("bun:jsc", () => {
     expect(setRandomSeed(2)).toBeUndefined();
   });
   it("isRope", () => {
-    expect(isRope("a" + 123 + "b")).toBe(true);
+    // https://twitter.com/bunjavascript/status/1806921203644571685
+    let y;
+    y = 123;
+    expect(isRope("a" + y + "b")).toBe(true);
     expect(isRope("abcdefgh")).toBe(false);
   });
   it("callerSourceOrigin", () => {

@@ -98,10 +98,6 @@ Object.setPrototypeOf(PerformanceResourceTiming, PerformanceEntry);
 
 export default {
   performance: {
-    // perf_hooks is a builtin global, so JSC is aware of it through C++ bindings
-    // see JSPerformance.cpp HashTableValue for more details
-    // perf_hooks has a performance module with these exported functions,
-    // most implemented in C++ but I decide to do timerify in JS
     mark(f) {
       return performance.mark(...arguments);
     },
@@ -109,9 +105,7 @@ export default {
       return performance.measure(...arguments);
     },
     timerify(f) {
-      // in this case, we want it to go back to JS function since we're passing a JS function
-      // go to JSPerformance.cpp HashTableValue to see how this is handled differently from the rest
-      return performance.timerify(...arguments); // this routes to JSPerformance.cpp
+      return performance.timerify(...arguments);
     },
     clearMarks(f) {
       return performance.clearMarks(...arguments);

@@ -2718,6 +2718,7 @@ pub const PackageManager = struct {
         pub const MapEntry = struct {
             root: Expr,
             source: logger.Source,
+            indentation: JSPrinter.Options.Indentation = .{},
         };
 
         pub const Map = bun.StringHashMapUnmanaged(MapEntry);
@@ -2725,6 +2726,7 @@ pub const PackageManager = struct {
         pub const GetJSONOptions = struct {
             init_reset_store: bool = true,
             always_decode_escape_sequences: bool = true,
+            guess_indentation: bool = false,
         };
 
         pub const GetResult = union(enum) {
@@ -2745,8 +2747,14 @@ pub const PackageManager = struct {
         /// Given an absolute path to a workspace package.json, return the AST
         /// and contents of the file. If the package.json is not present in the
         /// cache, it will be read from disk and parsed, and stored in the cache.
-        pub fn getWithPath(this: *@This(), allocator: std.mem.Allocator, log: *logger.Log, abs_package_json_path: anytype, comptime opts: GetJSONOptions) GetResult {
-            bun.assert(std.fs.path.isAbsolute(abs_package_json_path));
+        pub fn getWithPath(
+            this: *@This(),
+            allocator: std.mem.Allocator,
+            log: *logger.Log,
+            abs_package_json_path: anytype,
+            comptime opts: GetJSONOptions,
+        ) GetResult {
+            bun.assertWithLocation(std.fs.path.isAbsolute(abs_package_json_path), @src());
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
             const path = if (comptime !Environment.isWindows)
@@ -2769,16 +2777,25 @@ pub const PackageManager = struct {
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const _json = if (comptime opts.always_decode_escape_sequences)
-                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
-            else
-                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
+            const json_result = json_parser.ParsePackageJSONUTF8WithOpts(
+                &source,
+                log,
+                allocator,
+                .{
+                    .is_json = true,
+                    .allow_comments = true,
+                    .allow_trailing_commas = true,
+                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
+                    .guess_indentation = opts.guess_indentation,
+                },
+            );
 
-            const json = _json catch |err| return .{ .parse_err = err };
+            const json = json_result catch |err| return .{ .parse_err = err };
 
             entry.value_ptr.* = .{
-                .root = json.deepClone(allocator) catch bun.outOfMemory(),
+                .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
                 .source = source,
+                .indentation = json.indentation,
             };
 
             entry.key_ptr.* = key;
@@ -2794,7 +2811,7 @@ pub const PackageManager = struct {
             source: logger.Source,
             comptime opts: GetJSONOptions,
         ) GetResult {
-            bun.assert(std.fs.path.isAbsolute(source.path.text));
+            bun.assertWithLocation(std.fs.path.isAbsolute(source.path.text), @src());
 
             var buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
             const path = if (comptime !Environment.isWindows)
@@ -2813,15 +2830,25 @@ pub const PackageManager = struct {
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const _json = if (comptime opts.always_decode_escape_sequences)
-                json_parser.ParsePackageJSONUTF8AlwaysDecode(&source, log, allocator)
-            else
-                json_parser.ParsePackageJSONUTF8(&source, log, allocator);
-            const json = _json catch |err| return .{ .parse_err = err };
+            const json_result = json_parser.ParsePackageJSONUTF8WithOpts(
+                &source,
+                log,
+                allocator,
+                .{
+                    .is_json = true,
+                    .allow_comments = true,
+                    .allow_trailing_commas = true,
+                    .always_decode_escape_sequences = opts.always_decode_escape_sequences,
+                    .guess_indentation = opts.guess_indentation,
+                },
+            );
+
+            const json = json_result catch |err| return .{ .parse_err = err };
 
             entry.value_ptr.* = .{
-                .root = json.deepClone(allocator) catch bun.outOfMemory(),
+                .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
                 .source = source,
+                .indentation = json.indentation,
             };
 
             entry.key_ptr.* = allocator.dupe(u8, path) catch bun.outOfMemory();
@@ -9791,6 +9818,7 @@ pub const PackageManager = struct {
             manager.original_package_json_path,
             .{
                 .always_decode_escape_sequences = false,
+                .guess_indentation = true,
             },
         )) {
             .parse_err => |err| {
@@ -9814,6 +9842,7 @@ pub const PackageManager = struct {
             },
             .entry => |entry| entry,
         };
+        const current_package_json_indent = current_package_json.indentation;
 
         // If there originally was a newline at the end of their package.json, preserve it
         // so that we don't cause unnecessary diffs in their git history.
@@ -9950,7 +9979,15 @@ pub const PackageManager = struct {
         buffer_writer.append_newline = preserve_trailing_newline_at_eof_for_package_json;
         var package_json_writer = JSPrinter.BufferPrinter.init(buffer_writer);
 
-        var written = JSPrinter.printJSON(@TypeOf(&package_json_writer), &package_json_writer, current_package_json.root, &current_package_json.source) catch |err| {
+        var written = JSPrinter.printJSON(
+            @TypeOf(&package_json_writer),
+            &package_json_writer,
+            current_package_json.root,
+            &current_package_json.source,
+            .{
+                .indent = current_package_json_indent,
+            },
+        ) catch |err| {
             Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
             Global.crash();
         };
@@ -9980,7 +10017,14 @@ pub const PackageManager = struct {
 
             // The lifetime of this pointer is only valid until the next call to `getWithPath`, which can happen after this scope.
             // https://github.com/oven-sh/bun/issues/12288
-            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(manager.allocator, manager.log, root_package_json_path, .{})) {
+            const root_package_json = switch (manager.workspace_package_json_cache.getWithPath(
+                manager.allocator,
+                manager.log,
+                root_package_json_path,
+                .{
+                    .guess_indentation = true,
+                },
+            )) {
                 .parse_err => |err| {
                     switch (Output.enable_ansi_colors) {
                         inline else => |enable_ansi_colors| {
@@ -10015,7 +10059,15 @@ pub const PackageManager = struct {
                 buffer_writer2.append_newline = preserve_trailing_newline_at_eof_for_package_json;
                 var package_json_writer2 = JSPrinter.BufferPrinter.init(buffer_writer2);
 
-                _ = JSPrinter.printJSON(@TypeOf(&package_json_writer2), &package_json_writer2, root_package_json.root, &root_package_json.source) catch |err| {
+                _ = JSPrinter.printJSON(
+                    @TypeOf(&package_json_writer2),
+                    &package_json_writer2,
+                    root_package_json.root,
+                    &root_package_json.source,
+                    .{
+                        .indent = root_package_json.indentation,
+                    },
+                ) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     Global.crash();
                 };
@@ -10075,6 +10127,9 @@ pub const PackageManager = struct {
                 &package_json_writer_two,
                 new_package_json,
                 &source,
+                .{
+                    .indent = current_package_json_indent,
+                },
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 Global.crash();

@@ -68,6 +68,12 @@ pub fn resolveAndDupe(this: *ObjectURLRegistry, pathname: []const u8) ?JSC.WebCo
     return entry.blob.dupeWithContentType(true);
 }
 
+pub fn resolveAndDupeToJS(this: *ObjectURLRegistry, pathname: []const u8, globalObject: *JSC.JSGlobalObject) ?JSC.JSValue {
+    var blob = JSC.WebCore.Blob.new(this.resolveAndDupe(pathname) orelse return null);
+    blob.allocator = bun.default_allocator;
+    return blob.toJS(globalObject);
+}
+
 pub fn revoke(this: *ObjectURLRegistry, pathname: []const u8) void {
     const uuid = uuidFromPathname(pathname) orelse return;
     this.lock.lock();
@@ -126,9 +132,39 @@ export fn Bun__revokeObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JS
     return JSC.JSValue.undefined;
 }
 
+export fn jsFunctionResolveObjectURL(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    const arguments = callframe.arguments(1);
+
+    // Errors are ignored.
+    // Not thrown.
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/internal/blob.js#L441
+    if (arguments.len < 1) {
+        return JSC.JSValue.undefined;
+    }
+    const str = arguments.ptr[0].toBunString(globalObject);
+    defer str.deref();
+
+    if (globalObject.hasException()) {
+        return .zero;
+    }
+
+    if (!str.hasPrefixComptime("blob:") or str.length() < specifier_len) {
+        return JSC.JSValue.undefined;
+    }
+
+    const slice = str.toUTF8WithoutRef(bun.default_allocator);
+    defer slice.deinit();
+    const sliced = slice.slice();
+
+    const registry = ObjectURLRegistry.singleton();
+    const blob = registry.resolveAndDupeToJS(sliced["blob:".len..], globalObject);
+    return blob orelse JSC.JSValue.undefined;
+}
+
 comptime {
     _ = &Bun__createObjectURL;
     _ = &Bun__revokeObjectURL;
+    _ = &jsFunctionResolveObjectURL;
 }
 
 pub const specifier_len = "blob:".len + UUID.stringLength;

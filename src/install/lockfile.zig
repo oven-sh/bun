@@ -4294,6 +4294,7 @@ pub const Package = extern struct {
     ) !WorkspaceEntry {
         const workspace_json = try json_cache.getWithPath(allocator, log, abs_package_json_path, .{
             .init_reset_store = false,
+            .guess_indentation = true,
         }).unwrap();
 
         const name_expr = workspace_json.root.get("name") orelse return error.MissingPackageName;

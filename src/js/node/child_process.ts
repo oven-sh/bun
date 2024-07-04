@@ -1791,10 +1791,6 @@ function genericNodeError(message, options) {
   return err;
 }
 
-function _forkChild(fd, serializationMode) {
-  if (typeof fd !== "number") throw ERR_INVALID_ARG_TYPE("fd", "number", fd);
-}
-
 // const messages = new Map();
 
 // Utility function for registering the error codes. Only used here. Exported
@@ -2006,5 +2002,4 @@ export default {
   spawnSync,
   execFileSync,
   execSync,
-  _forkChild,
 };

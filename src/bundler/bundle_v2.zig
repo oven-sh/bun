@@ -6785,12 +6785,11 @@ const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            const indent: usize = 0;
             // TODO: IIFE indent
 
             const print_options = js_printer.Options{
-                // TODO: IIFE
-                .indent = indent,
+                // TODO: IIFE indent
+                .indent = .{},
                 .has_run_symbol_renamer = true,
 
                 .allocator = worker.allocator,
@@ -7678,8 +7677,8 @@ const LinkerContext = struct {
         }
 
         const print_options = js_printer.Options{
-            // TODO: IIFE
-            .indent = 0,
+            // TODO: IIFE indent
+            .indent = .{},
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
@@ -8959,8 +8958,7 @@ const LinkerContext = struct {
 
         const print_options = js_printer.Options{
             // TODO: IIFE
-            .indent = 0,
-
+            .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,

@@ -354,7 +354,7 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
     if (Output.isEmojiEnabled()) {
@@ -867,8 +867,6 @@ pub const DebugTimer = struct {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
             w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
-        } else {
-            @compileError("DebugTimer.format() should only be called in debug mode");
         }
     }
 };

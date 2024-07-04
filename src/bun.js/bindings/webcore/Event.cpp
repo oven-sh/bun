@@ -188,7 +188,7 @@ void Event::resetAfterDispatch()
 
 String Event::debugDescription() const
 {
-    return makeString(type(), " phase ", eventPhase(), bubbles() ? " bubbles " : " ", cancelable() ? "cancelable " : " ", "0x"_s, hex(reinterpret_cast<uintptr_t>(this), Lowercase));
+    return makeString(type(), " phase "_s, eventPhase(), bubbles() ? " bubbles "_s : " "_s, cancelable() ? "cancelable "_s : " "_s, "0x"_s, hex(reinterpret_cast<uintptr_t>(this), Lowercase));
 }
 
 TextStream& operator<<(TextStream& ts, const Event& event)

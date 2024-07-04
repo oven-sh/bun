@@ -95,7 +95,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     : EventTargetWithInlineData()
     , ContextDestructionObserver(&context)
     , m_options(WTFMove(options))
-    , m_identifier("worker:" + Inspector::IdentifiersFactory::createIdentifier())
+    , m_identifier(makeString("worker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
     // static bool addedListener;

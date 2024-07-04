@@ -59,6 +59,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
+pub const ini = @import("./ini.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -733,9 +734,9 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirNoRenamingOrDeletingWindows(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
-    const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
     return res.asDir();
 }
 
@@ -800,7 +801,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlInsensitive(line[0..key_end], key)) {
+            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -810,6 +811,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
+}
+
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
 }
 
 pub const FDHashMapContext = struct {
@@ -1955,10 +1961,10 @@ pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
+
 pub inline fn assertComptime() void {
-    if (comptime !@inComptime()) {
-        @compileError("This function can only be called in comptime.");
-    }
+    var x = 0; // if you hit an error on this line, you are not in a comptime context
+    _ = &x;
 }
 
 const TODO_LOG = Output.scoped(.TODO, false);
@@ -1989,7 +1995,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         }).encode();
     } else {
         // TODO: remove intCast. we should not be casting u32 -> i32
-        // even though file descriptors are always positive, linux/mac repesents them as signed integers
+        // even though file descriptors are always positive, linux/mac represents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
             sys.File => fd.handle,
@@ -2578,7 +2584,7 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         var buf: [literal.len:0]u8 = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;
@@ -2593,7 +2599,7 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
         var buf: [literal.len:0]OSPathChar = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;

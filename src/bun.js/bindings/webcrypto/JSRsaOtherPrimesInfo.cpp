@@ -29,7 +29,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -43,7 +42,7 @@ template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObje
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     RsaOtherPrimesInfo result;
     JSValue dValue;
@@ -51,42 +50,42 @@ template<> RsaOtherPrimesInfo convertDictionary<RsaOtherPrimesInfo>(JSGlobalObje
         dValue = jsUndefined();
     else {
         dValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "d"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!dValue.isUndefined()) {
         result.d = convert<IDLDOMString>(lexicalGlobalObject, dValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "d", "RsaOtherPrimesInfo", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "d"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
+        return {};
     }
     JSValue rValue;
     if (isNullOrUndefined)
         rValue = jsUndefined();
     else {
         rValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "r"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!rValue.isUndefined()) {
         result.r = convert<IDLDOMString>(lexicalGlobalObject, rValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "r", "RsaOtherPrimesInfo", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "r"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
+        return {};
     }
     JSValue tValue;
     if (isNullOrUndefined)
         tValue = jsUndefined();
     else {
         tValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "t"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!tValue.isUndefined()) {
         result.t = convert<IDLDOMString>(lexicalGlobalObject, tValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "t", "RsaOtherPrimesInfo", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "t"_s, "RsaOtherPrimesInfo"_s, "DOMString"_s);
+        return {};
     }
     return result;
 }
@@ -99,13 +98,13 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     auto dValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.d);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "d"_s), dValue);
     auto rValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.r);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "r"_s), rValue);
     auto tValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.t);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "t"_s), tValue);
     return result;
 }

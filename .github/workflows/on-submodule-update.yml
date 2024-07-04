@@ -1,0 +1,89 @@
+name: Comment on updated submodule
+
+on:
+  pull_request_target:
+    paths:
+      - "src/generated_versions_list.zig"
+      - ".github/workflows/on-submodule-update.yml"
+
+jobs:
+  comment:
+    name: Comment
+    runs-on: ubuntu-latest
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    permissions:
+      contents: read
+      pull-requests: write
+      issues: write
+    steps:
+      - name: Checkout current
+        uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            src
+      - name: Hash generated versions list
+        id: hash
+        run: |
+          echo "hash=$(sha256sum src/generated_versions_list.zig |  cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+      - name: Checkout base
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.base_ref }}
+          sparse-checkout: |
+            src
+      - name: Hash base
+        id: base
+        run: |
+          echo "base=$(sha256sum src/generated_versions_list.zig |  cut -d ' ' -f 1)" >> $GITHUB_OUTPUT
+      - name: Compare
+        id: compare
+        run: |
+          if [ "${{ steps.hash.outputs.hash }}" != "${{ steps.base.outputs.base }}" ]; then
+            echo "changed=true" >> $GITHUB_OUTPUT
+          else
+            echo "changed=false" >> $GITHUB_OUTPUT
+          fi
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- generated-comment submodule-updated -->
+      - name: Write Warning Comment
+        uses: peter-evans/create-or-update-comment@v4
+        if: steps.compare.outputs.changed == 'true'
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ github.event.pull_request.number }}
+          edit-mode: replace
+          body: |
+            ⚠️ **Warning:** @${{ github.actor }}, this PR has changes to submodule versions. 
+
+            If this change was intentional, please ignore this message. If not, please undo changes to submodules and rebase your branch.
+
+            <!-- generated-comment submodule-updated -->
+      - name: Add labels
+        uses: actions-cool/issues-helper@v3
+        if: steps.compare.outputs.changed == 'true'
+        with:
+          actions: "add-labels"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          labels: "changed-submodules"
+      - name: Remove labels
+        uses: actions-cool/issues-helper@v3
+        if: steps.compare.outputs.changed == 'false'
+        with:
+          actions: "remove-labels"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          labels: "changed-submodules"
+      - name: Delete outdated comment
+        uses: actions-cool/issues-helper@v3
+        if: steps.compare.outputs.changed == 'false' && steps.comment.outputs.comment-id != ''
+        with:
+          actions: "delete-comment"
+          token: ${{ secrets.GITHUB_TOKEN }}
+          issue-number: ${{ github.event.pull_request.number }}
+          comment-id: ${{ steps.comment.outputs.comment-id }}

@@ -30,7 +30,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -44,7 +43,7 @@ template<> CryptoAlgorithmAesCbcCfbParams convertDictionary<CryptoAlgorithmAesCb
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmAesCbcCfbParams result;
     JSValue nameValue;
@@ -52,28 +51,28 @@ template<> CryptoAlgorithmAesCbcCfbParams convertDictionary<CryptoAlgorithmAesCb
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "AesCbcCfbParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "AesCbcCfbParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue ivValue;
     if (isNullOrUndefined)
         ivValue = jsUndefined();
     else {
         ivValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "iv"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!ivValue.isUndefined()) {
         result.iv = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, ivValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iv", "AesCbcCfbParams", "(ArrayBufferView or ArrayBuffer)");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "iv"_s, "AesCbcCfbParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);
+        return {};
     }
     return result;
 }

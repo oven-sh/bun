@@ -5,20 +5,24 @@ describe("setTimeout", () => {
   it("abort() does not emit global error", async () => {
     let unhandledRejectionCaught = false;
 
-    process.on('unhandledRejection', () => {
+    const catchUnhandledRejection = () =>  {
       unhandledRejectionCaught = true;
-    });
+    };
+    process.on('unhandledRejection', catchUnhandledRejection);
     
     const c = new AbortController();
 
-    setTimeout(() => c.abort());
+    global.setTimeout(() => c.abort());
 
-    await setTimeout(50, undefined, { signal: c.signal }).catch(() => "aborted");
+    await setTimeout(100, undefined, { signal: c.signal }).catch(() => "aborted");
 
     // let unhandledRejection to be fired
-    await setTimeout()
+    await setTimeout(100)
 
-    expect(unhandledRejectionCaught).to.be.false;
+    process.off('unhandledRejection', catchUnhandledRejection);
+
+    expect(c.signal.aborted).toBe(true);
+    expect(unhandledRejectionCaught).toBe(false);
   });
 });
 
@@ -26,19 +30,23 @@ describe("setImmediate", () => {
   it("abort() does not emit global error", async () => {
     let unhandledRejectionCaught = false;
 
-    process.on('unhandledRejection', () => {
+    const catchUnhandledRejection = () =>  {
       unhandledRejectionCaught = true;
-    });
+    };
+    process.on('unhandledRejection', catchUnhandledRejection);
     
     const c = new AbortController();
 
-    setImmediate(() => c.abort());
+    global.setImmediate(() => c.abort());
 
     await setImmediate(undefined, { signal: c.signal }).catch(() => "aborted");
 
     // let unhandledRejection to be fired
-    await setTimeout()
+    await setTimeout(100)
 
-    expect(unhandledRejectionCaught).to.be.false;
+    process.off('unhandledRejection', catchUnhandledRejection);
+
+    expect(c.signal.aborted).toBe(true);
+    expect(unhandledRejectionCaught).toBe(false);
   });
 });

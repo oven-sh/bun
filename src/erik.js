@@ -7,13 +7,30 @@ const fn = () => {
 };
 
 let h = createHistogram();
-console.log("before", h);
-
-let wrapped = performance.timerify(fn, { histogram: h });
-wrapped();
+h.record(100, 1);
+h.record(200, 100);
+h.record(1000, 1000);
+h.record(2000, 1000);
+h.record(3000, 1000);
+h.record(5000, 1000);
+h.record(1000000, 1);
 console.log("after", h);
 
-// wrapped(400);
+let otherH = createHistogram();
+otherH.record(1, 300);
+h.add(otherH);
+
+console.log("after add", h);
+
+h.reset();
+
+let wrapped = performance.timerify(fn, { histogram: h });
+for (let i = 0; i < 1000; i++) {
+  wrapped();
+}
+console.log(h);
+
+// // wrapped(400);
 // console.log(h);
 
 // h.percentiles.forEach((value, key) => {

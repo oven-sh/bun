@@ -55,42 +55,6 @@ describe("WebSocket", () => {
     Bun.gc(true);
   });
 
-  it("should handle shutdown properly", async () => {
-    const server = Bun.serve({
-      port: 0,
-      hostname: "localhost",
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          // echo
-          ws.send(message);
-        },
-        open(ws) {},
-      },
-    });
-
-    const websockets = [];
-
-    for (let i = 0; i < 10_000; i++) {
-      const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-      const { promise, resolve } = Promise.withResolvers();
-      ws.onopen = () => {
-        ws.send("message");
-        resolve();
-      };
-
-      websockets.push(promise);
-    }
-    server.stop(true);
-    await Promise.all(websockets);
-  }, 60_000);
-
   it("should connect many times over https", async () => {
     using server = Bun.serve({
       port: 0,

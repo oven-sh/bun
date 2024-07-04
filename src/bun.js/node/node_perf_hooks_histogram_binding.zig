@@ -1,6 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
-const HDRHistogram = @import("./node_perf_hooks_histogram.zig").HDRHistogram;
+const HDRHistogram = @import("hdr_histogram.zig").HDRHistogram;
 const meta = bun.meta;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;

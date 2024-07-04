@@ -5,11 +5,14 @@ fn Impl(comptime T: type) type {
     return struct {
         pub fn format(self: T, comptime _: []const u8, _: anytype, writer: anytype) !void {
             var is_first = true;
-            inline for (std.meta.fieldNames(T)) |fieldName| {
+            inline for (comptime std.meta.fieldNames(T)) |fieldName| {
+                if (comptime bun.strings.eqlComptime(fieldName, "padding") or bun.strings.eqlComptime(fieldName, "none"))
+                    continue;
+
                 const value = @field(self, fieldName);
                 if (value) {
                     if (!is_first)
-                        try writer.write(" ");
+                        try writer.writeAll(" ");
                     is_first = false;
                     try writer.writeAll(fieldName);
                 }

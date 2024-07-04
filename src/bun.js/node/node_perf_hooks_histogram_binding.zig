@@ -19,17 +19,23 @@ pub const RecordableHistogram = struct {
     pub fn min(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
         return globalThis.toJS(this.hdrHist.min, .temporary);
     }
-    pub const minBigInt = getterAsFn(min);
+    pub fn minBigInt(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        return JSC.JSValue.fromUInt64NoTruncate(globalThis, this.hdrHist.min);
+    }
 
     pub fn max(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
         return globalThis.toJS(this.hdrHist.max, .temporary);
     }
-    pub const maxBigInt = getterAsFn(max);
+    pub fn maxBigInt(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        return JSC.JSValue.fromUInt64NoTruncate(globalThis, this.hdrHist.max);
+    }
 
     pub fn count(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
         return globalThis.toJS(this.hdrHist.total_count, .temporary);
     }
-    pub const countBigInt = getterAsFn(count);
+    pub fn countBigInt(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        return JSC.JSValue.fromUInt64NoTruncate(globalThis, this.hdrHist.total_count);
+    }
 
     pub fn mean(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
         if (this.hdrHist.mean()) |m| {
@@ -45,39 +51,47 @@ pub const RecordableHistogram = struct {
         return globalThis.toJS(std.math.nan(f64), .temporary);
     }
 
-    pub fn percentile(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    pub fn percentile_calc(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?u64 {
         const args = callframe.arguments(1).slice();
         if (args.len < 1) {
             globalThis.throwInvalidArguments("Expected query percent as argument", .{});
-            return .zero;
+            return null;
         }
         const percent = args[0].getNumber() orelse {
             globalThis.throwInvalidArguments("Expected a number", .{});
-            return .zero;
+            return null;
         };
-        const value = this.hdrHist.value_at_percentile(percent) orelse return .undefined;
-        return globalThis.toJS(value, .temporary);
+        const value = this.hdrHist.value_at_percentile(percent) orelse return null;
+        return value;
     }
-    pub const percentileBigInt = percentile;
+    pub fn percentile(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        const value = this.percentile_calc(globalThis, callframe);
+        if (value) |v| {
+            return globalThis.toJS(v, .temporary);
+        }
+        return .zero;
+    }
+    pub fn percentileBigInt(this: *This, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+        const value = this.percentile_calc(globalThis, callframe);
+        if (value) |v| {
+            return JSC.JSValue.fromUInt64NoTruncate(globalThis, v);
+        }
+        return .zero;
+    }
 
-    pub fn percentiles(this: *This, globalObject: *JSC.JSGlobalObject) JSValue {
-
-        // 2 arrays with percent and value
-        // make a cpp version of this file, extern C function. accepts array, length, creates search JSMap:: (search)
-
+    pub fn percentiles_calc(this: *This, globalThis: *JSC.JSGlobalObject) ?std.ArrayList(JSValue.DoubleToIntMapKV) {
         // first get 100th percentile, and loop 0, 50, 75, 82.5, ... until we find the highest percentile
-        const maxPercentileValue = this.hdrHist.value_at_percentile(100) orelse return .undefined;
+        const maxPercentileValue = this.hdrHist.value_at_percentile(100) orelse return null;
         var percent: f64 = 0;
         var stack_allocator = std.heap.stackFallback(4096, bun.default_allocator);
         var kvs = std.ArrayList(JSValue.DoubleToIntMapKV).init(stack_allocator.get());
-        defer kvs.deinit();
 
         while (true) {
             if (this.hdrHist.value_at_percentile(percent)) |val| {
                 const kv = JSValue.DoubleToIntMapKV{ .key = percent, .value = val };
                 kvs.append(kv) catch {
-                    globalObject.throwOutOfMemory();
-                    return .undefined;
+                    globalThis.throwOutOfMemory();
+                    return null;
                 };
                 if (val >= maxPercentileValue) {
                     break;
@@ -87,13 +101,24 @@ pub const RecordableHistogram = struct {
         }
 
         kvs.append(JSValue.DoubleToIntMapKV{ .key = 100, .value = maxPercentileValue }) catch {
-            globalObject.throwOutOfMemory();
-            return .undefined;
+            globalThis.throwOutOfMemory();
+            return null;
         };
 
-        return globalObject.toJS(JSValue.createMapFromDoubleUint64KVArray(globalObject, kvs.items), .temporary);
+        return kvs;
     }
-    pub const percentilesBigInt = getterAsFn(percentiles);
+    pub fn percentiles(this: *This, globalThis: *JSC.JSGlobalObject) JSValue {
+        const kvs = this.percentiles_calc(globalThis) orelse return .zero;
+        defer kvs.deinit();
+        const asBigInt = false;
+        return JSValue.createMapFromDoubleUint64KVArray(globalThis, kvs.items, asBigInt);
+    }
+    pub fn percentilesBigInt(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        const kvs = this.percentiles_calc(globalThis) orelse return .zero;
+        defer kvs.deinit();
+        const asBigInt = true;
+        return JSValue.createMapFromDoubleUint64KVArray(globalThis, kvs.items, asBigInt);
+    }
 
     //
     // additional functions
@@ -149,25 +174,6 @@ pub const RecordableHistogram = struct {
         };
 
         return .undefined;
-    }
-
-    // the bigInt variants of these functions are simple getters without arguments, but we want them as methods
-    // so this function strips the callframe argument so we can use the same callback as we do with our actual getters
-    fn getterAsFn(callback: fn (
-        this: *This,
-        globalThis: *JSC.JSGlobalObject,
-    ) JSValue) fn (
-        this: *This,
-        globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
-    ) callconv(JSC.conv) JSValue {
-        const outer = struct {
-            pub fn inner(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
-                // we don't need the callframe, so we can just call the callback
-                return callback(this, globalThis);
-            }
-        };
-        return outer.inner;
     }
 
     // since we create this with bun.new, we need to have it be destroyable

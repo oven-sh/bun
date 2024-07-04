@@ -5110,10 +5110,10 @@ pub const JSValue = enum(JSValueReprInt) {
         value: u64,
     };
 
-    extern fn Bun__createMapFromDoubleUint64KVArray(globalObject: *JSC.JSGlobalObject, array: [*]DoubleToIntMapKV, length: usize) JSValue;
+    extern fn Bun__createMapFromDoubleUint64KVArray(globalObject: *JSC.JSGlobalObject, array: [*]DoubleToIntMapKV, length: usize, asBigInt: bool) JSValue;
 
-    pub fn createMapFromDoubleUint64KVArray(global: *JSC.JSGlobalObject, kvs: []DoubleToIntMapKV) JSValue {
-        return Bun__createMapFromDoubleUint64KVArray(global, kvs.ptr, kvs.len);
+    pub fn createMapFromDoubleUint64KVArray(global: *JSC.JSGlobalObject, kvs: []DoubleToIntMapKV, asBigInt: bool) JSValue {
+        return Bun__createMapFromDoubleUint64KVArray(global, kvs.ptr, kvs.len, asBigInt);
     }
 
     /// Alias for getIfPropertyExists

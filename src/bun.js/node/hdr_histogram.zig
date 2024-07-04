@@ -2,7 +2,7 @@ const std = @import("std");
 
 pub const HistogramOptions = struct {
     lowest_trackable_value: u64 = 1,
-    highest_trackable_value: u64 = 9007199254740991, // Number.MAX_SAFE_INTEGER
+    highest_trackable_value: u64 = 9007199254740991, // Number.MAX_SAFE_INTEGER, as per node perf_hooks
     significant_figures: u8 = 3,
 };
 
@@ -97,7 +97,7 @@ pub const HDRHistogram = struct {
             .bucket_count = bucket_count,
             .counts = counts,
             .total_count = 0,
-            .min = 9223372036854776000,
+            .min = std.math.maxInt(64),
             .max = 0,
         };
     }
@@ -146,7 +146,7 @@ pub const HDRHistogram = struct {
             self.counts[index] = 0;
         }
         self.total_count = 0;
-        self.min = 9223372036854776000;
+        self.min = std.math.maxInt(64);
         self.max = 0;
     }
 

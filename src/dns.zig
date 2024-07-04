@@ -42,7 +42,12 @@ pub const GetAddrInfo = struct {
 
     pub const Options = packed struct {
         family: Family = .unspecified,
-        socktype: SocketType = .unspecified,
+        /// Leaving this unset leads to many duplicate addresses returned.
+        /// Node hardcodes to `SOCK_STREAM`.
+        /// There don't seem to be any issues in Node's repo about this
+        /// So I think it's likely that nobody actually needs `SOCK_DGRAM` as a flag
+        /// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/cares_wrap.cc#L1609
+        socktype: SocketType = .stream,
         protocol: Protocol = .unspecified,
         backend: Backend = Backend.default,
         flags: i32 = 0,
@@ -171,7 +176,8 @@ pub const GetAddrInfo = struct {
 
         pub fn fromJS(value: JSC.JSValue, globalObject: *JSC.JSGlobalObject) !SocketType {
             if (value.isEmptyOrUndefinedOrNull())
-                return .unspecified;
+                // Default to .stream
+                return .stream;
 
             if (value.isNumber()) {
                 return switch (value.to(i32)) {

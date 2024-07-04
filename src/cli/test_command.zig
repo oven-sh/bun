@@ -45,7 +45,7 @@ const Test = TestRunner.Test;
 const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
 const uws = bun.uws;
 
-fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
+fn fmtStatusTextIndicator(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
@@ -69,11 +69,11 @@ fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_col
     }
 }
 
-fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {
+fn writeTestStatusIndicator(comptime status: @Type(.EnumLiteral), writer: anytype) void {
     if (Output.enable_ansi_colors_stderr)
-        writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
+        writer.print(fmtStatusTextIndicator(status, true), .{}) catch unreachable
     else
-        writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
+        writer.print(fmtStatusTextIndicator(status, false), .{}) catch unreachable;
 }
 
 pub const CommandLineReporter = struct {
@@ -110,7 +110,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
-    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
+    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype, comptime status: @Type(.EnumLiteral)) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -130,26 +130,36 @@ pub const CommandLineReporter = struct {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
 
                 writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
+                if (!scope.has_printed) {
+                    for (1..i) |_|
+                        writer.writeAll("  ") catch unreachable;
+                    writer.print(comptime Output.prettyFmt("{s}\n", true), .{scope.label}) catch unreachable;
+                    scope.has_printed = true;
+                }
                 writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
             }
         } else {
             for (scopes, 0..) |_, i| {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;
-                writer.writeAll(" ") catch unreachable;
-                writer.writeAll(scope.label) catch unreachable;
-                writer.writeAll(" >") catch unreachable;
+
+                if (!scope.has_printed) {
+                    for (1..i) |_|
+                        writer.writeAll("  ") catch unreachable;
+                    writer.print(comptime Output.prettyFmt("{s}\n", false), .{scope.label}) catch unreachable;
+                    scope.has_printed = true;
+                }
             }
         }
+        for (1..scopes.len) |_|
+            writer.writeAll("  ") catch unreachable;
 
         const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
 
+        writeTestStatusIndicator(status, writer);
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
         else
@@ -170,14 +180,12 @@ pub const CommandLineReporter = struct {
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
-        var writer = buffered_writer.writer();
+        const writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        writeTestStatusLine(.pass, &writer);
-
-        printTestLine(label, elapsed_ns, parent, false, writer);
+        printTestLine(label, elapsed_ns, parent, false, writer, .pass);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
@@ -193,8 +201,7 @@ pub const CommandLineReporter = struct {
         const initial_length = this.failures_to_repeat_buf.items.len;
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
-        writeTestStatusLine(.fail, &writer);
-        printTestLine(label, elapsed_ns, parent, false, writer);
+        printTestLine(label, elapsed_ns, parent, false, writer, .fail);
 
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
@@ -226,10 +233,9 @@ pub const CommandLineReporter = struct {
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
-            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+            const writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
-            writeTestStatusLine(.skip, &writer);
-            printTestLine(label, elapsed_ns, parent, true, writer);
+            printTestLine(label, elapsed_ns, parent, true, writer, .skip);
 
             writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
             Output.flush();
@@ -249,10 +255,9 @@ pub const CommandLineReporter = struct {
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.todos_to_repeat_buf.items.len;
-        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+        const writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
-        writeTestStatusLine(.todo, &writer);
-        printTestLine(label, elapsed_ns, parent, true, writer);
+        printTestLine(label, elapsed_ns, parent, true, writer, .todo);
 
         writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();
@@ -569,10 +574,12 @@ const Scanner = struct {
                 bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-                const child_dir = bun.openDirAbsolute(path2) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
+                const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
+                const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;
+                _ = this.readDirWithName(
+                    this.fs.dirname_store.append(string, path2) catch bun.outOfMemory(),
+                    child_dir,
+                ) catch bun.outOfMemory();
             }
         }
     }
@@ -739,7 +746,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         bun.JSC.initialize();
-        HTTPThread.init() catch {};
+        HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);

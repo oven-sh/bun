@@ -816,3 +816,7 @@ pub const CLOCK_UPTIME_RAW = 8;
 pub const CLOCK_UPTIME_RAW_APPROX = 9;
 pub const CLOCK_PROCESS_CPUTIME_ID = 12;
 pub const CLOCK_THREAD_CPUTIME_ID = 1;
+
+pub const netdb = @cImport({
+    @cInclude("netdb.h");
+});

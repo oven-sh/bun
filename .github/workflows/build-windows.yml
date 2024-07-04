@@ -21,8 +21,6 @@ on:
         required: true
       assertions:
         type: boolean
-      zig-optimize:
-        type: string
       canary:
         type: boolean
       no-cache:
@@ -50,7 +48,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
@@ -77,14 +74,10 @@ jobs:
           path: bun-deps
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
-        name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
-      - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Clone Submodules
         run: |
@@ -111,7 +104,6 @@ jobs:
           name: bun-${{ inputs.tag }}-deps
           path: bun-deps
           if-no-files-found: error
-
   codegen:
     name: Codegen
     runs-on: ubuntu-latest
@@ -120,7 +112,6 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
       - name: Setup Bun
@@ -141,7 +132,6 @@ jobs:
           name: bun-${{ inputs.tag }}-codegen
           path: build-codegen-win32-x64
           if-no-files-found: error
-
   build-cpp:
     name: Build C++
     needs: codegen
@@ -153,18 +143,14 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -207,23 +193,19 @@ jobs:
           name: bun-${{ inputs.tag }}-cpp
           path: build/bun-cpp-objects.a
           if-no-files-found: error
-
   build-zig:
     name: Build Zig
     uses: ./.github/workflows/build-zig.yml
     with:
       os: windows
+      zig-optimize: ReleaseSafe
       only-zig: true
       tag: ${{ inputs.tag }}
       arch: ${{ inputs.arch }}
       cpu: ${{ inputs.cpu }}
       assertions: ${{ inputs.assertions }}
-      zig-optimize: ReleaseSafe
-      # Windows is always ReleaseSafe for now
-      # zig-optimize: ${{ inputs.zig-optimize }}
       canary: ${{ inputs.canary }}
       no-cache: ${{ inputs.no-cache }}
-
   link:
     name: Link
     runs-on: ${{ inputs.runs-on }}
@@ -239,18 +221,14 @@ jobs:
         run: |
           git config --global core.autocrlf false
           git config --global core.eol lf
-          git config --system core.longpaths true
       - name: Checkout
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -335,7 +313,6 @@ jobs:
           path: features.json
           if-no-files-found: error
           overwrite: true
-
   on-failure:
     if: ${{ github.repository_owner == 'oven-sh' && failure() }}
     name: On Failure

@@ -196,7 +196,7 @@ pub const Response = struct {
     pub fn getURL(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         return this.url.toJS(globalThis);
     }
@@ -204,18 +204,18 @@ pub const Response = struct {
     pub fn getResponseType(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toValue(globalThis);
+            return ZigString.init("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toValue(globalThis);
+        return ZigString.init("default").toJS(globalThis);
     }
 
     pub fn getStatusText(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         return this.init.status_text.toJS(globalThis);
     }
@@ -223,7 +223,7 @@ pub const Response = struct {
     pub fn getRedirected(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
         return JSValue.jsBoolean(this.redirected);
     }
@@ -231,7 +231,7 @@ pub const Response = struct {
     pub fn getOK(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         return JSValue.jsBoolean(this.isOK());
     }
@@ -254,7 +254,7 @@ pub const Response = struct {
     pub fn getHeaders(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return this.getOrCreateHeaders(globalThis).toJS(globalThis);
     }
 
@@ -262,7 +262,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const cloned = this.clone(globalThis);
         return Response.makeMaybePooled(globalThis, cloned);
     }
@@ -290,7 +290,7 @@ pub const Response = struct {
     pub fn getStatus(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         return JSValue.jsNumber(this.init.status_code);
     }
@@ -342,7 +342,7 @@ pub const Response = struct {
     pub fn constructJSON(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -399,7 +399,7 @@ pub const Response = struct {
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -444,7 +444,7 @@ pub const Response = struct {
     pub fn constructError(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const response = bun.new(
             Response,
             Response{
@@ -463,7 +463,7 @@ pub const Response = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Response {
+    ) ?*Response {
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
@@ -1706,7 +1706,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            try http.HTTPThread.init();
+            http.HTTPThread.init();
             var node = try get(
                 allocator,
                 global,
@@ -1839,7 +1839,7 @@ pub const Fetch = struct {
     pub export fn Bun__fetch(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);

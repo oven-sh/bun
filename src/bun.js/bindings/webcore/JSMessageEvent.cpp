@@ -492,18 +492,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<MessageEvent>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7MessageEvent@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore12MessageEventE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore12MessageEventE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // MessageEvent has subclasses. If MessageEvent has subclasses that get passed
         // to toJS() we currently require MessageEvent you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<MessageEvent>(globalObject, WTFMove(impl));

@@ -271,6 +271,10 @@ pub fn normalizeDNSName(name: []const u8, backend: *GetAddrInfo.Backend) []const
         } else if (strings.isIPV6Address(name)) {
             backend.* = .system;
         }
+        // getaddrinfo() is inconsistent with ares_getaddrinfo() when using localhost
+        else if (strings.eqlComptime(name, "localhost")) {
+            backend.* = .system;
+        }
     }
 
     return name;
@@ -488,29 +492,15 @@ pub const CAresNameInfo = struct {
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?c_ares.struct_nameinfo) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("lookupService failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
         if (result == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("lookupService failed: No results", .{});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
             this.deinit();
             return;
         }
@@ -906,29 +896,15 @@ pub const CAresReverse = struct {
     pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*c_ares.struct_hostent) void {
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("reverse failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
         if (result == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("reverse failed: No results", .{});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
-
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
             this.deinit();
             return;
         }
@@ -985,28 +961,15 @@ pub fn CAresLookup(comptime cares_type: type, comptime type_name: []const u8) ty
         pub fn processResolve(this: *@This(), err_: ?c_ares.Error, _: i32, result: ?*cares_type) void {
             if (err_) |err| {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
-                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, err.label() });
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
-                );
-
-                promise.rejectTask(globalThis, error_value);
+                const globalThis = this.globalThis;
+                promise.rejectTask(globalThis, err.toJS(globalThis));
                 this.deinit();
                 return;
             }
             if (result == null) {
                 var promise = this.promise;
-                var globalThis = this.globalThis;
-                const error_value = globalThis.createErrorInstance("{s} lookup failed: {s}", .{ type_name, "No results" });
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-                );
-                promise.rejectTask(globalThis, error_value);
+                const globalThis = this.globalThis;
+                promise.rejectTask(globalThis, c_ares.Error.ENOTFOUND.toJS(globalThis));
                 this.deinit();
                 return;
             }
@@ -1070,19 +1033,14 @@ pub const DNSLookup = struct {
         log("processGetAddrInfoNative: status={d}", .{status});
         if (c_ares.Error.initEAI(status)) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
             const error_value = brk: {
                 if (err == .ESERVFAIL) {
                     break :brk bun.sys.Error.fromCode(bun.C.getErrno(@as(c_int, -1)), .getaddrinfo).toJSC(globalThis);
                 }
-                const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
-                error_value.put(
-                    globalThis,
-                    JSC.ZigString.static("code"),
-                    JSC.ZigString.init(err.code()).toValueGC(globalThis),
-                );
-                break :brk error_value;
+
+                break :brk err.toJS(globalThis);
             };
 
             this.deinit();
@@ -1096,28 +1054,17 @@ pub const DNSLookup = struct {
         log("processGetAddrInfo", .{});
         if (err_) |err| {
             var promise = this.promise;
-            var globalThis = this.globalThis;
-            const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{err.label()});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init(err.code()).toValueGC(globalThis),
-            );
-            promise.rejectTask(globalThis, error_value);
+            const globalThis = this.globalThis;
+            promise.rejectTask(globalThis, err.toJS(globalThis));
             this.deinit();
             return;
         }
 
         if (result == null or result.?.node == null) {
             var promise = this.promise;
-            var globalThis = this.globalThis;
+            const globalThis = this.globalThis;
 
-            const error_value = globalThis.createErrorInstance("DNS lookup failed: {s}", .{"No results"});
-            error_value.put(
-                globalThis,
-                JSC.ZigString.static("code"),
-                JSC.ZigString.init("EUNREACHABLE").toValueGC(globalThis),
-            );
+            const error_value = c_ares.Error.ENOTFOUND.toJS(globalThis);
             promise.rejectTask(globalThis, error_value);
             this.deinit();
             return;
@@ -1396,7 +1343,14 @@ pub const InternalDNS = struct {
         .addrlen = 0,
         .canonname = null,
         .family = std.c.AF.UNSPEC,
-        .flags = 0,
+        // If the system is IPv4-only or IPv6-only, then only return the corresponding address family.
+        // https://github.com/nodejs/node/commit/54dd7c38e507b35ee0ffadc41a716f1782b0d32f
+        // https://bugzilla.mozilla.org/show_bug.cgi?id=467497
+        // https://github.com/adobe/chromium/blob/cfe5bf0b51b1f6b9fe239c2a3c2f2364da9967d7/net/base/host_resolver_proc.cc#L122-L241
+        // https://github.com/nodejs/node/issues/33816
+        // https://github.com/aio-libs/aiohttp/issues/5357
+        // https://github.com/libuv/libuv/issues/2225
+        .flags = if (Environment.isPosix) bun.C.netdb.AI_ADDRCONFIG else 0,
         .next = null,
         .protocol = 0,
         .socktype = std.c.SOCK.STREAM,
@@ -1608,7 +1562,7 @@ pub const InternalDNS = struct {
     var dns_cache_errors: usize = 0;
     var getaddrinfo_calls: usize = 0;
 
-    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn getDNSCacheStats(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const object = JSC.JSValue.createEmptyObject(globalObject, 6);
         object.put(globalObject, JSC.ZigString.static("cacheHitsCompleted"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_completed, .monotonic)));
         object.put(globalObject, JSC.ZigString.static("cacheHitsInflight"), JSC.JSValue.jsNumber(@atomicLoad(usize, &dns_cache_hits_inflight, .monotonic)));
@@ -1679,7 +1633,7 @@ pub const InternalDNS = struct {
         return req;
     }
 
-    pub fn prefetchFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn prefetchFromJS(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 1) {
@@ -2298,7 +2252,7 @@ pub const DNSResolver = struct {
         });
     };
 
-    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolve(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolve", 2, arguments.len);
@@ -2383,7 +2337,7 @@ pub const DNSResolver = struct {
         }
     }
 
-    pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn reverse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("reverse", 2, arguments.len);
@@ -2411,13 +2365,8 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (resolver.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
                 defer ip_slice.deinit();
-                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toJS(globalThis));
                 return .zero;
             },
         };
@@ -2453,7 +2402,7 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn lookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn lookup(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("lookup", 2, arguments.len);
@@ -2523,7 +2472,7 @@ pub const DNSResolver = struct {
         };
     }
 
-    pub fn resolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveSrv(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveSrv", 2, arguments.len);
@@ -2554,7 +2503,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_srv_reply, "srv", name.slice(), globalThis);
     }
 
-    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveSoa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveSoa", 2, arguments.len);
@@ -2580,7 +2529,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_soa_reply, "soa", name.slice(), globalThis);
     }
 
-    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveCaa(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveCaa", 2, arguments.len);
@@ -2611,7 +2560,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_caa_reply, "caa", name.slice(), globalThis);
     }
 
-    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveNs(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveNs", 2, arguments.len);
@@ -2637,7 +2586,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ns", name.slice(), globalThis);
     }
 
-    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolvePtr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolvePtr", 2, arguments.len);
@@ -2668,7 +2617,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "ptr", name.slice(), globalThis);
     }
 
-    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveCname(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveCname", 2, arguments.len);
@@ -2699,7 +2648,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_hostent, "cname", name.slice(), globalThis);
     }
 
-    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveMx(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveMx", 2, arguments.len);
@@ -2730,7 +2679,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_mx_reply, "mx", name.slice(), globalThis);
     }
 
-    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveNaptr(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveNaptr", 2, arguments.len);
@@ -2761,7 +2710,7 @@ pub const DNSResolver = struct {
         return resolver.doResolveCAres(c_ares.struct_ares_naptr_reply, "naptr", name.slice(), globalThis);
     }
 
-    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn resolveTxt(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(2);
         if (arguments.len < 1) {
             globalThis.throwNotEnoughArguments("resolveTxt", 2, arguments.len);
@@ -2796,13 +2745,7 @@ pub const DNSResolver = struct {
         var channel: *c_ares.Channel = switch (this.getChannel()) {
             .result => |res| res,
             .err => |err| {
-                const system_error = JSC.SystemError{
-                    .errno = -1,
-                    .code = bun.String.static(err.code()),
-                    .message = bun.String.static(err.label()),
-                };
-
-                globalThis.throwValue(system_error.toErrorInstance(globalThis));
+                globalThis.throwValue(err.toJS(globalThis));
                 return .zero;
             },
         };
@@ -2888,7 +2831,7 @@ pub const DNSResolver = struct {
         return promise;
     }
 
-    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn getServers(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         _ = callframe;
 
         var vm = globalThis.bunVM();
@@ -2954,16 +2897,16 @@ pub const DNSResolver = struct {
 
             const size = bun.len(bun.cast([*:0]u8, buf[1..])) + 1;
             if (port == IANA_DNS_PORT) {
-                values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toValueGC(globalThis));
+                values.putIndex(globalThis, i, JSC.ZigString.init(buf[1..size]).withEncoding().toJS(globalThis));
             } else {
                 if (family == std.posix.AF.INET6) {
                     buf[0] = '[';
                     buf[size] = ']';
                     const port_slice = std.fmt.bufPrint(buf[size + 1 ..], ":{d}", .{port}) catch unreachable;
-                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toValueGC(globalThis));
+                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[0 .. size + 1 + port_slice.len]).withEncoding().toJS(globalThis));
                 } else {
                     const port_slice = std.fmt.bufPrint(buf[size..], ":{d}", .{port}) catch unreachable;
-                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toValueGC(globalThis));
+                    values.putIndex(globalThis, i, JSC.ZigString.init(buf[1 .. size + port_slice.len]).withEncoding().toJS(globalThis));
                 }
             }
         }
@@ -2974,7 +2917,7 @@ pub const DNSResolver = struct {
     // Resolves the given address and port into a host name and service using the operating system's underlying getnameinfo implementation.
     // If address is not a valid IP address, a TypeError will be thrown. The port will be coerced to a number.
     // If it is not a legal port, a TypeError will be thrown.
-    pub fn lookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn lookupService(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3);
         if (arguments.len < 2) {
             globalThis.throwNotEnoughArguments("lookupService", 3, arguments.len);

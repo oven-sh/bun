@@ -239,7 +239,7 @@ pub const TrustCommand = struct {
         try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
         try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
 
-        var package_names_to_add: std.StringArrayHashMapUnmanaged(void) = .{};
+        var package_names_to_add: bun.StringArrayHashMapUnmanaged(void) = .{};
         var scripts_at_depth: std.AutoArrayHashMapUnmanaged(usize, std.ArrayListUnmanaged(struct {
             package_id: PackageID,
             scripts_list: Lockfile.Package.Scripts.List,
@@ -264,7 +264,7 @@ pub const TrustCommand = struct {
                     const alias = dep.name.slice(buf);
                     const package_id = pm.lockfile.buffers.resolutions.items[dep_id];
                     if (comptime Environment.allow_assert) {
-                        bun.assert(package_id != Install.invalid_package_id);
+                        bun.assertWithLocation(package_id != Install.invalid_package_id, @src());
                     }
                     const resolution = &resolutions[package_id];
                     var package_scripts = scripts[package_id];
@@ -329,14 +329,9 @@ pub const TrustCommand = struct {
             pm.scripts_node = &scripts_node;
         }
 
-        var depth = scripts_at_depth.count();
-        while (depth > 0) {
-            depth -= 1;
-            const _entry = scripts_at_depth.get(depth);
-            if (comptime bun.Environment.allow_assert) {
-                bun.assert(_entry != null);
-            }
-            if (_entry) |entry| {
+        {
+            var iter = std.mem.reverseIterator(scripts_at_depth.values());
+            while (iter.next()) |entry| {
                 for (entry.items) |info| {
                     if (info.skip) continue;
 
@@ -387,7 +382,7 @@ pub const TrustCommand = struct {
         // now add the package names to lockfile.trustedDependencies and package.json `trustedDependencies`
         const names = package_names_to_add.keys();
         if (comptime Environment.allow_assert) {
-            bun.assert(names.len > 0);
+            bun.assertWithLocation(names.len > 0, @src());
         }
 
         // could be null if these are the first packages to be trusted
@@ -399,10 +394,9 @@ pub const TrustCommand = struct {
 
         Output.print("\n", .{});
 
-        depth = scripts_at_depth.count();
-        while (depth > 0) {
-            depth -= 1;
-            if (scripts_at_depth.get(depth)) |entry| {
+        {
+            var iter = std.mem.reverseIterator(scripts_at_depth.values());
+            while (iter.next()) |entry| {
                 for (entry.items) |info| {
                     const resolution = pm.lockfile.packages.items(.resolution)[info.package_id];
                     if (info.skip) {
@@ -431,7 +425,7 @@ pub const TrustCommand = struct {
         buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
         var package_json_writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
-        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source) catch |err| {
+        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{}) catch |err| {
             Output.errGeneric("failed to print package.json: {s}", .{@errorName(err)});
             Global.crash();
         };
@@ -443,7 +437,7 @@ pub const TrustCommand = struct {
         pm.root_package_json_file.close();
 
         if (comptime Environment.allow_assert) {
-            bun.assert(total_scripts_ran > 0);
+            bun.assertWithLocation(total_scripts_ran > 0, @src());
         }
 
         Output.pretty(" <green>{d}<r> script{s} ran across {d} package{s} ", .{

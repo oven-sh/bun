@@ -88,7 +88,8 @@ pub fn canPrintWithoutEscape(comptime CodePointType: type, c: CodePointType, com
     }
 }
 
-const indentation_buf = [_]u8{' '} ** 128;
+const indentation_space_buf = [_]u8{' '} ** 128;
+const indentation_tab_buf = [_]u8{'\t'} ** 128;
 
 pub fn bestQuoteCharForString(comptime Type: type, str: []const Type, allow_backtick: bool) u8 {
     var single_cost: usize = 0;
@@ -516,7 +517,7 @@ pub const Options = struct {
     to_esm_ref: Ref = Ref.None,
     require_ref: ?Ref = null,
     import_meta_ref: Ref = Ref.None,
-    indent: usize = 0,
+    indent: Indentation = .{},
     externals: []u32 = &[_]u32{},
     runtime_imports: runtime.Runtime.Imports = runtime.Runtime.Imports{},
     module_hash: u32 = 0,
@@ -567,9 +568,14 @@ pub const Options = struct {
     // us do binary search on to figure out what line a given AST node came from
     line_offset_tables: ?SourceMap.LineOffsetTable.List = null,
 
-    pub inline fn unindent(self: *Options) void {
-        self.indent -|= 1;
-    }
+    // Default indentation is 2 spaces
+    pub const Indentation = struct {
+        scalar: usize = 2,
+        count: usize = 0,
+        character: Character = .space,
+
+        pub const Character = enum { tab, space };
+    };
 
     pub fn requireOrImportMetaForSource(
         self: *const Options,
@@ -1009,12 +1015,25 @@ fn NewPrinter(
             p.print(str);
         }
 
+        pub inline fn unindent(p: *Printer) void {
+            p.options.indent.count -|= 1;
+        }
+
+        pub inline fn indent(p: *Printer) void {
+            p.options.indent.count += 1;
+        }
+
         pub fn printIndent(p: *Printer) void {
-            if (p.options.indent == 0 or p.options.minify_whitespace) {
+            if (p.options.indent.count == 0 or p.options.minify_whitespace) {
                 return;
             }
 
-            var i: usize = p.options.indent * 2;
+            const indentation_buf = switch (p.options.indent.character) {
+                .space => indentation_space_buf,
+                .tab => indentation_tab_buf,
+            };
+
+            var i: usize = p.options.indent.count * p.options.indent.scalar;
 
             while (i > 0) {
                 const amt = @min(i, indentation_buf.len);
@@ -1113,7 +1132,7 @@ fn NewPrinter(
 
                 if (!import.is_single_line) {
                     p.printNewline();
-                    p.options.indent += 1;
+                    p.indent();
                     p.printIndent();
                 }
 
@@ -1133,7 +1152,7 @@ fn NewPrinter(
 
                 if (!import.is_single_line) {
                     p.printNewline();
-                    p.options.unindent();
+                    p.unindent();
                 } else {
                     p.printSpace();
                 }
@@ -1205,9 +1224,9 @@ fn NewPrinter(
                 },
                 else => {
                     p.printNewline();
-                    p.options.indent += 1;
+                    p.indent();
                     p.printStmt(stmt) catch unreachable;
-                    p.options.unindent();
+                    p.unindent();
                 },
             }
         }
@@ -1224,9 +1243,9 @@ fn NewPrinter(
             p.print("{");
             p.printNewline();
 
-            p.options.indent += 1;
+            p.indent();
             p.printBlockBody(stmts);
-            p.options.unindent();
+            p.unindent();
             p.needs_semicolon = false;
 
             p.printIndent();
@@ -1241,10 +1260,10 @@ fn NewPrinter(
             p.print("{");
             p.printNewline();
 
-            p.options.indent += 1;
+            p.indent();
             p.printBlockBody(prepend);
             p.printBlockBody(stmts);
-            p.options.unindent();
+            p.unindent();
             p.needs_semicolon = false;
 
             p.printIndent();
@@ -1484,7 +1503,7 @@ fn NewPrinter(
             p.addSourceMapping(class.body_loc);
             p.print("{");
             p.printNewline();
-            p.options.indent += 1;
+            p.indent();
 
             for (class.properties) |item| {
                 p.printSemicolonIfNeeded();
@@ -1508,7 +1527,7 @@ fn NewPrinter(
             }
 
             p.needs_semicolon = false;
-            p.options.unindent();
+            p.unindent();
             p.printIndent();
             if (class.close_brace_loc.start > class.body_loc.start)
                 p.addSourceMapping(class.close_brace_loc);
@@ -2073,7 +2092,7 @@ fn NewPrinter(
             // External import()
             if (leading_interior_comments.len > 0) {
                 p.printNewline();
-                p.options.indent += 1;
+                p.indent();
                 for (leading_interior_comments) |comment| {
                     p.printIndentedComment(comment.text);
                 }
@@ -2121,7 +2140,7 @@ fn NewPrinter(
 
             if (leading_interior_comments.len > 0) {
                 p.printNewline();
-                p.options.unindent();
+                p.unindent();
                 p.printIndent();
             }
 
@@ -2508,7 +2527,7 @@ fn NewPrinter(
                         p.print("import(");
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
-                            p.options.indent += 1;
+                            p.indent();
                             for (e.leading_interior_comments) |comment| {
                                 p.printIndentedComment(comment.text);
                             }
@@ -2538,7 +2557,7 @@ fn NewPrinter(
 
                         if (e.leading_interior_comments.len > 0) {
                             p.printNewline();
-                            p.options.unindent();
+                            p.unindent();
                             p.printIndent();
                         }
                         p.print(")");
@@ -2783,7 +2802,7 @@ fn NewPrinter(
                     const items = e.items.slice();
                     if (items.len > 0) {
                         if (!e.is_single_line) {
-                            p.options.indent += 1;
+                            p.indent();
                         }
 
                         for (items, 0..) |item, i| {
@@ -2806,7 +2825,7 @@ fn NewPrinter(
                         }
 
                         if (!e.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -2832,7 +2851,9 @@ fn NewPrinter(
                     p.print("{");
                     const props = expr.data.e_object.properties.slice();
                     if (props.len > 0) {
-                        p.options.indent += @as(usize, @intFromBool(!e.is_single_line));
+                        if (!e.is_single_line) {
+                            p.indent();
+                        }
 
                         if (e.is_single_line) {
                             p.printSpace();
@@ -2857,7 +2878,7 @@ fn NewPrinter(
                         }
 
                         if (!e.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                             p.printNewline();
                             p.printIndent();
                         } else {
@@ -3715,7 +3736,9 @@ fn NewPrinter(
                 .b_array => |b| {
                     p.print("[");
                     if (b.items.len > 0) {
-                        p.options.indent += @as(usize, @intFromBool(!b.is_single_line));
+                        if (!b.is_single_line) {
+                            p.indent();
+                        }
 
                         for (b.items, 0..) |*item, i| {
                             if (i != 0) {
@@ -3746,7 +3769,7 @@ fn NewPrinter(
                         }
 
                         if (!b.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -3757,8 +3780,9 @@ fn NewPrinter(
                 .b_object => |b| {
                     p.print("{");
                     if (b.properties.len > 0) {
-                        p.options.indent +=
-                            @as(usize, @intFromBool(!b.is_single_line));
+                        if (!b.is_single_line) {
+                            p.indent();
+                        }
 
                         for (b.properties, 0..) |*property, i| {
                             if (i != 0) {
@@ -3847,7 +3871,7 @@ fn NewPrinter(
                         }
 
                         if (!b.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                             p.printNewline();
                             p.printIndent();
                         } else {
@@ -3960,7 +3984,7 @@ fn NewPrinter(
                     }
                 },
                 .s_empty => {
-                    if (p.prev_stmt_tag == .s_empty and p.options.indent == 0) return;
+                    if (p.prev_stmt_tag == .s_empty and p.options.indent.count == 0) return;
 
                     p.printIndent();
                     p.print(";");
@@ -4178,7 +4202,7 @@ fn NewPrinter(
                     p.print("{");
 
                     if (!s.is_single_line) {
-                        p.options.indent += 1;
+                        p.indent();
                     } else {
                         p.printSpace();
                     }
@@ -4200,7 +4224,7 @@ fn NewPrinter(
                     }
 
                     if (!s.is_single_line) {
-                        p.options.unindent();
+                        p.unindent();
                         p.printNewline();
                         p.printIndent();
                     } else {
@@ -4275,7 +4299,7 @@ fn NewPrinter(
                     p.printWhitespacer(ws("export {"));
 
                     if (!s.is_single_line) {
-                        p.options.indent += 1;
+                        p.indent();
                     } else {
                         p.printSpace();
                     }
@@ -4296,7 +4320,7 @@ fn NewPrinter(
                     }
 
                     if (!s.is_single_line) {
-                        p.options.unindent();
+                        p.unindent();
                         p.printNewline();
                         p.printIndent();
                     } else {
@@ -4342,10 +4366,10 @@ fn NewPrinter(
                         },
                         else => {
                             p.printNewline();
-                            p.options.indent += 1;
+                            p.indent();
                             p.printStmt(s.body) catch unreachable;
                             p.printSemicolonIfNeeded();
-                            p.options.unindent();
+                            p.unindent();
                             p.printIndent();
                         },
                     }
@@ -4412,7 +4436,7 @@ fn NewPrinter(
                     p.printBody(s.body);
                 },
                 .s_label => |s| {
-                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                    if (!p.options.minify_whitespace and p.options.indent.count > 0) {
                         p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
@@ -4490,7 +4514,7 @@ fn NewPrinter(
                     p.printSpace();
                     p.print("{");
                     p.printNewline();
-                    p.options.indent += 1;
+                    p.indent();
 
                     for (s.cases) |c| {
                         p.printSemicolonIfNeeded();
@@ -4519,15 +4543,15 @@ fn NewPrinter(
                         }
 
                         p.printNewline();
-                        p.options.indent += 1;
+                        p.indent();
                         for (c.body) |st| {
                             p.printSemicolonIfNeeded();
                             p.printStmt(st) catch unreachable;
                         }
-                        p.options.unindent();
+                        p.unindent();
                     }
 
-                    p.options.unindent();
+                    p.unindent();
                     p.printIndent();
                     p.print("}");
                     p.printNewline();
@@ -4747,7 +4771,7 @@ fn NewPrinter(
 
                         p.print("{");
                         if (!s.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                         }
 
                         for (s.items, 0..) |item, i| {
@@ -4767,7 +4791,7 @@ fn NewPrinter(
                         }
 
                         if (!s.is_single_line) {
-                            p.options.unindent();
+                            p.unindent();
                             p.printNewline();
                             p.printIndent();
                         }
@@ -4888,7 +4912,7 @@ fn NewPrinter(
                     p.printSemicolonAfterStatement();
                 },
                 .s_expr => |s| {
-                    if (!p.options.minify_whitespace and p.options.indent > 0) {
+                    if (!p.options.minify_whitespace and p.options.indent.count > 0) {
                         p.addSourceMapping(stmt.loc);
                         p.printIndent();
                     }
@@ -5160,9 +5184,9 @@ fn NewPrinter(
                         p.print("{");
                         p.printNewline();
 
-                        p.options.indent += 1;
+                        p.indent();
                         p.printStmt(s.yes) catch unreachable;
-                        p.options.unindent();
+                        p.unindent();
                         p.needs_semicolon = false;
 
                         p.printIndent();
@@ -5175,9 +5199,9 @@ fn NewPrinter(
                         }
                     } else {
                         p.printNewline();
-                        p.options.indent += 1;
+                        p.indent();
                         p.printStmt(s.yes) catch unreachable;
-                        p.options.unindent();
+                        p.unindent();
 
                         if (s.no != null) {
                             p.printIndent();
@@ -5202,9 +5226,9 @@ fn NewPrinter(
                     },
                     else => {
                         p.printNewline();
-                        p.options.indent += 1;
+                        p.indent();
                         p.printStmt(no_block) catch unreachable;
-                        p.options.unindent();
+                        p.unindent();
                     },
                 }
             }
@@ -6155,6 +6179,7 @@ pub fn printJSON(
     _writer: Writer,
     expr: Expr,
     source: *const logger.Source,
+    opts: Options,
 ) !usize {
     const PrinterType = NewPrinter(false, Writer, false, false, true, false);
     const writer = _writer;
@@ -6172,7 +6197,7 @@ pub fn printJSON(
     var printer = PrinterType.init(
         writer,
         ast.import_records.slice(),
-        .{},
+        opts,
         renamer.toRenamer(),
         undefined,
     );

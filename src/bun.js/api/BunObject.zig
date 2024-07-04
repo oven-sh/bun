@@ -3880,7 +3880,7 @@ const TOMLObject = struct {
             return .zero;
         };
         var writer = js_printer.BufferPrinter.init(buffer_writer);
-        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source) catch {
+        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source, .{}) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
             return .zero;
         };

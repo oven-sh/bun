@@ -378,6 +378,48 @@ module.exports = function lmao() {
   );
 });
 
+describe("package.json indentation", async () => {
+  test("works for root and workspace packages", async () => {
+    await Promise.all([
+      // 5 space indentation
+      write(join(packageDir, "package.json"), `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"]\n}`),
+      // 1 tab indentation
+      write(join(packageDir, "packages", "bar", "package.json"), `\n{\n\n\t"name": "bar",\n}`),
+    ]);
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+
+    const rootPackageJson = await file(join(packageDir, "package.json")).text();
+
+    expect(rootPackageJson).toBe(
+      `{\n     "name": "foo",\n     "workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
+    );
+
+    // now add to workspace. it should keep tab indentation
+    ({ exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: join(packageDir, "packages", "bar"),
+      stdout: "inherit",
+      stderr: "inherit",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "package.json")).text()).toBe(rootPackageJson);
+    const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
+    expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+  });
+});
+
 describe("optionalDependencies", () => {
   for (const optional of [true, false]) {
     test(`exit code is ${optional ? 0 : 1} when ${optional ? "optional" : ""} dependency tarball is missing`, async () => {

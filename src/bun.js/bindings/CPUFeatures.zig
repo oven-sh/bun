@@ -67,8 +67,7 @@ else
             return .{};
         }
 
-        pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {
-        }
+        pub fn format(_: @This(), comptime _: []const u8, _: anytype, _: anytype) !void {}
 
         pub fn isEmpty(_: @This()) bool {
             return true;

@@ -1,9 +1,7 @@
 // https://github.com/oven-sh/bun/issues/12360
 import { test, expect } from "bun:test";
 import { fileURLToPath, pathToFileURL } from "bun";
-function tmpdirSync() {
-  return require("os").tmpdir();
-}
+import { tmpdirSync } from "harness";
 import { join } from "path";
 
 export async function validatePath(path: URL): Promise<URL | string> {

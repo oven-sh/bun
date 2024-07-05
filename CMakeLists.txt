@@ -954,12 +954,15 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+if(APPLE)
+    add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
+endif()
+
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
-    "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
@@ -1148,7 +1151,6 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
-
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()

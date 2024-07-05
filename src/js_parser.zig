@@ -1867,10 +1867,10 @@ pub const SideEffects = enum(u1) {
         };
     }
 
-    /// This is responsible for simplifying an unused expression that may or may not
-    /// have side effects into a smaller expression. For example, this is where
-    /// calls with .can_be_unwrapped_if_unused get unwrapped. A `null` return value
-    /// implies E.Missing, aka "remove this expression"
+    /// This is responsible for simplifying an unused expression that may or may
+    /// not have side effects into a smaller expression. For example, this is
+    /// where calls with .can_be_unwrapped_if_unused get unwrapped. This returns
+    /// Expr.missing if the node can be removed completely.
     ///
     /// Since this is run on many expressions and, more specifically, binary comma
     /// expressions, a recursive approach will easily stack overflow with large,
@@ -1886,30 +1886,47 @@ pub const SideEffects = enum(u1) {
             .keep => expr,
             .remove => Expr.missing,
             .recursive => {
-                var state: SimplifyState = p.simplify_state.get();
-                defer p.simplify_state.release(&state);
+                var sfa = std.heap.stackFallback(
+                    @sizeOf(Expr) * 1024 + @sizeOf(SimplifyState.Node) * 256,
+                    p.allocator,
+                );
+                const node_allocator = sfa.get();
+                var state: SimplifyState = .{
+                    .exprs = SimplifyState.ExprList.initCapacity(node_allocator, 1024) catch unreachable,
+                    .nodes = SimplifyState.NodeList.initCapacity(node_allocator, 256) catch unreachable,
+                    .current = undefined,
+                };
 
-                state.exprs.append(bun.failing_allocator, expr) catch unreachable;
-                state.current = state.pushDependencies(0, &expr, p.allocator) catch bun.outOfMemory();
+                if (Environment.isDebug) {
+                    assert(sfa.fixed_buffer_allocator.end_index == sfa.fixed_buffer_allocator.buffer.len);
+                }
 
-                bun.assert(state.exprs.len > 1); // should be more than one dependency
-                bun.assert(state.current.data.parent_index == 0);
-                bun.assert(state.current.children_left > 0);
-                bun.assert(state.current.offset == 0);
+                state.exprs.appendAssumeCapacity(expr);
+                state.current = state.pushDependencies(0, &expr, node_allocator) catch bun.outOfMemory();
+
+                if (Environment.isDebug) {
+                    bun.assert(state.exprs.items.len > 1); // should have pushed something
+                    bun.assert(state.current.data.parent_index == 0);
+                    bun.assert(state.current.children_left > 0);
+                    bun.assert(state.current.offset == 0);
+                }
 
                 while (true) {
                     if (state.current.children_left > 0) {
-                        state.startExpr(p, p.allocator) catch bun.outOfMemory();
+                        state.startExpr(p, node_allocator) catch bun.outOfMemory();
                     } else {
                         if (state.finishExpr(p) catch bun.outOfMemory() == .stop)
                             break;
                     }
                 }
 
-                bun.assert(state.nodes.len == 0);
-                bun.assert(state.exprs.len == 1);
+                if (Environment.isDebug) {
+                    // when stopping there should only be one item remaining
+                    bun.assert(state.nodes.items.len == 0);
+                    bun.assert(state.exprs.items.len == 1);
+                }
 
-                return state.exprs.at(0).*;
+                return state.exprs.items[0];
             },
         };
     }
@@ -1929,6 +1946,7 @@ pub const SideEffects = enum(u1) {
                 /// Depends on the expression type
                 /// - e_object: does this have any spreads?
                 /// - e_array: does this have any spreads?
+                /// - e_if: is this a second pass to visit the test
                 flag: bool,
                 /// Index of the unvisited root expression
                 parent_index: u31,
@@ -1944,62 +1962,28 @@ pub const SideEffects = enum(u1) {
             }
         };
 
-        // TODO: benchmark ArrayListUnmanaged here. it probably does better in the general case.
-        const ExprList = std.SegmentedList(Expr, 128);
-        const NodeList = std.SegmentedList(Node, 32);
-
-        /// We want to re-use memory from simplifyUnusedExpr across invocations,
-        /// since freeing it will likely do nothing since the parser uses an arena.
-        /// However, storing the entire state is useless as the segmented lists
-        /// take up a lot of extra bytes which will always be unused outside of
-        /// `simplifyUnusedExpr`. This 'SharedMemory' stores just the reused
-        /// allocations from SegmentedList.
-        const SharedMemory = struct {
-            /// Memory sharing requires an exclusive lock, which is OK because
-            /// simplifyUnusedExpr is not recursive.
-            lock: std.debug.SafetyLock = .{},
-            exprs: [][*]Expr = &.{},
-            nodes: [][*]Node = &.{},
-
-            /// The `SimplifyState` is not fully initialized
-            pub fn get(shared_memory: *SharedMemory) callconv(callconv_inline) SimplifyState {
-                shared_memory.lock.lock();
-                return .{
-                    .exprs = .{ .dynamic_segments = shared_memory.exprs },
-                    .nodes = .{ .dynamic_segments = shared_memory.nodes },
-                    .current = undefined,
-                };
-            }
-
-            pub fn release(shared_memory: *SharedMemory, state: *SimplifyState) callconv(callconv_inline) void {
-                shared_memory.lock.unlock();
-                shared_memory.exprs = state.exprs.dynamic_segments;
-                shared_memory.nodes = state.nodes.dynamic_segments;
-
-                if (Environment.isDebug)
-                    state.* = undefined;
-            }
-        };
+        const ExprList = std.ArrayListUnmanaged(Expr);
+        const NodeList = std.ArrayListUnmanaged(Node);
 
         const ChildrenSlice = struct {
-            expr_list: *ExprList,
+            expr_list: [*]Expr,
             offset: u32,
             len: if (Environment.isDebug) u32 else u0 = 0,
 
-            pub fn at(slice: ChildrenSlice, n: u32) Expr {
+            pub fn at(slice: ChildrenSlice, n: u32) callconv(callconv_inline) Expr {
                 if (Environment.isDebug)
                     bun.assert(n < slice.len);
 
-                return slice.expr_list.at(slice.offset + n).*;
+                return slice.expr_list[slice.offset + n];
             }
 
-            pub fn next(slice: *ChildrenSlice) Expr {
+            pub fn next(slice: *ChildrenSlice) callconv(callconv_inline) Expr {
                 defer {
                     slice.offset += 1;
                     if (Environment.isDebug)
                         slice.len -= 1;
                 }
-                return slice.expr_list.at(slice.offset).*;
+                return slice.expr_list[slice.offset];
             }
         };
 
@@ -2007,10 +1991,10 @@ pub const SideEffects = enum(u1) {
             state: *SimplifyState,
             parent_index: u31,
             expr: *const Expr,
-            allocator: Allocator,
+            node_allocator: Allocator,
         ) !Node {
             var flag = false;
-            const offset = state.exprs.len - 1;
+            const offset = state.exprs.items.len - 1;
             const children_count: u32 = switch (expr.data) {
                 else => |tag| Output.panic("SimplifyState.pushDependencies unexpected state: {s}", .{@tagName(tag)}),
 
@@ -2018,27 +2002,25 @@ pub const SideEffects = enum(u1) {
                     bun.assert(call.can_be_unwrapped_if_unused); // if false, visiting is useless
                     bun.assert(call.args.len > 0); // if zero, should have already returned .remove
                     const args = call.args.slice();
-                    try state.exprs.appendSlice(allocator, args);
+                    try state.exprs.appendSlice(node_allocator, args);
                     break :len @intCast(args.len);
                 },
 
                 .e_if => |ternary| len: {
-                    try state.exprs.appendSlice(allocator, &.{
-                        // TODO: always visiting this is wrong and slow
-                        ternary.test_,
+                    try state.exprs.appendSlice(node_allocator, &.{
                         ternary.yes,
                         ternary.no,
                     });
-                    break :len 3;
+                    break :len 2;
                 },
 
                 .e_unary => |unary| len: {
-                    try state.exprs.append(allocator, unary.value);
+                    try state.exprs.append(node_allocator, unary.value);
                     break :len 1;
                 },
 
                 .e_binary => |bin| len: {
-                    try state.exprs.appendSlice(allocator, &.{
+                    try state.exprs.appendSlice(node_allocator, &.{
                         bin.left,
                         bin.right,
                     });
@@ -2051,7 +2033,7 @@ pub const SideEffects = enum(u1) {
                     for (items) |prop| {
                         // Spread properties must always be evaluated
                         if (prop.data != .e_spread) {
-                            try state.exprs.append(allocator, prop);
+                            try state.exprs.append(node_allocator, prop);
                             count += 1;
                         } else {
                             // Mark there to be a spread
@@ -2066,7 +2048,7 @@ pub const SideEffects = enum(u1) {
                     const properties = obj.properties.slice();
                     for (properties) |prop| {
                         if (prop.kind != .spread) {
-                            try state.exprs.append(allocator, prop.value.?);
+                            try state.exprs.append(node_allocator, prop.value.?);
                             count += 1;
                         } else {
                             // Mark there to be a spread
@@ -2087,11 +2069,11 @@ pub const SideEffects = enum(u1) {
             };
         }
 
-        fn startExpr(state: *SimplifyState, p: anytype, allocator: Allocator) callconv(callconv_inline) !void {
+        fn startExpr(state: *SimplifyState, p: anytype, node_allocator: Allocator) callconv(callconv_inline) !void {
             bun.assert(state.current.children_left > 0); // already visited parent index
 
             const i = state.current.offset + state.current.children_left;
-            const expr = state.exprs.at(i);
+            const expr = &state.exprs.items[i];
 
             state.current.children_left -= 1;
 
@@ -2103,8 +2085,8 @@ pub const SideEffects = enum(u1) {
                 },
                 .recursive => {
                     // push a new `node`
-                    try state.nodes.append(allocator, state.current);
-                    state.current = try state.pushDependencies(@intCast(i), expr, allocator);
+                    try state.nodes.append(node_allocator, state.current);
+                    state.current = try state.pushDependencies(@intCast(i), expr, node_allocator);
                 },
             }
         }
@@ -2113,28 +2095,35 @@ pub const SideEffects = enum(u1) {
 
         fn finishExpr(state: *SimplifyState, p: anytype) callconv(callconv_inline) !FinishResult {
             bun.assert(state.current.children_left == 0); // already visited
-            const expr = state.exprs.at(state.current.data.parent_index);
+            const expr = &state.exprs.items[state.current.data.parent_index];
 
             var children: ChildrenSlice = .{
-                .expr_list = &state.exprs,
+                .expr_list = state.exprs.items.ptr,
                 .offset = state.current.offset + 1,
                 .len = state.current.children_count_debug,
             };
-            expr.* = finishExprWithChildren(
+            expr.* = state.finishExprWithChildren(
                 p,
                 expr,
-                state.current.data.flag,
                 &children,
-            );
-            state.exprs.len = state.current.offset + 1;
-            state.current = state.nodes.pop() orelse return .stop;
+            ) orelse return .@"continue";
+
+            state.exprs.items.len = state.current.offset + 1;
+            state.current = state.nodes.popOrNull() orelse
+                return .stop;
+
             return .@"continue";
         }
 
         /// `children` in this context is the visited children, which were
         /// pushed in `pushDependencies`. The exact contents and length are
         /// dependant on what was pushed.
-        fn finishExprWithChildren(p: anytype, original: *Expr, flag: bool, children: *ChildrenSlice) callconv(callconv_inline) Expr {
+        fn finishExprWithChildren(
+            state: *SimplifyState,
+            p: anytype,
+            original: *Expr,
+            children: *ChildrenSlice,
+        ) callconv(callconv_inline) ?Expr {
             if (Environment.isDebug) {
                 bun.assert(nonRecursive(p, original) == .recursive);
                 bun.assert(p.options.features.dead_code_elimination);
@@ -2173,7 +2162,8 @@ pub const SideEffects = enum(u1) {
                         .bin_loose_ne,
                         => {
                             if (Environment.isDebug)
-                                bun.assert(isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data));
+                                bun.assert(isPrimitiveWithSideEffects(bin.left.data) and
+                                    isPrimitiveWithSideEffects(bin.right.data));
 
                             return Expr.joinWithComma(left, right);
                         },
@@ -2187,6 +2177,7 @@ pub const SideEffects = enum(u1) {
                             // Preserve short-circuit behavior: the left expression is only unused if
                             // the right expression can be completely removed. Otherwise, the left
                             // expression is important for the branch.
+                            // TODO: audit this
                             if (bin.right.isMissing())
                                 return left;
 
@@ -2203,33 +2194,43 @@ pub const SideEffects = enum(u1) {
                 .e_unary => return children.at(0),
 
                 .e_if => |ternary| {
-                    ternary.yes = children.at(1);
-                    ternary.no = children.at(2);
+                    if (!state.current.data.flag) {
+                        ternary.yes = children.at(0);
+                        ternary.no = children.at(1);
 
-                    // "foo() ? 1 : 2" => "foo()"
-                    if (ternary.yes.isMissing() and ternary.no.isMissing()) {
+                        // "foo() ? 1 : 2" => "foo()"
+                        if (ternary.yes.isMissing() and ternary.no.isMissing()) {
+                            state.exprs.items.len -= 2;
+                            state.exprs.appendAssumeCapacity(ternary.test_);
+                            state.current.data.flag = true;
+                            state.current.children_left = 1;
+                            state.current.children_count_debug = if (Environment.isDebug) 1 else 0;
+                            return null;
+                        }
+
+                        // "foo() ? 1 : bar()" => "foo() || bar()"
+                        if (ternary.yes.isMissing()) {
+                            return Expr.joinWithLeftAssociativeOp(
+                                .bin_logical_or,
+                                ternary.test_,
+                                ternary.no,
+                            );
+                        }
+
+                        // "foo() ? bar() : 2" => "foo() && bar()"
+                        if (ternary.no.isMissing()) {
+                            return Expr.joinWithLeftAssociativeOp(
+                                .bin_logical_and,
+                                ternary.test_,
+                                ternary.yes,
+                            );
+                        }
+
+                        return original.*;
+                    } else {
+                        // "foo() ? 1 : 2" => "foo()"
                         return children.at(0);
                     }
-
-                    // "foo() ? 1 : bar()" => "foo() || bar()"
-                    if (ternary.yes.isMissing()) {
-                        return Expr.joinWithLeftAssociativeOp(
-                            .bin_logical_or,
-                            ternary.test_,
-                            ternary.no,
-                        );
-                    }
-
-                    // "foo() ? bar() : 2" => "foo() && bar()"
-                    if (ternary.no.isMissing()) {
-                        return Expr.joinWithLeftAssociativeOp(
-                            .bin_logical_and,
-                            ternary.test_,
-                            ternary.yes,
-                        );
-                    }
-
-                    return original.*;
                 },
 
                 .e_object => |obj| {
@@ -2237,7 +2238,7 @@ pub const SideEffects = enum(u1) {
                     // "..." triggers code evaluation via getters. In that case, just trim
                     // the other items instead and leave the object expression there.
                     var properties_slice = obj.properties.slice();
-                    if (flag) {
+                    if (state.current.data.flag) {
                         var end: usize = 0;
 
                         // Spread properties must always be evaluated
@@ -2286,7 +2287,7 @@ pub const SideEffects = enum(u1) {
                 .e_array => |array| {
                     var items = array.items.slice();
 
-                    if (flag) {
+                    if (state.current.data.flag) {
                         var end: usize = 0;
 
                         for (items) |item| {
@@ -2357,10 +2358,6 @@ pub const SideEffects = enum(u1) {
                     .keep,
 
                 .e_identifier => |ident| {
-                    std.debug.print("awa {} - {s}\n", .{
-                        ident,
-                        p.symbols.items[ident.ref.innerIndex()].original_name,
-                    });
                     if (ident.must_keep_due_to_with_stmt)
                         return .keep;
 
@@ -5566,8 +5563,6 @@ fn NewParser_(
 
         // If this is true, then all top-level statements are wrapped in a try/catch
         will_wrap_module_in_try_catch_for_using: bool = false,
-
-        simplify_state: SideEffects.SimplifyState.SharedMemory = .{},
 
         const RecentlyVisitedTSNamespace = struct {
             ref: Ref = Ref.None,
@@ -19792,8 +19787,6 @@ fn NewParser_(
                     }
                 },
                 .s_expr => |data| {
-                    const should_trim_primitive = p.options.features.dead_code_elimination and
-                        (p.options.features.minify_syntax and data.value.isPrimitiveLiteral());
                     p.stmt_expr_value = data.value.data;
                     defer p.stmt_expr_value = .{ .e_missing = .{} };
 
@@ -19805,14 +19798,10 @@ fn NewParser_(
                             p.commonjs_named_exports_needs_conversion;
                     }
 
-                    data.value = p.visitExpr(data.value);
-
-                    if (should_trim_primitive and data.value.isPrimitiveLiteral()) {
-                        return;
-                    }
+                    const visited = p.visitExpr(data.value);
 
                     // simplify unused
-                    data.value = SideEffects.simplifyUnusedExpr(p, data.value).toOptional() orelse
+                    data.value = SideEffects.simplifyUnusedExpr(p, visited).toOptional() orelse
                         return;
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {

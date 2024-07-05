@@ -2296,7 +2296,8 @@ fn NewPrinter(
                 .e_missing => {
                     if (bun.Environment.isDebug and !p.debug_allowed_to_print_missing) {
                         // e_missing is allowed in arrays, so this cannot universally panic
-                        Output.panic("Attempt to print .e_missing outside of an array", .{});
+                        Output.debugWarn("Attempt to print .e_missing outside of an array! Check bundle for 'e_missing'", .{});
+                        p.print("(<e_missing>)");
                     }
                 },
                 .e_undefined => {

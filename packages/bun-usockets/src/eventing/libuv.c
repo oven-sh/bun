@@ -125,7 +125,7 @@ int us_poll_events(struct us_poll_t *p) {
          ((p->poll_type & POLL_TYPE_POLLING_OUT) ? LIBUS_SOCKET_WRITABLE : 0);
 }
 
-unsigned int us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
+size_t us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
 
 int us_internal_poll_type(struct us_poll_t *p) { return p->poll_type & POLL_TYPE_KIND_MASK; }
 

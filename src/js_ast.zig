@@ -2874,23 +2874,12 @@ pub const Stmt = struct {
     }
 
     pub fn isMissingExpr(self: Stmt) bool {
-        return self.data == .s_expr and self.data.s_expr.value.data == .e_missing;
+        return self.data == .s_expr and self.data.s_expr.value.isMissing();
     }
 
     pub fn empty() Stmt {
-        return Stmt{ .data = .{ .s_empty = None }, .loc = logger.Loc{} };
+        return Stmt{ .data = .{ .s_empty = .{} }, .loc = logger.Loc{} };
     }
-
-    pub fn toEmpty(this: Stmt) Stmt {
-        return .{
-            .data = .{
-                .s_empty = None,
-            },
-            .loc = this.loc,
-        };
-    }
-
-    const None = S.Empty{};
 
     pub var icount: usize = 0;
     pub fn init(comptime StatementType: type, origData: *StatementType, loc: logger.Loc) Stmt {
@@ -3228,7 +3217,19 @@ pub const Expr = struct {
     loc: logger.Loc,
     data: Data,
 
-    pub const empty = Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = logger.Loc.Empty };
+    /// Missing refers to the lack of an expression. This is used to represent
+    /// array holes in arrays, but is otherwise used as a null state for an
+    /// expression.
+    ///
+    /// You can treat this as the `null` encoding by using .toOptional() to convert
+    /// Expr (with `e_missing`) to `?Expr (not missing)`
+    pub const missing: Expr = .{ .data = .{ .e_missing = .{} }, .loc = logger.Loc.Empty };
+
+    pub const empty = missing; // deprecated, please refer to this as missing
+
+    pub fn isMissing(a: *const Expr) bool {
+        return a.data == .e_missing;
+    }
 
     pub fn isAnonymousNamed(expr: Expr) bool {
         return switch (expr.data) {
@@ -3337,20 +3338,24 @@ pub const Expr = struct {
     }
 
     pub inline fn initIdentifier(ref: Ref, loc: logger.Loc) Expr {
-        return Expr{
+        return .{
+            .data = .{ .e_identifier = E.Identifier.init(ref) },
             .loc = loc,
-            .data = .{
-                .e_identifier = E.Identifier.init(ref),
-            },
         };
     }
 
-    pub fn toEmpty(expr: Expr) Expr {
-        return Expr{ .data = .{ .e_missing = E.Missing{} }, .loc = expr.loc };
+    pub inline fn initNumber(value: f64, loc: logger.Loc) Expr {
+        return .{
+            .data = .{ .e_number = .{ .value = value } },
+            .loc = loc,
+        };
     }
-    pub fn isEmpty(expr: Expr) bool {
-        return expr.data == .e_missing;
+
+    /// Represents .e_missing as the null value.
+    pub fn toOptional(expr: Expr) ?Expr {
+        return if (expr.isMissing()) null else expr;
     }
+
     pub const Query = struct { expr: Expr, loc: logger.Loc, i: u32 = 0 };
 
     pub fn hasAnyPropertyNamed(expr: *const Expr, comptime names: []const string) bool {
@@ -3517,10 +3522,6 @@ pub const Expr = struct {
         loc: logger.Loc,
     };
 
-    pub fn isMissing(a: *const Expr) bool {
-        return std.meta.activeTag(a.data) == Expr.Tag.e_missing;
-    }
-
     // The goal of this function is to "rotate" the AST if it's possible to use the
     // left-associative property of the operator to avoid unnecessary parentheses.
     //
@@ -3531,13 +3532,12 @@ pub const Expr = struct {
         comptime op: Op.Code,
         a: Expr,
         b: Expr,
-        allocator: std.mem.Allocator,
     ) Expr {
         // "(a, b) op c" => "a, b op c"
         switch (a.data) {
             .e_binary => |comma| {
                 if (comma.op == .bin_comma) {
-                    comma.right = joinWithLeftAssociativeOp(op, comma.right, b, allocator);
+                    comma.right = joinWithLeftAssociativeOp(op, comma.right, b);
                 }
             },
             else => {},
@@ -3550,9 +3550,8 @@ pub const Expr = struct {
                 if (binary.op == op) {
                     return joinWithLeftAssociativeOp(
                         op,
-                        joinWithLeftAssociativeOp(op, a, binary.left, allocator),
+                        joinWithLeftAssociativeOp(op, a, binary.left),
                         binary.right,
-                        allocator,
                     );
                 }
             },
@@ -3561,10 +3560,14 @@ pub const Expr = struct {
 
         // "a op b" => "a op b"
         // "(a op b) op c" => "(a op b) op c"
-        return Expr.init(E.Binary, E.Binary{ .op = op, .left = a, .right = b }, a.loc);
+        return Expr.init(
+            E.Binary,
+            E.Binary{ .op = op, .left = a, .right = b },
+            a.loc,
+        );
     }
 
-    pub fn joinWithComma(a: Expr, b: Expr, _: std.mem.Allocator) Expr {
+    pub fn joinWithComma(a: Expr, b: Expr) Expr {
         if (a.isMissing()) {
             return b;
         }
@@ -3573,29 +3576,38 @@ pub const Expr = struct {
             return a;
         }
 
-        return Expr.init(E.Binary, E.Binary{ .op = .bin_comma, .left = a, .right = b }, a.loc);
+        return Expr.init(E.Binary, E.Binary{
+            .op = .bin_comma,
+            .left = a,
+            .right = b,
+        }, a.loc);
     }
 
-    pub fn joinAllWithComma(all: []Expr, allocator: std.mem.Allocator) Expr {
+    pub fn joinAllWithComma(all: []Expr) Expr {
         bun.assert(all.len > 0);
         switch (all.len) {
             1 => {
                 return all[0];
             },
             2 => {
-                return Expr.joinWithComma(all[0], all[1], allocator);
+                return Expr.joinWithComma(all[0], all[1]);
             },
             else => {
                 var expr = all[0];
                 for (1..all.len) |i| {
-                    expr = Expr.joinWithComma(expr, all[i], allocator);
+                    expr = Expr.joinWithComma(expr, all[i]);
                 }
                 return expr;
             },
         }
     }
 
-    pub fn joinAllWithCommaCallback(all: []Expr, comptime Context: type, ctx: Context, comptime callback: (fn (ctx: anytype, expr: Expr) ?Expr), allocator: std.mem.Allocator) ?Expr {
+    pub fn joinAllWithCommaCallback(
+        all: []Expr,
+        comptime Context: type,
+        ctx: Context,
+        comptime callback: (fn (ctx: anytype, expr: Expr) ?Expr),
+    ) ?Expr {
         switch (all.len) {
             0 => return null,
             1 => {
@@ -3611,7 +3623,6 @@ pub const Expr = struct {
                         .data = .{ .e_missing = .{} },
                         .loc = all[1].loc,
                     },
-                    allocator,
                 );
             },
             else => {
@@ -3625,7 +3636,7 @@ pub const Expr = struct {
                     expr = Expr.joinWithComma(expr, callback(ctx, all[i]) orelse Expr{
                         .data = .{ .e_missing = .{} },
                         .loc = all[i].loc,
-                    }, allocator);
+                    });
                 }
 
                 return expr;
@@ -6041,6 +6052,9 @@ pub const S = struct {
     };
 
     pub const SExpr = struct {
+        /// Ideally, this must not be e_missing. The statement can be s_empty instead.
+        /// TODO(@paperdave): turn this suggestion into an assertion. it will
+        /// unify some code paths that check both conditions.
         value: ExprNodeIndex,
 
         // This is set to true for automatically-generated expressions that should
@@ -6049,14 +6063,20 @@ pub const S = struct {
         does_not_affect_tree_shaking: bool = false,
     };
 
-    pub const Comment = struct { text: string };
+    pub const Comment = struct {
+        text: string,
+    };
 
     pub const Directive = struct {
         value: []const u8,
     };
 
-    pub const ExportClause = struct { items: []ClauseItem, is_single_line: bool = false };
+    pub const ExportClause = struct {
+        items: []ClauseItem,
+        is_single_line: bool = false,
+    };
 
+    /// TODO: rename to Missing
     pub const Empty = struct {};
 
     pub const ExportStar = struct {
@@ -6066,9 +6086,14 @@ pub const S = struct {
     };
 
     // This is an "export = value;" statement in TypeScript
-    pub const ExportEquals = struct { value: ExprNodeIndex };
+    pub const ExportEquals = struct {
+        value: ExprNodeIndex,
+    };
 
-    pub const Label = struct { name: LocRef, stmt: StmtNodeIndex };
+    pub const Label = struct {
+        name: LocRef,
+        stmt: StmtNodeIndex,
+    };
 
     // This is a stand-in for a TypeScript type declaration
     pub const TypeScript = struct {};
@@ -6123,6 +6148,7 @@ pub const S = struct {
     pub const Class = struct { class: G.Class, is_export: bool = false };
 
     pub const If = struct {
+        // TODO(@paperdave): rename to 'cond' or 'condition'
         test_: ExprNodeIndex,
         yes: StmtNodeIndex,
         no: ?StmtNodeIndex,
@@ -6131,6 +6157,7 @@ pub const S = struct {
     pub const For = struct {
         // May be a SConst, SLet, SVar, or SExpr
         init: ?StmtNodeIndex = null,
+        // TODO(@paperdave): rename to 'cond' or 'condition'
         test_: ?ExprNodeIndex = null,
         update: ?ExprNodeIndex = null,
         body: StmtNodeIndex,
@@ -6259,7 +6286,11 @@ pub const Finally = struct {
     stmts: StmtNodeList,
 };
 
-pub const Case = struct { loc: logger.Loc, value: ?ExprNodeIndex, body: StmtNodeList };
+pub const Case = struct {
+    loc: logger.Loc,
+    value: ?ExprNodeIndex,
+    body: StmtNodeList,
+};
 
 pub const Op = struct {
     // If you add a new token, remember to add it to "Table" too

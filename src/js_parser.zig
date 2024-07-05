@@ -44,6 +44,7 @@ pub const BindingNodeList = js_ast.BindingNodeList;
 const DeclaredSymbol = js_ast.DeclaredSymbol;
 const JSC = bun.JSC;
 const Index = @import("./ast/base.zig").Index;
+const callconv_inline = bun.callconv_inline;
 
 fn _disabledAssert(_: bool) void {
     if (!Environment.allow_assert) @compileError("assert is missing an if (Environment.allow_assert)");
@@ -1821,16 +1822,23 @@ pub const SideEffects = enum(u1) {
                 switch (e.op) {
                     .bin_logical_and => {
                         const effects = SideEffects.toBoolean(p, e.right.data);
+                        // "if (anything && truthyNoSideEffects)" => "if (anything)"
                         if (effects.ok and effects.value and effects.side_effects == .no_side_effects) {
-                            // "if (anything && truthyNoSideEffects)" => "if (anything)"
-                            return e.left;
+                            return simplifyBoolean(p, e.left);
+                        } else {
+                            // "if (x && (y && true))" => "if (x && y)"
+                            e.left = simplifyBoolean(p, e.left);
+                            e.right = simplifyBoolean(p, e.right);
                         }
                     },
                     .bin_logical_or => {
                         const effects = SideEffects.toBoolean(p, e.right.data);
                         if (effects.ok and !effects.value and effects.side_effects == .no_side_effects) {
                             // "if (anything || falsyNoSideEffects)" => "if (anything)"
-                            return e.left;
+                            return simplifyBoolean(p, e.left);
+                        } else {
+                            e.left = simplifyBoolean(p, e.left);
+                            e.right = simplifyBoolean(p, e.right);
                         }
                     },
                     else => {},
@@ -1870,13 +1878,13 @@ pub const SideEffects = enum(u1) {
     ///
     /// This approach uses a parse-shared "SimplifyState", which heap-allocates
     /// a stack of expressions, and will re-use this heap across simplifications.
-    pub fn simpifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
+    pub fn simplifyUnusedExpr(p: anytype, expr: Expr) Expr {
         comptime assert(@typeInfo(@TypeOf(p)) == .Pointer);
         if (!p.options.features.dead_code_elimination) return expr;
 
-        return switch (SimplifyState.nonRecursive(p, expr)) {
+        return switch (SimplifyState.nonRecursive(p, &expr)) {
             .keep => expr,
-            .remove => null,
+            .remove => Expr.missing,
             .recursive => {
                 var state: SimplifyState = p.simplify_state.get();
                 defer p.simplify_state.release(&state);
@@ -1885,20 +1893,21 @@ pub const SideEffects = enum(u1) {
                 state.current = state.pushDependencies(0, &expr, p.allocator) catch bun.outOfMemory();
 
                 bun.assert(state.exprs.len > 1); // should be more than one dependency
-                bun.assert(state.current.parent_index == 0);
-                bun.assert(state.current.children_count > 0);
+                bun.assert(state.current.data.parent_index == 0);
+                bun.assert(state.current.children_left > 0);
                 bun.assert(state.current.offset == 0);
 
                 while (true) {
-                    if (state.current.children_count == 0) {
-                        if (state.finishExpr(p, p.allocator) catch bun.outOfMemory() == .stop)
-                            break;
-                    } else {
+                    if (state.current.children_left > 0) {
                         state.startExpr(p, p.allocator) catch bun.outOfMemory();
+                    } else {
+                        if (state.finishExpr(p) catch bun.outOfMemory() == .stop)
+                            break;
                     }
                 }
 
                 bun.assert(state.nodes.len == 0);
+                bun.assert(state.exprs.len == 1);
 
                 return state.exprs.at(0).*;
             },
@@ -1912,34 +1921,34 @@ pub const SideEffects = enum(u1) {
         nodes: NodeList,
         current: Node,
 
-        // / Used to ensure we do not visit an expression twice
-        // debug_state_map: if (Environment.isDebug)
-        //     std.ArrayListUnmanaged(DebugState)
-        // else
-        //     struct {} = .{},
-
-        // todo: compress
         const Node = struct {
-            /// Number of children after this node to consideer
-            children_count: u32,
+            children_left: u32,
             offset: u32,
-            /// Depends on the expression type
-            /// - e_object: does this have any spreads?
-            flag: bool,
-            /// Index of the unvisited root expression
-            parent_index: u32,
+
+            data: packed struct(u32) {
+                /// Depends on the expression type
+                /// - e_object: does this have any spreads?
+                /// - e_array: does this have any spreads?
+                flag: bool,
+                /// Index of the unvisited root expression
+                parent_index: u31,
+            },
+
+            children_count_debug: if (Environment.isDebug) u32 else u0,
+
+            comptime {
+                if (Environment.isRelease) {
+                    bun.assert(@alignOf(Node) == 4);
+                    bun.assert(@sizeOf(Node) == 4 * 3);
+                }
+            }
         };
 
         // TODO: benchmark ArrayListUnmanaged here. it probably does better in the general case.
         const ExprList = std.SegmentedList(Expr, 128);
         const NodeList = std.SegmentedList(Node, 32);
 
-        // const DebugState = struct {
-        //     visited: bool = false,
-        //     is_node_root: bool = false,
-        // };
-
-        /// We want to re-use memory from simpifyUnusedExpr across invocations,
+        /// We want to re-use memory from simplifyUnusedExpr across invocations,
         /// since freeing it will likely do nothing since the parser uses an arena.
         /// However, storing the entire state is useless as the segmented lists
         /// take up a lot of extra bytes which will always be unused outside of
@@ -1953,7 +1962,7 @@ pub const SideEffects = enum(u1) {
             nodes: [][*]Node = &.{},
 
             /// The `SimplifyState` is not fully initialized
-            pub fn get(shared_memory: *SharedMemory) SimplifyState {
+            pub fn get(shared_memory: *SharedMemory) callconv(callconv_inline) SimplifyState {
                 shared_memory.lock.lock();
                 return .{
                     .exprs = .{ .dynamic_segments = shared_memory.exprs },
@@ -1962,7 +1971,7 @@ pub const SideEffects = enum(u1) {
                 };
             }
 
-            pub fn release(shared_memory: *SharedMemory, state: *SimplifyState) void {
+            pub fn release(shared_memory: *SharedMemory, state: *SimplifyState) callconv(callconv_inline) void {
                 shared_memory.lock.unlock();
                 shared_memory.exprs = state.exprs.dynamic_segments;
                 shared_memory.nodes = state.nodes.dynamic_segments;
@@ -1996,7 +2005,7 @@ pub const SideEffects = enum(u1) {
 
         pub fn pushDependencies(
             state: *SimplifyState,
-            parent_index: u32,
+            parent_index: u31,
             expr: *const Expr,
             allocator: Allocator,
         ) !Node {
@@ -2015,6 +2024,7 @@ pub const SideEffects = enum(u1) {
 
                 .e_if => |ternary| len: {
                     try state.exprs.appendSlice(allocator, &.{
+                        // TODO: always visiting this is wrong and slow
                         ternary.test_,
                         ternary.yes,
                         ternary.no,
@@ -2043,6 +2053,9 @@ pub const SideEffects = enum(u1) {
                         if (prop.data != .e_spread) {
                             try state.exprs.append(allocator, prop);
                             count += 1;
+                        } else {
+                            // Mark there to be a spread
+                            flag = true;
                         }
                     }
                     break :len count;
@@ -2064,20 +2077,25 @@ pub const SideEffects = enum(u1) {
                 },
             };
             return .{
-                .parent_index = parent_index,
-                .children_count = children_count,
+                .data = .{
+                    .flag = flag,
+                    .parent_index = parent_index,
+                },
                 .offset = @intCast(offset),
-                .flag = flag,
+                .children_left = children_count,
+                .children_count_debug = if (Environment.isDebug) children_count else 0,
             };
         }
 
-        fn startExpr(state: *SimplifyState, p: anytype, allocator: Allocator) !void {
-            bun.assert(state.current.children_count > 0); // already visited
+        fn startExpr(state: *SimplifyState, p: anytype, allocator: Allocator) callconv(callconv_inline) !void {
+            bun.assert(state.current.children_left > 0); // already visited parent index
 
-            const i = state.current.offset + state.current.children_count;
+            const i = state.current.offset + state.current.children_left;
             const expr = state.exprs.at(i);
 
-            switch (nonRecursive(p, expr.*)) {
+            state.current.children_left -= 1;
+
+            switch (nonRecursive(p, expr)) {
                 inline .keep, .remove => |tag| {
                     if (tag == .remove) {
                         expr.* = Expr.empty;
@@ -2086,61 +2104,39 @@ pub const SideEffects = enum(u1) {
                 .recursive => {
                     // push a new `node`
                     try state.nodes.append(allocator, state.current);
-                    state.current = try state.pushDependencies(i, expr, allocator);
+                    state.current = try state.pushDependencies(@intCast(i), expr, allocator);
                 },
             }
-
-            state.current.children_count -= 1;
         }
 
         const FinishResult = enum { stop, @"continue" };
 
-        fn finishExpr(state: *SimplifyState, p: anytype, allocator: Allocator) !FinishResult {
-            bun.assert(state.current.children_count == 0); // already visited
-            const expr = state.exprs.at(state.current.parent_index);
+        fn finishExpr(state: *SimplifyState, p: anytype) callconv(callconv_inline) !FinishResult {
+            bun.assert(state.current.children_left == 0); // already visited
+            const expr = state.exprs.at(state.current.data.parent_index);
 
             var children: ChildrenSlice = .{
                 .expr_list = &state.exprs,
-                .offset = state.current.offset,
-
-                // this approach is very stupid,
-                // however having a length for this slice will catch bugs
-                .len = if (bun.Environment.isDebug) count_for_debug: {
-                    var debug_sfa = std.heap.stackFallback(4096, bun.default_allocator);
-                    const debug_temp_alloc = debug_sfa.get();
-                    var fake_state: SimplifyState = .{
-                        .exprs = .{},
-                        .nodes = undefined, // not used
-                        .current = undefined, // not used
-                    };
-                    defer fake_state.exprs.deinit(debug_temp_alloc);
-                    _ = fake_state.exprs.addOne(debug_temp_alloc) catch bun.outOfMemory();
-                    const node = fake_state.pushDependencies(
-                        0,
-                        expr,
-                        debug_temp_alloc,
-                    ) catch bun.outOfMemory();
-                    break :count_for_debug node.children_count;
-                } else 0,
+                .offset = state.current.offset + 1,
+                .len = state.current.children_count_debug,
             };
             expr.* = finishExprWithChildren(
                 p,
-                allocator,
                 expr,
-                state.current.flag,
+                state.current.data.flag,
                 &children,
             );
-            bun.assert(children.len == 0);
+            state.exprs.len = state.current.offset + 1;
             state.current = state.nodes.pop() orelse return .stop;
             return .@"continue";
         }
 
         /// `children` in this context is the visited children, which were
         /// pushed in `pushDependencies`. The exact contents and length are
-        /// dependant on what was pushed
-        fn finishExprWithChildren(p: anytype, allocator: Allocator, original: *Expr, flag: bool, children: *ChildrenSlice) Expr {
+        /// dependant on what was pushed.
+        fn finishExprWithChildren(p: anytype, original: *Expr, flag: bool, children: *ChildrenSlice) callconv(callconv_inline) Expr {
             if (Environment.isDebug) {
-                bun.assert(nonRecursive(p, original.*) == .recursive);
+                bun.assert(nonRecursive(p, original) == .recursive);
                 bun.assert(p.options.features.dead_code_elimination);
             }
 
@@ -2150,7 +2146,7 @@ pub const SideEffects = enum(u1) {
                 inline .e_call, .e_new => |call| {
                     var result = children.next();
                     for (1..call.args.len) |_| {
-                        result = Expr.joinWithComma(original.*, children.next(), allocator);
+                        result = Expr.joinWithComma(result, children.next());
                     }
                     return result;
                 },
@@ -2166,7 +2162,7 @@ pub const SideEffects = enum(u1) {
                         .bin_strict_ne,
                         .bin_comma,
                         => {
-                            return Expr.joinWithComma(left, right, allocator);
+                            return Expr.joinWithComma(left, right);
                         },
 
                         // We can simplify "==" and "!=" even though they can call "toString" and/or
@@ -2179,7 +2175,7 @@ pub const SideEffects = enum(u1) {
                             if (Environment.isDebug)
                                 bun.assert(isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data));
 
-                            return Expr.joinWithComma(left, right, allocator);
+                            return Expr.joinWithComma(left, right);
                         },
 
                         .bin_logical_and,
@@ -2191,8 +2187,8 @@ pub const SideEffects = enum(u1) {
                             // Preserve short-circuit behavior: the left expression is only unused if
                             // the right expression can be completely removed. Otherwise, the left
                             // expression is important for the branch.
-                            if (bin.right.isEmpty())
-                                return bin.left;
+                            if (bin.right.isMissing())
+                                return left;
 
                             return original.*;
                         },
@@ -2211,27 +2207,25 @@ pub const SideEffects = enum(u1) {
                     ternary.no = children.at(2);
 
                     // "foo() ? 1 : 2" => "foo()"
-                    if (ternary.yes.isEmpty() and ternary.no.isEmpty()) {
+                    if (ternary.yes.isMissing() and ternary.no.isMissing()) {
                         return children.at(0);
                     }
 
                     // "foo() ? 1 : bar()" => "foo() || bar()"
-                    if (ternary.yes.isEmpty()) {
+                    if (ternary.yes.isMissing()) {
                         return Expr.joinWithLeftAssociativeOp(
                             .bin_logical_or,
                             ternary.test_,
                             ternary.no,
-                            p.allocator,
                         );
                     }
 
                     // "foo() ? bar() : 2" => "foo() && bar()"
-                    if (ternary.no.isEmpty()) {
+                    if (ternary.no.isMissing()) {
                         return Expr.joinWithLeftAssociativeOp(
                             .bin_logical_and,
                             ternary.test_,
                             ternary.yes,
-                            p.allocator,
                         );
                     }
 
@@ -2271,7 +2265,7 @@ pub const SideEffects = enum(u1) {
 
                     // Otherwise, the object can be completely removed. We only need to keep any
                     // object properties with side effects. Apply this simplification recursively.
-                    var result = Expr.empty;
+                    var result = Expr.missing;
                     for (properties_slice) |prop| {
                         if (prop.flags.contains(.is_computed)) {
                             // Make sure "ToString" is still evaluated on the key
@@ -2281,10 +2275,37 @@ pub const SideEffects = enum(u1) {
                                     .left = prop.key.?,
                                     .right = p.newExpr(E.String{}, prop.key.?.loc),
                                 }, prop.key.?.loc),
-                                p.allocator,
                             );
                         }
-                        result = result.joinWithComma(children.next(), p.allocator);
+                        result = result.joinWithComma(children.next());
+                    }
+
+                    return result;
+                },
+
+                .e_array => |array| {
+                    var items = array.items.slice();
+
+                    if (flag) {
+                        var end: usize = 0;
+
+                        for (items) |item| {
+                            if (!item.isMissing()) {
+                                items[end] = item;
+                                end += 1;
+                            }
+                        }
+
+                        array.items = ExprNodeList.init(items[0..end]);
+                        return original.*;
+                    }
+
+                    // Otherwise, the array can be completely removed. We only need to keep any
+                    // array items with side effects. Apply this simplification recursively.
+                    // return Expr.joinAllWithComma(items);
+                    var result = Expr.missing;
+                    for (0..items.len) |_| {
+                        result = result.joinWithComma(children.next());
                     }
 
                     return result;
@@ -2302,7 +2323,7 @@ pub const SideEffects = enum(u1) {
             recursive,
         };
 
-        pub fn nonRecursive(p: anytype, expr: Expr) FirstPass {
+        pub fn nonRecursive(p: anytype, expr: *const Expr) FirstPass {
             if (Environment.isDebug)
                 bun.assert(p.options.features.dead_code_elimination);
 
@@ -2319,6 +2340,10 @@ pub const SideEffects = enum(u1) {
                 .e_function,
                 .e_arrow,
                 .e_import_meta,
+                .e_require_string,
+                .e_require_resolve_string,
+                .e_require_resolve_call_target,
+                .e_require_call_target,
                 => .remove,
 
                 .e_inlined_enum => |inlined| {
@@ -2332,6 +2357,10 @@ pub const SideEffects = enum(u1) {
                     .keep,
 
                 .e_identifier => |ident| {
+                    std.debug.print("awa {} - {s}\n", .{
+                        ident,
+                        p.symbols.items[ident.ref.innerIndex()].original_name,
+                    });
                     if (ident.must_keep_due_to_with_stmt)
                         return .keep;
 
@@ -2348,7 +2377,7 @@ pub const SideEffects = enum(u1) {
                     => .recursive,
 
                     .un_typeof => {
-                        // "typeof x" must not be transformed into if "x" since doing so could
+                        // "typeof x" must not be transformed into "x" since doing so could
                         // cause an exception to be thrown. Instead we can just remove it since
                         // "typeof x" is special-cased in the standard to never throw.
                         if (un.value.data == .e_identifier) {
@@ -2414,267 +2443,6 @@ pub const SideEffects = enum(u1) {
             };
         }
     };
-
-    // pub fn simpifyUnusedExprInner(p: anytype, expr: Expr) SimplifyResult {
-    //     comptime assert(@typeInfo(@TypeOf(p)) == .Pointer);
-    //     bun.assert(p.options.features.dead_code_elimination);
-    //     switch (expr.data) {
-    //         .e_null,
-    //         .e_undefined,
-    //         .e_missing,
-    //         .e_boolean,
-    //         .e_number,
-    //         .e_big_int,
-    //         .e_string,
-    //         .e_this,
-    //         .e_reg_exp,
-    //         .e_function,
-    //         .e_arrow,
-    //         .e_import_meta,
-    //         => {
-    //             return null;
-    //         },
-
-    //         .e_dot => |dot| if (dot.can_be_removed_if_unused) {
-    //             return null;
-    //         },
-
-    //         .e_identifier => |ident| {
-    //             if (ident.must_keep_due_to_with_stmt) {
-    //                 return expr;
-    //             }
-
-    //             if (ident.can_be_removed_if_unused or
-    //                 p.symbols.items[ident.ref.innerIndex()].kind != .unbound)
-    //             {
-    //                 return null;
-    //             }
-    //         },
-
-    //         .e_if => |if_expr| {
-    //             if_expr.yes = simpifyUnusedExpr(p, if_expr.yes) orelse if_expr.yes.toEmpty();
-    //             if_expr.no = simpifyUnusedExpr(p, if_expr.no) orelse if_expr.no.toEmpty();
-
-    //             // "foo() ? 1 : 2" => "foo()"
-    //             if (if_expr.yes.isEmpty() and if_expr.no.isEmpty()) {
-    //                 return simpifyUnusedExpr(p, if_expr.test_);
-    //             }
-
-    //             // "foo() ? 1 : bar()" => "foo() || bar()"
-    //             if (if_expr.yes.isEmpty()) {
-    //                 return Expr.joinWithLeftAssociativeOp(
-    //                     .bin_logical_or,
-    //                     if_expr.test_,
-    //                     if_expr.no,
-    //                     p.allocator,
-    //                 );
-    //             }
-
-    //             // "foo() ? bar() : 2" => "foo() && bar()"
-    //             if (if_expr.no.isEmpty()) {
-    //                 return Expr.joinWithLeftAssociativeOp(
-    //                     .bin_logical_and,
-    //                     if_expr.test_,
-    //                     if_expr.yes,
-    //                     p.allocator,
-    //                 );
-    //             }
-    //         },
-
-    //         .e_unary => |un| {
-    //             // These operators must not have any type conversions that can execute code
-    //             // such as "toString" or "valueOf". They must also never throw any exceptions.
-    //             switch (un.op) {
-    //                 .un_void, .un_not => {
-    //                     return simpifyUnusedExpr(p, un.value);
-    //                 },
-    //                 .un_typeof => {
-    //                     // "typeof x" must not be transformed into if "x" since doing so could
-    //                     // cause an exception to be thrown. Instead we can just remove it since
-    //                     // "typeof x" is special-cased in the standard to never throw.
-    //                     if (un.value.data == .e_identifier) {
-    //                         return null;
-    //                     }
-
-    //                     return simpifyUnusedExpr(p, un.value);
-    //                 },
-
-    //                 else => {},
-    //             }
-    //         },
-
-    //         .e_call => |call| {
-    //             // A call that has been marked "__PURE__" can be removed if all arguments
-    //             // can be removed. The annotation causes us to ignore the target.
-    //             if (call.can_be_unwrapped_if_unused) {
-    //                 if (call.args.len > 0) {
-    //                     return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simpifyUnusedExpr, p.allocator);
-    //                 }
-    //             }
-    //         },
-
-    //         .e_binary => |bin| {
-    //             switch (bin.op) {
-    //                 // These operators must not have any type conversions that can execute code
-    //                 // such as "toString" or "valueOf". They must also never throw any exceptions.
-    //                 .bin_strict_eq, .bin_strict_ne, .bin_comma => {
-    //                     return Expr.joinWithComma(
-    //                         simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-    //                         simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
-    //                         p.allocator,
-    //                     );
-    //                 },
-
-    //                 // We can simplify "==" and "!=" even though they can call "toString" and/or
-    //                 // "valueOf" if we can statically determine that the types of both sides are
-    //                 // primitives. In that case there won't be any chance for user-defined
-    //                 // "toString" and/or "valueOf" to be called.
-    //                 .bin_loose_eq,
-    //                 .bin_loose_ne,
-    //                 => {
-    //                     if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
-    //                         return Expr.joinWithComma(
-    //                             simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-    //                             simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
-    //                             p.allocator,
-    //                         );
-    //                     }
-    //                 },
-
-    //                 .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
-    //                     bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
-
-    //                     // Preserve short-circuit behavior: the left expression is only unused if
-    //                     // the right expression can be completely removed. Otherwise, the left
-    //                     // expression is important for the branch.
-    //                     if (bin.right.isEmpty())
-    //                         return simpifyUnusedExpr(p, bin.left);
-    //                 },
-
-    //                 else => {},
-    //             }
-    //         },
-
-    //         .e_new => |call| {
-    //             // A constructor call that has been marked "__PURE__" can be removed if all arguments
-    //             // can be removed. The annotation causes us to ignore the target.
-    //             if (call.can_be_unwrapped_if_unused) {
-    //                 if (call.args.len > 0) {
-    //                     return Expr.joinAllWithCommaCallback(
-    //                         call.args.slice(),
-    //                         @TypeOf(p),
-    //                         p,
-    //                         comptime simpifyUnusedExpr,
-    //                         p.allocator,
-    //                     );
-    //                 }
-
-    //                 return null;
-    //             }
-    //         },
-
-    //         else => {},
-    //     }
-
-    //     return expr;
-    // }
-
-    // fn simpifyUnusedExprInner(p: anytype, expr: Expr) ?Expr {
-    //     bun.assert(p.options.features.dead_code_elimination);
-    //     switch (expr.data) {
-    //         .e_object => {
-    //             // Objects with "..." spread expressions can't be unwrapped because the
-    //             // "..." triggers code evaluation via getters. In that case, just trim
-    //             // the other items instead and leave the object expression there.
-    //             var properties_slice = expr.data.e_object.properties.slice();
-    //             var end: usize = 0;
-    //             for (properties_slice) |spread| {
-    //                 end = 0;
-    //                 if (spread.kind == .spread) {
-    //                     // Spread properties must always be evaluated
-    //                     for (properties_slice) |prop_| {
-    //                         var prop = prop_;
-    //                         if (prop_.kind != .spread) {
-    //                             const value = simpifyUnusedExpr(p, prop.value.?);
-    //                             if (value != null) {
-    //                                 prop.value = value;
-    //                             } else if (!prop.flags.contains(.is_computed)) {
-    //                                 continue;
-    //                             } else {
-    //                                 prop.value = p.newExpr(E.Number{ .value = 0.0 }, prop.value.?.loc);
-    //                             }
-    //                         }
-
-    //                         properties_slice[end] = prop_;
-    //                         end += 1;
-    //                     }
-
-    //                     properties_slice = properties_slice[0..end];
-    //                     expr.data.e_object.properties = G.Property.List.init(properties_slice);
-    //                     return expr;
-    //                 }
-    //             }
-
-    //             var result = Expr.init(E.Missing, E.Missing{}, expr.loc);
-
-    //             // Otherwise, the object can be completely removed. We only need to keep any
-    //             // object properties with side effects. Apply this simplification recursively.
-    //             for (properties_slice) |prop| {
-    //                 if (prop.flags.contains(.is_computed)) {
-    //                     // Make sure "ToString" is still evaluated on the key
-    //                     result = result.joinWithComma(
-    //                         p.newExpr(
-    //                             E.Binary{
-    //                                 .op = .bin_add,
-    //                                 .left = prop.key.?,
-    //                                 .right = p.newExpr(E.String{}, prop.key.?.loc),
-    //                             },
-    //                             prop.key.?.loc,
-    //                         ),
-    //                         p.allocator,
-    //                     );
-    //                 }
-    //                 result = result.joinWithComma(
-    //                     simpifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
-    //                     p.allocator,
-    //                 );
-    //             }
-
-    //             return result;
-    //         },
-    //         .e_array => {
-    //             var items = expr.data.e_array.items.slice();
-
-    //             for (items) |item| {
-    //                 if (item.data == .e_spread) {
-    //                     var end: usize = 0;
-    //                     for (items) |item__| {
-    //                         const item_ = item__;
-    //                         if (item_.data != .e_missing) {
-    //                             items[end] = item_;
-    //                             end += 1;
-    //                         }
-
-    //                         expr.data.e_array.items = ExprNodeList.init(items[0..end]);
-    //                         return expr;
-    //                     }
-    //                 }
-    //             }
-
-    //             // Otherwise, the array can be completely removed. We only need to keep any
-    //             // array items with side effects. Apply this simplification recursively.
-    //             return Expr.joinAllWithCommaCallback(
-    //                 items,
-    //                 @TypeOf(p),
-    //                 p,
-    //                 comptime simpifyUnusedExpr,
-    //                 p.allocator,
-    //             );
-    //         },
-
-    //         else => @compileError(unreachable),
-    //     }
-    // }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
         switch (binding.data) {
@@ -5059,10 +4827,6 @@ const ParseStatementOptions = struct {
     }
 };
 
-var e_missing_data = E.Missing{};
-var s_missing = S.Empty{};
-var nullExprData = Expr.Data{ .e_missing = e_missing_data };
-var nullStmtData = Stmt.Data{ .s_empty = s_missing };
 pub const Prefill = struct {
     pub const HotModuleReloading = struct {
         pub var DebugEnabledArgs = [_]Expr{
@@ -5091,10 +4855,6 @@ pub const Prefill = struct {
         pub const LineNumber = [_]u8{ 'l', 'i', 'n', 'e', 'N', 'u', 'm', 'b', 'e', 'r' };
         pub const ColumnNumber = [_]u8{ 'c', 'o', 'l', 'u', 'm', 'n', 'N', 'u', 'm', 'b', 'e', 'r' };
     };
-    pub const Value = struct {
-        pub const EThis = E.This{};
-        pub const Zero = E.Number{ .value = 0.0 };
-    };
     pub const String = struct {
         pub var Key = E.String{ .data = &Prefill.StringLiteral.Key };
         pub var Children = E.String{ .data = &Prefill.StringLiteral.Children };
@@ -5113,9 +4873,6 @@ pub const Prefill = struct {
         pub var BMissing = B{ .b_missing = BMissing_ };
         pub var BMissing_ = B.Missing{};
 
-        pub var EMissing = Expr.Data{ .e_missing = EMissing_ };
-        pub var EMissing_ = E.Missing{};
-
         pub var SEmpty = Stmt.Data{ .s_empty = SEmpty_ };
         pub var SEmpty_ = S.Empty{};
 
@@ -5130,7 +4887,6 @@ pub const Prefill = struct {
         pub var _owner = Expr.Data{ .e_string = &Prefill.String._owner };
         pub var REACT_ELEMENT_TYPE = Expr.Data{ .e_string = &Prefill.String.REACT_ELEMENT_TYPE };
         pub const This = Expr.Data{ .e_this = E.This{} };
-        pub const Zero = Expr.Data{ .e_number = Value.Zero };
     };
     pub const Runtime = struct {
         pub var JSXFilename = "__jsxFilename";
@@ -5925,7 +5681,7 @@ fn NewParser_(
                     // We don't want to spend time scanning the required files if they will
                     // never be used.
                     if (p.is_control_flow_dead) {
-                        return Expr{ .data = nullExprData, .loc = arg.loc };
+                        return Expr.missing;
                     }
 
                     str.resolveRopeIfNeeded(p.allocator);
@@ -8016,7 +7772,7 @@ fn NewParser_(
                         // "(1, 2)" => "2"
                         // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                         if (p.options.features.minify_syntax) {
-                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse
+                            e_.left = SideEffects.simplifyUnusedExpr(p, e_.left).toOptional() orelse
                                 return e_.right;
                         }
                     },
@@ -8083,7 +7839,7 @@ fn NewParser_(
                                 // "(null ?? this.fn)" => "this.fn"
                                 // "(null ?? this.fn)()" => "(0, this.fn)()"
                                 if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                    return Expr.joinWithComma(Expr{ .data = .{ .e_number = .{ .value = 0.0 } }, .loc = e_.left.loc }, e_.right, p.allocator);
+                                    return Expr.initNumber(0, e_.left.loc).joinWithComma(e_.right);
                                 }
 
                                 return e_.right;
@@ -8099,7 +7855,7 @@ fn NewParser_(
                             // "(0 || this.fn)" => "this.fn"
                             // "(0 || this.fn)()" => "(0, this.fn)()"
                             if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                return Expr.joinWithComma(Expr.initNumber(0, e_.left.loc), e_.right);
                             }
 
                             return e_.right;
@@ -8115,7 +7871,7 @@ fn NewParser_(
                                 // "(1 && this.fn)" => "this.fn"
                                 // "(1 && this.fn)()" => "(0, this.fn)()"
                                 if (is_call_target and e_.right.hasValueForThisInCall()) {
-                                    return Expr.joinWithComma(Expr{ .data = Prefill.Data.Zero, .loc = e_.left.loc }, e_.right, p.allocator);
+                                    return Expr.joinWithComma(Expr.initNumber(0, e_.left.loc), e_.right);
                                 }
 
                                 return e_.right;
@@ -12299,7 +12055,7 @@ fn NewParser_(
         }
 
         pub fn parsePropertyBinding(p: *P) anyerror!B.Property {
-            var key: js_ast.Expr = Expr{ .loc = logger.Loc.Empty, .data = Prefill.Data.EMissing };
+            var key = Expr.missing;
             var is_computed = false;
 
             switch (p.lexer.token) {
@@ -15813,7 +15569,10 @@ fn NewParser_(
                     while (p.lexer.token != .t_close_bracket) {
                         switch (p.lexer.token) {
                             .t_comma => {
-                                items.append(Expr{ .data = Prefill.Data.EMissing, .loc = p.lexer.loc() }) catch unreachable;
+                                items.append(Expr{
+                                    .data = .{ .e_missing = .{} },
+                                    .loc = p.lexer.loc(),
+                                }) catch unreachable;
                             },
                             .t_dot_dot_dot => {
                                 if (errors != null)
@@ -17679,18 +17438,14 @@ fn NewParser_(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
-                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_before = std.meta.activeTag(e_.value.data) == .e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
-                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_after = std.meta.activeTag(e_.value.data) == .e_identifier;
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
                             if (!id_before and id_after and p.symbols.items[e_.value.data.e_identifier.ref.innerIndex()].kind == .unbound) {
-                                e_.value = Expr.joinWithComma(
-                                    Expr{ .loc = e_.value.loc, .data = Prefill.Data.Zero },
-                                    e_.value,
-                                    p.allocator,
-                                );
+                                e_.value = Expr.initNumber(0, e_.value.loc).joinWithComma(e_.value);
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
@@ -17771,8 +17526,7 @@ fn NewParser_(
                                     switch (e_.value.data) {
                                         .e_binary => |comma| {
                                             if (comma.op == .bin_comma) {
-                                                return Expr.joinWithComma(
-                                                    comma.left,
+                                                return comma.left.joinWithComma(
                                                     p.newExpr(
                                                         E.Unary{
                                                             .op = e_.op,
@@ -17780,7 +17534,6 @@ fn NewParser_(
                                                         },
                                                         comma.right.loc,
                                                     ),
-                                                    p.allocator,
                                                 );
                                             }
                                         },
@@ -17900,14 +17653,16 @@ fn NewParser_(
                             p.is_control_flow_dead = old;
 
                             if (side_effects.side_effects == .could_have_side_effects) {
-                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.yes, p.allocator);
+                                return SideEffects.simplifyUnusedExpr(p, e_.test_)
+                                    .joinWithComma(e_.yes);
                             }
 
                             // "(1 ? fn : 2)()" => "fn()"
                             // "(1 ? this.fn : 2)" => "this.fn"
                             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                             if (is_call_target and e_.yes.hasValueForThisInCall()) {
-                                return p.newExpr(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.yes, p.allocator);
+                                return p.newExpr(E.Number{ .value = 0 }, e_.test_.loc)
+                                    .joinWithComma(e_.yes);
                             }
 
                             return e_.yes;
@@ -17921,14 +17676,16 @@ fn NewParser_(
 
                             // "(a, false) ? b : c" => "a, c"
                             if (side_effects.side_effects == .could_have_side_effects) {
-                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.no, p.allocator);
+                                return SideEffects.simplifyUnusedExpr(p, e_.test_)
+                                    .joinWithComma(e_.no);
                             }
 
                             // "(1 ? fn : 2)()" => "fn()"
                             // "(1 ? this.fn : 2)" => "this.fn"
                             // "(1 ? this.fn : 2)()" => "(0, this.fn)()"
                             if (is_call_target and e_.no.hasValueForThisInCall()) {
-                                return p.newExpr(E.Number{ .value = 0 }, e_.test_.loc).joinWithComma(e_.no, p.allocator);
+                                return p.newExpr(E.Number{ .value = 0 }, e_.test_.loc)
+                                    .joinWithComma(e_.no);
                             }
                             return e_.no;
                         }
@@ -19082,9 +18839,9 @@ fn NewParser_(
                     p.to_expr_wrapper_hoisted,
                 );
                 if (decl.value) |decl_value| {
-                    value = value.joinWithComma(Expr.assign(binding, decl_value), p.allocator);
+                    value = value.joinWithComma(Expr.assign(binding, decl_value));
                 } else if (mode == .for_in_or_for_of) {
-                    value = value.joinWithComma(binding, p.allocator);
+                    value = value.joinWithComma(binding);
                 }
             }
 
@@ -19244,7 +19001,8 @@ fn NewParser_(
                                 for (props) |prop| {
                                     const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
                                     const visited_value = p.visitExpr(prop.value.?);
-                                    const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
+                                    // TODO(@paperdave): AUDIT
+                                    const value = SideEffects.simplifyUnusedExpr(p, visited_value).toOptional() orelse visited_value;
 
                                     // We are doing `module.exports = { ... }`
                                     // lets rewrite it to a series of what will become export assignments
@@ -20054,7 +19812,8 @@ fn NewParser_(
                     }
 
                     // simplify unused
-                    data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse return;
+                    data.value = SideEffects.simplifyUnusedExpr(p, data.value).toOptional() orelse
+                        return;
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (is_top_level) {
@@ -20266,8 +20025,8 @@ fn NewParser_(
                                 if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
-                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                            stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        if (SideEffects.simplifyUnusedExpr(p, data.test_).toOptional()) |cond| {
+                                            stmts.append(p.s(S.SExpr{ .value = cond }, cond.loc)) catch unreachable;
                                         }
                                     }
 
@@ -20280,8 +20039,8 @@ fn NewParser_(
                                 if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
-                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
-                                            stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
+                                        if (SideEffects.simplifyUnusedExpr(p, data.test_).toOptional()) |cond| {
+                                            stmts.append(p.s(S.SExpr{ .value = cond }, cond.loc)) catch unreachable;
                                         }
                                     }
 
@@ -22755,7 +22514,7 @@ fn NewParser_(
                                     }
                                     local.decls.len = @as(u32, @truncate(end));
                                     if (end == 0) {
-                                        stmt.* = stmt.*.toEmpty();
+                                        stmt.* = Stmt.empty();
                                     }
                                     continue;
                                 }
@@ -22903,10 +22662,8 @@ fn NewParser_(
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall() and p.options.runtimeMergeAdjacentExpressionStatements()) {
                                 prev_stmt.data.s_expr.does_not_affect_tree_shaking = prev_stmt.data.s_expr.does_not_affect_tree_shaking and
                                     s_expr.does_not_affect_tree_shaking;
-                                prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value.joinWithComma(
-                                    s_expr.value,
-                                    p.allocator,
-                                );
+                                prev_stmt.data.s_expr.value = prev_stmt.data.s_expr.value
+                                    .joinWithComma(s_expr.value);
                                 continue;
                             } else if
                             //
@@ -22950,7 +22707,7 @@ fn NewParser_(
                         if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_, p.allocator);
+                                s_switch.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_switch.test_);
                                 output.items.len -= 1;
                             }
                         }
@@ -22960,7 +22717,7 @@ fn NewParser_(
                         if (output.items.len > 0 and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_, p.allocator);
+                                s_if.test_ = prev_stmt.data.s_expr.value.joinWithComma(s_if.test_);
                                 output.items.len -= 1;
                             }
                         }
@@ -22973,7 +22730,7 @@ fn NewParser_(
                         if (output.items.len > 0 and ret.value != null and p.options.runtimeMergeAdjacentExpressionStatements()) {
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
-                                ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?, p.allocator);
+                                ret.value = prev_stmt.data.s_expr.value.joinWithComma(ret.value.?);
                                 prev_stmt.* = stmt;
                                 continue;
                             }
@@ -22992,10 +22749,7 @@ fn NewParser_(
                             var prev_stmt = &output.items[output.items.len - 1];
                             if (prev_stmt.data == .s_expr and !prev_stmt.isSuperCall()) {
                                 prev_stmt.* = p.s(S.Throw{
-                                    .value = prev_stmt.data.s_expr.value.joinWithComma(
-                                        stmt.data.s_throw.value,
-                                        p.allocator,
-                                    ),
+                                    .value = prev_stmt.data.s_expr.value.joinWithComma(stmt.data.s_throw.value),
                                 }, stmt.loc);
                                 continue;
                             }
@@ -23216,7 +22970,7 @@ fn NewParser_(
                     return error.SyntaxError;
                 }
 
-                var value = Expr.joinAllWithComma(items, p.allocator);
+                var value = Expr.joinAllWithComma(items);
                 p.markExprAsParenthesized(&value);
                 return value;
             }
@@ -24409,11 +24163,11 @@ fn NewParser_(
                 // It will fail for the case in the "in-keyword.js" file
                 .allow_in = true,
 
-                .call_target = nullExprData,
-                .delete_target = nullExprData,
-                .stmt_expr_value = nullExprData,
+                .call_target = Expr.missing.data,
+                .delete_target = Expr.missing.data,
+                .stmt_expr_value = Expr.missing.data,
                 .expr_list = .{},
-                .loop_body = nullStmtData,
+                .loop_body = .{ .s_empty = .{} },
                 .define = define,
                 .import_records = undefined,
                 .named_imports = undefined,
@@ -24421,7 +24175,7 @@ fn NewParser_(
                 .log = log,
                 .allocator = allocator,
                 .options = opts,
-                .then_catch_chain = ThenCatchChain{ .next_target = nullExprData },
+                .then_catch_chain = ThenCatchChain{ .next_target = Expr.missing.data },
                 .to_expr_wrapper_namespace = undefined,
                 .to_expr_wrapper_hoisted = undefined,
                 .import_transposer = undefined,

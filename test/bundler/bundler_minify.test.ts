@@ -397,6 +397,35 @@ describe("bundler", () => {
       stdout: "PASS",
     },
   });
+  itBundled("minify/SimplifyBoolean", {
+    files: {
+      "/entry.js": /* js */ `
+        if (x && 123) {
+          console.log(1);
+        }
+
+        if (123 && x) {
+          console.log(1);
+        }
+
+        if ((x && 123) && 123) {
+          console.log(1);
+        }
+
+        if ((123 && x) && 123) {
+          console.log(1);
+        }
+
+        if (x && (y && 123)) {
+          console.log(1);
+        }
+      `,
+    },
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("123");
+    },
+    minifySyntax: true,
+  });
 
   const side_effect_simplification_situations = [["/* @__PURE__ */ 2(4, pass);", "pass;"]];
 });

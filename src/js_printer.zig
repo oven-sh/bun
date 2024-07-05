@@ -778,6 +778,8 @@ fn NewPrinter(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
+        debug_allowed_to_print_missing: if (Environment.isDebug) bool else void = false,
+
         const Printer = @This();
 
         /// When Printer is used as a io.Writer, this represents it's error type, aka nothing.
@@ -2282,8 +2284,20 @@ fn NewPrinter(
         pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
             var flags = _flags;
 
+            if (bun.Environment.isDebug) {
+                if (p.debug_allowed_to_print_missing) {
+                    p.debug_allowed_to_print_missing = false;
+                    if (expr.data == .e_missing) return;
+                }
+            }
+
             switch (expr.data) {
-                .e_missing => {},
+                .e_missing => {
+                    if (bun.Environment.isDebug and !p.debug_allowed_to_print_missing) {
+                        // e_missing is allowed in arrays, so this cannot universally panic
+                        Output.panic("Attempt to print .e_missing outside of an array", .{});
+                    }
+                },
                 .e_undefined => {
                     p.printUndefined(expr.loc, level);
                 },
@@ -2816,6 +2830,9 @@ fn NewPrinter(
                                 p.printNewline();
                                 p.printIndent();
                             }
+                            if (Environment.isDebug)
+                                p.debug_allowed_to_print_missing = true;
+
                             p.printExpr(item, .comma, ExprFlag.None());
 
                             if (i == items.len - 1 and item.data == .e_missing) {

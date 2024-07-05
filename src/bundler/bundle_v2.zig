@@ -8829,22 +8829,18 @@ const LinkerContext = struct {
                             switch (stmt.data) {
                                 .s_local => |local| {
                                     if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
-                                        var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
+                                        var value = Expr.missing;
                                         for (local.decls.slice()) |*decl| {
                                             const binding = decl.binding.toExpr(&hoisty);
                                             if (decl.value) |other| {
-                                                value = value.joinWithComma(
-                                                    binding.assign(
-                                                        other,
-                                                    ),
-                                                    temp_allocator,
-                                                );
+                                                value = value.joinWithComma(binding.assign(other));
                                             }
                                         }
 
-                                        if (value.isEmpty()) {
+                                        if (value.isMissing()) {
                                             continue;
                                         }
+
                                         stmt = Stmt.alloc(
                                             S.SExpr,
                                             S.SExpr{

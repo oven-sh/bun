@@ -115,17 +115,15 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 #include <sys/syscall.h>
 static int has_epoll_pwait2 = -1;
 
-static int sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
-#ifdef __NR_epoll_pwait2
-    return syscall(__NR_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
-#else
-    return ENOSYS;
+#ifndef SYS_epoll_pwait2
+// It's consistent on multiple architectures
+// https://github.com/torvalds/linux/blob/9d1ddab261f3e2af7c384dc02238784ce0cf9f98/include/uapi/asm-generic/unistd.h#L795
+// https://github.com/google/gvisor/blob/master/test/syscalls/linux/epoll.cc#L48C1-L50C7
+#define SYS_epoll_pwait2 441
 #endif
-}
 
-static void bun_detect_epoll_pwait2_support() {
-    int ret = sys_epoll_pwait2(-1, NULL, 0, NULL, NULL, 0);
-    has_epoll_pwait2 = (ret != ENOSYS);
+static ssize_t sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
+    return syscall(SYS_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
 }
 
 static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
@@ -133,17 +131,23 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
     if (has_epoll_pwait2 != 0) {
         do {
             ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, NULL, 0);
-        } while (ret == EINTR);
-    } else {
-        int timeoutMs = -1; 
-        if (timeout) {
-            timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+        } while (IS_EINTR(ret));
+
+        if (LIKELY(ret != -1 || errno != ENOSYS)) {
+            return ret;
         }
 
-        do {
-            ret = epoll_wait(epfd, events, maxevents, timeoutMs);
-        } while (IS_EINTR(ret));
+        has_epoll_pwait2 = 0;
     }
+
+    int timeoutMs = -1; 
+    if (timeout) {
+        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+    }
+
+    do {
+        ret = epoll_wait(epfd, events, maxevents, timeoutMs);
+    } while (IS_EINTR(ret));
 
     return ret;
 }
@@ -162,9 +166,6 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
-    if (has_epoll_pwait2 == -1) {
-        bun_detect_epoll_pwait2_support();
-    }
 #else
     loop->fd = kqueue();
 #endif

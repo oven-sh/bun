@@ -13,3 +13,5 @@ new_test("call-and-destroy.ts");
 new_test("worker-constructor.ts");
 new_test("worker-death.ts");
 new_test("worker-events.ts");
+new_test("worker-exit.ts");
+new_test("worker-forced-exit.ts");

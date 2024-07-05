@@ -26,6 +26,9 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

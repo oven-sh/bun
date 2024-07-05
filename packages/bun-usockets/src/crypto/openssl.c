@@ -16,16 +16,18 @@
  */
 
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
+
+
+#include "internal/internal.h"
+#include "libusockets.h"
+#include <string.h>
+
 /* These are in sni_tree.cpp */
 void *sni_new();
 void sni_free(void *sni, void (*cb)(void *));
 int sni_add(void *sni, const char *hostname, void *user);
 void *sni_remove(void *sni, const char *hostname);
 void *sni_find(void *sni, const char *hostname);
-
-#include "internal/internal.h"
-#include "libusockets.h"
-#include <string.h>
 
 /* This module contains the entire OpenSSL implementation
  * of the SSL socket and socket context interfaces. */

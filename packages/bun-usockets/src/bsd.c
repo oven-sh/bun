@@ -19,9 +19,6 @@
 
 #define __APPLE_USE_RFC_3542
 
-#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
-#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
-
 #include "libusockets.h"
 #include "internal/internal.h"
 
@@ -45,11 +42,6 @@
 #define HAS_MSGX
 #endif
 
-#ifdef _WIN32
-    #define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
-#else
-    #define IS_EINTR(rc) (rc == -1 && errno == EINTR)
-#endif
 
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {

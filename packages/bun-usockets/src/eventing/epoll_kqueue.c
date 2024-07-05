@@ -109,6 +109,47 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
     return internal_cb->loop;
 }
 
+
+#if defined(LIBUS_USE_EPOLL) 
+
+#include <sys/syscall.h>
+static int has_epoll_pwait2 = -1;
+
+static int sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
+#ifdef __NR_epoll_pwait2
+    return syscall(__NR_epoll_pwait2, epfd, events, maxevents, timeout, sigmask, sigsetsize);
+#else
+    return ENOSYS;
+#endif
+}
+
+static void bun_detect_epoll_pwait2_support() {
+    int ret = sys_epoll_pwait2(-1, NULL, 0, NULL, NULL, 0);
+    has_epoll_pwait2 = (ret != ENOSYS);
+}
+
+static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout) {
+    int ret;
+    if (has_epoll_pwait2 != 0) {
+        do {
+            ret = sys_epoll_pwait2(epfd, events, maxevents, timeout, NULL, 0);
+        } while (ret == EINTR);
+    } else {
+        int timeoutMs = -1; 
+        if (timeout) {
+            timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
+        }
+
+        do {
+            ret = epoll_pwait(epfd, events, maxevents, timeoutMs, NULL);
+        } while (IS_EINTR(ret));
+    }
+
+    return ret;
+}
+
+#endif
+
 /* Loop */
 struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t *loop), void (*pre_cb)(struct us_loop_t *loop), void (*post_cb)(struct us_loop_t *loop), unsigned int ext_size) {
     struct us_loop_t *loop = (struct us_loop_t *) us_calloc(1, sizeof(struct us_loop_t) + ext_size);
@@ -121,6 +162,9 @@ struct us_loop_t *us_create_loop(void *hint, void (*wakeup_cb)(struct us_loop_t 
 
 #ifdef LIBUS_USE_EPOLL
     loop->fd = epoll_create1(EPOLL_CLOEXEC);
+    if (has_epoll_pwait2 == -1) {
+        bun_detect_epoll_pwait2_support();
+    }
 #else
     loop->fd = kqueue();
 #endif
@@ -139,9 +183,11 @@ void us_loop_run(struct us_loop_t *loop) {
 
         /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-        loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, -1);
+        loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, NULL);
 #else
-        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+        do {
+            loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, NULL);
+        } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
         /* Iterate ready polls, dispatching them by type */
@@ -183,12 +229,6 @@ void us_loop_run(struct us_loop_t *loop) {
     }
 }
 
-#if defined(LIBUS_USE_EPOLL) 
-
-// static int has_epoll_pwait2 = 0;
-// TODO:
-
-#endif
 
 void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout) {
     if (loop->num_polls == 0)
@@ -207,13 +247,12 @@ void us_loop_run_bun_tick(struct us_loop_t *loop, const struct timespec* timeout
 
     /* Fetch ready polls */
 #ifdef LIBUS_USE_EPOLL
-    int timeoutMs = -1; 
-    if (timeout) {
-        timeoutMs = timeout->tv_sec * 1000 + timeout->tv_nsec / 1000000;
-    }
-    loop->num_ready_polls = epoll_wait(loop->fd, loop->ready_polls, 1024, timeoutMs);
+    
+    loop->num_ready_polls = bun_epoll_pwait2(loop->fd, loop->ready_polls, 1024, timeout);
 #else
-    loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
+    do {
+        loop->num_ready_polls = kevent64(loop->fd, NULL, 0, loop->ready_polls, 1024, 0, timeout);
+    } while (IS_EINTR(loop->num_ready_polls));
 #endif
 
     /* Iterate ready polls, dispatching them by type */
@@ -296,7 +335,10 @@ int kqueue_change(int kqfd, int fd, int old_events, int new_events, void *user_d
         EV_SET64(&change_list[change_length++], fd, EVFILT_WRITE, (new_events & LIBUS_SOCKET_WRITABLE) ? EV_ADD : EV_DELETE, 0, 0, (uint64_t)(void*)user_data, 0, 0);
     }
 
-    int ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    int ret;
+    do {
+        ret = kevent64(kqfd, change_list, change_length, change_list, change_length, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 
     // ret should be 0 in most cases (not guaranteed when removing async)
 
@@ -332,7 +374,10 @@ void us_poll_start(struct us_poll_t *p, struct us_loop_t *loop, int events) {
     struct epoll_event event;
     event.events = events;
     event.data.ptr = p;
-    epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
+    int ret;
+    do {
+        ret = epoll_ctl(loop->fd, EPOLL_CTL_ADD, p->state.fd, &event);
+    } while (IS_EINTR(ret));
 #else
     kqueue_change(loop->fd, p->state.fd, 0, events, p);
 #endif
@@ -348,7 +393,10 @@ void us_poll_change(struct us_poll_t *p, struct us_loop_t *loop, int events) {
         struct epoll_event event;
         event.events = events;
         event.data.ptr = p;
-        epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
+        int rc;
+        do {
+            rc = epoll_ctl(loop->fd, EPOLL_CTL_MOD, p->state.fd, &event);
+        } while (IS_EINTR(rc));
 #else
         kqueue_change(loop->fd, p->state.fd, old_events, events, p);
 #endif
@@ -362,7 +410,10 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     int new_events = 0;
 #ifdef LIBUS_USE_EPOLL
     struct epoll_event event;
-    epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
+    int rc;
+    do {
+         rc = epoll_ctl(loop->fd, EPOLL_CTL_DEL, p->state.fd, &event);
+    } while (IS_EINTR(rc));
 #else
     if (old_events) {
         kqueue_change(loop->fd, p->state.fd, old_events, new_events, NULL);
@@ -373,12 +424,14 @@ void us_poll_stop(struct us_poll_t *p, struct us_loop_t *loop) {
     us_internal_loop_update_pending_ready_polls(loop, p, 0, old_events, new_events);
 }
 
-unsigned int us_internal_accept_poll_event(struct us_poll_t *p) {
+size_t us_internal_accept_poll_event(struct us_poll_t *p) {
 #ifdef LIBUS_USE_EPOLL
     int fd = us_poll_fd(p);
     uint64_t buf;
-    int read_length = read(fd, &buf, 8);
-    (void)read_length;
+    ssize_t read_length = 0;
+    do {
+         read_length = read(fd, &buf, 8);
+    } while (IS_EINTR(read_length));
     return buf;
 #else
     /* Kqueue has no underlying FD for timers or user events */
@@ -467,7 +520,11 @@ void us_timer_close(struct us_timer_t *timer, int fallthrough) {
 
     struct kevent64_s event;
     EV_SET64(&event, (uint64_t) (void*) internal_cb, EVFILT_TIMER, EV_DELETE, 0, 0, (uint64_t)internal_cb, 0, 0);
-    kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    int ret;
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
+
 
     /* (regular) sockets are the only polls which are not freed immediately */
     if(fallthrough){
@@ -486,7 +543,11 @@ void us_timer_set(struct us_timer_t *t, void (*cb)(struct us_timer_t *t), int ms
     struct kevent64_s event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
     EV_SET64(&event, ptr, EVFILT_TIMER, EV_ADD | (repeat_ms ? 0 : EV_ONESHOT), 0, ms, (uint64_t)internal_cb, 0, 0);
-    kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+
+    int ret;
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 }
 #endif
 
@@ -581,7 +642,11 @@ void us_internal_async_close(struct us_internal_async *a) {
     struct kevent64_s event;
     uint64_t ptr = (uint64_t)(void*)internal_cb;
     EV_SET64(&event, ptr, EVFILT_MACHPORT, EV_DELETE, 0, 0, (uint64_t)(void*)internal_cb, 0,0);
-    kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    
+    int ret;
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 
     mach_port_deallocate(mach_task_self(), internal_cb->port);
     us_free(internal_cb->machport_buf);
@@ -609,7 +674,10 @@ void us_internal_async_set(struct us_internal_async *a, void (*cb)(struct us_int
     event.ext[1] = MACHPORT_BUF_LEN;
     event.udata = (uint64_t)(void*)internal_cb;
 
-    int ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    int ret; 
+    do {
+        ret = kevent64(internal_cb->loop->fd, &event, 1, &event, 1, KEVENT_FLAG_ERROR_EVENTS, NULL);
+    } while (IS_EINTR(ret));
 
     if (UNLIKELY(ret == -1)) {
        abort();

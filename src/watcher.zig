@@ -135,7 +135,7 @@ const INotify = struct {
                 if (len < (@sizeOf(EventListBuffer) / 2)) {
                     var fds = [_]std.os.linux.pollfd{.{
                         .fd = this.inotify_fd,
-                        .events = std.posix.POLL.IN | std.posix.POLL.ERR,
+                        .events = std.os.linux.POLL.IN | std.os.linux.POLL.ERR,
                         .revents = 0,
                     }};
                     var timespec = std.os.linux.timespec{ .tv_sec = 0, .tv_nsec = this.coalesce_interval };

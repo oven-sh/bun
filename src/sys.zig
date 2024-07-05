@@ -1877,6 +1877,21 @@ pub fn renameatConcurrentlyWithoutFallback(
     return Maybe(void).success;
 }
 
+pub fn poll(fds: []posix.pollfd, timeout: ?*linux.timespec) Maybe(usize) {
+    if (comptime !Environment.isLinux) @compileError("ppoll() is not implemented on this platform");
+
+    while (true) {
+        const rc = linux.ppoll(fds.ptr, fds.len, timeout, null);
+        if (Maybe(usize).errnoSys(rc, .poll)) |err| {
+            if (err.getErrno() == .INTR) continue;
+            return err;
+        }
+        return Maybe(usize){ .result = rc };
+    }
+
+    unreachable;
+}
+
 pub fn renameat2(from_dir: bun.FileDescriptor, from: [:0]const u8, to_dir: bun.FileDescriptor, to: [:0]const u8, flags: RenameAt2Flags) Maybe(void) {
     if (Environment.isWindows) {
         return renameat(from_dir, from, to_dir, to);

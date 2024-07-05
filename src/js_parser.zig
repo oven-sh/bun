@@ -1013,7 +1013,7 @@ pub const TypeScript = struct {
                 else => return null,
             }
         }
-        pub const IMap = std.StaticStringMap(Kind).initComptime(.{
+        pub const IMap = bun.ComptimeStringMap(Kind, .{
             .{ "unique", .unique },
             .{ "abstract", .abstract },
             .{ "asserts", .asserts },
@@ -2560,7 +2560,7 @@ const AsyncPrefixExpression = enum(u2) {
     is_async,
     is_await,
 
-    const map = std.StaticStringMap(AsyncPrefixExpression).initComptime(.{
+    const map = bun.ComptimeStringMap(AsyncPrefixExpression, .{
         .{ "yield", .is_yield },
         .{ "await", .is_await },
         .{ "async", .is_async },

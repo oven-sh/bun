@@ -7,7 +7,7 @@ const unicode = std.unicode;
 const default_allocator = bun.default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+const ComptimeStringMap = bun.ComptimeStringMap;
 
 pub const T = enum(u8) {
     t_end_of_file,

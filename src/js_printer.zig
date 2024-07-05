@@ -778,7 +778,8 @@ fn NewPrinter(
 
         binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
 
-        debug_allowed_to_print_missing: if (Environment.isDebug) bool else void = false,
+        debug_allowed_to_print_missing: if (Environment.isDebug) bool else void =
+            if (Environment.isDebug) false else {},
 
         const Printer = @This();
 

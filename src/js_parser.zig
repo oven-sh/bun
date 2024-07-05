@@ -1879,7 +1879,7 @@ pub const SideEffects = enum(u1) {
     /// This approach uses a parse-shared "SimplifyState", which heap-allocates
     /// a stack of expressions, and will re-use this heap across simplifications.
     pub fn simplifyUnusedExpr(p: anytype, expr: Expr) Expr {
-        comptime assert(@typeInfo(@TypeOf(p)) == .Pointer);
+        comptime bun.assert(@typeInfo(@TypeOf(p)) == .Pointer);
         if (!p.options.features.dead_code_elimination) return expr;
 
         return switch (SimplifyState.nonRecursive(p, &expr)) {

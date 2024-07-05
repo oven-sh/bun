@@ -301,12 +301,10 @@ void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
     context->ref_count++;
 }
 
-uint32_t us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
-    uint32_t count = --context->ref_count;
-    if (count == 0) {
+void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
+    if (--context->ref_count == 0) {
         us_internal_socket_context_free(ssl, context);
     }
-    return count;
 }
 
 void us_socket_context_free(int ssl, struct us_socket_context_t *context) {

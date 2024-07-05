@@ -958,7 +958,7 @@ class Server extends EventEmitter {
       // That leads to all sorts of confusion.
       //
       // process.nextTick() is not sufficient because it will run before the IO queue.
-      setTimeout(emitListeningNextTick, 1, this, onListen.bind(this));
+      setTimeout(emitListeningNextTick, 1, this, onListen?.bind(this));
     } catch (err) {
       setTimeout(emitErrorNextTick, 1, this, err);
     }

@@ -507,9 +507,11 @@ pub const WriteFileWindows = struct {
     fn onMkdirpComplete(this: *WriteFileWindows) void {
         this.event_loop.unrefConcurrently();
 
-        if (this.err) |err| {
-            this.throw(err);
-            bun.default_allocator.free(err.path);
+        const err = this.err;
+        this.err = null;
+        if (err) |err_| {
+            this.throw(err_);
+            bun.default_allocator.free(err_.path);
             return;
         }
 

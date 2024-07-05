@@ -66,7 +66,7 @@ pub const Editor = enum(u8) {
     const StringMap = std.EnumMap(Editor, string);
     const StringArrayMap = std.EnumMap(Editor, []const [:0]const u8);
 
-    const name_map = std.StaticStringMap(Editor).initComptime(.{
+    const name_map = bun.ComptimeStringMap(Editor, .{
         .{ "sublime", .sublime },
         .{ "subl", .sublime },
         .{ "vscode", .vscode },

@@ -23,7 +23,7 @@ pub const Mode = enum {
     /// This must match the behavior of node.js, and supports bun <--> node.js/etc communication.
     json,
 
-    const Map = std.StaticStringMap(Mode).initComptime(.{
+    const Map = bun.ComptimeStringMap(Mode, .{
         .{ "advanced", .advanced },
         .{ "json", .json },
     });

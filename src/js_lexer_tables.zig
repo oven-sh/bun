@@ -159,7 +159,7 @@ pub const T = enum(u8) {
     }
 };
 
-pub const Keywords = std.StaticStringMap(T).initComptime(.{
+pub const Keywords = bun.ComptimeStringMap(T, .{
     .{ "break", .t_break },
     .{ "case", .t_case },
     .{ "catch", .t_catch },
@@ -198,7 +198,7 @@ pub const Keywords = std.StaticStringMap(T).initComptime(.{
     .{ "with", .t_with },
 });
 
-pub const StrictModeReservedWords = std.StaticStringMap(void).initComptime(.{
+pub const StrictModeReservedWords = bun.ComptimeStringMap(void, .{
     .{ "implements", {} },
     .{ "interface", {} },
     .{ "let", {} },
@@ -210,7 +210,7 @@ pub const StrictModeReservedWords = std.StaticStringMap(void).initComptime(.{
     .{ "yield", {} },
 });
 
-pub const StrictModeReservedWordsRemap = std.StaticStringMap(string).initComptime(.{
+pub const StrictModeReservedWordsRemap = bun.ComptimeStringMap(string, .{
     .{ "implements", "_implements" },
     .{ "interface", "_interface" },
     .{ "let", "_let" },
@@ -235,7 +235,7 @@ pub const PropertyModifierKeyword = enum {
     p_set,
     p_static,
 
-    pub const List = std.StaticStringMap(PropertyModifierKeyword).initComptime(.{
+    pub const List = bun.ComptimeStringMap(PropertyModifierKeyword, .{
         .{ "abstract", .p_abstract },
         .{ "async", .p_async },
         .{ "declare", .p_declare },
@@ -250,7 +250,7 @@ pub const PropertyModifierKeyword = enum {
     });
 };
 
-pub const TypeScriptAccessibilityModifier = std.StaticStringMap(void).initComptime(.{
+pub const TypeScriptAccessibilityModifier = bun.ComptimeStringMap(void, .{
     .{ "override", void },
     .{ "private", void },
     .{ "protected", void },
@@ -519,7 +519,7 @@ pub const TypescriptStmtKeyword = enum {
     ts_stmt_global,
     ts_stmt_declare,
 
-    pub const List = std.StaticStringMap(TypescriptStmtKeyword).initComptime(.{
+    pub const List = bun.ComptimeStringMap(TypescriptStmtKeyword, .{
         .{
             "type",
             TypescriptStmtKeyword.ts_stmt_type,
@@ -552,7 +552,7 @@ pub const TypescriptStmtKeyword = enum {
 };
 
 //  Error: meta is a void element tag and must neither have `children` nor use `dangerouslySetInnerHTML`.
-pub const ChildlessJSXTags = std.StaticStringMap(void).initComptime(.{
+pub const ChildlessJSXTags = bun.ComptimeStringMap(void, .{
     .{ "area", void },
     .{ "base", void },
     .{ "br", void },
@@ -572,7 +572,7 @@ pub const ChildlessJSXTags = std.StaticStringMap(void).initComptime(.{
 });
 
 // In a microbenchmark, this outperforms
-pub const jsxEntity = std.StaticStringMap(CodePoint).initComptime(.{
+pub const jsxEntity = bun.ComptimeStringMap(CodePoint, .{
     .{ "Aacute", @as(CodePoint, 0x00C1) },
     .{ "aacute", @as(CodePoint, 0x00E1) },
     .{ "Acirc", @as(CodePoint, 0x00C2) },

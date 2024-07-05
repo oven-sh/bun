@@ -112,7 +112,7 @@ struct us_loop_t *us_timer_loop(struct us_timer_t *t) {
 
 #if defined(LIBUS_USE_EPOLL) 
 
-#include <sys/syscall.h>
+#include <linux/syscall.h>
 static int has_epoll_pwait2 = -1;
 
 static int sys_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents, const struct timespec *timeout, const sigset_t *sigmask, size_t sigsetsize) {
@@ -141,7 +141,7 @@ static int bun_epoll_pwait2(int epfd, struct epoll_event *events, int maxevents,
         }
 
         do {
-            ret = epoll_pwait(epfd, events, maxevents, timeoutMs, NULL);
+            ret = epoll_wait(epfd, events, maxevents, timeoutMs);
         } while (IS_EINTR(ret));
     }
 

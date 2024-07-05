@@ -524,7 +524,7 @@ static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct 
         result = listen(listenFd, backlog);
     while (IS_EINTR(result));
 
-    return 0;
+    return result;
 }
 
 inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(

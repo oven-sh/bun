@@ -3903,6 +3903,24 @@ pub const JSValue = enum(JSValueReprInt) {
         JSC__JSValue__putBunString(value, global, key, result);
     }
 
+    pub fn putMaybeDouble(value: JSValue, global: *JSGlobalObject, double_key: f64, result: JSC.JSValue) void {
+        // if webkit can convert the stringified key back to an int, it will, and then crash
+        // so if our double has a decimal part, we can still put it as a string
+        // otherwise, we need to use putIndex
+
+        var doubleBuf: [256]u8 = undefined;
+        const doubleStr: []const u8 = std.fmt.bufPrint(&doubleBuf, "{d}", .{double_key}) catch {
+            // doesn't happen unless user float as a string is 256 bytes long
+            return;
+        };
+        const hasDecimal = std.mem.containsAtLeast(u8, doubleStr, 1, ".");
+        if (hasDecimal) {
+            put(value, global, bun.String.fromBytes(doubleStr), result);
+        } else {
+            JSC__JSValue__putMayBeIndex(value, global, &bun.String.fromBytes(doubleStr), result);
+        }
+    }
+
     pub fn put(value: JSValue, global: *JSGlobalObject, key: anytype, result: JSC.JSValue) void {
         const Key = @TypeOf(key);
         if (comptime @typeInfo(Key) == .Pointer) {

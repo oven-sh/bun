@@ -97,7 +97,7 @@ pub const HDRHistogram = struct {
             .bucket_count = bucket_count,
             .counts = counts,
             .total_count = 0,
-            .min = std.math.maxInt(64),
+            .min = @intCast(std.math.maxInt(u64)),
             .max = 0,
         };
     }
@@ -146,7 +146,7 @@ pub const HDRHistogram = struct {
             self.counts[index] = 0;
         }
         self.total_count = 0;
-        self.min = std.math.maxInt(64);
+        self.min = @intCast(std.math.maxInt(u64));
         self.max = 0;
     }
 

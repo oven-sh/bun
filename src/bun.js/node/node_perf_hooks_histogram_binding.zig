@@ -4,6 +4,7 @@ const HDRHistogram = @import("hdr_histogram.zig").HDRHistogram;
 const meta = bun.meta;
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
+const ZigString = JSC.ZigString;
 
 // Wrapper around HRD Histogram
 pub const RecordableHistogram = struct {
@@ -174,6 +175,30 @@ pub const RecordableHistogram = struct {
         };
 
         return .undefined;
+    }
+
+    pub fn toJSON(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        var object = JSC.JSValue.createEmptyObject(globalThis, 4);
+        //api for ref
+        // object.put(globalThis, ZigString.static("name"), ZigString.init("BuildMessage").toJS(globalThis));
+        // object.put(globalThis, ZigString.static("position"), this.getPosition(globalThis));
+
+        object.put(globalThis, ZigString.static("min"), this.min(globalThis));
+        object.put(globalThis, ZigString.static("max"), this.max(globalThis));
+        object.put(globalThis, ZigString.static("count"), this.count(globalThis));
+        object.put(globalThis, ZigString.static("mean"), this.mean(globalThis));
+        object.put(globalThis, ZigString.static("stddev"), this.stddev(globalThis));
+
+        const percentilesKV = this.percentiles_calc(globalThis) orelse return .undefined;
+        defer percentilesKV.deinit();
+
+        var percentagesObj = JSC.JSValue.createEmptyObject(globalThis, percentilesKV.items.len);
+        for (percentilesKV.items) |kv| {
+            // many of the percentiles are integers which crash WebKit when used as stringified keys, so treat them as MaybeDouble
+            percentagesObj.putMaybeDouble(globalThis, kv.key, globalThis.toJS(kv.value, .temporary));
+        }
+        object.put(globalThis, ZigString.static("percentiles"), percentagesObj);
+        return object;
     }
 
     // since we create this with bun.new, we need to have it be destroyable

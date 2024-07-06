@@ -577,7 +577,7 @@ export default [
       countBigInt: { fn: "countBigInt", length: 0 },
       percentilesBigInt: { fn: "percentilesBigInt", length: 0 },
       percentileBigInt: { fn: "percentileBigInt", length: 1 },
-      // toJSON: { fn: "toJSON", length: 0 },
+      toJSON: { fn: "toJSON", length: 0 },
     },
     values: [],
   }),

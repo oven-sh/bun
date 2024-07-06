@@ -461,6 +461,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
+    EnsureStillAliveScope argument2 = callFrame->argument(2);
 
     RefPtr<Blob> blobValue = nullptr;
     if (argument1.value().inherits<JSBlob>()) {
@@ -472,7 +473,6 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     }
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
-    EnsureStillAliveScope argument2 = callFrame->argument(2);
     auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 

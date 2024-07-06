@@ -1301,6 +1301,14 @@ describe("bundler", () => {
       "-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 /* g */",
     ],
   });
+  // Stack overflow possibility
+  itBundled("edgecase/AwsCdkLib", {
+    files: {
+      "entry.js": `import * as aws from ${JSON.stringify(require.resolve("aws-cdk-lib"))}; aws;`,
+    },
+    target: "bun",
+    run: true,
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

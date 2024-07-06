@@ -12,7 +12,7 @@ Run `bun install -y` to generate a Yarn-compatible `yarn.lock` (v1) that can be 
 
 Add the following to your local or global `.gitattributes` file:
 
-```
+```text
 *.lockb binary diff=lockb
 ```
 

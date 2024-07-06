@@ -23,7 +23,7 @@ In TOML, comments start with `#`
 
 Bun-flavored adds a few more escape sequences to TOML to work better with JavaScript strings.
 
-```
+```text
 # Bun-flavored TOML extras
 \x{XX}     - ASCII           (U+00XX)
 \u{x+}     - unicode         (U+0000000X) - (U+XXXXXXXX)

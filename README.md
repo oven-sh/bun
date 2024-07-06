@@ -1,10 +1,12 @@
+<!-- markdownlint-disable no-inline-html first-line-h1 -->
+
 <p align="center">
   <a href="https://bun.sh"><img src="https://user-images.githubusercontent.com/709451/182802334-d9c42afe-f35d-4a7b-86ea-9985f73f20c3.png" alt="Logo" height=170></a>
 </p>
 <h1 align="center">Bun</h1>
 
 <p align="center">
-<a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" /></a>
+<a href="https://bun.sh/discord" target="_blank"><img height=20 src="https://img.shields.io/discord/876711213126520882" alt="Discord" /></a>
 <img src="https://img.shields.io/github/stars/oven-sh/bun" alt="stars">
 <a href="https://twitter.com/jarredsumner/status/1542824445810642946"><img src="https://img.shields.io/static/v1?label=speed&message=fast&color=success" alt="Bun speed" /></a>
 </p>
@@ -183,9 +185,9 @@ bun upgrade --canary
   - [Building Windows](https://bun.sh/docs/project/building-windows)
   - [License](https://bun.sh/docs/project/licensing)
 
-## Guides 
+## Guides
 
-- Binary 
+- Binary
   - [Convert a Blob to a DataView](https://bun.sh/guides/binary/blob-to-dataview)
   - [Convert a Blob to a ReadableStream](https://bun.sh/guides/binary/blob-to-stream)
   - [Convert a Blob to a string](https://bun.sh/guides/binary/blob-to-string)
@@ -209,7 +211,7 @@ bun upgrade --canary
   - [Convert an ArrayBuffer to a Uint8Array](https://bun.sh/guides/binary/arraybuffer-to-typedarray)
   - [Convert an ArrayBuffer to an array of numbers](https://bun.sh/guides/binary/arraybuffer-to-array)
 
-- Ecosystem 
+- Ecosystem
   - [Build a frontend using Vite and Bun](https://bun.sh/guides/ecosystem/vite)
   - [Build an app with Astro and Bun](https://bun.sh/guides/ecosystem/astro)
   - [Build an app with Next.js and Bun](https://bun.sh/guides/ecosystem/nextjs)
@@ -236,7 +238,7 @@ bun upgrade --canary
   - [Use React and JSX](https://bun.sh/guides/ecosystem/react)
   - [Add Sentry to a Bun app](https://bun.sh/guides/ecosystem/sentry)
 
-- HTTP 
+- HTTP
   - [Common HTTP server usage](https://bun.sh/guides/http/server)
   - [Configure TLS on an HTTP server](https://bun.sh/guides/http/tls)
   - [fetch with unix domain sockets in Bun](https://bun.sh/guides/http/fetch-unix)
@@ -250,7 +252,7 @@ bun upgrade --canary
   - [Upload files via HTTP using FormData](https://bun.sh/guides/http/file-uploads)
   - [Write a simple HTTP server](https://bun.sh/guides/http/simple)
 
-- Install 
+- Install
   - [Add a dependency](https://bun.sh/guides/install/add)
   - [Add a development dependency](https://bun.sh/guides/install/add-dev)
   - [Add a Git dependency](https://bun.sh/guides/install/add-git)
@@ -268,7 +270,7 @@ bun upgrade --canary
   - [Using bun install with an Azure Artifacts npm registry](https://bun.sh/guides/install/azure-artifacts)
   - [Using bun install with Artifactory](https://bun.sh/guides/install/jfrog-artifactory)
 
-- Process 
+- Process
   - [Get the process uptime in nanoseconds](https://bun.sh/guides/process/nanoseconds)
   - [Listen for CTRL+C](https://bun.sh/guides/process/ctrl-c)
   - [Listen to OS signals](https://bun.sh/guides/process/os-signals)
@@ -279,7 +281,7 @@ bun upgrade --canary
   - [Spawn a child process](https://bun.sh/guides/process/spawn)
   - [Spawn a child process and communicate using IPC](https://bun.sh/guides/process/ipc)
 
-- Read file 
+- Read file
   - [Check if a file exists](https://bun.sh/guides/read-file/exists)
   - [Get the MIME type of a file](https://bun.sh/guides/read-file/mime)
   - [Read a file as a ReadableStream](https://bun.sh/guides/read-file/stream)
@@ -290,7 +292,7 @@ bun upgrade --canary
   - [Read a JSON file](https://bun.sh/guides/read-file/json)
   - [Watch a directory for changes](https://bun.sh/guides/read-file/watch)
 
-- Runtime 
+- Runtime
   - [Debugging Bun with the VS Code extension](https://bun.sh/guides/runtime/vscode-debugger)
   - [Debugging Bun with the web debugger](https://bun.sh/guides/runtime/web-debugger)
   - [Define and replace static globals & constants](https://bun.sh/guides/runtime/define-constant)
@@ -305,7 +307,7 @@ bun upgrade --canary
   - [Set a time zone in Bun](https://bun.sh/guides/runtime/timezone)
   - [Set environment variables](https://bun.sh/guides/runtime/set-env)
 
-- Streams 
+- Streams
   - [Convert a Node.js Readable to a Blob](https://bun.sh/guides/streams/node-readable-to-blob)
   - [Convert a Node.js Readable to a string](https://bun.sh/guides/streams/node-readable-to-string)
   - [Convert a Node.js Readable to an ArrayBuffer](https://bun.sh/guides/streams/node-readable-to-arraybuffer)
@@ -318,7 +320,7 @@ bun upgrade --canary
   - [Convert a ReadableStream to an ArrayBuffer](https://bun.sh/guides/streams/to-arraybuffer)
   - [Convert a ReadableStream to JSON](https://bun.sh/guides/streams/to-json)
 
-- Test 
+- Test
   - [Bail early with the Bun test runner](https://bun.sh/guides/test/bail)
   - [Generate code coverage reports with the Bun test runner](https://bun.sh/guides/test/coverage)
   - [Mark a test as a "todo" with the Bun test runner](https://bun.sh/guides/test/todo-tests)
@@ -336,7 +338,7 @@ bun upgrade --canary
   - [Use snapshot testing in `bun test`](https://bun.sh/guides/test/snapshot)
   - [Write browser DOM tests with Bun and happy-dom](https://bun.sh/guides/test/happy-dom)
 
-- Util 
+- Util
   - [Check if the current file is the entrypoint](https://bun.sh/guides/util/entrypoint)
   - [Check if two objects are deeply equal](https://bun.sh/guides/util/deep-equals)
   - [Compress and decompress data with DEFLATE](https://bun.sh/guides/util/deflate)
@@ -355,13 +357,13 @@ bun upgrade --canary
   - [Hash a password](https://bun.sh/guides/util/hash-a-password)
   - [Sleep for a fixed number of milliseconds](https://bun.sh/guides/util/sleep)
 
-- WebSocket 
+- WebSocket
   - [Build a publish-subscribe WebSocket server](https://bun.sh/guides/websocket/pubsub)
   - [Build a simple WebSocket server](https://bun.sh/guides/websocket/simple)
   - [Enable compression for WebSocket messages](https://bun.sh/guides/websocket/compression)
   - [Set per-socket contextual data on a WebSocket](https://bun.sh/guides/websocket/context)
 
-- Write file 
+- Write file
   - [Append content to a file](https://bun.sh/guides/write-file/append)
   - [Copy a file to another location](https://bun.sh/guides/write-file/file-cp)
   - [Delete a file](https://bun.sh/guides/write-file/unlink)

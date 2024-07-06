@@ -80,14 +80,14 @@ $ docker pull oven/bun:distroless
 
 To check that Bun was installed successfully, open a new terminal window and run `bun --version`.
 
-```sh
+```bash
 $ bun --version
 1.x.y
 ```
 
 To see the precise commit of [oven-sh/bun](https://github.com/oven-sh/bun) that you're using, run `bun --revision`.
 
-```sh
+```bash
 $ bun --revision
 1.x.y+b7982ac13189
 ```
@@ -97,7 +97,7 @@ If you've installed Bun but are seeing a `command not found` error, you may have
 {% details summary="How to add to your `PATH`" %}
 First, determine what shell you're using:
 
-```sh
+```bash
 $ echo $SHELL
 /bin/zsh # or /bin/bash or /bin/fish
 ```
@@ -118,7 +118,7 @@ export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
 ```
 
-```sh#~/.config/fish/config.fish
+```bash#~/.config/fish/config.fish
 # add to ~/.config/fish/config.fish
 export BUN_INSTALL="$HOME/.bun"
 export PATH="$BUN_INSTALL/bin:$PATH"
@@ -133,7 +133,7 @@ Save the file. You'll need to open a new shell/terminal window for the changes t
 
 Once installed, the binary can upgrade itself.
 
-```sh
+```bash
 $ bun upgrade
 ```
 
@@ -148,7 +148,7 @@ $ bun upgrade
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:
 
-```sh
+```bash
 $ bun upgrade --canary
 ```
 
@@ -168,7 +168,7 @@ Since Bun is a single binary, you can install older versions of Bun by re-runnin
 
 To install a specific version of Bun, you can pass the git tag of the version you want to install to the install script, such as `bun-v1.1.6` or `bun-v1.1.1`.
 
-```sh
+```bash
 $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.1.6"
 ```
 
@@ -176,7 +176,7 @@ $ curl -fsSL https://bun.sh/install | bash -s "bun-v1.1.6"
 
 On Windows, you can install a specific version of Bun by passing the version number to the Powershell install script.
 
-```sh
+```bash
 # PowerShell:
 $ iex "& {$(irm https://bun.sh/install.ps1)} -Version 1.1.6"
 ```
@@ -203,19 +203,19 @@ The `baseline` binaries are built for older CPUs which may not support AVX2 inst
 
 Works on macOS x64 & Silicon, Linux x64, Windows Subsystem for Linux.
 
-```sh
+```bash
 $ curl -fsSL https://bun.sh/install | bash
 ```
 
 Once installed, the binary can upgrade itself.
 
-```sh
+```bash
 $ bun upgrade
 ```
 
 Bun automatically releases an (untested) canary build on every commit to `main`. To upgrade to the latest canary build:
 
-```sh
+```bash
 $ bun upgrade --canary
 ```
 
@@ -223,7 +223,7 @@ $ bun upgrade --canary
 
 Works on macOS and Linux
 
-```sh
+```bash
 $ brew tap oven-sh/bun
 $ brew install bun
 ```
@@ -234,7 +234,7 @@ Homebrew recommends using `brew upgrade <package>` to install newer versions.
 
 Works on Linux x64
 
-```sh
+```bash
 # this is a comment
 $ docker pull oven/bun:edge
 this is some output

@@ -32,25 +32,25 @@ Unzip is required to install Bun on Linux. You can use one of the following comm
 
 #### Debian / Ubuntu / Mint
 
-```sh
+```bash
 $ sudo apt install unzip
 ```
 
 #### RedHat / CentOS / Fedora
 
-```sh
+```bash
 $ sudo dnf install unzip
 ```
 
 #### Arch / Manjaro
 
-```sh
+```bash
 $ sudo pacman -S unzip
 ```
 
 #### OpenSUSE
 
-```sh
+```bash
 $ sudo zypper install unzip
 ```
 
@@ -62,6 +62,6 @@ Please run `bun install --verbose 2> logs.txt` and send them to me in Bun's disc
 
 Bun's binary and install cache is located in `~/.bun` by default. To uninstall bun, delete this directory and edit your shell config (`.bashrc`, `.zshrc`, or similar) to remove `~/.bun/bin` from the `$PATH` variable.
 
-```sh
+```bash
 $ rm -rf ~/.bun # make sure to remove ~/.bun/bin from $PATH
 ```

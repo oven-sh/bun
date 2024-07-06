@@ -47,7 +47,7 @@ If you used `bun init`, Bun will have automatically installed Bun's TypeScript d
 
 To fix this, first install `@types/bun` as a dev dependency.
 
-```sh
+```bash
 $ bun add -d @types/bun
 ```
 
@@ -135,7 +135,7 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 
 Restart the server and refresh the page. You should see a new ASCII art banner.
 
-```txt
+```text
   ____              _
  | __ ) _   _ _ __ | |
  |  _ \| | | | '_ \| |

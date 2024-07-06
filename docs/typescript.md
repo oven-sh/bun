@@ -1,6 +1,6 @@
 To install the TypeScript definitions for Bun's built-in APIs, install `@types/bun`.
 
-```sh
+```bash
 $ bun add -d @types/bun # dev dependency
 ```
 
@@ -46,6 +46,6 @@ Bun supports things like top-level await, JSX, and extensioned `.ts` imports, wh
 
 If you run `bun init` in a new directory, this `tsconfig.json` will be generated for you. (The stricter flags are disabled by default.)
 
-```sh
+```bash
 $ bun init
 ```

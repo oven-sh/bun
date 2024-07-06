@@ -1,3 +1,5 @@
+<!-- markdownlint-disable first-line-h1 commands-show-output -->
+
 Configuring a development environment for Bun can take 10-30 minutes depending on your internet connection and computer speed. You will need ~10GB of free disk space for the repository and build artifacts.
 
 If you are using Windows, please refer to [this guide](/docs/project/building-windows)
@@ -251,7 +253,7 @@ The Clang compiler typically uses the `libstdc++` C++ standard library by defaul
 
 Bun relies on C++20 features like `std::span`, which are not available in GCC versions lower than 11. GCC 10 doesn't have all of the C++20 features implemented. As a result, running `make setup` may fail with the following error:
 
-```
+```text
 fatal error: 'span' file not found
 #include <span>
          ^~~~~~
@@ -259,7 +261,7 @@ fatal error: 'span' file not found
 
 The issue may manifest when initially running `bun setup` as Clang being unable to compile a simple program:
 
-```
+```text
 The C++ compiler
 
   "/usr/bin/clang++-16"

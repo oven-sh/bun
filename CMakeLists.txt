@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.18")
-set(WEBKIT_TAG 00e8a32b3ca72cefae683cd65140428ff1d4ff09)
+set(WEBKIT_TAG 615e8585f96aa718b0f5158210259b83fe8440ea)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -14,8 +14,6 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
-
-set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
 
 # Should not start with v
 # Used in process.version, process.versions.node, napi, and elsewhere
@@ -323,6 +321,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(WIN32 AND USE_LTO)
+    set(CMAKE_LINKER_TYPE LLD)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
@@ -1080,6 +1083,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(LTO_LINK_FLAG "")
 
         if(USE_LTO)
+            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
+
             # -emit-llvm seems to not be supported or under a different name on Windows.
             list(APPEND LTO_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
@@ -1119,10 +1124,6 @@ if(WIN32)
 
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
-
-    if(USE_LTO)
-        target_compile_options(${bun} PUBLIC "-Xclang -emit-llvm-bc")
-    endif()
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")

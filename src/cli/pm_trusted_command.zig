@@ -239,7 +239,7 @@ pub const TrustCommand = struct {
         try abs_node_modules_path.appendSlice(ctx.allocator, top_level_without_trailing_slash);
         try abs_node_modules_path.append(ctx.allocator, std.fs.path.sep);
 
-        var package_names_to_add: std.StringArrayHashMapUnmanaged(void) = .{};
+        var package_names_to_add: bun.StringArrayHashMapUnmanaged(void) = .{};
         var scripts_at_depth: std.AutoArrayHashMapUnmanaged(usize, std.ArrayListUnmanaged(struct {
             package_id: PackageID,
             scripts_list: Lockfile.Package.Scripts.List,
@@ -425,7 +425,7 @@ pub const TrustCommand = struct {
         buffer_writer.append_newline = package_json_contents.len > 0 and package_json_contents[package_json_contents.len - 1] == '\n';
         var package_json_writer = bun.js_printer.BufferPrinter.init(buffer_writer);
 
-        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source) catch |err| {
+        _ = bun.js_printer.printJSON(@TypeOf(&package_json_writer), &package_json_writer, package_json, &package_json_source, .{}) catch |err| {
             Output.errGeneric("failed to print package.json: {s}", .{@errorName(err)});
             Global.crash();
         };

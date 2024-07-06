@@ -6166,6 +6166,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 &writer,
                 bun.Global.BunInfo.generate(*Bundler, &JSC.VirtualMachine.get().bundler, allocator) catch unreachable,
                 &source,
+                .{},
             ) catch unreachable;
 
             resp.writeStatus("200 OK");

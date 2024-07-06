@@ -67,7 +67,7 @@ pub const TSConfigJSON = struct {
         remove,
         invalid,
 
-        pub const List = std.StaticStringMap(ImportsNotUsedAsValue).initComptime(.{
+        pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, .{
             .{ "preserve", .preserve },
             .{ "error", .err },
             .{ "remove", .remove },

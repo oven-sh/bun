@@ -705,9 +705,10 @@ pub const ConfigIterator = struct {
         registry_url: []const u8,
         optname: Opt,
         value: []const u8,
+        loc: Loc,
 
         pub const Opt = enum {
-            /// base64 authentication string
+            /// username:password encoded in base64
             _auth,
 
             /// authentication string
@@ -715,6 +716,7 @@ pub const ConfigIterator = struct {
 
             username,
 
+            /// this is encoded as base64 in .npmrc
             _password,
 
             email,
@@ -724,7 +726,41 @@ pub const ConfigIterator = struct {
 
             /// path to key file
             keyfile,
+
+            pub fn isBase64Encoded(this: Opt) bool {
+                return switch (this) {
+                    ._auth, ._password => true,
+                    else => false,
+                };
+            }
         };
+
+        /// Duplicate the value, decoding it if it is base64 encoded.
+        pub fn dupeValueDecoded(
+            this: *const Item,
+            allocator: Allocator,
+            log: *bun.logger.Log,
+            source: *const bun.logger.Source,
+        ) ?[]const u8 {
+            if (this.optname.isBase64Encoded()) {
+                const len = bun.base64.decodeLen(this.value);
+                var slice = allocator.alloc(u8, len) catch bun.outOfMemory();
+                const result = bun.base64.decode(slice[0..], this.value);
+                if (result.status != .success) {
+                    log.addErrorFmt(
+                        source,
+                        this.loc,
+                        allocator,
+                        "{s} is not valid base64",
+                        .{@tagName(this.optname)},
+                    ) catch bun.outOfMemory();
+                    return null;
+                }
+                std.debug.print("{s} = {s}\n", .{ @tagName(this.optname), slice[0..result.count] });
+                return allocator.dupe(u8, slice[0..result.count]) catch bun.outOfMemory();
+            }
+            return allocator.dupe(u8, this.value) catch bun.outOfMemory();
+        }
 
         pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.print("//{s}:{s}={s}", .{ this.registry_url, @tagName(this.optname), this.value });
@@ -767,6 +803,7 @@ pub const ConfigIterator = struct {
                                             .registry_url = url_part,
                                             .value = value,
                                             .optname = std.meta.stringToEnum(Item.Opt, name).?,
+                                            .loc = prop.key.?.loc,
                                         },
                                     };
                                 }
@@ -1090,9 +1127,15 @@ pub fn loadNpmrc(
                     };
 
                     switch (conf_item.optname) {
-                        ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                        .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                        ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                        ._authToken => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                        },
+                        .username => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                        },
+                        ._password => {
+                            if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                        },
                         ._auth, .email, .certfile, .keyfile => unreachable,
                     }
                     continue;
@@ -1110,9 +1153,15 @@ pub fn loadNpmrc(
                         }
                         matched_at_least_one = true;
                         switch (conf_item.optname) {
-                            ._authToken => v.token = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            .username => v.username = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
-                            ._password => v.password = allocator.dupe(u8, conf_item.value) catch bun.outOfMemory(),
+                            ._authToken => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.token = x;
+                            },
+                            .username => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.username = x;
+                            },
+                            ._password => {
+                                if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
+                            },
                             ._auth, .email, .certfile, .keyfile => unreachable,
                         }
                         // We have to keep going as it could match multiple scopes

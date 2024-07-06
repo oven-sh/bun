@@ -5242,8 +5242,13 @@ fn NewParser_(
         will_wrap_module_in_try_catch_for_using: bool = false,
 
         const RecentlyVisitedTSNamespace = struct {
-            ref: Ref = Ref.None,
-            data: ?*js_ast.TSNamespaceMemberMap = null,
+            expr: Expr = Expr.empty,
+            map: ?*js_ast.TSNamespaceMemberMap = null,
+
+            const ExpressionData = union(enum) {
+                ref: Ref,
+                ptr: *E.Dot,
+            };
         };
 
         /// use this instead of checking p.source.index
@@ -6063,16 +6068,17 @@ fn NewParser_(
                                         p.symbols.items[ref.inner_index].original_name,
                                     ),
 
-                                    .namespace => |data| {
-                                        p.ts_namespace = .{
-                                            .ref = ref,
-                                            .data = data,
-                                        };
-                                        return p.newExpr(E.Dot{
+                                    .namespace => |map| {
+                                        const expr = p.newExpr(E.Dot{
                                             .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
                                             .name = ns_alias.alias,
                                             .name_loc = loc,
                                         }, loc);
+                                        p.ts_namespace = .{
+                                            .expr = expr,
+                                            .map = map,
+                                        };
+                                        return expr;
                                     },
 
                                     else => {},
@@ -6110,15 +6116,18 @@ fn NewParser_(
                             p.symbols.items[ref.inner_index].original_name,
                         ),
 
-                        .namespace => |data| {
-                            p.ts_namespace = .{
-                                .ref = ref,
-                                .data = data,
-                            };
-                            return .{
+                        .namespace => |map| {
+                            const expr: Expr = .{
                                 .data = .{ .e_identifier = ident },
                                 .loc = loc,
                             };
+
+                            p.ts_namespace = .{
+                                .expr = expr,
+                                .map = map,
+                            };
+
+                            return expr;
                         },
 
                         else => {},
@@ -6130,11 +6139,19 @@ fn NewParser_(
                     const name = p.symbols.items[ref.innerIndex()].original_name;
 
                     p.recordUsage(ns_ref);
-                    return p.newExpr(E.Dot{
+                    const prop = p.newExpr(E.Dot{
                         .target = p.newExpr(E.Identifier.init(ns_ref), loc),
                         .name = name,
                         .name_loc = loc,
                     }, loc);
+
+                    if (p.ts_namespace.expr.data == .e_identifier and
+                        p.ts_namespace.expr.data.e_identifier.ref.eql(ident.ref))
+                    {
+                        p.ts_namespace.expr = prop;
+                    }
+
+                    return prop;
                 }
             }
 
@@ -18817,41 +18834,12 @@ fn NewParser_(
                     }
 
                     // Handle references to namespaces or namespace members
-                    if (id.ref.eql(p.ts_namespace.ref) and
+                    if (p.ts_namespace.expr.data == .e_identifier and
+                        id.ref.eql(p.ts_namespace.expr.data.e_identifier.ref) and
                         identifier_opts.assign_target == .none and
                         !identifier_opts.is_delete_target)
                     {
-                        if (p.ts_namespace.data.?.get(name)) |value| {
-                            switch (value.data) {
-                                .enum_number => |num| {
-                                    p.ignoreUsageOfIdentifierInDotChain(target);
-                                    return p.wrapInlinedEnum(
-                                        .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
-                                        name,
-                                    );
-                                },
-
-                                .enum_string => |str| {
-                                    p.ignoreUsageOfIdentifierInDotChain(target);
-                                    return p.wrapInlinedEnum(
-                                        .{ .loc = loc, .data = .{ .e_string = str } },
-                                        name,
-                                    );
-                                },
-
-                                .namespace => |data| {
-                                    p.ts_namespace = .{
-                                        .ref = id.ref,
-                                        .data = data,
-                                    };
-                                    return .{
-                                        .loc = loc,
-                                        .data = .{ .e_identifier = id },
-                                    };
-                                },
-                                else => {},
-                            }
-                        }
+                        return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
                     }
                 },
                 // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
@@ -18913,12 +18901,9 @@ fn NewParser_(
                     // Symbol uses due to a property access off of an imported symbol are tracked
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
-                        const i = p.symbol_uses.getIndex(id.ref).?;
-                        const use = &p.symbol_uses.values()[i];
+                        const use = p.symbol_uses.getPtr(id.ref).?;
                         use.count_estimate -= 1;
-                        if (use.count_estimate == 0) {
-                            // p.symbol_uses.swapRemoveAt(i);
-                        }
+                        // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead
                         const gop = p.import_symbol_property_uses.getOrPutValue(
@@ -18934,7 +18919,73 @@ fn NewParser_(
                         inner_use.value_ptr.count_estimate += 1;
                     }
                 },
+                inline .e_dot, .e_index => |data, tag| {
+                    if (p.ts_namespace.expr.data == tag and
+                        data == @field(p.ts_namespace.expr.data, @tagName(tag)) and
+                        identifier_opts.assign_target == .none and
+                        !identifier_opts.is_delete_target)
+                    {
+                        return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
+                    }
+                },
                 else => {},
+            }
+
+            return null;
+        }
+
+        fn maybeRewritePropertyAccessForNamespace(
+            p: *P,
+            name: string,
+            target: *const Expr,
+            loc: logger.Loc,
+            name_loc: logger.Loc,
+        ) ?Expr {
+            if (p.ts_namespace.map.?.get(name)) |value| {
+                switch (value.data) {
+                    .enum_number => |num| {
+                        p.ignoreUsageOfIdentifierInDotChain(target.*);
+                        return p.wrapInlinedEnum(
+                            .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
+                            name,
+                        );
+                    },
+
+                    .enum_string => |str| {
+                        p.ignoreUsageOfIdentifierInDotChain(target.*);
+                        return p.wrapInlinedEnum(
+                            .{ .loc = loc, .data = .{ .e_string = str } },
+                            name,
+                        );
+                    },
+
+                    .namespace => |namespace| {
+                        // If this isn't a constant, return a clone of this property access
+                        // but with the namespace member data associated with it so that
+                        // more property accesses off of this property access are recognized.
+                        const expr = if (js_lexer.isIdentifier(name))
+                            p.newExpr(E.Dot{
+                                .target = target.*,
+                                .name = name,
+                                .name_loc = name_loc,
+                            }, loc)
+                        else
+                            p.newExpr(E.Dot{
+                                .target = target.*,
+                                .name = name,
+                                .name_loc = name_loc,
+                            }, loc);
+
+                        p.ts_namespace = .{
+                            .expr = expr,
+                            .map = namespace,
+                        };
+
+                        return expr;
+                    },
+
+                    else => {},
+                }
             }
 
             return null;

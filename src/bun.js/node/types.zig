@@ -1698,15 +1698,26 @@ pub const Dirent = struct {
 
     pub const Kind = std.fs.File.Kind;
     pub usingnamespace JSC.Codegen.JSDirent;
+    pub usingnamespace bun.New(@This());
 
     pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) ?*Dirent {
         globalObject.throw("Dirent is not a constructor", .{});
         return null;
     }
 
+    pub fn toJS(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        const as_js = Dirent.toJSUnchecked(globalObject, this);
+
+        // Immediately create JSString* objects for the name and path
+        // So that the GC is aware of them and can collect them if necessary
+        Dirent.nameSetCached(as_js, globalObject, this.name.toJS(globalObject));
+        Dirent.pathSetCached(as_js, globalObject, this.path.toJS(globalObject));
+
+        return as_js;
+    }
+
     pub fn toJSNewlyCreated(this: *const Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        var out = bun.new(Dirent, this.*);
-        return out.toJS(globalObject);
+        return toJS(Dirent.new(this.*), globalObject);
     }
 
     pub fn getName(this: *Dirent, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
@@ -1772,9 +1783,9 @@ pub const Dirent = struct {
         this.path.deref();
     }
 
-    pub fn finalize(this: *Dirent) callconv(.C) void {
+    pub fn finalize(this: *Dirent) void {
         this.deref();
-        bun.destroy(this);
+        this.destroy();
     }
 };
 

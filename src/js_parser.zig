@@ -3401,6 +3401,11 @@ pub const Parser = struct {
         ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_simplify_stack.clearAndFree();
 
+        if (Environment.allow_assert) {
+            bun.assert(binary_expression_stack_heap.fixed_buffer_allocator.ownsPtr(@ptrCast(p.binary_expression_stack.items)));
+            bun.assert(binary_expression_simplify_stack_heap.fixed_buffer_allocator.ownsPtr(@ptrCast(p.binary_expression_simplify_stack.items)));
+        }
+
         // defer {
         //     if (p.allocated_names_pool) |pool| {
         //         pool.data = p.allocated_names;

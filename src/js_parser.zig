@@ -5242,7 +5242,7 @@ fn NewParser_(
         will_wrap_module_in_try_catch_for_using: bool = false,
 
         const RecentlyVisitedTSNamespace = struct {
-            expr: Expr = Expr.empty,
+            expr: Expr.Data = Expr.empty.data,
             map: ?*js_ast.TSNamespaceMemberMap = null,
 
             const ExpressionData = union(enum) {
@@ -6075,7 +6075,7 @@ fn NewParser_(
                                             .name_loc = loc,
                                         }, loc);
                                         p.ts_namespace = .{
-                                            .expr = expr,
+                                            .expr = expr.data,
                                             .map = map,
                                         };
                                         return expr;
@@ -6123,7 +6123,7 @@ fn NewParser_(
                             };
 
                             p.ts_namespace = .{
-                                .expr = expr,
+                                .expr = expr.data,
                                 .map = map,
                             };
 
@@ -6145,10 +6145,10 @@ fn NewParser_(
                         .name_loc = loc,
                     }, loc);
 
-                    if (p.ts_namespace.expr.data == .e_identifier and
-                        p.ts_namespace.expr.data.e_identifier.ref.eql(ident.ref))
+                    if (p.ts_namespace.expr == .e_identifier and
+                        p.ts_namespace.expr.e_identifier.ref.eql(ident.ref))
                     {
-                        p.ts_namespace.expr = prop;
+                        p.ts_namespace.expr = prop.data;
                     }
 
                     return prop;
@@ -18834,8 +18834,8 @@ fn NewParser_(
                     }
 
                     // Handle references to namespaces or namespace members
-                    if (p.ts_namespace.expr.data == .e_identifier and
-                        id.ref.eql(p.ts_namespace.expr.data.e_identifier.ref) and
+                    if (p.ts_namespace.expr == .e_identifier and
+                        id.ref.eql(p.ts_namespace.expr.e_identifier.ref) and
                         identifier_opts.assign_target == .none and
                         !identifier_opts.is_delete_target)
                     {
@@ -18920,8 +18920,8 @@ fn NewParser_(
                     }
                 },
                 inline .e_dot, .e_index => |data, tag| {
-                    if (p.ts_namespace.expr.data == tag and
-                        data == @field(p.ts_namespace.expr.data, @tagName(tag)) and
+                    if (p.ts_namespace.expr == tag and
+                        data == @field(p.ts_namespace.expr, @tagName(tag)) and
                         identifier_opts.assign_target == .none and
                         !identifier_opts.is_delete_target)
                     {
@@ -18977,7 +18977,7 @@ fn NewParser_(
                             }, loc);
 
                         p.ts_namespace = .{
-                            .expr = expr,
+                            .expr = expr.data,
                             .map = namespace,
                         };
 

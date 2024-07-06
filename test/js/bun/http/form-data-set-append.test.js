@@ -5,7 +5,7 @@ import { expect, test } from "bun:test";
 test("formdata set with File works as expected", async () => {
   const expected = ["617580375", "text-notes1.txt"];
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch: async req => {
       const data = await req.formData();
@@ -30,13 +30,12 @@ test("formdata set with File works as expected", async () => {
   formDataSet.set("chat_id", expected[0]);
   formDataSet.set("document", new File(["some text notes 1"], expected[1]));
   await sendDocument(formDataSet);
-  server.stop();
 });
 
 test("formdata apppend with File works as expected", async () => {
   const expected = ["617580376", "text-notes2.txt"];
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     fetch: async req => {
       const data = await req.formData();
@@ -61,5 +60,4 @@ test("formdata apppend with File works as expected", async () => {
   formDataSet.append("chat_id", expected[0]);
   formDataSet.append("document", new File(["some text notes 2"], expected[1]));
   await sendDocument(formDataSet);
-  server.stop();
 });

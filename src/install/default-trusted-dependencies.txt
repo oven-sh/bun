@@ -14,6 +14,7 @@
 @bazel/rollup
 @bazel/terser
 @bazel/typescript
+@biomejs/biome
 @bufbuild/buf
 @cdktf/node-pty-prebuilt-multiarch
 @ckeditor/ckeditor5-vue

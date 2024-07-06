@@ -2,7 +2,7 @@ Bun supports loading configuration options from [`.npmrc`](https://docs.npmjs.co
 
 {% callout %}
 
-**NOTE**: We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/docs/runtime/bunfig) format, as it provides more flexible options and can let you configure Bun-specific configuration options.
+**NOTE**: We recommend migrating your `.npmrc` file to Bun's [`bunfig.toml`](/docs/runtime/bunfig) format, as it provides more flexible options and can let you configure Bun-specific options.
 
 {% /callout %}
 
@@ -50,16 +50,21 @@ Allows you to set options for a specific registry:
 
 
 # or you could set a username and password
+# note that the password is base64 encoded
 //http://localhost:4873/:username=myusername
 
 //http://localhost:4873/:_password=${NPM_PASSWORD}
+
+# or use _auth, which is $username:$password, but base64 encoded
+//http://localhost:4873/:_auth=${NPM_AUTH}
 ```
 
 The following options are supported:
 
 - `_authToken`
 - `username`
-- `_password`
+- `_password` (base64 encoded password)
+- `_auth` (base64 encoded username:password)
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/docs/runtime/bunfig#install-registry):
 

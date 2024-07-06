@@ -743,6 +743,7 @@ pub const ConfigIterator = struct {
             source: *const bun.logger.Source,
         ) ?[]const u8 {
             if (this.optname.isBase64Encoded()) {
+                if (this.value.len == 0) return "";
                 const len = bun.base64.decodeLen(this.value);
                 var slice = allocator.alloc(u8, len) catch bun.outOfMemory();
                 const result = bun.base64.decode(slice[0..], this.value);
@@ -1097,7 +1098,7 @@ pub fn loadNpmrc(
                 // - @myorg:registry=https://somewhere-else.com/myorg
                 const conf_item: bun.ini.ConfigIterator.Item = conf_item_;
                 switch (conf_item.optname) {
-                    ._auth, .email, .certfile, .keyfile => {
+                    .email, .certfile, .keyfile => {
                         log.addWarningFmt(
                             source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
@@ -1136,7 +1137,10 @@ pub fn loadNpmrc(
                         ._password => {
                             if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
                         },
-                        ._auth, .email, .certfile, .keyfile => unreachable,
+                        ._auth => {
+                            _ = @"handle _auth"(allocator, v, &conf_item, log, source);
+                        },
+                        .email, .certfile, .keyfile => unreachable,
                     }
                     continue;
                 }
@@ -1162,7 +1166,10 @@ pub fn loadNpmrc(
                             ._password => {
                                 if (conf_item.dupeValueDecoded(allocator, log, source)) |x| v.password = x;
                             },
-                            ._auth, .email, .certfile, .keyfile => unreachable,
+                            ._auth => {
+                                _ = @"handle _auth"(allocator, v, &conf_item, log, source);
+                            },
+                            .email, .certfile, .keyfile => unreachable,
                         }
                         // We have to keep going as it could match multiple scopes
                         continue;
@@ -1189,4 +1196,47 @@ pub fn loadNpmrc(
     if (had_errors) {
         return error.ParserError;
     }
+}
+
+fn @"handle _auth"(
+    allocator: Allocator,
+    v: *bun.Schema.Api.NpmRegistry,
+    conf_item: *const ConfigIterator.Item,
+    log: *bun.logger.Log,
+    source: *const bun.logger.Source,
+) void {
+    if (conf_item.value.len == 0) {
+        log.addErrorFmt(
+            source,
+            conf_item.loc,
+            allocator,
+            "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got an empty string",
+            .{},
+        ) catch bun.outOfMemory();
+        return;
+    }
+    const decode_len = bun.base64.decodeLen(conf_item.value);
+    var decoded = allocator.alloc(u8, decode_len) catch bun.outOfMemory();
+    const result = bun.base64.decode(decoded[0..], conf_item.value);
+    if (!result.isSuccessful()) {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid base64", .{}) catch bun.outOfMemory();
+        return;
+    }
+    const @"username:password" = decoded[0..result.count];
+    const colon_idx = std.mem.indexOfScalar(u8, @"username:password", ':') orelse {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        return;
+    };
+    const username = @"username:password"[0..colon_idx];
+    if (colon_idx + 1 >= @"username:password".len) {
+        defer allocator.free(decoded);
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        return;
+    }
+    const password = @"username:password"[colon_idx + 1 ..];
+    v.username = username;
+    v.password = password;
+    return;
 }

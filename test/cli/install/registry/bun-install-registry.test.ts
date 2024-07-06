@@ -301,6 +301,7 @@ registry = http://localhost:${port}/
     name: string,
     _opts: Record<string, string> | (() => Promise<Record<string, string>>),
     _env?: EnvMap | (() => Promise<EnvMap>),
+    check?: (stdout: string, stderr: string) => void,
   ) {
     it(`sets scoped registry option: ${name}`, async () => {
       console.log("PACKAGE DIR", packageDir);
@@ -314,7 +315,7 @@ registry = http://localhost:${port}/
       const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
       const dotEnvInner = dotEnv
         ? Object.entries(dotEnv)
-            .map(([k, v]) => `${k}=${k.toLowerCase().includes("password") ? Buffer.from(v).toString("base64") : v}`)
+            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
             .join("\n")
         : "";
 
@@ -342,10 +343,12 @@ ${Object.keys(opts)
         },
       })} > package.json`.cwd(packageDir);
 
-      await Bun.$`${bunExe()} install`
+      const { stdout, stderr } = await Bun.$`${bunExe()} install`
         .env({ ...env, ...restOfEnv })
         .cwd(packageDir)
-        .throws(true);
+        .throws(check === undefined);
+
+      if (check) check(stdout.toString(), stderr.toString());
     });
   }
 
@@ -379,6 +382,37 @@ ${Object.keys(opts)
     },
     {
       dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
+    },
+  );
+
+  registryConfigOptionTest("_auth", async () => {
+    await generateRegistryUser("linus", "verysecure");
+    const _auth = "linus:verysecure";
+    return { _auth };
+  });
+
+  registryConfigOptionTest(
+    "_auth from .env variable",
+    async () => {
+      await generateRegistryUser("zack", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "zack:verysecure" },
+    },
+  );
+
+  registryConfigOptionTest(
+    "_auth from .env variable with no value",
+    async () => {
+      await generateRegistryUser("zack420", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "" },
+    },
+    (stdout: string, stderr: string) => {
+      expect(stderr).toContain("got an empty string");
     },
   );
 });

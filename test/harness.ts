@@ -1180,6 +1180,8 @@ if (secretTestFn) {
     if (!options) {
       options = {};
     }
+
+    // Default delta is 20 MB.
     const delta = options?.delta ?? 20;
     options.label ??= label;
 
@@ -1200,6 +1202,10 @@ declare module "bun:test" {
     minimumMilliseocnds?: number;
     verbose?: boolean;
     maxWarmup?: number;
+
+    /**
+     * Default delta is 20 MB.
+     */
     delta?: number;
   }
   interface Test {

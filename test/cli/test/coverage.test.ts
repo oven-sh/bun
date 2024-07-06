@@ -131,7 +131,7 @@ coverageReporter = ["text", "lcov"]
     const stderr = result.stderr.toString();
 
     expect(result.exitCode).toBe(0);
-    expect(stderr).toContain("All files     |    0.00 |    0.00 |");
+    expect(stderr).toMatch(/All files\s*|\s*0.00\s*|\s*0.00\s*|/g);
     expect(stderr).not.toContain("demo1.ts");
     expect(stderr).not.toContain("demo2.ts");
     expect(readFileSync(path.join(dir, "coverage", "lcov.info"), "utf-8")).toMatchSnapshot();

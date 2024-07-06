@@ -461,10 +461,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     RefPtr<Blob> blobValue = nullptr;
     if (argument1.value().inherits<JSBlob>()) {
@@ -473,8 +470,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
 
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     }
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
 }

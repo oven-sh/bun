@@ -3202,7 +3202,7 @@ pub const Stmt = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All.instance.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -6012,7 +6012,7 @@ pub const Expr = struct {
             }
 
             pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All.instance.?.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
+                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
                 return Store.All.reclaim();
             }
         };
@@ -8314,7 +8314,6 @@ pub const GlobalStoreHandle = struct {
 
     pub fn unget(handle: ?*ASTMemoryAllocator) void {
         Stmt.Data.Store.memory_allocator = handle;
-
         Expr.Data.Store.memory_allocator = handle;
     }
 };

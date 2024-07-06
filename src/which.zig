@@ -1,5 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
+const Environment = bun.Environment;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
@@ -19,7 +20,7 @@ pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []con
     if (bin.len > bun.MAX_PATH_BYTES) return null;
     bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
 
-    if (bun.Environment.os == .windows) {
+    if (comptime Environment.isWindows) {
         var convert_buf: bun.WPathBuffer = undefined;
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;

@@ -1042,7 +1042,7 @@ pub const EventLoop = struct {
                     this.virtual_machine.modules.onPoll();
                 },
                 @field(Task.Tag, typeBaseName(@typeName(GetAddrInfoRequestTask))) => {
-                    if (Environment.os == .windows) @panic("This should not be reachable on Windows");
+                    if (comptime Environment.isWindows) @panic("This should not be reachable on Windows");
 
                     var any: *GetAddrInfoRequestTask = task.get(GetAddrInfoRequestTask).?;
                     any.runFromJS();

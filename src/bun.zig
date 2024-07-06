@@ -3110,7 +3110,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
         assert(num != 0);
     }
 
-    if (Environment.os == .windows) {
+    if (comptime Environment.isWindows) {
         // uv errors are negative, normalizing it will make this more resilient
         num = @abs(num);
     } else {

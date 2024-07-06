@@ -22,6 +22,7 @@ const bun = @import("root").bun;
 const builtin = @import("builtin");
 const mimalloc = @import("allocators/mimalloc.zig");
 const SourceMap = @import("./sourcemap/sourcemap.zig");
+const Environment = bun.Environment;
 const windows = std.os.windows;
 const Output = bun.Output;
 const Global = bun.Global;
@@ -697,7 +698,7 @@ pub fn init() void {
 }
 
 pub fn resetSegfaultHandler() void {
-    if (bun.Environment.os == .windows) {
+    if (comptime Environment.isWindows) {
         if (windows_segfault_handle) |handle| {
             const rc = windows.kernel32.RemoveVectoredExceptionHandler(handle);
             windows_segfault_handle = null;

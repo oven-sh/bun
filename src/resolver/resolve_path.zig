@@ -1,6 +1,7 @@
 const tester = @import("../test/tester.zig");
 const std = @import("std");
 const strings = @import("../string_immutable.zig");
+const Environment = bun.Environment;
 const FeatureFlags = @import("../feature_flags.zig");
 const default_allocator = @import("../memory_allocator.zig").c_allocator;
 const bun = @import("root").bun;
@@ -1365,7 +1366,7 @@ pub fn joinAbsStringBufZTrailingSlash(cwd: []const u8, buf: []u8, _parts: anytyp
 
 fn _joinAbsStringBuf(comptime is_sentinel: bool, comptime ReturnType: type, _cwd: []const u8, buf: []u8, _parts: anytype, comptime platform: Platform) ReturnType {
     if (platform.resolve() == .windows or
-        (bun.Environment.os == .windows and platform == .loose))
+        (Environment.isWindows and platform == .loose))
     {
         return _joinAbsStringBufWindows(is_sentinel, ReturnType, _cwd, buf, _parts);
     }

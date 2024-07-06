@@ -123,7 +123,7 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
 }
 
 pub fn build(b: *Build) !void {
-    std.debug.print("zig build v{s}\n", .{builtin.zig_version_string});
+    std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
     b.zig_lib_dir = b.zig_lib_dir orelse b.path("src/deps/zig/lib");
 
@@ -259,6 +259,40 @@ pub fn build(b: *Build) !void {
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
+        }) |check| {
+            inline for (.{ .Debug, .ReleaseFast }) |mode| {
+                const check_target = b.resolveTargetQuery(.{
+                    .os_tag = OperatingSystem.stdOSTag(check.os),
+                    .cpu_arch = check.arch,
+                    .os_version_min = getOSVersionMin(check.os),
+                    .glibc_version = getOSGlibCVersion(check.os),
+                });
+
+                var options = BunBuildOptions{
+                    .target = check_target,
+                    .os = check.os,
+                    .arch = check_target.result.cpu.arch,
+                    .optimize = mode,
+
+                    .canary_revision = build_options.canary_revision,
+                    .sha = build_options.sha,
+                    .tracy_callstack_depth = build_options.tracy_callstack_depth,
+                    .version = build_options.version,
+                    .reported_nodejs_version = build_options.reported_nodejs_version,
+                    .generated_code_dir = build_options.generated_code_dir,
+                };
+                var obj = addBunObject(b, &options);
+                obj.generated_bin = null;
+                step.dependOn(&obj.step);
+            }
+        }
+    }
+
+    // zig build check-windows
+    {
+        var step = b.step("check-windows", "Check for semantic analysis errors on Windows x64");
+        inline for (.{
+            .{ .os = .windows, .arch = .x86_64 },
         }) |check| {
             inline for (.{ .Debug, .ReleaseFast }) |mode| {
                 const check_target = b.resolveTargetQuery(.{

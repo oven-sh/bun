@@ -741,13 +741,13 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
             if (name.isEmpty()) {
                 if (p + 1 < end && *(p + 1) == '\n')
                     return (p + 2) - start;
-                failureReason = makeString("CR doesn't follow LF in header name at ", trimInputSample(p, end - p));
+                failureReason = makeString("CR doesn't follow LF in header name at "_s, trimInputSample(p, end - p));
                 return 0;
             }
-            failureReason = makeString("Unexpected CR in header name at ", trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected CR in header name at "_s, trimInputSample(name.data(), name.size()));
             return 0;
         case '\n':
-            failureReason = makeString("Unexpected LF in header name at ", trimInputSample(name.data(), name.size()));
+            failureReason = makeString("Unexpected LF in header name at "_s, trimInputSample(name.data(), name.size()));
             return 0;
         case ':':
             break;
@@ -756,7 +756,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
                 if (name.size() < 1)
                     failureReason = "Unexpected start character in header name"_s;
                 else
-                    failureReason = makeString("Unexpected character in header name at ", trimInputSample(name.data(), name.size()));
+                    failureReason = makeString("Unexpected character in header name at "_s, trimInputSample(name.data(), name.size()));
                 return 0;
             }
             name.append(*p);
@@ -784,7 +784,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
             break;
         case '\n':
             if (strict) {
-                failureReason = makeString("Unexpected LF in header value at ", trimInputSample(value.data(), value.size()));
+                failureReason = makeString("Unexpected LF in header value at "_s, trimInputSample(value.data(), value.size()));
                 return 0;
             }
             break;
@@ -797,7 +797,7 @@ size_t parseHTTPHeader(const uint8_t* start, size_t length, String& failureReaso
         }
     }
     if (p >= end || (strict && *p != '\n')) {
-        failureReason = makeString("CR doesn't follow LF after header value at ", trimInputSample(p, end - p));
+        failureReason = makeString("CR doesn't follow LF after header value at "_s, trimInputSample(p, end - p));
         return 0;
     }
     valueStr = String::fromUTF8({ value.data(), value.size() });

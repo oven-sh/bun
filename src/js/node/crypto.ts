@@ -11834,7 +11834,7 @@ class KeyObject {
   }
 
   get [Symbol.toStringTag]() {
-    return "KeyObject"
+    return "KeyObject";
   }
 
   static from(key) {

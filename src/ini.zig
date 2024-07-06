@@ -64,7 +64,7 @@ pub const Parser = struct {
         var iter = std.mem.splitScalar(u8, this.src, '\n');
         var head: *E.Object = this.out.data.e_object;
 
-        // var duplicates = std.StringArrayHashMapUnmanaged(u32){};
+        // var duplicates = bun.StringArrayHashMapUnmanaged(u32){};
         // defer duplicates.deinit(allocator);
 
         var rope_stack = std.heap.stackFallback(@sizeOf(Rope) * 6, arena_allocator);
@@ -268,7 +268,7 @@ pub const Parser = struct {
                     return "[Object object]";
                 },
                 else => {
-                    const str = std.fmt.allocPrint(arena_allocator, "{}", .{toStringFormatter{ .d = json_val.data }}) catch |e| {
+                    const str = std.fmt.allocPrint(arena_allocator, "{}", .{ToStringFormatter{ .d = json_val.data }}) catch |e| {
                         this.logger.addErrorFmt(&this.source, Loc{ .start = offset }, arena_allocator, "failed to stringify value: {s}", .{@errorName(e)}) catch bun.outOfMemory();
                         return error.ParserError;
                     };
@@ -653,7 +653,7 @@ pub const IniTestingAPIs = struct {
     }
 };
 
-pub const toStringFormatter = struct {
+pub const ToStringFormatter = struct {
     d: js_ast.Expr.Data,
 
     pub fn format(this: *const @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
@@ -662,7 +662,7 @@ pub const toStringFormatter = struct {
                 const last = this.d.e_array.items.len -| 1;
                 for (this.d.e_array.items.slice(), 0..) |*e, i| {
                     const is_last = i == last;
-                    try writer.print("{}{s}", .{ toStringFormatter{ .d = e.data }, if (is_last) "" else "," });
+                    try writer.print("{}{s}", .{ ToStringFormatter{ .d = e.data }, if (is_last) "" else "," });
                 }
             },
             .e_object => try writer.print("[Object object]", .{}),
@@ -672,49 +672,9 @@ pub const toStringFormatter = struct {
             .e_null => try writer.print("null", .{}),
             .e_utf8_string => try writer.print("{s}", .{this.d.e_utf8_string.data}),
 
-            .e_unary => {},
-            .e_binary => {},
-            .e_class => {},
-
-            .e_new => {},
-            .e_function => {},
-            .e_call => {},
-            .e_dot => {},
-            .e_index => {},
-            .e_arrow => {},
-
-            .e_jsx_element => {},
-            .e_spread => {},
-            .e_template_part => {},
-            .e_template => {},
-            .e_reg_exp => {},
-            .e_await => {},
-            .e_yield => {},
-            .e_if => {},
-            .e_import => {},
-
-            .e_identifier => {},
-            .e_import_identifier => {},
-            .e_private_identifier => {},
-            .e_commonjs_export_identifier => {},
-
-            .e_big_int => {},
-
-            .e_require_string => {},
-            .e_require_resolve_string => {},
-            .e_require_call_target => {},
-            .e_require_resolve_call_target => {},
-
-            .e_missing => {},
-            .e_this => {},
-            .e_super => {},
-            .e_undefined => {},
-            .e_new_target => {},
-            .e_import_meta => {},
-
-            // This type should not exist outside of MacroContext
-            // If it ends up in JSParser or JSPrinter, it is a bug.
-            .inline_identifier => {},
+            else => |tag| if (bun.Environment.isDebug) {
+                Output.panic("Unexpected AST node: {s}", .{@tagName(tag)});
+            },
         }
     }
 };
@@ -1063,7 +1023,7 @@ pub fn loadNpmrc(
         // The line that sets the auth token should only apply to the @myorg scope
         // The line that sets the username would apply to both @myorg and @another
         var url_map = url_map: {
-            var url_map = std.StringArrayHashMap(bun.URL).init(parser.arena.allocator());
+            var url_map = bun.StringArrayHashMap(bun.URL).init(parser.arena.allocator());
             url_map.ensureTotalCapacity(registry_map.scopes.keys().len) catch bun.outOfMemory();
 
             for (registry_map.scopes.keys(), registry_map.scopes.values()) |*k, *v| {

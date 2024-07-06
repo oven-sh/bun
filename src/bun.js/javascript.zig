@@ -392,7 +392,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
@@ -415,7 +415,7 @@ pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.Stri
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;
@@ -2278,16 +2278,6 @@ pub const VirtualMachine = struct {
         res.* = ErrorableString.ok(bun.String.init(result.path));
     }
 
-    // // This double prints
-    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-    //     const result = promise.result(global.vm());
-    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
-    //         VirtualMachine.get().runErrorHandler(result, null);
-    //     }
-
-    //     return JSValue.jsUndefined();
-    // }
-
     pub const main_file_name: string = "bun:main";
 
     pub fn drainMicrotasks(this: *VirtualMachine) void {
@@ -3732,7 +3722,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         ctx: *Ctx,
         verbose: bool = false,
 
-        tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();

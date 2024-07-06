@@ -79,6 +79,10 @@ export function writeIfNotChanged(file: string, contents: string) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, contents);
   }
+
+  if (fs.readFileSync(file, "utf8") !== contents) {
+    throw new Error(`Failed to write file ${file}`);
+  }
 }
 
 export function readdirRecursiveWithExclusionsAndExtensionsSync(

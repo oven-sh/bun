@@ -241,7 +241,7 @@ pub const CreateCommand = struct {
         @setCold(true);
 
         Global.configureAllocator(.{ .long_running = false });
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         var create_options = try CreateOptions.parse(ctx);
         const positionals = create_options.positionals;
@@ -1436,7 +1436,7 @@ pub const CreateCommand = struct {
 
                 const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
-                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
+                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source, .{}) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;
@@ -1999,7 +1999,7 @@ pub const Example = struct {
         var is_expected_content_type = false;
         var content_type: string = "";
         for (response.headers) |header| {
-            if (strings.eqlInsensitive(header.name, "content-type")) {
+            if (strings.eqlCaseInsensitiveASCII(header.name, "content-type", true)) {
                 content_type = header.value;
 
                 if (strings.eqlComptime(header.value, "application/x-gzip")) {

@@ -18,7 +18,7 @@ const std = @import("std");
 const builtin = @import("builtin");
 const windows = std.os.windows;
 const testing = std.testing;
-const assert = std.debug.assert;
+const assert = (std.debug).assert;
 const Progress = @This();
 
 /// `null` if the current node (and its children) should
@@ -246,7 +246,7 @@ fn clearWithHeldLock(p: *Progress, end_ptr: *usize) void {
             end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[{d}D", .{p.columns_written}) catch unreachable).len;
             end += (std.fmt.bufPrint(p.output_buffer[end..], "\x1b[0K", .{}) catch unreachable).len;
         } else if (builtin.os.tag == .windows) winapi: {
-            std.debug.assert(p.is_windows_terminal);
+            assert(p.is_windows_terminal);
 
             var info: windows.CONSOLE_SCREEN_BUFFER_INFO = undefined;
             if (windows.kernel32.GetConsoleScreenBufferInfo(file.handle, &info) != windows.TRUE) {
@@ -357,7 +357,7 @@ fn refreshWithHeldLock(self: *Progress) void {
 
 pub fn log(self: *Progress, comptime format: []const u8, args: anytype) void {
     const file = self.terminal orelse {
-        std.debug.print(format, args);
+        (std.debug).print(format, args);
         return;
     };
     self.refresh();

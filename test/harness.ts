@@ -1,10 +1,9 @@
+/// Be careful when adding to this file
+/// This file is loaded in every single test.
+/// Every time you make this file longer, you make our entire test suite slower.
 import { gc as bunGC, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
-import { readlink, readFile, writeFile } from "fs/promises";
 import { isAbsolute, join, dirname } from "path";
-import fs, { openSync, closeSync } from "node:fs";
-import os from "node:os";
-import { heapStats } from "bun:jsc";
 
 type Awaitable<T> = T | Promise<T>;
 
@@ -136,6 +135,8 @@ type DirectoryTree = {
 };
 
 export function tempDirWithFiles(basename: string, files: DirectoryTree): string {
+  const fs = require("fs");
+  const os = require("os");
   async function makeTree(base: string, tree: DirectoryTree) {
     for (const [name, raw_contents] of Object.entries(tree)) {
       const contents = typeof raw_contents === "function" ? await raw_contents({ root: base }) : raw_contents;
@@ -212,32 +213,6 @@ export function bunRunAsScript(
     stdout: result.stdout.toString("utf8").trim(),
     stderr: result.stderr.toString("utf8").trim(),
   };
-}
-
-export function randomLoneSurrogate() {
-  const n = randomRange(0, 2);
-  if (n === 0) return randomLoneHighSurrogate();
-  return randomLoneLowSurrogate();
-}
-
-export function randomInvalidSurrogatePair() {
-  const low = randomLoneLowSurrogate();
-  const high = randomLoneHighSurrogate();
-  return `${low}${high}`;
-}
-
-// Generates a random lone high surrogate (from the range D800-DBFF)
-export function randomLoneHighSurrogate() {
-  return String.fromCharCode(randomRange(0xd800, 0xdbff));
-}
-
-// Generates a random lone high surrogate (from the range DC00-DFFF)
-export function randomLoneLowSurrogate() {
-  return String.fromCharCode(randomRange(0xdc00, 0xdfff));
-}
-
-function randomRange(low: number, high: number): number {
-  return low + Math.floor(Math.random() * (high - low));
 }
 
 export function runWithError(cb: () => unknown): Error | undefined {
@@ -399,6 +374,7 @@ export function ospath(path: string) {
  * non-npm packages (links, folders, git dependencies, etc.)
  */
 export async function toMatchNodeModulesAt(lockfile: any, root: string) {
+  const fs = require("fs");
   function shouldSkip(pkg: any, dep: any): boolean {
     return (
       !pkg ||
@@ -529,6 +505,7 @@ export async function toHaveBins(actual: string[], expectedBins: string[]) {
 
 export async function toBeValidBin(actual: string, expectedLinkPath: string) {
   const message = () => `Expected ${actual} to be a link to ${expectedLinkPath}`;
+  const { readFile, readlink } = require("fs/promises");
 
   if (isWindows) {
     const contents = await readFile(actual + ".bunx", "utf16le");
@@ -553,10 +530,11 @@ export async function toBeWorkspaceLink(actual: string, expectedLinkPath: string
 }
 
 export function getMaxFD(): number {
+  const { openSync, readdirSync, closeSync } = require("fs");
   if (isMacOS || isLinux) {
     let max = -1;
     // https://github.com/python/cpython/commit/e21a7a976a7e3368dc1eba0895e15c47cb06c810
-    for (let entry of fs.readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd")) {
+    for (let entry of readdirSync(isMacOS ? "/dev/fd" : "/proc/self/fd")) {
       const fd = parseInt(entry.trim(), 10);
       if (Number.isSafeInteger(fd) && fd >= 0) {
         max = Math.max(max, fd);
@@ -757,7 +735,7 @@ function failTestsOnBlockingWriteCall() {
 failTestsOnBlockingWriteCall();
 
 export function dumpStats() {
-  const stats = heapStats();
+  const stats = require("bun:jsc").heapStats();
   const { objectTypeCounts, protectedObjectTypeCounts } = stats;
   console.log({
     objects: Object.fromEntries(Object.entries(objectTypeCounts).sort()),
@@ -823,6 +801,7 @@ const shebang_windows = (program: string) => `0</* :{
  `;
 
 export function writeShebangScript(path: string, program: string, data: string) {
+  const { writeFile } = require("fs/promises");
   if (!isWindows) {
     return writeFile(path, shebang_posix(program) + "\n" + data, { mode: 0o777 });
   } else {
@@ -897,6 +876,8 @@ export function mergeWindowEnvs(envs: Record<string, string | undefined>[]) {
 }
 
 export function tmpdirSync(pattern: string = "bun.test.") {
+  const fs = require("fs");
+  const os = require("os");
   return fs.mkdtempSync(join(fs.realpathSync(os.tmpdir()), pattern));
 }
 
@@ -1055,7 +1036,7 @@ let networkInterfaces: any;
 
 function isIP(type: "IPv4" | "IPv6") {
   if (!networkInterfaces) {
-    networkInterfaces = os.networkInterfaces();
+    networkInterfaces = require("os").networkInterfaces();
   }
   for (const networkInterface of Object.values(networkInterfaces)) {
     for (const { family } of networkInterface as any[]) {
@@ -1126,4 +1107,102 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
     return false;
   }
   return parseFloat(macOSVersion) >= minVersion;
+}
+
+const NS_PER_MS = 1e6;
+let lazyLoadedNumberFmt;
+export async function leakTest(
+  fn: () => void | Promise<void>,
+  { label, minimumMilliseocnds = 5, repeatCount = 50, verbose = isDebug, maxWarmup = 100 } = {},
+) {
+  maxWarmup *= NS_PER_MS;
+
+  lazyLoadedNumberFmt ||= new Intl.NumberFormat("en-US", { maximumFractionDigits: 2 });
+  const initialStart = Bun.nanoseconds();
+
+  let i = 0;
+  let last = initialStart;
+  Bun.gc(true);
+  const log = verbose ? console.log : (...args: any[]) => {};
+
+  let threshold = minimumMilliseocnds * NS_PER_MS;
+  while (i < 100) {
+    while ((last = Bun.nanoseconds()) - initialStart < threshold) {
+      i++;
+      await fn();
+    }
+
+    if (i < 100) {
+      threshold *= 2;
+    }
+
+    if (last - initialStart > maxWarmup) {
+      break;
+    }
+  }
+
+  log(`[${label}]`, "Running", i, "iterations", "x", repeatCount);
+  Bun.gc(true);
+  const baseline = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  for (let iter = 0; iter < repeatCount; iter++) {
+    for (let j = 0; j < i; j++) {
+      await fn();
+    }
+
+    Bun.gc();
+  }
+
+  const rss = (process.memoryUsage.rss() / 1024 / 1024) | 0;
+  const delta = rss - baseline;
+
+  const leak = delta >= 1 ? ((delta / (i * repeatCount)) * 1024 * 1024) | 0 : 0;
+  log(`[${label}]`, "Ran", i, "iterations", "x", repeatCount, {
+    delta,
+    leak: `${lazyLoadedNumberFmt.format(leak)} bytes per iteration`,
+    rss,
+  });
+  return {
+    delta,
+    leak,
+    rss,
+    i,
+    baseline,
+    repeatCount,
+  };
+}
+
+/* @ts-expect-error */
+const secretTestFn = Bun.jest(import.meta.path).test?.region!;
+
+if (secretTestFn) {
+  secretTestFn.leak = function (label, fn, options = {}) {
+    const test = this;
+    if (!options) {
+      options = {};
+    }
+    const delta = options?.delta ?? 20;
+    options.label ??= label;
+
+    test(
+      label,
+      async () => {
+        const result = await leakTest(fn, options);
+        expect(result.delta).toBeLessThan(delta);
+      },
+      options.timeout ?? undefined,
+    );
+  };
+}
+
+declare module "bun:test" {
+  interface LeakTestOptions extends TestOptions {
+    repeatCount?: number;
+    minimumMilliseocnds?: number;
+    verbose?: boolean;
+    maxWarmup?: number;
+    delta?: number;
+  }
+  interface Test {
+    leak(label: string, fn: () => void | Promise<void>, options?: LeakTestOptions): void;
+  }
 }

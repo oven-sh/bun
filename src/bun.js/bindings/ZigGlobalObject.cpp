@@ -2527,6 +2527,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 }
 
 extern "C" JSC::EncodedJSValue CryptoObject__create(JSGlobalObject*);
+extern "C" bool is_allowed_to_use_internal_testing_apis;
 
 void GlobalObject::finishCreation(VM& vm)
 {
@@ -2571,15 +2572,33 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::JSGlobalObject* globalObject = init.owner;
 
             JSValue result = JSValue::decode(Bun__Jest__createTestModuleObject(globalObject));
-            init.set(result.toObject(globalObject));
+            auto* object = result.toObject(globalObject);
+
+            // Add a copy of the "test" function we can use to add extra Bun test-suite only methods
+            if (is_allowed_to_use_internal_testing_apis) {
+                const auto test = Identifier::fromString(init.vm, "test"_s);
+                auto* testFn = object->getDirect(init.vm, test).getObject();
+                testFn->putDirect(init.vm, init.vm.propertyNames->region, testFn);
+            }
+
+            init.set(object);
         });
 
     m_lazyPreloadTestModuleObject.initLater(
         [](const Initializer<JSObject>& init) {
-            JSC::JSGlobalObject* globalObject = init.owner;
+            Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(init.owner);
 
             JSValue result = JSValue::decode(Bun__Jest__createTestPreloadObject(globalObject));
-            init.set(result.toObject(globalObject));
+            auto* preload = result.toObject(globalObject);
+
+            // Add a copy of the "test" function we can use to add extra Bun test-suite only methods
+            if (is_allowed_to_use_internal_testing_apis) {
+                const auto test = Identifier::fromString(init.vm, "test"_s);
+                JSObject* testFn = jsCast<JSObject*>(globalObject->lazyTestModuleObject()->getDirect(init.vm, test));
+                preload->getDirect(init.vm, test).getObject()->putDirect(init.vm, init.vm.propertyNames->region, testFn);
+            }
+
+            init.set(preload);
         });
 
     m_testMatcherUtilsObject.initLater(

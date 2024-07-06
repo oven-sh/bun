@@ -746,7 +746,7 @@ pub const ModuleLoader = struct {
     transpile_source_code_arena: ?*bun.ArenaAllocator = null,
     eval_source: ?*logger.Source = null,
 
-    pub var is_allowed_to_use_internal_testing_apis = false;
+    pub export var is_allowed_to_use_internal_testing_apis = false;
 
     /// This must be called after calling transpileSourceCode
     pub fn resetArena(this: *ModuleLoader, jsc_vm: *VirtualMachine) void {

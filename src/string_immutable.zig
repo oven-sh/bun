@@ -746,7 +746,7 @@ pub fn eql(self: string, other: anytype) bool {
 
 pub fn eqlComptimeT(comptime T: type, self: []const T, comptime alt: anytype) bool {
     if (T == u16) {
-        return eqlComptimeUTF16(self, comptime toUTF16Literal(alt));
+        return eqlComptimeUTF16(self, alt);
     }
 
     return eqlComptime(self, alt);

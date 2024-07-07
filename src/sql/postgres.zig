@@ -1978,7 +1978,7 @@ pub const PostgresSQLContext = struct {
     onQueryResolveFn: JSC.Strong = .{},
     onQueryRejectFn: JSC.Strong = .{},
 
-    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn init(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         var ctx = &globalObject.bunVM().rareData().postgresql_context;
         ctx.onQueryResolveFn.set(globalObject, callframe.argument(0));
         ctx.onQueryRejectFn.set(globalObject, callframe.argument(1));
@@ -2022,7 +2022,7 @@ pub const PostgresSQLQuery = struct {
         }
     };
 
-    pub fn hasPendingActivity(this: *@This()) callconv(.C) bool {
+    pub fn hasPendingActivity(this: *@This()) bool {
         return this.ref_count.load(.monotonic) > 1;
     }
 
@@ -2038,7 +2038,7 @@ pub const PostgresSQLQuery = struct {
         bun.default_allocator.destroy(this);
     }
 
-    pub fn finalize(this: *@This()) callconv(.C) void {
+    pub fn finalize(this: *@This()) void {
         debug("PostgresSQLQuery finalize", .{});
         this.thisValue = .zero;
         this.deref();
@@ -2236,18 +2236,18 @@ pub const PostgresSQLQuery = struct {
         });
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLQuery {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*PostgresSQLQuery {
         _ = callframe;
         globalThis.throw("PostgresSQLQuery cannot be constructed directly", .{});
         return null;
     }
 
-    pub fn estimatedSize(this: *PostgresSQLQuery) callconv(.C) usize {
+    pub fn estimatedSize(this: *PostgresSQLQuery) usize {
         _ = this;
         return @sizeOf(PostgresSQLQuery);
     }
 
-    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const arguments = callframe.arguments(3).slice();
         const query = arguments[0];
         const values = arguments[1];
@@ -2294,13 +2294,13 @@ pub const PostgresSQLQuery = struct {
         pending_value.push(globalThis, value);
     }
 
-    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doDone(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         _ = globalObject;
         this.is_done = true;
         return .undefined;
     }
 
-    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRun(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         var arguments_ = callframe.arguments(2);
         const arguments = arguments_.slice();
         var connection = arguments[0].as(PostgresSQLConnection) orelse {
@@ -2400,7 +2400,7 @@ pub const PostgresSQLQuery = struct {
         return .undefined;
     }
 
-    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doCancel(this: *PostgresSQLQuery, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -2824,7 +2824,7 @@ pub const PostgresSQLConnection = struct {
 
     pub usingnamespace JSC.Codegen.JSPostgresSQLConnection;
 
-    pub fn hasPendingActivity(this: *PostgresSQLConnection) callconv(.C) bool {
+    pub fn hasPendingActivity(this: *PostgresSQLConnection) bool {
         @fence(.acquire);
         return this.pending_activity_count.load(.acquire) > 0;
     }
@@ -2856,7 +2856,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn finalize(this: *PostgresSQLConnection) callconv(.C) void {
+    pub fn finalize(this: *PostgresSQLConnection) void {
         debug("PostgresSQLConnection finalize", .{});
         this.js_value = .zero;
         this.deref();
@@ -3005,7 +3005,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) ?*PostgresSQLConnection {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) ?*PostgresSQLConnection {
         _ = callframe;
         globalObject.throw("PostgresSQLConnection cannot be constructed directly", .{});
         return null;
@@ -3017,7 +3017,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn call(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         var vm = globalObject.bunVM();
         const arguments = callframe.arguments(9).slice();
         const hostname_str = arguments[0].toBunString(globalObject);
@@ -3169,13 +3169,13 @@ pub const PostgresSQLConnection = struct {
         this.ref_count += 1;
     }
 
-    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.poll_ref.ref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
     }
 
-    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doUnref(this: *@This(), _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.poll_ref.unref(this.globalObject.bunVM());
         this.updateHasPendingActivity();
         return .undefined;
@@ -3191,7 +3191,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doClose(this: *@This(), globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         _ = globalObject;
         this.disconnect();
         this.write_buffer.deinit(bun.default_allocator);
@@ -4038,7 +4038,7 @@ pub const PostgresSQLConnection = struct {
         }
     }
 
-    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doFlush(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -4046,7 +4046,7 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn createQuery(this: *PostgresSQLConnection, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = callframe;
         _ = globalObject;
         _ = this;
@@ -4054,7 +4054,7 @@ pub const PostgresSQLConnection = struct {
         return .undefined;
     }
 
-    pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getConnected(this: *PostgresSQLConnection, _: *JSC.JSGlobalObject) JSValue {
         return JSValue.jsBoolean(this.status == Status.connected);
     }
 };

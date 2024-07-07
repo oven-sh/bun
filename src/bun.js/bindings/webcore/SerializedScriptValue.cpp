@@ -2420,7 +2420,7 @@ private:
     SerializationForStorage m_forStorage;
 };
 
-void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
+SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
 {
     ctx->write(data, size);
 }
@@ -3406,7 +3406,7 @@ private:
             return false;
         if (m_ptr + length > m_end)
             return false;
-        arrayBuffer = ArrayBuffer::tryCreate(m_ptr, length);
+        arrayBuffer = ArrayBuffer::tryCreate({ m_ptr, length });
         if (!arrayBuffer)
             return false;
         m_ptr += length;
@@ -4729,14 +4729,7 @@ private:
                 fail();
                 return JSValue();
             }
-            auto scope = DECLARE_THROW_SCOPE(m_lexicalGlobalObject->vm());
-            JSValue result = JSC::JSWebAssemblyModule::createStub(m_lexicalGlobalObject->vm(), m_lexicalGlobalObject, m_globalObject->webAssemblyModuleStructure(), m_wasmModules->at(index));
-            // Since we are cloning a JSWebAssemblyModule, it's impossible for that
-            // module to not have been a valid module. Therefore, createStub should
-            // not throw.
-            scope.releaseAssertNoException();
-            m_gcBuffer.appendWithCrashOnOverflow(result);
-            return result;
+            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -5686,7 +5679,7 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 
     this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        this->m_data.data(), this->m_data.size(), createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
+        { this->m_data.data(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
             protectedThis->deref();
         }));
 

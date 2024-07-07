@@ -87,7 +87,7 @@ pub fn messageWithTypeAndLevel(
     global: *JSGlobalObject,
     vals: [*]const JSValue,
     len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     if (comptime is_bindgen) {
         return;
     }
@@ -2077,10 +2077,22 @@ pub const Formatter = struct {
                 var printable = value.getName(this.globalThis);
                 defer printable.deref();
 
+                const proto = value.getPrototype(this.globalThis);
+                const func_name = proto.getName(this.globalThis); // "Function" | "AsyncFunction" | "GeneratorFunction" | "AsyncGeneratorFunction"
+                defer func_name.deref();
+
                 if (printable.isEmpty()) {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    if (func_name.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function]<r>", enable_ansi_colors), .{});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[{}]<r>", enable_ansi_colors), .{func_name});
+                    }
                 } else {
-                    writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                    if (func_name.isEmpty()) {
+                        writer.print(comptime Output.prettyFmt("<cyan>[Function: {}]<r>", enable_ansi_colors), .{printable});
+                    } else {
+                        writer.print(comptime Output.prettyFmt("<cyan>[{}: {}]<r>", enable_ansi_colors), .{ func_name, printable });
+                    }
                 }
             },
             .GetterSetter => {
@@ -3179,7 +3191,7 @@ pub fn count(
     ptr: [*]const u8,
     // len
     len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     var this = globalThis.bunVM().console;
     const slice = ptr[0..len];
     const hash = bun.hash(slice);
@@ -3205,7 +3217,7 @@ pub fn countReset(
     ptr: [*]const u8,
     // len
     len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     var this = globalThis.bunVM().console;
     const slice = ptr[0..len];
     const hash = bun.hash(slice);
@@ -3225,7 +3237,7 @@ pub fn time(
     _: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     const id = bun.hash(chars[0..len]);
     if (!pending_time_logs_loaded) {
         pending_time_logs = PendingTimers.init(default_allocator);
@@ -3245,7 +3257,7 @@ pub fn timeEnd(
     _: *JSGlobalObject,
     chars: [*]const u8,
     len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     if (!pending_time_logs_loaded) {
         return;
     }
@@ -3276,7 +3288,7 @@ pub fn timeLog(
     // args
     args: [*]JSValue,
     args_len: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     if (!pending_time_logs_loaded) {
         return;
     }
@@ -3323,7 +3335,7 @@ pub fn profile(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(.C) void {}
+) callconv(JSC.conv) void {}
 pub fn profileEnd(
     // console
     _: ConsoleObject.Type,
@@ -3333,7 +3345,7 @@ pub fn profileEnd(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(.C) void {}
+) callconv(JSC.conv) void {}
 pub fn takeHeapSnapshot(
     // console
     _: ConsoleObject.Type,
@@ -3343,7 +3355,7 @@ pub fn takeHeapSnapshot(
     _: [*]const u8,
     // len
     _: usize,
-) callconv(.C) void {
+) callconv(JSC.conv) void {
     // TODO: this does an extra JSONStringify and we don't need it to!
     var snapshot: [1]JSValue = .{globalThis.generateHeapSnapshot()};
     ConsoleObject.messageWithTypeAndLevel(undefined, MessageType.Log, MessageLevel.Debug, globalThis, &snapshot, 1);
@@ -3355,7 +3367,7 @@ pub fn timeStamp(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(.C) void {}
+) callconv(JSC.conv) void {}
 pub fn record(
     // console
     _: ConsoleObject.Type,
@@ -3363,7 +3375,7 @@ pub fn record(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(.C) void {}
+) callconv(JSC.conv) void {}
 pub fn recordEnd(
     // console
     _: ConsoleObject.Type,
@@ -3371,7 +3383,7 @@ pub fn recordEnd(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(.C) void {}
+) callconv(JSC.conv) void {}
 pub fn screenshot(
     // console
     _: ConsoleObject.Type,
@@ -3379,62 +3391,20 @@ pub fn screenshot(
     _: *JSGlobalObject,
     // args
     _: *ScriptArguments,
-) callconv(.C) void {}
-
-pub const Export = shim.exportFunctions(.{
-    .messageWithTypeAndLevel = messageWithTypeAndLevel,
-    .count = count,
-    .countReset = countReset,
-    .time = time,
-    .timeLog = timeLog,
-    .timeEnd = timeEnd,
-    .profile = profile,
-    .profileEnd = profileEnd,
-    .takeHeapSnapshot = takeHeapSnapshot,
-    .timeStamp = timeStamp,
-    .record = record,
-    .recordEnd = recordEnd,
-    .screenshot = screenshot,
-});
+) callconv(JSC.conv) void {}
 
 comptime {
-    @export(messageWithTypeAndLevel, .{
-        .name = Export[0].symbol_name,
-    });
-    @export(count, .{
-        .name = Export[1].symbol_name,
-    });
-    @export(countReset, .{
-        .name = Export[2].symbol_name,
-    });
-    @export(time, .{
-        .name = Export[3].symbol_name,
-    });
-    @export(timeLog, .{
-        .name = Export[4].symbol_name,
-    });
-    @export(timeEnd, .{
-        .name = Export[5].symbol_name,
-    });
-    @export(profile, .{
-        .name = Export[6].symbol_name,
-    });
-    @export(profileEnd, .{
-        .name = Export[7].symbol_name,
-    });
-    @export(takeHeapSnapshot, .{
-        .name = Export[8].symbol_name,
-    });
-    @export(timeStamp, .{
-        .name = Export[9].symbol_name,
-    });
-    @export(record, .{
-        .name = Export[10].symbol_name,
-    });
-    @export(recordEnd, .{
-        .name = Export[11].symbol_name,
-    });
-    @export(screenshot, .{
-        .name = Export[12].symbol_name,
-    });
+    @export(messageWithTypeAndLevel, .{ .name = shim.symbolName("messageWithTypeAndLevel") });
+    @export(count, .{ .name = shim.symbolName("count") });
+    @export(countReset, .{ .name = shim.symbolName("countReset") });
+    @export(time, .{ .name = shim.symbolName("time") });
+    @export(timeLog, .{ .name = shim.symbolName("timeLog") });
+    @export(timeEnd, .{ .name = shim.symbolName("timeEnd") });
+    @export(profile, .{ .name = shim.symbolName("profile") });
+    @export(profileEnd, .{ .name = shim.symbolName("profileEnd") });
+    @export(takeHeapSnapshot, .{ .name = shim.symbolName("takeHeapSnapshot") });
+    @export(timeStamp, .{ .name = shim.symbolName("timeStamp") });
+    @export(record, .{ .name = shim.symbolName("record") });
+    @export(recordEnd, .{ .name = shim.symbolName("recordEnd") });
+    @export(screenshot, .{ .name = shim.symbolName("screenshot") });
 }

@@ -97,9 +97,9 @@ pub fn detectAndLoadOtherLockfile(
     return LoadFromDiskResult{ .not_found = {} };
 }
 
-const ResolvedURLsMap = std.StringHashMapUnmanaged(string);
+const ResolvedURLsMap = bun.StringHashMapUnmanaged(string);
 
-const IdMap = std.StringHashMapUnmanaged(IdMapValue);
+const IdMap = bun.StringHashMapUnmanaged(IdMapValue);
 const IdMapValue = struct {
     /// index into the old package-lock.json package entries.
     old_json_index: u32,
@@ -702,7 +702,7 @@ pub fn migrateNPMLockfile(
             }
             if (expr.data != .e_array) return error.InvalidNPMLockfile;
             const arr: *E.Array = expr.data.e_array;
-            var map = std.StringArrayHashMapUnmanaged(void){};
+            var map = bun.StringArrayHashMapUnmanaged(void){};
             try map.ensureTotalCapacity(allocator, arr.items.len);
             for (arr.items.slice()) |item| {
                 map.putAssumeCapacity(item.asString(allocator) orelse return error.InvalidNPMLockfile, {});

@@ -565,7 +565,7 @@ pub const JSBundler = struct {
     pub fn buildFn(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(1);
         return build(globalThis, arguments.slice());
     }
@@ -1081,7 +1081,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getText, .{ &this.blob, globalThis, callframe });
     }
 
@@ -1089,27 +1089,27 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getJSON, .{ &this.blob, globalThis, callframe });
     }
     pub fn getArrayBuffer(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return @call(bun.callmod_inline, Blob.getArrayBuffer, .{ &this.blob, globalThis, callframe });
     }
     pub fn getSlice(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return @call(bun.callmod_inline, Blob.getSlice, .{ &this.blob, globalThis, callframe });
     }
     pub fn getType(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalThis });
     }
 
@@ -1117,7 +1117,7 @@ pub const BuildArtifact = struct {
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return @call(bun.callmod_inline, Blob.getStream, .{
             &this.blob,
             globalThis,
@@ -1128,39 +1128,39 @@ pub const BuildArtifact = struct {
     pub fn getPath(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return ZigString.fromUTF8(this.path).toValueGC(globalThis);
+    ) JSValue {
+        return ZigString.fromUTF8(this.path).toJS(globalThis);
     }
 
     pub fn getLoader(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
-        return ZigString.fromUTF8(@tagName(this.loader)).toValueGC(globalThis);
+    ) JSValue {
+        return ZigString.fromUTF8(@tagName(this.loader)).toJS(globalThis);
     }
 
     pub fn getHash(
         this: *BuildArtifact,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var buf: [512]u8 = undefined;
         const out = std.fmt.bufPrint(&buf, "{any}", .{options.PathTemplate.hashFormatter(this.hash)}) catch @panic("Unexpected");
-        return ZigString.init(out).toValueGC(globalThis);
+        return ZigString.init(out).toJS(globalThis);
     }
 
-    pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getSize(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSValue {
         return @call(bun.callmod_inline, Blob.getSize, .{ &this.blob, globalObject });
     }
 
-    pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getMimeType(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSValue {
         return @call(bun.callmod_inline, Blob.getType, .{ &this.blob, globalObject });
     }
 
-    pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) callconv(.C) JSValue {
-        return ZigString.init(@tagName(this.output_kind)).toValueGC(globalObject);
+    pub fn getOutputKind(this: *BuildArtifact, globalObject: *JSC.JSGlobalObject) JSValue {
+        return ZigString.init(@tagName(this.output_kind)).toJS(globalObject);
     }
 
-    pub fn getSourceMap(this: *BuildArtifact, _: *JSC.JSGlobalObject) callconv(.C) JSValue {
+    pub fn getSourceMap(this: *BuildArtifact, _: *JSC.JSGlobalObject) JSValue {
         if (this.sourcemap.get()) |value| {
             return value;
         }

@@ -200,11 +200,6 @@ pub inline fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub inline fn indexAny(in: anytype, target: string) ?usize {
-    for (in, 0..) |str, i| if (indexOf(str, target) != null) return i;
-    return null;
-}
-
 pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
@@ -747,10 +742,6 @@ pub fn eql(self: string, other: anytype) bool {
         if (other[i] != c) return false;
     }
     return true;
-}
-
-pub inline fn eqlInsensitive(self: string, other: anytype) bool {
-    return std.ascii.eqlIgnoreCase(self, other);
 }
 
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
@@ -2570,8 +2561,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @intFromPtr(remaining.ptr) - @intFromPtr(latin1.ptr);
-                        @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
-                        buf.items.len = copy_len;
+                        buf.appendSliceAssumeCapacity(latin1[0..copy_len]);
                         any_needs_escape = true;
                         inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {

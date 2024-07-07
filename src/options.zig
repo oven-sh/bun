@@ -298,7 +298,7 @@ pub const ExternalModules = struct {
         "zlib",
     };
 
-    pub const NodeBuiltinsMap = std.StaticStringMap(void).initComptime(.{
+    pub const NodeBuiltinsMap = bun.ComptimeStringMap(void, .{
         .{ "_http_agent", {} },
         .{ "_http_client", {} },
         .{ "_http_common", {} },
@@ -370,7 +370,7 @@ pub const ModuleType = enum {
     cjs,
     esm,
 
-    pub const List = std.StaticStringMap(ModuleType).initComptime(.{
+    pub const List = bun.ComptimeStringMap(ModuleType, .{
         .{ "commonjs", ModuleType.cjs },
         .{ "module", ModuleType.esm },
     });

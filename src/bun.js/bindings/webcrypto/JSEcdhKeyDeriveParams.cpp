@@ -29,7 +29,6 @@
 #include "JSDOMConvertStrings.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -43,7 +42,7 @@ template<> CryptoAlgorithmEcdhKeyDeriveParams convertDictionary<CryptoAlgorithmE
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmEcdhKeyDeriveParams result;
     JSValue nameValue;
@@ -51,28 +50,28 @@ template<> CryptoAlgorithmEcdhKeyDeriveParams convertDictionary<CryptoAlgorithmE
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "EcdhKeyDeriveParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "EcdhKeyDeriveParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue publicKeyValue;
     if (isNullOrUndefined)
         publicKeyValue = jsUndefined();
     else {
         publicKeyValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "publicKey"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!publicKeyValue.isUndefined()) {
         result.publicKey = convert<IDLInterface<CryptoKey>>(lexicalGlobalObject, publicKeyValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey", "EcdhKeyDeriveParams", "CryptoKey");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "publicKey"_s, "EcdhKeyDeriveParams"_s, "CryptoKey"_s);
+        return {};
     }
     return result;
 }

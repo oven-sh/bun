@@ -972,7 +972,7 @@ exports[`fast-glob e2e tests (absolute) patterns absolute cwd *: absolute: * 1`]
 
 exports[`fast-glob e2e tests patterns absolute cwd *: absolute: * 1`] = `
 [
-  "",
+  "file.md",
 ]
 `;
 
@@ -993,16 +993,16 @@ exports[`fast-glob e2e tests (absolute) patterns absolute cwd **: absolute: ** 1
 
 exports[`fast-glob e2e tests patterns absolute cwd **: absolute: ** 1`] = `
 [
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
+  "file.md",
+  "first/file.md",
+  "first/nested/directory/file.json",
+  "first/nested/directory/file.md",
+  "first/nested/file.md",
+  "second/file.md",
+  "second/nested/directory/file.md",
+  "second/nested/file.md",
+  "third/library/a/book.md",
+  "third/library/b/book.md",
 ]
 `;
 
@@ -1023,16 +1023,16 @@ exports[`fast-glob e2e tests (absolute) patterns absolute cwd **/*: absolute: **
 
 exports[`fast-glob e2e tests patterns absolute cwd **/*: absolute: **/* 1`] = `
 [
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
-  "",
+  "file.md",
+  "first/file.md",
+  "first/nested/directory/file.json",
+  "first/nested/directory/file.md",
+  "first/nested/file.md",
+  "second/file.md",
+  "second/nested/directory/file.md",
+  "second/nested/file.md",
+  "third/library/a/book.md",
+  "third/library/b/book.md",
 ]
 `;
 

@@ -185,7 +185,7 @@ pub const FFI = struct {
         function.printCallbackSourceCode(null, null, &writer) catch {
             return ZigString.init("Error while printing code").toErrorInstance(global);
         };
-        return ZigString.init(arraylist.items).toValueGC(global);
+        return ZigString.init(arraylist.items).toJS(global);
     }
 
     pub fn print(global: *JSGlobalObject, object: JSC.JSValue, is_callback_val: ?JSC.JSValue) JSValue {
@@ -424,7 +424,7 @@ pub const FFI = struct {
         return js_object;
     }
 
-    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getSymbols(_: *FFI, _: *JSC.JSGlobalObject) JSC.JSValue {
         // This shouldn't be called. The cachedValue is what should be called.
         return .undefined;
     }

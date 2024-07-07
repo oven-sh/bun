@@ -486,19 +486,18 @@ pub const ConcurrentTask = struct {
     auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
+    pub usingnamespace bun.New(@This());
 
     pub const AutoDeinit = enum {
         manual_deinit,
         auto_deinit,
     };
     pub fn create(task: Task) *ConcurrentTask {
-        const created = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
-        created.* = .{
+        return ConcurrentTask.new(.{
             .task = task,
             .next = null,
             .auto_delete = true,
-        };
-        return created;
+        });
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
@@ -1296,8 +1295,8 @@ pub const EventLoop = struct {
 
         while (iter.next()) |task| {
             if (to_destroy) |dest| {
-                bun.default_allocator.destroy(dest);
                 to_destroy = null;
+                dest.destroy();
             }
 
             if (task.auto_delete) {
@@ -1311,7 +1310,7 @@ pub const EventLoop = struct {
         }
 
         if (to_destroy) |dest| {
-            bun.default_allocator.destroy(dest);
+            dest.destroy();
         }
 
         return this.tasks.count - start_count;

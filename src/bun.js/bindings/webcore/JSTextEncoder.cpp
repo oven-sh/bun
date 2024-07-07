@@ -257,7 +257,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
             GCDeferralContext gcDeferralContext(vm);
             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, encodedValue);
+                RELEASE_AND_RETURN(throwScope, { encodedValue });
             }
         }
 
@@ -270,10 +270,10 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValu
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
+        return { encodedJSValue() };
     }
 
-    RELEASE_AND_RETURN(throwScope, res);
+    RELEASE_AND_RETURN(throwScope, { res });
 }
 
 JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
@@ -283,7 +283,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto source = sourceStr->value(lexicalGlobalObject);
+    String source = sourceStr->value(lexicalGlobalObject);
     size_t res = 0;
     if (!source.is8Bit()) {
         res = TextEncoder__encodeInto16(source.span16().data(), source.length(), destination->vector(), destination->byteLength());
@@ -296,7 +296,7 @@ JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeChe
     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
-    return JSValue::encode(result);
+    return { JSValue::encode(result) };
 }
 
 const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderPrototype) };
@@ -462,7 +462,7 @@ void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSTextEncoder*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -499,18 +499,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<TextEncoder>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TextEncoder@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // TextEncoder has subclasses. If TextEncoder has subclasses that get passed
         // to toJS() we currently require TextEncoder you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<TextEncoder>(globalObject, WTFMove(impl));

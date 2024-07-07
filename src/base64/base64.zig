@@ -37,7 +37,7 @@ pub fn decode(destination: []u8, source: []const u8) bun.simdutf.SIMDUTFResult {
 pub fn decodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
     var dest = try allocator.alloc(u8, decodeLen(input));
     const result = decode(dest, input);
-    if (result.isSuccessful()) {
+    if (!result.isSuccessful()) {
         allocator.free(dest);
         return error.DecodingFailed;
     }

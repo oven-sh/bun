@@ -585,7 +585,7 @@ var access = function access(path, mode, callback) {
 
     ensureCallback(callback);
 
-    fs.opendir(path, options).then(function (dir) {
+    promises.opendir(path, options).then(function (dir) {
       callback(null, dir);
     }, callback);
   };

@@ -97,9 +97,18 @@ pub extern "kernel32" fn CommandLineToArgvW(
     pNumArgs: *c_int,
 ) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
 
-pub extern fn GetFileType(
-    hFile: win32.HANDLE,
-) callconv(windows.WINAPI) win32.DWORD;
+pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
+    const function = struct {
+        pub extern fn GetFileType(
+            hFile: win32.HANDLE,
+        ) callconv(windows.WINAPI) win32.DWORD;
+    }.GetFileType;
+
+    const rc = function(hFile);
+    if (comptime Environment.enable_logs)
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+    return rc;
+}
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
 pub const FILE_TYPE_UNKNOWN = 0x0000;

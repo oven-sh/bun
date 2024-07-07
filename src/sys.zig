@@ -3138,11 +3138,10 @@ pub const File = struct {
             return .{
                 .result = switch (rt) {
                     windows.FILE_TYPE_CHAR => .character_device,
-                    windows.FILE_TYPE_DISK => .file,
+                    windows.FILE_TYPE_REMOTE, windows.FILE_TYPE_DISK => .file,
                     windows.FILE_TYPE_PIPE => .named_pipe,
-                    windows.FILE_TYPE_REMOTE => .remote,
                     windows.FILE_TYPE_UNKNOWN => .unknown,
-                    else => return .file,
+                    else => .file,
                 },
             };
         }

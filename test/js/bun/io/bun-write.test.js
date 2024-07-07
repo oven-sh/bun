@@ -317,6 +317,15 @@ it("Bun.write(Bun.stderr, 'new TextEncoder().encode(Bun.write STDERR TEST'))", a
   expect(await Bun.write(Bun.stderr, new TextEncoder().encode("\nBun.write STDERR TEST\n\n"))).toBe(24);
 });
 
+// These tests pass by not throwing:
+it("Bun.write(Bun.stdout, Bun.file(path))", async () => {
+  await Bun.write(Bun.stdout, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
+});
+
+it("Bun.write(Bun.stderr, Bun.file(path))", async () => {
+  await Bun.write(Bun.stderr, Bun.file(path.join(import.meta.dir, "hello-world.txt")));
+});
+
 it("Bun.file(0) survives GC", async () => {
   for (let i = 0; i < 10; i++) {
     let f = Bun.file(0);

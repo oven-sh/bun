@@ -311,3 +311,12 @@ $ bun setup -DUSE_STATIC_LIBATOMIC=OFF
 ```
 
 The built version of Bun may not work on other systems if compiled this way.
+
+## ccache conflicts with building TinyCC on macOS
+
+If you run into issues with `ccache` when building TinyCC, try reinstalling ccache
+
+```bash
+brew uninstall ccache
+brew install ccache
+```

@@ -23,7 +23,7 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    const err = new TypeError("Callback must be a function");
+    const err = new TypeError('The "cb" argument must be of type function. Received ' + typeof callback);
     err.code = "ERR_INVALID_ARG_TYPE";
     throw err;
   }

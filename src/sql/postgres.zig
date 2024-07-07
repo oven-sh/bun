@@ -2154,7 +2154,7 @@ pub const PostgresSQLQuery = struct {
                 .MOVE => JSValue.jsNumber(6),
                 .FETCH => JSValue.jsNumber(7),
                 .COPY => JSValue.jsNumber(8),
-                .other => |tag| JSC.ZigString.init(tag).toValueGC(globalObject),
+                .other => |tag| JSC.ZigString.init(tag).toJS(globalObject),
             };
         }
 

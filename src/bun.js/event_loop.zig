@@ -319,8 +319,11 @@ pub const JSCScheduler = struct {
     export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
         JSC.markBinding(@src());
         var loop = jsc_vm.eventLoop();
-        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
-        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
+        loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
+            .task = Task.init(task),
+            .next = null,
+            .auto_delete = true,
+        }));
     }
 
     comptime {
@@ -1256,8 +1259,7 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
-    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
-        JSC.markBinding(@src());
+    fn updateCounts(this: *EventLoop) void {
         const delta = this.concurrent_ref.swap(0, .monotonic);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
@@ -1275,6 +1277,10 @@ pub const EventLoop = struct {
                 loop.active -= @intCast(-delta);
             }
         }
+    }
+
+    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        this.updateCounts();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1575,11 +1581,14 @@ pub const EventLoop = struct {
         }
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrent({s})", .{task.task.typeName() orelse "[unknown]"});
         }
 
         this.concurrent_tasks.push(task);
@@ -1587,11 +1596,14 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.Batch) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrentBatch({d})", .{batch.count});
         }
 
         this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);

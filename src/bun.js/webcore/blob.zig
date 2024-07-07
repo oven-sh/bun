@@ -2784,6 +2784,7 @@ pub const Blob = struct {
                 }
 
                 while (true) {
+                    // TODO: this should use non-blocking I/O.
                     const written = switch (comptime use) {
                         .copy_file_range => linux.copy_file_range(src_fd.cast(), null, dest_fd.cast(), null, remain, 0),
                         .sendfile => linux.sendfile(dest_fd.cast(), src_fd.cast(), null, remain),
@@ -2794,6 +2795,7 @@ pub const Blob = struct {
                         .SUCCESS => {},
 
                         .NOSYS, .XDEV => {
+                            // TODO: this should use non-blocking I/O.
                             switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                                 .err => |err| {
                                     this.system_error = err.toSystemError();
@@ -2826,6 +2828,7 @@ pub const Blob = struct {
                             // incompatible with the chosen syscall, fall back
                             // to a read/write loop
                             if (total_written == 0) {
+                                // TODO: this should use non-blocking I/O.
                                 switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", src_fd, dest_fd, if (unknown_size) 0 else remain, &total_written)) {
                                     .err => |err| {
                                         this.system_error = err.toSystemError();
@@ -2860,12 +2863,33 @@ pub const Blob = struct {
                 }
             }
 
-            pub fn doFCopyFile(this: *CopyFile) anyerror!void {
+            pub fn doFCopyFileWithReadWriteLoopFallback(this: *CopyFile) anyerror!void {
                 switch (bun.sys.fcopyfile(this.source_fd, this.destination_fd, posix.system.COPYFILE_DATA)) {
                     .err => |errno| {
-                        this.system_error = errno.toSystemError();
+                        switch (errno.getErrno()) {
+                            // If the file type doesn't support seeking, it may return EBADF
+                            // Example case:
+                            //
+                            // bun test bun-write.test | xargs echo
+                            //
+                            .BADF => {
+                                var total_written: u64 = 0;
 
-                        return bun.errnoToZigErr(errno.errno);
+                                // TODO: this should use non-blocking I/O.
+                                switch (JSC.Node.NodeFS.copyFileUsingReadWriteLoop("", "", this.source_fd, this.destination_fd, 0, &total_written)) {
+                                    .err => |err| {
+                                        this.system_error = err.toSystemError();
+                                        return bun.errnoToZigErr(err.errno);
+                                    },
+                                    .result => {},
+                                }
+                            },
+                            else => {
+                                this.system_error = errno.toSystemError();
+
+                                return bun.errnoToZigErr(errno.errno);
+                            },
+                        }
                     },
                     .result => {},
                 }
@@ -2909,15 +2933,6 @@ pub const Blob = struct {
 
                 if (this.source_file_store.pathlike == .fd) {
                     this.source_fd = this.source_file_store.pathlike.fd;
-                }
-
-                if (comptime Environment.isWindows) {
-                    this.system_error = SystemError{
-                        .code = bun.String.static("TODO"),
-                        .syscall = bun.String.static("CopyFileEx"),
-                        .message = bun.String.static("Not implemented on Windows yet"),
-                    };
-                    return;
                 }
 
                 // Do we need to open both files?
@@ -3070,7 +3085,7 @@ pub const Blob = struct {
                 }
 
                 if (comptime Environment.isMac) {
-                    this.doFCopyFile() catch {
+                    this.doFCopyFileWithReadWriteLoopFallback() catch {
                         this.doClose();
 
                         return;

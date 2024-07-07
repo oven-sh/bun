@@ -684,6 +684,13 @@ pub const TestScope = struct {
         return JSValue.jsUndefined();
     }
 
+    pub fn shouldEvaluateScope(this: *const TestScope) bool {
+        if (this.tag == .skip or
+            this.tag == .todo) return false;
+        if (Jest.runner.?.only and this.tag == .only) return true;
+        return this.parent.shouldEvaluateScope();
+    }
+
     pub fn run(
         this: *TestScope,
         task: *TestRunnerTask,
@@ -1196,12 +1203,16 @@ pub const DescribeScope = struct {
     }
 
     pub fn onTestComplete(this: *DescribeScope, globalThis: *JSGlobalObject, test_id: TestRunner.Test.ID, skipped: bool) void {
+        var should_eval_test_scope = true;
         // invalidate it
         this.current_test_id = std.math.maxInt(TestRunner.Test.ID);
-        if (test_id != std.math.maxInt(TestRunner.Test.ID)) this.pending_tests.unset(test_id);
+        if (test_id != std.math.maxInt(TestRunner.Test.ID)) {
+            this.pending_tests.unset(test_id);
+            should_eval_test_scope = this.tests.items[test_id].shouldEvaluateScope();
+        }
         globalThis.bunVM().onUnhandledRejectionCtx = null;
 
-        if (!skipped) {
+        if (!skipped and should_eval_test_scope) {
             if (this.runCallback(globalThis, .afterEach)) |err| {
                 _ = globalThis.bunVM().uncaughtException(globalThis, err, true);
             }
@@ -1387,10 +1398,12 @@ pub const TestRunnerTask = struct {
             this.needs_before_each = false;
             const label = test_.label;
 
-            if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
-                _ = jsc_vm.uncaughtException(globalThis, err, true);
-                Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
-                return false;
+            if (test_.shouldEvaluateScope()) {
+                if (this.describe.runCallback(globalThis, .beforeEach)) |err| {
+                    _ = jsc_vm.uncaughtException(globalThis, err, true);
+                    Jest.runner.?.reportFailure(test_id, this.source_file_path, label, 0, 0, this.describe);
+                    return false;
+                }
             }
         }
 

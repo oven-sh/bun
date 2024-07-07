@@ -395,29 +395,10 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
-    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
-
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    assert(input.len > 0);
-    assert(output.len > 0);
-
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
-
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
-        C.memmove(output.ptr, input.ptr, input.len);
-    } else {
-        for (input, output) |input_byte, *out| {
-            out.* = input_byte;
-        }
-    }
+    return memmove(output, input);
 }
 
 pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
@@ -3552,3 +3533,25 @@ pub fn OrdinalT(comptime Int: type) type {
 
 /// ABI-equivalent of WTF::OrdinalNumber
 pub const Ordinal = OrdinalT(c_int);
+
+pub fn memmove(output: []u8, input: []const u8) void {
+    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len and output.len > 0);
+    }
+
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+
+    if (!does_input_or_output_overlap) {
+        @memcpy(output[0..input.len], input);
+    } else if (comptime Environment.isNative) {
+        C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
+    }
+}

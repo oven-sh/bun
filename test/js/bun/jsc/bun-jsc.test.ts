@@ -25,6 +25,7 @@ import {
   drainMicrotasks,
   startRemoteDebugger,
   setTimeZone,
+  profile,
 } from "bun:jsc";
 
 describe("bun:jsc", () => {
@@ -169,5 +170,19 @@ describe("bun:jsc", () => {
       serialize({ a: 1 });
     }
     Bun.gc(true);
+  });
+
+  it("profile async", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const result = await profile(
+      async function hey(arg1: number) {
+        await Bun.sleep(10).then(() => resolve(arguments));
+        return arg1;
+      },
+      1,
+      2,
+    );
+    const input = await promise;
+    expect({ ...input }).toStrictEqual({ "0": 2 });
   });
 });

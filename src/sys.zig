@@ -3120,6 +3120,53 @@ pub const File = struct {
         return fstat(self.handle);
     }
 
+    /// Be careful about using this on Linux or macOS.
+    ///
+    /// This calls stat() internally.
+    pub fn kind(self: File) Maybe(std.fs.File.Kind) {
+        if (Environment.isWindows) {
+            const rt = windows.GetFileType(self.handle.cast());
+            if (rt == windows.FILE_TYPE_UNKNOWN) {
+                switch (bun.windows.GetLastError()) {
+                    .SUCCESS => {},
+                    else => |err| {
+                        return .{ .err = Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN).toE(), .fstat) };
+                    },
+                }
+            }
+
+            return .{
+                .result = switch (rt) {
+                    windows.FILE_TYPE_CHAR => .character_device,
+                    windows.FILE_TYPE_DISK => .file,
+                    windows.FILE_TYPE_PIPE => .named_pipe,
+                    windows.FILE_TYPE_REMOTE => .remote,
+                    windows.FILE_TYPE_UNKNOWN => .unknown,
+                    else => return .file,
+                },
+            };
+        }
+
+        const st = switch (self.stat()) {
+            .err => |err| return .{ .err = err },
+            .result => |s| s,
+        };
+
+        const m = st.mode & posix.S.IFMT;
+        switch (m) {
+            posix.S.IFBLK => return .{ .result = .block_device },
+            posix.S.IFCHR => return .{ .result = .character_device },
+            posix.S.IFDIR => return .{ .result = .directory },
+            posix.S.IFIFO => return .{ .result = .named_pipe },
+            posix.S.IFLNK => return .{ .result = .sym_link },
+            posix.S.IFREG => return .{ .result = .file },
+            posix.S.IFSOCK => return .{ .result = .unix_domain_socket },
+            else => {
+                return .{ .result = .file };
+            },
+        }
+    }
+
     pub const ReadToEndResult = struct {
         bytes: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
         err: ?Error = null,

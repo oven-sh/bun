@@ -870,15 +870,16 @@ pub const Blob = struct {
         // If this is file <> file, we can just copy the file
         else if (destination_type == .file and source_type == .file) {
             if (comptime Environment.isWindows) {
-                var copier = Store.CopyFileWindows.init(
+                var promise = JSValue.zero;
+                _ = Store.CopyFileWindows.init(
                     destination_blob.store.?,
                     source_blob.store.?,
                     ctx.bunVM().eventLoop(),
                     mkdirp_if_not_exists,
                     destination_blob.size,
+                    &promise,
                 );
-
-                return copier.promise.value();
+                return promise;
             }
             var file_copier = Store.CopyFile.create(
                 bun.default_allocator,
@@ -1987,6 +1988,7 @@ pub const Blob = struct {
                 event_loop: *JSC.EventLoop,
                 mkdirp_if_not_exists: bool,
                 size_: Blob.SizeType,
+                promise: *JSC.JSValue,
             ) *CopyFileWindows {
                 destination_file_store.ref();
                 source_file_store.ref();
@@ -1999,7 +2001,7 @@ pub const Blob = struct {
                     .mkdirp_if_not_exists = mkdirp_if_not_exists,
                     .size = size_,
                 });
-
+                promise.* = result.promise.value();
                 result.copyfile();
 
                 return result;

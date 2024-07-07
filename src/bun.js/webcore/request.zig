@@ -476,19 +476,28 @@ pub const Request = struct {
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
     ) ?Request {
-        var req = Request{
-            .body = InitRequestBodyValue(.{ .Null = {} }) catch {
-                return null;
-            },
+        var success = false;
+        const body = InitRequestBodyValue(.{ .Null = {} }) catch {
+            return null;
         };
+        var req = Request{
+            .body = body,
+        };
+        defer {
+            if (!success) {
+                req.finalizeWithoutDeinit();
+                _ = req.body.unref();
+            }
+            if (req.body != body) {
+                _ = body.unref();
+            }
+        }
 
         if (arguments.len == 0) {
             globalThis.throw("Failed to construct 'Request': 1 argument required, but only 0 present.", .{});
-            _ = req.body.unref();
             return null;
         } else if (arguments[0].isEmptyOrUndefinedOrNull() or !arguments[0].isCell()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object, got undefined", .{});
-            _ = req.body.unref();
             return null;
         }
 
@@ -504,8 +513,6 @@ pub const Request = struct {
 
         if (is_first_argument_a_url) {
             const str = bun.String.tryFromJS(arguments[0], globalThis) orelse {
-                req.finalizeWithoutDeinit();
-                _ = req.body.unref();
                 return null;
             };
             req.url = str;
@@ -514,7 +521,6 @@ pub const Request = struct {
                 fields.insert(.url);
         } else if (!url_or_object_type.isObject()) {
             globalThis.throw("Failed to construct 'Request': expected non-empty string or object", .{});
-            _ = req.body.unref();
             return null;
         }
 
@@ -536,6 +542,7 @@ pub const Request = struct {
                 if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
                         request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
+                        success = true;
                         return req;
                     }
 
@@ -597,13 +604,9 @@ pub const Request = struct {
             if (!fields.contains(.body)) {
                 if (value.fastGet(globalThis, .body)) |body_| {
                     fields.insert(.body);
-                    if (Body.Value.fromJS(globalThis, body_)) |body| {
-                        req.body.value = body;
-                    } else {
-                        req.finalizeWithoutDeinit();
-                        _ = req.body.unref();
+                    req.body.value = Body.Value.fromJS(globalThis, body_) orelse {
                         return null;
-                    }
+                    };
                 }
             }
 
@@ -617,11 +620,7 @@ pub const Request = struct {
                 } else if (@intFromEnum(value) == @intFromEnum(values_to_try[values_to_try.len - 1]) and !is_first_argument_a_url and
                     value.implementsToString(globalThis))
                 {
-                    const str = bun.String.tryFromJS(value, globalThis) orelse {
-                        req.finalizeWithoutDeinit();
-                        _ = req.body.unref();
-                        return null;
-                    };
+                    const str = bun.String.tryFromJS(value, globalThis) orelse return null;
                     req.url = str;
                     if (!req.url.isEmpty())
                         fields.insert(.url);
@@ -637,8 +636,6 @@ pub const Request = struct {
                         req.signal = signal.ref();
                     } else {
                         globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
-                        req.finalizeWithoutDeinit();
-                        _ = req.body.unref();
                         return null;
                     }
                 }
@@ -667,8 +664,6 @@ pub const Request = struct {
         }
         if (req.url.isEmpty()) {
             globalThis.throw("Failed to construct 'Request': url is required.", .{});
-            req.finalizeWithoutDeinit();
-            _ = req.body.unref();
             return null;
         }
 
@@ -679,8 +674,6 @@ pub const Request = struct {
             globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
                 req.url,
             });
-            req.finalizeWithoutDeinit();
-            _ = req.body.unref();
             return null;
         }
 
@@ -702,6 +695,7 @@ pub const Request = struct {
         }
 
         req.calculateEstimatedByteSize();
+        success = true;
 
         return req;
     }

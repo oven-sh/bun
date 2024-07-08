@@ -1519,6 +1519,10 @@ JSC_DEFINE_HOST_FUNCTION(functionBTOA,
         LChar* ptr;
         unsigned length = encodedString.length();
         auto dest = WTF::String::createUninitialized(length, ptr);
+        if (UNLIKELY(dest.isNull())) {
+            throwOutOfMemoryError(globalObject, throwScope);
+            return JSC::JSValue::encode(JSC::JSValue {});
+        }
         WTF::StringImpl::copyCharacters(ptr, encodedString.span16());
         encodedString = WTFMove(dest);
     }

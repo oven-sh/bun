@@ -8346,13 +8346,25 @@ pub const Interpreter = struct {
                         return;
                     }
 
-                    switch (Syscall.renameat(this.cwd, src, this.cwd, this.target)) {
-                        .err => |e| {
-                            if (e.getErrno() == .NOTDIR) {
-                                this.err = e.withPath(this.target);
-                            } else this.err = e;
+                    var err = switch (bun.sys.renameat2(this.cwd, src, this.cwd, this.target, .{
+                        .exclude = true,
+                    })) {
+                        .err => |err| brk: {
+                            if (err.getErrno() == .XDEV) {
+                                if (bun.C.moveFileZSlowMaybe(this.cwd, src, this.cwd, this.target).asErr()) |e| {
+                                    break :brk e;
+                                }
+                                return;
+                            }
+                            break :brk err;
                         },
-                        else => {},
+                        .result => return,
+                    };
+
+                    if (err.getErrno() == .NOTDIR) {
+                        this.err = err.withPath(this.target);
+                    } else {
+                        this.err = err;
                     }
                 }
 
@@ -8486,7 +8498,10 @@ pub const Interpreter = struct {
                                         },
                                         else => {
                                             const sys_err = e.toSystemError();
-                                            const buf = this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() });
+                                            const buf = if (sys_err.path.length() > 0)
+                                                this.bltn.fmtErrorArena(.mv, "{s}: {s}\n", .{ sys_err.path.byteSlice(), sys_err.message.byteSlice() })
+                                            else
+                                                this.bltn.fmtErrorArena(.mv, "{s}\n", .{sys_err.message.byteSlice()});
                                             return this.writeFailingError(buf, 1);
                                         },
                                     }

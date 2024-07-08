@@ -158,7 +158,7 @@ pub fn moveFileZSlow(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_di
 pub fn moveFileZSlowMaybe(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) Maybe(void) {
     const in_handle = switch (bun.sys.openat(from_dir, filename, bun.O.RDONLY | bun.O.CLOEXEC, if (Environment.isWindows) 0 else 0o644)) {
         .result => |f| f,
-        .err => |e| return .{ .err = e },
+        .err => |e| return .{ .err = e.withPath(filename) },
     };
     defer _ = bun.sys.close(in_handle);
     _ = bun.sys.unlinkat(from_dir, filename);
@@ -199,7 +199,7 @@ pub fn copyFileZSlowWithHandle(in_handle: bun.FileDescriptor, to_dir: bun.FileDe
             if (comptime Environment.isPosix) 0o644 else 0,
         )) {
             .result => |fd| fd,
-            .err => |e| return .{ .err = e },
+            .err => |e| return .{ .err = e.withPath(destination) },
         };
         defer _ = bun.sys.close(out_handle);
 

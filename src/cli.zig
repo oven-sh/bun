@@ -220,7 +220,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
+        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
@@ -235,7 +235,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
-        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -243,16 +243,19 @@ pub const Arguments = struct {
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
-        clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
-        clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
-        clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
-        clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
-        clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
-        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
-        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
-        clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
-        clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
+        clap.parseParam("--timeout <NUMBER>                       Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
+        clap.parseParam("--update-snapshots                       Update snapshot files.") catch unreachable,
+        clap.parseParam("--rerun-each <NUMBER>                    Re-run each test file <NUMBER> times, helps catch certain bugs.") catch unreachable,
+        clap.parseParam("--only                                   Only run tests that are marked with \"test.only()\".") catch unreachable,
+        clap.parseParam("--todo                                   Include tests that are marked with \"test.todo()\".") catch unreachable,
+        clap.parseParam("--coverage <STR>?                        Generate a coverage profile.") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...             Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>                     Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
+        clap.parseParam("--coverage-threshold <NUMBER>            Coverage threshold for lines and functions.") catch unreachable,
+        clap.parseParam("--coverage-threshold-lines <NUMBER>      Coverage threshold for lines. Overrides '--coverage-threshold'.") catch unreachable,
+        clap.parseParam("--coverage-threshold-functions <NUMBER>  Coverage threshold for functions. Overrides '--coverage-threshold'.") catch unreachable,
+        clap.parseParam("--bail <NUMBER>?                         Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
+        clap.parseParam("-t, --test-name-pattern <STR>            Run only tests with a name that matches the given regex.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
@@ -439,8 +442,61 @@ pub const Arguments = struct {
                 }
             }
 
-            if (!ctx.test_options.coverage.enabled) {
-                ctx.test_options.coverage.enabled = args.flag("--coverage");
+            if (args.option("--coverage")) |coverage_option| {
+                if (!ctx.test_options.coverage.enabled) {
+                    ctx.test_options.coverage.enabled = coverage_option.len == 0 or !bun.strings.eqlComptime(coverage_option, "false");
+                } else if (bun.strings.eqlComptime(coverage_option, "false")) {
+                    ctx.test_options.coverage.enabled = false;
+                }
+            }
+
+            if (args.option("--coverage-threshold")) |coverage_threshold| {
+                if (coverage_threshold.len > 0) {
+                    const coverage_threshold_number = std.fmt.parseFloat(f64, coverage_threshold) catch |e| {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold expects a number: {s}", .{@errorName(e)});
+                        Global.exit(1);
+                    };
+
+                    if (coverage_threshold_number < 0 or coverage_threshold_number > 1) {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold expects a number between 0 and 1", .{});
+                        Global.exit(1);
+                    }
+
+                    ctx.test_options.coverage.fractions.lines = coverage_threshold_number;
+                    ctx.test_options.coverage.fractions.functions = coverage_threshold_number;
+                }
+            }
+
+            if (args.option("--coverage-threshold-lines")) |coverage_threshold_lines| {
+                if (coverage_threshold_lines.len > 0) {
+                    const coverage_threshold_lines_number = std.fmt.parseFloat(f64, coverage_threshold_lines) catch |e| {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold-lines expects a number: {s}", .{@errorName(e)});
+                        Global.exit(1);
+                    };
+
+                    if (coverage_threshold_lines_number < 0 or coverage_threshold_lines_number > 1) {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold-lines expects a number between 0 and 1", .{});
+                        Global.exit(1);
+                    }
+
+                    ctx.test_options.coverage.fractions.lines = coverage_threshold_lines_number;
+                }
+            }
+
+            if (args.option("--coverage-threshold-functions")) |coverage_threshold_functions| {
+                if (coverage_threshold_functions.len > 0) {
+                    const coverage_threshold_functions_number = std.fmt.parseFloat(f64, coverage_threshold_functions) catch |e| {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold-functions expects a number: {s}", .{@errorName(e)});
+                        Global.exit(1);
+                    };
+
+                    if (coverage_threshold_functions_number < 0 or coverage_threshold_functions_number > 1) {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-threshold-functions expects a number between 0 and 1", .{});
+                        Global.exit(1);
+                    }
+
+                    ctx.test_options.coverage.fractions.functions = coverage_threshold_functions_number;
+                }
             }
 
             if (args.options("--coverage-reporter").len > 0) {

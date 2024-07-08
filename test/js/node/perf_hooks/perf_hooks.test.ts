@@ -29,6 +29,7 @@ test("timerify with histogram", () => {
   const histogram = perf.createHistogram({ auto: true });
   const fn = performance.timerify(() => {}, { histogram: histogram });
   expect(histogram.max).toBe(0); // should default to 0
+
   fn();
   expect(histogram.toJSON()).toBeObject();
   expect(histogram.min).toBeGreaterThan(0);

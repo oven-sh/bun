@@ -131,7 +131,7 @@ pub const RecordableHistogram = struct {
             globalThis.throwInvalidArguments("Expected the value to record as an argument", .{});
             return .zero;
         }
-        const value = args[0].to(u64);
+        const value = args[0].toUInt64NoTruncate();
         this.hdrHist.record_value(value, 1);
         return .undefined;
     }

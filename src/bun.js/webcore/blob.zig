@@ -1987,7 +1987,7 @@ pub const Blob = struct {
                 must_close_destination_fd: bool = false,
                 written: usize = 0,
                 read_buf: std.ArrayList(u8) = std.ArrayList(u8).init(default_allocator),
-                uv_buf: libuv.uv_buf_t = libuv.uv_buf_t{ .base = undefined, .len = 0 },
+                uv_buf: libuv.uv_buf_t = .{ .base = undefined, .len = 0 },
 
                 pub fn start(read_write_loop: *ReadWriteLoop, this: *CopyFileWindows) JSC.Maybe(void) {
                     read_write_loop.read_buf.ensureTotalCapacityPrecise(64 * 1024) catch bun.outOfMemory();

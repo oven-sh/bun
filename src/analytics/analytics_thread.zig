@@ -101,7 +101,6 @@ pub const Features = struct {
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
     pub var macros: usize = 0;
-    pub var origin: usize = 0;
     pub var shell: usize = 0;
     pub var spawn: usize = 0;
     pub var standalone_shell: usize = 0;
@@ -110,7 +109,8 @@ pub const Features = struct {
     pub var tsconfig: usize = 0;
     pub var virtual_modules: usize = 0;
     pub var WebSocket: usize = 0;
-
+    pub var no_avx: usize = 0;
+    pub var no_avx2: usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
 
     pub fn formatter() Formatter {

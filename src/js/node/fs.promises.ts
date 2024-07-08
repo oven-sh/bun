@@ -276,6 +276,12 @@ export default exports;
       return this[kFd];
     }
 
+    [kCloseResolve];
+    [kFd];
+    [kFlag];
+    [kClosePromise];
+    [kRefs];
+
     async appendFile(data, options: object | string | undefined) {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);

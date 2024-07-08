@@ -757,7 +757,6 @@ pub const ConfigIterator = struct {
                     ) catch bun.outOfMemory();
                     return null;
                 }
-                std.debug.print("{s} = {s}\n", .{ @tagName(this.optname), slice[0..result.count] });
                 return allocator.dupe(u8, slice[0..result.count]) catch bun.outOfMemory();
             }
             return allocator.dupe(u8, this.value) catch bun.outOfMemory();

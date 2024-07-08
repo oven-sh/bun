@@ -86,4 +86,4 @@ else
 
 extern "C" fn bun_cpu_features() u8;
 
-const assert = bun.assert;
+const assert = bun.debugAssert;

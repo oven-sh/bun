@@ -30,11 +30,8 @@ static uint8_t x86_cpu_features()
     uint8_t features = 0;
 
 #if OS(WINDOWS)
-    if (IsProcessorFeaturePresent(PF_SSE42_INSTRUCTIONS_AVAILABLE))
+    if (IsProcessorFeaturePresent(PF_SSE4_2_INSTRUCTIONS_AVAILABLE))
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
-
-    if (IsProcessorFeaturePresent(PF_POPCNT_INSTRUCTION_AVAILABLE))
-        features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
 
     if (IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE))
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);

@@ -29,6 +29,11 @@ fn Impl(comptime T: type) type {
             // sanity check
             assert(this.none == false and this.padding == 0);
 
+            if (bun.Environment.isX64) {
+                bun.analytics.Features.no_avx += @as(usize, @intFromBool(!this.avx));
+                bun.analytics.Features.no_avx2 += @as(usize, @intFromBool(!this.avx2));
+            }
+
             return this;
         }
     };

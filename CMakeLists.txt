@@ -1127,12 +1127,6 @@ if(WIN32)
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
 
-    if(ARCH STREQUAL "x86_64")
-        target_link_libraries(${bun} PRIVATE "clang_rt.builtins-x86_64.lib")
-    elseif(ARCH MATCHES "aarch64|arm64|arm")
-        target_link_libraries(${bun} PRIVATE "clang_rt.builtins-arm64.lib")
-    endif()
-
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC

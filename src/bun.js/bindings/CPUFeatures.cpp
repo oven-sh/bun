@@ -19,9 +19,33 @@ enum class AArch64CPUFeature : uint8_t {
 
 #if CPU(X86_64)
 
+#if OS(WINDOWS)
+
+#include <windows.h>
+
+#endif
+
 static uint8_t x86_cpu_features()
 {
     uint8_t features = 0;
+
+#if OS(WINDOWS)
+    if (IsProcessorFeaturePresent(PF_SSE42_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::sse42);
+
+    if (IsProcessorFeaturePresent(PF_POPCNT_INSTRUCTION_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::popcnt);
+
+    if (IsProcessorFeaturePresent(PF_AVX_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx);
+
+    if (IsProcessorFeaturePresent(PF_AVX2_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx2);
+
+    if (IsProcessorFeaturePresent(PF_AVX512F_INSTRUCTIONS_AVAILABLE))
+        features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
+
+#else
 
 #if __has_builtin(__builtin_cpu_supports)
     __builtin_cpu_init();
@@ -38,6 +62,8 @@ static uint8_t x86_cpu_features()
         features |= 1 << static_cast<uint8_t>(X86CPUFeature::avx512);
 #endif
 
+#endif
+
     return features;
 }
 
@@ -48,6 +74,10 @@ static uint8_t x86_cpu_features()
 static uint8_t aarch64_cpu_features()
 {
     uint8_t features = 0;
+
+#if OS(WINDOWS)
+#pragma error "TODO: Implement AArch64 CPU features for Windows"
+#endif
 
 #if __has_builtin(__builtin_cpu_supports)
     __builtin_cpu_init();

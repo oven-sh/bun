@@ -1386,6 +1386,7 @@ pub fn StatType(comptime Big: bool) type {
 
     return extern struct {
         pub usingnamespace if (Big) JSC.Codegen.JSBigIntStats else JSC.Codegen.JSStats;
+        pub usingnamespace bun.New(@This());
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
         // On windows, these two need to be u64 as the numbers are often very large.
@@ -1555,7 +1556,7 @@ pub fn StatType(comptime Big: bool) type {
         // TODO: BigIntStats includes a `_checkModeProperty` but I dont think anyone actually uses it.
 
         pub fn finalize(this: *This) callconv(.C) void {
-            bun.destroy(this);
+            this.destroy();
         }
 
         pub fn init(stat_: bun.Stat) This {
@@ -1588,12 +1589,6 @@ pub fn StatType(comptime Big: bool) type {
             };
         }
 
-        pub fn initWithAllocator(allocator: std.mem.Allocator, stat: bun.Stat) *This {
-            const this = allocator.create(This) catch bun.outOfMemory();
-            this.* = init(stat);
-            return this;
-        }
-
         pub fn constructor(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) ?*This {
             if (Big) {
                 globalObject.throwInvalidArguments("BigIntStats is not a constructor", .{});
@@ -1608,7 +1603,7 @@ pub fn StatType(comptime Big: bool) type {
             const ctime_ms: f64 = if (args.len > 12 and args[12].isNumber()) args[12].asNumber() else 0;
             const birthtime_ms: f64 = if (args.len > 13 and args[13].isNumber()) args[13].asNumber() else 0;
 
-            const this = bun.new(This, .{
+            const this = This.new(.{
                 .dev = if (args.len > 0 and args[0].isNumber()) @intCast(args[0].toInt32()) else 0,
                 .mode = if (args.len > 1 and args[1].isNumber()) args[1].toInt32() else 0,
                 .nlink = if (args.len > 2 and args[2].isNumber()) args[2].toInt32() else 0,
@@ -1658,8 +1653,8 @@ pub const Stats = union(enum) {
 
     pub fn toJSNewlyCreated(this: *const Stats, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         return switch (this.*) {
-            .big => bun.new(StatsBig, this.big).toJS(globalObject),
-            .small => bun.new(StatsSmall, this.small).toJS(globalObject),
+            .big => StatsBig.new(this.big).toJS(globalObject),
+            .small => StatsSmall.new(this.small).toJS(globalObject),
         };
     }
 

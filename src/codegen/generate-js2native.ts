@@ -101,8 +101,21 @@ export function registerNativeCall(
   return id;
 }
 
-function symbol(call: Pick<NativeCall, "type" | "symbol">) {
-  return call.type === "zig" ? `JS2Zig__${call.symbol.replace(/[^A-Za-z]/g, "_")}` : call.symbol;
+function symbol(call: Pick<NativeCall, "type" | "symbol" | "filename">) {
+  return call.type === "zig"
+    ? `JS2Zig__${call.filename ? normalizeSymbolPathPrefix(call.filename) + "_" : ""}${call.symbol.replace(/[^A-Za-z]/g, "_")}`
+    : call.symbol;
+}
+
+function normalizeSymbolPathPrefix(input: string) {
+  input = path.resolve(input);
+
+  const bunDir = path.resolve(path.join(import.meta.dir, "..", ".."));
+  if (input.startsWith(bunDir)) {
+    input = input.slice(bunDir.length);
+  }
+
+  return input.replaceAll(".zig", "_zig_").replace(/[^A-Za-z]/g, "_");
 }
 
 function cppPointer(call: NativeCall) {

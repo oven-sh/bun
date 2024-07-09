@@ -16,6 +16,12 @@ pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
 else
     @import("./memory_allocator.zig").c_allocator;
 
+/// Zeroing memory allocator
+pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").z_allocator;
+
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
@@ -367,6 +373,51 @@ pub const StringHashMapUnowned = struct {
 };
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
+pub const OffsetByteList = struct {
+    head: u32 = 0,
+    byte_list: ByteList = .{},
+
+    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
+        return OffsetByteList{
+            .head = head,
+            .byte_list = byte_list,
+        };
+    }
+
+    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+        _ = try self.byte_list.write(allocator, bytes);
+    }
+
+    pub fn slice(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[0..this.head];
+    }
+
+    pub fn remaining(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[this.head..];
+    }
+
+    pub fn consume(self: *OffsetByteList, bytes: u32) void {
+        self.head +|= bytes;
+        if (self.head >= self.byte_list.len) {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+    }
+
+    pub fn len(self: *const OffsetByteList) u32 {
+        return self.byte_list.len - self.head;
+    }
+
+    pub fn clear(self: *OffsetByteList) void {
+        self.head = 0;
+        self.byte_list.len = 0;
+    }
+
+    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
+        self.byte_list.deinitWithAllocator(allocator);
+        self.* = .{};
+    }
+};
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.allow_assert) {
@@ -395,29 +446,10 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
-    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
-
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    assert(input.len > 0);
-    assert(output.len > 0);
-
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
-
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
-        C.memmove(output.ptr, input.ptr, input.len);
-    } else {
-        for (input, output) |input_byte, *out| {
-            out.* = input_byte;
-        }
-    }
+    return memmove(output, input);
 }
 
 pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
@@ -1234,15 +1266,11 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    comptime {
-        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
-        var i: usize = 0;
-        for (std.enums.values(T)) |value| {
-            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
-            i += 1;
-        }
-        return ComptimeStringMap(T, entries);
+    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    for (std.enums.values(T), &entries) |value, *entry| {
+        entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
+    return ComptimeStringMap(T, entries);
 }
 
 /// Write 0's for every byte in Type
@@ -3552,3 +3580,27 @@ pub fn OrdinalT(comptime Int: type) type {
 
 /// ABI-equivalent of WTF::OrdinalNumber
 pub const Ordinal = OrdinalT(c_int);
+
+pub fn memmove(output: []u8, input: []const u8) void {
+    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len and output.len > 0);
+    }
+
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+
+    if (!does_input_or_output_overlap) {
+        @memcpy(output[0..input.len], input);
+    } else if (comptime Environment.isNative) {
+        C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
+    }
+}
+
+pub const hmac = @import("./hmac.zig");

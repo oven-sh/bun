@@ -1859,7 +1859,7 @@ pub const SideEffects = enum(u1) {
         };
     }
 
-    pub fn simpifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
+    pub fn simplifyUnusedExpr(p: anytype, expr: Expr) ?Expr {
         if (!p.options.features.dead_code_elimination) return expr;
         switch (expr.data) {
             .e_null,
@@ -1894,12 +1894,12 @@ pub const SideEffects = enum(u1) {
                 }
             },
             .e_if => |__if__| {
-                __if__.yes = simpifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
-                __if__.no = simpifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
+                __if__.yes = simplifyUnusedExpr(p, __if__.yes) orelse __if__.yes.toEmpty();
+                __if__.no = simplifyUnusedExpr(p, __if__.no) orelse __if__.no.toEmpty();
 
                 // "foo() ? 1 : 2" => "foo()"
                 if (__if__.yes.isEmpty() and __if__.no.isEmpty()) {
-                    return simpifyUnusedExpr(p, __if__.test_);
+                    return simplifyUnusedExpr(p, __if__.test_);
                 }
 
                 // "foo() ? 1 : bar()" => "foo() || bar()"
@@ -1927,7 +1927,7 @@ pub const SideEffects = enum(u1) {
                 // such as "toString" or "valueOf". They must also never throw any exceptions.
                 switch (un.op) {
                     .un_void, .un_not => {
-                        return simpifyUnusedExpr(p, un.value);
+                        return simplifyUnusedExpr(p, un.value);
                     },
                     .un_typeof => {
                         // "typeof x" must not be transformed into if "x" since doing so could
@@ -1937,7 +1937,7 @@ pub const SideEffects = enum(u1) {
                             return null;
                         }
 
-                        return simpifyUnusedExpr(p, un.value);
+                        return simplifyUnusedExpr(p, un.value);
                     },
 
                     else => {},
@@ -1950,7 +1950,7 @@ pub const SideEffects = enum(u1) {
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simpifyUnusedExpr, p.allocator);
+                        return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
                     }
                 }
             },
@@ -1959,13 +1959,10 @@ pub const SideEffects = enum(u1) {
                 switch (bin.op) {
                     // These operators must not have any type conversions that can execute code
                     // such as "toString" or "valueOf". They must also never throw any exceptions.
-                    .bin_strict_eq, .bin_strict_ne, .bin_comma => {
-                        return Expr.joinWithComma(
-                            simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(),
-                            simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(),
-                            p.allocator,
-                        );
-                    },
+                    .bin_strict_eq,
+                    .bin_strict_ne,
+                    .bin_comma,
+                    => return simplifyUnusedBinaryCommaExpr(p, expr),
 
                     // We can simplify "==" and "!=" even though they can call "toString" and/or
                     // "valueOf" if we can statically determine that the types of both sides are
@@ -1975,18 +1972,18 @@ pub const SideEffects = enum(u1) {
                     .bin_loose_ne,
                     => {
                         if (isPrimitiveWithSideEffects(bin.left.data) and isPrimitiveWithSideEffects(bin.right.data)) {
-                            return Expr.joinWithComma(simpifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
+                            return Expr.joinWithComma(simplifyUnusedExpr(p, bin.left) orelse bin.left.toEmpty(), simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty(), p.allocator);
                         }
                     },
 
                     .bin_logical_and, .bin_logical_or, .bin_nullish_coalescing => {
-                        bin.right = simpifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
+                        bin.right = simplifyUnusedExpr(p, bin.right) orelse bin.right.toEmpty();
                         // Preserve short-circuit behavior: the left expression is only unused if
                         // the right expression can be completely removed. Otherwise, the left
                         // expression is important for the branch.
 
                         if (bin.right.isEmpty())
-                            return simpifyUnusedExpr(p, bin.left);
+                            return simplifyUnusedExpr(p, bin.left);
                     },
 
                     else => {},
@@ -2006,7 +2003,7 @@ pub const SideEffects = enum(u1) {
                         for (properties_slice) |prop_| {
                             var prop = prop_;
                             if (prop_.kind != .spread) {
-                                const value = simpifyUnusedExpr(p, prop.value.?);
+                                const value = simplifyUnusedExpr(p, prop.value.?);
                                 if (value != null) {
                                     prop.value = value;
                                 } else if (!prop.flags.contains(.is_computed)) {
@@ -2046,7 +2043,7 @@ pub const SideEffects = enum(u1) {
                         );
                     }
                     result = result.joinWithComma(
-                        simpifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
+                        simplifyUnusedExpr(p, prop.value.?) orelse prop.value.?.toEmpty(),
                         p.allocator,
                     );
                 }
@@ -2078,7 +2075,7 @@ pub const SideEffects = enum(u1) {
                     items,
                     @TypeOf(p),
                     p,
-                    comptime simpifyUnusedExpr,
+                    comptime simplifyUnusedExpr,
                     p.allocator,
                 );
             },
@@ -2092,7 +2089,7 @@ pub const SideEffects = enum(u1) {
                             call.args.slice(),
                             @TypeOf(p),
                             p,
-                            comptime simpifyUnusedExpr,
+                            comptime simplifyUnusedExpr,
                             p.allocator,
                         );
                     }
@@ -2104,6 +2101,56 @@ pub const SideEffects = enum(u1) {
         }
 
         return expr;
+    }
+
+    const BinaryExpressionSimplifyVisitor = struct {
+        bin: *E.Binary,
+    };
+
+    ///
+    fn simplifyUnusedBinaryCommaExpr(p: anytype, expr: Expr) ?Expr {
+        if (Environment.allow_assert) {
+            assert(expr.data == .e_binary);
+            assert(switch (expr.data.e_binary.op) {
+                .bin_strict_eq,
+                .bin_strict_ne,
+                .bin_comma,
+                => true,
+                else => false,
+            });
+        }
+        const stack: *std.ArrayList(BinaryExpressionSimplifyVisitor) = &p.binary_expression_simplify_stack;
+        const stack_bottom = stack.items.len;
+        defer stack.shrinkRetainingCapacity(stack_bottom);
+
+        stack.append(.{ .bin = expr.data.e_binary }) catch bun.outOfMemory();
+
+        // Build stack up of expressions
+        var left: Expr = expr.data.e_binary.left;
+        while (left.data.as(.e_binary)) |left_bin| {
+            switch (left_bin.op) {
+                .bin_strict_eq,
+                .bin_strict_ne,
+                .bin_comma,
+                => {
+                    stack.append(.{ .bin = left_bin }) catch bun.outOfMemory();
+                    left = left_bin.left;
+                },
+                else => break,
+            }
+        }
+
+        // Ride the stack downwards
+        var i = stack.items.len;
+        var result = simplifyUnusedExpr(p, left) orelse Expr.empty;
+        while (i > stack_bottom) {
+            i -= 1;
+            const top = stack.items[i];
+            const visited_right = simplifyUnusedExpr(p, top.bin.right) orelse Expr.empty;
+            result = result.joinWithComma(visited_right, p.allocator);
+        }
+
+        return if (result.isMissing()) Expr.empty else result;
     }
 
     fn findIdentifiers(binding: Binding, decls: *std.ArrayList(G.Decl)) void {
@@ -3340,9 +3387,24 @@ pub const Parser = struct {
 
         defer p.lexer.deinit();
 
-        var binary_expression_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
-        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).init(binary_expression_stack_heap.get());
+        var binary_expression_stack_heap = std.heap.stackFallback(42 * @sizeOf(ParserType.BinaryExpressionVisitor), bun.default_allocator);
+        p.binary_expression_stack = std.ArrayList(ParserType.BinaryExpressionVisitor).initCapacity(
+            binary_expression_stack_heap.get(),
+            41, // one less in case of unlikely alignment between the stack buffer and reality
+        ) catch unreachable; // stack allocation cannot fail
         defer p.binary_expression_stack.clearAndFree();
+
+        var binary_expression_simplify_stack_heap = std.heap.stackFallback(48 * @sizeOf(SideEffects.BinaryExpressionSimplifyVisitor), bun.default_allocator);
+        p.binary_expression_simplify_stack = std.ArrayList(SideEffects.BinaryExpressionSimplifyVisitor).initCapacity(
+            binary_expression_simplify_stack_heap.get(),
+            47,
+        ) catch unreachable; // stack allocation cannot fail
+        defer p.binary_expression_simplify_stack.clearAndFree();
+
+        if (Environment.allow_assert) {
+            bun.assert(binary_expression_stack_heap.fixed_buffer_allocator.ownsPtr(@ptrCast(p.binary_expression_stack.items)));
+            bun.assert(binary_expression_simplify_stack_heap.fixed_buffer_allocator.ownsPtr(@ptrCast(p.binary_expression_simplify_stack.items)));
+        }
 
         // defer {
         //     if (p.allocated_names_pool) |pool| {
@@ -5218,7 +5280,9 @@ fn NewParser_(
 
         const_values: js_ast.Ast.ConstValuesMap = .{},
 
-        binary_expression_stack: std.ArrayList(BinaryExpressionVisitor) = undefined,
+        // These are backed by stack fallback allocators in _parse, and are uninitialized until then.
+        binary_expression_stack: ListManaged(BinaryExpressionVisitor) = undefined,
+        binary_expression_simplify_stack: ListManaged(SideEffects.BinaryExpressionSimplifyVisitor) = undefined,
 
         /// We build up enough information about the TypeScript namespace hierarchy to
         /// be able to resolve scope lookups and property accesses for TypeScript enum
@@ -5242,8 +5306,13 @@ fn NewParser_(
         will_wrap_module_in_try_catch_for_using: bool = false,
 
         const RecentlyVisitedTSNamespace = struct {
-            ref: Ref = Ref.None,
-            data: ?*js_ast.TSNamespaceMemberMap = null,
+            expr: Expr.Data = Expr.empty.data,
+            map: ?*js_ast.TSNamespaceMemberMap = null,
+
+            const ExpressionData = union(enum) {
+                ref: Ref,
+                ptr: *E.Dot,
+            };
         };
 
         /// use this instead of checking p.source.index
@@ -6063,16 +6132,17 @@ fn NewParser_(
                                         p.symbols.items[ref.inner_index].original_name,
                                     ),
 
-                                    .namespace => |data| {
-                                        p.ts_namespace = .{
-                                            .ref = ref,
-                                            .data = data,
-                                        };
-                                        return p.newExpr(E.Dot{
+                                    .namespace => |map| {
+                                        const expr = p.newExpr(E.Dot{
                                             .target = p.newExpr(E.Identifier.init(ns_alias.namespace_ref), loc),
                                             .name = ns_alias.alias,
                                             .name_loc = loc,
                                         }, loc);
+                                        p.ts_namespace = .{
+                                            .expr = expr.data,
+                                            .map = map,
+                                        };
+                                        return expr;
                                     },
 
                                     else => {},
@@ -6110,15 +6180,18 @@ fn NewParser_(
                             p.symbols.items[ref.inner_index].original_name,
                         ),
 
-                        .namespace => |data| {
-                            p.ts_namespace = .{
-                                .ref = ref,
-                                .data = data,
-                            };
-                            return .{
+                        .namespace => |map| {
+                            const expr: Expr = .{
                                 .data = .{ .e_identifier = ident },
                                 .loc = loc,
                             };
+
+                            p.ts_namespace = .{
+                                .expr = expr.data,
+                                .map = map,
+                            };
+
+                            return expr;
                         },
 
                         else => {},
@@ -6130,11 +6203,19 @@ fn NewParser_(
                     const name = p.symbols.items[ref.innerIndex()].original_name;
 
                     p.recordUsage(ns_ref);
-                    return p.newExpr(E.Dot{
+                    const prop = p.newExpr(E.Dot{
                         .target = p.newExpr(E.Identifier.init(ns_ref), loc),
                         .name = name,
                         .name_loc = loc,
                     }, loc);
+
+                    if (p.ts_namespace.expr == .e_identifier and
+                        p.ts_namespace.expr.e_identifier.ref.eql(ident.ref))
+                    {
+                        p.ts_namespace.expr = prop.data;
+                    }
+
+                    return prop;
                 }
             }
 
@@ -7444,7 +7525,7 @@ fn NewParser_(
                         // "(1, 2)" => "2"
                         // "(sideEffects(), 2)" => "(sideEffects(), 2)"
                         if (p.options.features.minify_syntax) {
-                            e_.left = SideEffects.simpifyUnusedExpr(p, e_.left) orelse return e_.right;
+                            e_.left = SideEffects.simplifyUnusedExpr(p, e_.left) orelse return e_.right;
                         }
                     },
                     .bin_loose_eq => {
@@ -17327,7 +17408,7 @@ fn NewParser_(
                             p.is_control_flow_dead = old;
 
                             if (side_effects.side_effects == .could_have_side_effects) {
-                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.yes, p.allocator);
+                                return Expr.joinWithComma(SideEffects.simplifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.yes, p.allocator);
                             }
 
                             // "(1 ? fn : 2)()" => "fn()"
@@ -17348,7 +17429,7 @@ fn NewParser_(
 
                             // "(a, false) ? b : c" => "a, c"
                             if (side_effects.side_effects == .could_have_side_effects) {
-                                return Expr.joinWithComma(SideEffects.simpifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.no, p.allocator);
+                                return Expr.joinWithComma(SideEffects.simplifyUnusedExpr(p, e_.test_) orelse p.newExpr(E.Missing{}, e_.test_.loc), e_.no, p.allocator);
                             }
 
                             // "(1 ? fn : 2)()" => "fn()"
@@ -18671,7 +18752,7 @@ fn NewParser_(
                                 for (props) |prop| {
                                     const key = prop.key.?.data.e_string.string(p.allocator) catch unreachable;
                                     const visited_value = p.visitExpr(prop.value.?);
-                                    const value = SideEffects.simpifyUnusedExpr(p, visited_value) orelse visited_value;
+                                    const value = SideEffects.simplifyUnusedExpr(p, visited_value) orelse visited_value;
 
                                     // We are doing `module.exports = { ... }`
                                     // lets rewrite it to a series of what will become export assignments
@@ -18817,41 +18898,12 @@ fn NewParser_(
                     }
 
                     // Handle references to namespaces or namespace members
-                    if (id.ref.eql(p.ts_namespace.ref) and
+                    if (p.ts_namespace.expr == .e_identifier and
+                        id.ref.eql(p.ts_namespace.expr.e_identifier.ref) and
                         identifier_opts.assign_target == .none and
                         !identifier_opts.is_delete_target)
                     {
-                        if (p.ts_namespace.data.?.get(name)) |value| {
-                            switch (value.data) {
-                                .enum_number => |num| {
-                                    p.ignoreUsageOfIdentifierInDotChain(target);
-                                    return p.wrapInlinedEnum(
-                                        .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
-                                        name,
-                                    );
-                                },
-
-                                .enum_string => |str| {
-                                    p.ignoreUsageOfIdentifierInDotChain(target);
-                                    return p.wrapInlinedEnum(
-                                        .{ .loc = loc, .data = .{ .e_string = str } },
-                                        name,
-                                    );
-                                },
-
-                                .namespace => |data| {
-                                    p.ts_namespace = .{
-                                        .ref = id.ref,
-                                        .data = data,
-                                    };
-                                    return .{
-                                        .loc = loc,
-                                        .data = .{ .e_identifier = id },
-                                    };
-                                },
-                                else => {},
-                            }
-                        }
+                        return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
                     }
                 },
                 // TODO: e_inlined_enum -> .e_string -> "length" should inline the length
@@ -18913,12 +18965,9 @@ fn NewParser_(
                     // Symbol uses due to a property access off of an imported symbol are tracked
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
-                        const i = p.symbol_uses.getIndex(id.ref).?;
-                        const use = &p.symbol_uses.values()[i];
+                        const use = p.symbol_uses.getPtr(id.ref).?;
                         use.count_estimate -= 1;
-                        if (use.count_estimate == 0) {
-                            // p.symbol_uses.swapRemoveAt(i);
-                        }
+                        // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead
                         const gop = p.import_symbol_property_uses.getOrPutValue(
@@ -18934,7 +18983,73 @@ fn NewParser_(
                         inner_use.value_ptr.count_estimate += 1;
                     }
                 },
+                inline .e_dot, .e_index => |data, tag| {
+                    if (p.ts_namespace.expr == tag and
+                        data == @field(p.ts_namespace.expr, @tagName(tag)) and
+                        identifier_opts.assign_target == .none and
+                        !identifier_opts.is_delete_target)
+                    {
+                        return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
+                    }
+                },
                 else => {},
+            }
+
+            return null;
+        }
+
+        fn maybeRewritePropertyAccessForNamespace(
+            p: *P,
+            name: string,
+            target: *const Expr,
+            loc: logger.Loc,
+            name_loc: logger.Loc,
+        ) ?Expr {
+            if (p.ts_namespace.map.?.get(name)) |value| {
+                switch (value.data) {
+                    .enum_number => |num| {
+                        p.ignoreUsageOfIdentifierInDotChain(target.*);
+                        return p.wrapInlinedEnum(
+                            .{ .loc = loc, .data = .{ .e_number = .{ .value = num } } },
+                            name,
+                        );
+                    },
+
+                    .enum_string => |str| {
+                        p.ignoreUsageOfIdentifierInDotChain(target.*);
+                        return p.wrapInlinedEnum(
+                            .{ .loc = loc, .data = .{ .e_string = str } },
+                            name,
+                        );
+                    },
+
+                    .namespace => |namespace| {
+                        // If this isn't a constant, return a clone of this property access
+                        // but with the namespace member data associated with it so that
+                        // more property accesses off of this property access are recognized.
+                        const expr = if (js_lexer.isIdentifier(name))
+                            p.newExpr(E.Dot{
+                                .target = target.*,
+                                .name = name,
+                                .name_loc = name_loc,
+                            }, loc)
+                        else
+                            p.newExpr(E.Dot{
+                                .target = target.*,
+                                .name = name,
+                                .name_loc = name_loc,
+                            }, loc);
+
+                        p.ts_namespace = .{
+                            .expr = expr.data,
+                            .map = namespace,
+                        };
+
+                        return expr;
+                    },
+
+                    else => {},
+                }
             }
 
             return null;
@@ -19481,7 +19596,7 @@ fn NewParser_(
                     }
 
                     // simplify unused
-                    data.value = SideEffects.simpifyUnusedExpr(p, data.value) orelse return;
+                    data.value = SideEffects.simplifyUnusedExpr(p, data.value) orelse return;
 
                     if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
                         if (is_top_level) {
@@ -19693,7 +19808,7 @@ fn NewParser_(
                                 if (data.no == null or !SideEffects.shouldKeepStmtInDeadControlFlow(p, data.no.?, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
-                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
+                                        if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
                                             stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
                                         }
                                     }
@@ -19707,7 +19822,7 @@ fn NewParser_(
                                 if (!SideEffects.shouldKeepStmtInDeadControlFlow(p, data.yes, p.allocator)) {
                                     if (effects.side_effects == .could_have_side_effects) {
                                         // Keep the condition if it could have side effects (but is still known to be truthy)
-                                        if (SideEffects.simpifyUnusedExpr(p, data.test_)) |test_| {
+                                        if (SideEffects.simplifyUnusedExpr(p, data.test_)) |test_| {
                                             stmts.append(p.s(S.SExpr{ .value = test_ }, test_.loc)) catch unreachable;
                                         }
                                     }

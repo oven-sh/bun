@@ -50,6 +50,8 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -746,6 +748,7 @@ pub fn printMetadata(writer: anytype) !void {
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const cpu_features = CPUFeatures.get();
         if (bun.Environment.isLinux) {
             // TODO: musl
             const version = gnu_get_libc_version() orelse "";
@@ -758,6 +761,11 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         }
+
+        if (!cpu_features.isEmpty()) {
+            try writer.print("CPU: {}\n", .{cpu_features});
+        }
+
         try writer.print("Args: ", .{});
         var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {

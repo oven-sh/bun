@@ -1,6 +1,6 @@
 import { serve, file } from "bun";
 import { join } from "node:path";
-const bigfile = join("...", "...", "web", "encoding", "utf8-encoding-fixture.bin");
+const bigfile = join(import.meta.dir, "../../web/encoding/utf8-encoding-fixture.bin");
 const server = serve({
   port: 0,
   async fetch() {

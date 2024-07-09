@@ -260,8 +260,7 @@ pub const NodeJSFS = struct {
 };
 
 pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-    var module = globalObject.allocator().create(NodeJSFS) catch bun.outOfMemory();
-    module.* = .{};
+    const module = NodeJSFS.new(.{});
 
     const vm = globalObject.bunVM();
     if (vm.standalone_module_graph != null)

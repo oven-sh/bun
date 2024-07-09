@@ -7,6 +7,8 @@
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const builtin = @import("builtin");
 const std = @import("std");
+const bun = @This();
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
@@ -1670,7 +1672,6 @@ pub fn reloadProcess(
     }
 
     Output.Source.Stdio.restore();
-    const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
@@ -2933,15 +2934,15 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
+/// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
-pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
-
-pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
@@ -2950,71 +2951,54 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
-pub inline fn new(comptime T: type, t: T) *T {
-    if (comptime @hasDecl(T, "is_bun.New()")) {
-        // You will get weird memory bugs in debug builds if you use the wrong allocator.
-        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
-    }
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t;
-        return ptr;
+pub inline fn new(comptime T: type, init: T) *T {
+    const ptr = if (heap_breakdown.enabled)
+        heap_breakdown.getZone(T).create(T, init)
+    else ptr: {
+        const ptr = default_allocator.create(T) catch outOfMemory();
+        ptr.* = init;
+        break :ptr ptr;
+    };
+
+    if (comptime Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t;
     return ptr;
 }
 
-pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
-pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+/// Free a globally-allocated a value from `bun.new()`. Using this with
+/// pointers allocated from other means may cause crashes.
+pub inline fn destroy(ptr: anytype) void {
+    const T = std.meta.Child(@TypeOf(ptr));
 
-pub inline fn dupe(comptime T: type, t: *T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t.*;
-        return ptr;
+    if (Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t.*;
-    return ptr;
+    if (heap_breakdown.enabled) {
+        heap_breakdown.getZone(T).destroy(T, ptr);
+    } else {
+        default_allocator.destroy(ptr);
+    }
+}
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
+    return new(T, t.*);
 }
 
 pub fn New(comptime T: type) type {
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-        pub const @"is_bun.New()" = true;
+        pub const ban_standard_library_allocator = true;
 
         pub inline fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
-                allocation_logger("destroy({*})", .{self});
-            }
-
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
-                if (comptime Environment.allow_assert) {
-                    allocation_logger("new() = {*}", .{ptr});
-                }
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                allocation_logger("new() = {*}", .{ptr});
-            }
-            return ptr;
+            return bun.new(T, t);
         }
     };
 }
@@ -3040,28 +3024,23 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     const log = Output.scoped(output_name, true);
 
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-
         pub fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
+            if (Environment.allow_assert) {
                 assert(self.ref_count == 0);
-                allocation_logger("destroy() = {*}", .{self});
             }
 
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub fn ref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -3074,45 +3053,17 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
+            const ptr = bun.new(T, t);
 
-                if (comptime Environment.allow_assert) {
-                    if (ptr.ref_count != 1) {
-                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
-                    }
-                    allocation_logger("new() = {*}", .{ptr});
+            if (Environment.allow_assert) {
+                if (ptr.ref_count != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
                 }
-
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                assert(ptr.ref_count == 1);
-                allocation_logger("new() = {*}", .{ptr});
             }
 
             return ptr;
         }
     };
-}
-
-/// Free a globally-allocated a value.
-///
-/// Must have used `new` to allocate the value.
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroy(t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
-    } else {
-        default_allocator.destroy(t);
-    }
 }
 
 pub fn exitThread() noreturn {

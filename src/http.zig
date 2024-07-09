@@ -2099,11 +2099,17 @@ pub const AsyncHTTP = struct {
 
             const active_requests = AsyncHTTP.active_requests_count.fetchSub(1, .monotonic);
             assert(active_requests > 0);
-        }
+            
+            // if we abort before connecting we can cause stackoverflow by calling drainEvents
+            if(result.fail) |err|{
+                if (err == error.Aborted) return;
+            }
 
-        if (AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
-            http_thread.drainEvents();
+            if (AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
+                http_thread.drainEvents();
+            }
         }
+        
     }
 
     pub fn startAsyncHTTP(task: *Task) void {

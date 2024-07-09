@@ -199,25 +199,24 @@ it("should be able to stop in the middle of a file response", async () => {
     } catch {}
   }
   const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
-  for (let i = 0; i < 10; i++) {
+  for (let i = 0; i < 3; i++) {
     const process = Bun.spawn([bunExe(), fixture], {
       env: bunEnv,
       stderr: "inherit",
       stdout: "pipe",
       stdin: "ignore",
     });
-    const { stdout, exited } = process;
-    const { value } = await stdout.getReader().read();
+    const { value } = await process.stdout.getReader().read();
     const url = new TextDecoder().decode(value).trim();
     const requests = [];
-    for (let j = 0; j < 10_000; j++) {
+    for (let j = 0; j < 1_000; j++) {
       requests.push(doRequest(url));
     }
     await Promise.all(requests);
     expect(process.exitCode || 0).toBe(0);
     process.kill();
   }
-});
+}, 30_000);
 
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();

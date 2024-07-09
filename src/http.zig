@@ -2101,7 +2101,7 @@ pub const AsyncHTTP = struct {
             assert(active_requests > 0);
 
             // if we abort before connecting we can cause stackoverflow by calling drainEvents
-            if(result.fail) |err|{
+            if (result.fail) |err| {
                 if (err == error.AbortedBeforeConnecting) return;
             }
 

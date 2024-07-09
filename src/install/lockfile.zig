@@ -4346,8 +4346,6 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
-            if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
-
             if (bun.glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
@@ -4359,9 +4357,6 @@ pub const Package = extern struct {
                 &.{ input_path, "package.json" },
                 .auto,
             );
-
-            // skip root package.json
-            if (strings.eqlLong(bun.path.dirname(abs_package_json_path, .auto), source.path.name.dir, true)) continue;
 
             const workspace_entry = processWorkspaceName(
                 allocator,
@@ -4484,10 +4479,6 @@ pub const Package = extern struct {
                     },
                 }) |matched_path| {
                     const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
-
-                    // skip root package.json
-                    if (strings.eqlComptime(matched_path, "package.json")) continue;
-
                     debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
                     const abs_package_json_path = Path.joinAbsStringBufZ(

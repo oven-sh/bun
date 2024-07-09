@@ -124,7 +124,7 @@ inline fn formatExtT(comptime T: type, ext: []const T, buf: []T) []const T {
     }
     const bufSize = len + 1;
     buf[0] = CHAR_DOT;
-    @memcpy(buf[1..bufSize], ext);
+    bun.memmove(buf[1..bufSize], ext);
     return buf[0..bufSize];
 }
 
@@ -903,7 +903,7 @@ fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []con
     var baseLen = base.len;
     var baseOrNameExt = base;
     if (baseLen > 0) {
-        @memcpy(buf[0..baseLen], base);
+        bun.memmove(buf[0..baseLen], base);
     } else {
         const formattedExt = formatExtT(T, ext, buf);
         const nameLen = _name.len;
@@ -916,7 +916,7 @@ fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []con
             bun.copy(T, buf[bufOffset..bufSize], formattedExt);
         }
         if (nameLen > 0) {
-            @memcpy(buf[0..nameLen], _name);
+            bun.memmove(buf[0..nameLen], _name);
         }
         if (bufSize > 0) {
             baseOrNameExt = buf[0..bufSize];
@@ -941,7 +941,7 @@ fn _formatT(comptime T: type, pathObject: PathParsed(T), sep: T, buf: []T) []con
         // Use bun.copy because baseOrNameExt and buf overlap.
         bun.copy(T, buf[bufOffset..bufSize], baseOrNameExt);
     }
-    @memcpy(buf[0..dirLen], dirOrRoot);
+    bun.memmove(buf[0..dirLen], dirOrRoot);
     bufSize = dirLen + baseLen;
     if (!dirIsRoot) {
         bufSize += 1;
@@ -1105,7 +1105,7 @@ pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, b
             }
             bufOffset = bufSize;
             bufSize += len;
-            @memcpy(buf2[bufOffset..bufSize], path);
+            bun.memmove(buf2[bufOffset..bufSize], path);
 
             joined = buf2[0..bufSize];
         }
@@ -1146,7 +1146,7 @@ pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: 
             bufOffset = bufSize;
             if (bufSize == 0) {
                 bufSize = len;
-                @memcpy(buf2[0..bufSize], path);
+                bun.memmove(buf2[0..bufSize], path);
 
                 joined = buf2[0..bufSize];
                 firstPart = joined;
@@ -1156,7 +1156,7 @@ pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: 
                 buf2[bufOffset] = CHAR_BACKWARD_SLASH;
                 bufOffset = bufSize;
                 bufSize += len;
-                @memcpy(buf2[bufOffset..bufSize], path);
+                bun.memmove(buf2[bufOffset..bufSize], path);
 
                 joined = buf2[0..bufSize];
             }
@@ -1388,7 +1388,7 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
 
                 bufOffset = bufSize;
                 bufSize += slice.len;
-                @memcpy(buf[bufOffset..bufSize], slice);
+                bun.memmove(buf[bufOffset..bufSize], slice);
 
                 res = buf[0..bufSize];
 
@@ -1548,13 +1548,13 @@ pub fn normalizeWindowsT(comptime T: type, path: []const T, buf: []T) []const T 
                         buf[1] = CHAR_BACKWARD_SLASH;
                         bufOffset = bufSize;
                         bufSize += firstPart.len;
-                        @memcpy(buf[bufOffset..bufSize], firstPart);
+                        bun.memmove(buf[bufOffset..bufSize], firstPart);
                         bufOffset = bufSize;
                         bufSize += 1;
                         buf[bufOffset] = CHAR_BACKWARD_SLASH;
                         bufOffset = bufSize;
                         bufSize += len - last;
-                        @memcpy(buf[bufOffset..bufSize], path[last..len]);
+                        bun.memmove(buf[bufOffset..bufSize], path[last..len]);
                         bufOffset = bufSize;
                         bufSize += 1;
                         buf[bufOffset] = CHAR_BACKWARD_SLASH;
@@ -1572,13 +1572,13 @@ pub fn normalizeWindowsT(comptime T: type, path: []const T, buf: []T) []const T 
                         buf[1] = CHAR_BACKWARD_SLASH;
                         bufOffset = bufSize;
                         bufSize += firstPart.len;
-                        @memcpy(buf[bufOffset..bufSize], firstPart);
+                        bun.memmove(buf[bufOffset..bufSize], firstPart);
                         bufOffset = bufSize;
                         bufSize += 1;
                         buf[bufOffset] = CHAR_BACKWARD_SLASH;
                         bufOffset = bufSize;
                         bufSize += j - last;
-                        @memcpy(buf[bufOffset..bufSize], path[last..j]);
+                        bun.memmove(buf[bufOffset..bufSize], path[last..j]);
 
                         device = buf[0..bufSize];
                         rootEnd = j;
@@ -2126,7 +2126,7 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
         bun.copy(T, buf[bufOffset..bufSize], toOrig[toStart..toOrigLen]);
     }
     if (outLen > 0) {
-        @memcpy(buf[0..outLen], out);
+        bun.memmove(buf[0..outLen], out);
     }
     return MaybeSlice(T){ .result = buf[0..bufSize] };
 }
@@ -2304,7 +2304,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
             // Use bun.copy because toOrig and buf overlap.
             bun.copy(T, buf[bufOffset..bufSize], toOrig[toStart..toEnd]);
         }
-        @memcpy(buf[0..outLen], out);
+        bun.memmove(buf[0..outLen], out);
         return MaybeSlice(T){ .result = buf[0..bufSize] };
     }
 
@@ -2412,7 +2412,7 @@ pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2:
             bun.copy(u8, buf2[bufOffset..bufSize], resolvedPath);
         }
         bufSize = len;
-        @memcpy(buf2[0..bufSize], path);
+        bun.memmove(buf2[0..bufSize], path);
         bufSize += 1;
         buf2[len] = CHAR_FORWARD_SLASH;
         bufSize += resolvedPathLen;
@@ -2514,7 +2514,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                     buf2[0] = '=';
                     bufOffset = bufSize;
                     bufSize += resolvedDeviceLen;
-                    @memcpy(buf2[bufOffset..bufSize], resolvedDevice);
+                    bun.memmove(buf2[bufOffset..bufSize], resolvedDevice);
                     if (T == u16) {
                         break :brk buf2[0..bufSize];
                     } else {
@@ -2533,7 +2533,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                 if (std.process.getenvW(key_w)) |r| {
                     if (T == u16) {
                         bufSize = r.len;
-                        @memcpy(buf2[0..bufSize], r);
+                        bun.memmove(buf2[0..bufSize], r);
                     } else {
                         // Reuse buf2 because it's used for path.
                         bufSize = std.unicode.utf16leToUtf8(buf2, r) catch {
@@ -2570,7 +2570,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                 // Translated from the following JS code:
                 //   path = `${resolvedDevice}\\`;
                 bufSize = resolvedDeviceLen;
-                @memcpy(buf2[0..bufSize], resolvedDevice);
+                bun.memmove(buf2[0..bufSize], resolvedDevice);
                 bufOffset = bufSize;
                 bufSize += 1;
                 buf2[bufOffset] = CHAR_BACKWARD_SLASH;
@@ -2641,14 +2641,14 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                             tmpBuf[1] = CHAR_BACKWARD_SLASH;
                             bufOffset = bufSize;
                             bufSize += firstPart.len;
-                            @memcpy(tmpBuf[bufOffset..bufSize], firstPart);
+                            bun.memmove(tmpBuf[bufOffset..bufSize], firstPart);
                             bufOffset = bufSize;
                             bufSize += 1;
                             tmpBuf[bufOffset] = CHAR_BACKWARD_SLASH;
                             const slice = path[last..j];
                             bufOffset = bufSize;
                             bufSize += slice.len;
-                            @memcpy(tmpBuf[bufOffset..bufSize], slice);
+                            bun.memmove(tmpBuf[bufOffset..bufSize], slice);
 
                             device = tmpBuf[0..bufSize];
                             rootEnd = j;
@@ -2688,7 +2688,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
                 bufSize = device.len;
                 // Copy device over if it's backed by an anonymous buffer.
                 if (device.ptr != tmpBuf[0..].ptr) {
-                    @memcpy(tmpBuf[0..bufSize], device);
+                    bun.memmove(tmpBuf[0..bufSize], device);
                 }
                 resolvedDevice = tmpBuf[0..bufSize];
                 resolvedDeviceLen = bufSize;
@@ -2712,7 +2712,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
             }
             bufSize = sliceLen;
             if (sliceLen > 0) {
-                @memcpy(buf2[0..bufSize], path[rootEnd..len]);
+                bun.memmove(buf2[0..bufSize], path[rootEnd..len]);
             }
             bufOffset = bufSize;
             bufSize += 1;
@@ -2751,7 +2751,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
         // Use bun.copy because resolvedTail and buf overlap.
         bun.copy(T, buf[bufOffset..bufSize], resolvedTail);
         buf[resolvedDeviceLen] = CHAR_BACKWARD_SLASH;
-        @memcpy(buf[0..resolvedDeviceLen], resolvedDevice);
+        bun.memmove(buf[0..resolvedDeviceLen], resolvedDevice);
         return MaybeSlice(T){ .result = buf[0..bufSize] };
     }
     // Translated from the following JS code:
@@ -2761,7 +2761,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
         bufSize = bufOffset + resolvedTailLen;
         // Use bun.copy because resolvedTail and buf overlap.
         bun.copy(T, buf[bufOffset..bufSize], resolvedTail);
-        @memcpy(buf[0..resolvedDeviceLen], resolvedDevice);
+        bun.memmove(buf[0..resolvedDeviceLen], resolvedDevice);
         return MaybeSlice(T){ .result = buf[0..bufSize] };
     }
     return MaybeSlice(T){ .result = comptime L(T, CHAR_STR_DOT) };

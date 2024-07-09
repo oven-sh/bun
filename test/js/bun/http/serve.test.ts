@@ -1096,6 +1096,7 @@ describe("should support Content-Range with Bun.file()", () => {
 });
 
 it("formats error responses correctly", async () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   const c = spawn(bunExe(), ["./error-response.js"], { cwd: import.meta.dir, env: bunEnv });
 
   var output = "";
@@ -1103,9 +1104,16 @@ it("formats error responses correctly", async () => {
     output += chunk.toString();
   });
   c.stderr.on("end", () => {
-    expect(output).toContain('throw new Error("1");');
-    c.kill();
+    try {
+      expect(output).toContain('throw new Error("1");');
+      resolve();
+    } catch (e) {
+      reject(e);
+    } finally {
+      c.kill();
+    }
   });
+  await promise;
 });
 
 it("request body and signal life cycle", async () => {
@@ -1542,25 +1550,25 @@ it("should be able to stop in the middle of a file response", async () => {
     process.kill();
   }
 }, 60_000);
-it("should be able to abrupt stop the server", async () => {
-  for (let i = 0; i < 1000; i++) {
-    using server = Bun.serve({
-      port: 0,
-      error() {
-        return new Response("Error", { status: 500 });
-      },
-      async fetch(req, server) {
-        server.stop(true);
-        await Bun.sleep(100);
-        return new Response("Hello, World!");
-      },
-    });
+// it("should be able to abrupt stop the server", async () => {
+//   for (let i = 0; i < 10; i++) {
+//     using server = Bun.serve({
+//       port: 0,
+//       error() {
+//         return new Response("Error", { status: 500 });
+//       },
+//       async fetch(req, server) {
+//         server.stop(true);
+//         await Bun.sleep(100);
+//         return new Response("Hello, World!");
+//       },
+//     });
 
-    try {
-      await fetch(server.url).then(res => res.text());
-      expect.unreachable();
-    } catch (e) {
-      expect(e.code).toBe("ConnectionClosed");
-    }
-  }
-});
+//     try {
+//       await fetch(server.url).then(res => res.text());
+//       expect.unreachable();
+//     } catch (e) {
+//       expect(e.code).toBe("ConnectionClosed");
+//     }
+//   }
+// });

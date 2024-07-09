@@ -1024,9 +1024,9 @@ pub const VirtualMachine = struct {
         return this.bundler.getPackageManager();
     }
 
-    pub fn garbageCollect(this: *const VirtualMachine, sync: bool) JSValue {
+    pub fn garbageCollect(this: *const VirtualMachine, sync: bool, mimalloc_force: bool) JSValue {
         @setCold(true);
-        Global.mimalloc_cleanup(false);
+        Global.mimalloc_cleanup(mimalloc_force);
         if (sync)
             return this.global.vm().runGC(true);
 
@@ -1036,7 +1036,7 @@ pub const VirtualMachine = struct {
 
     pub inline fn autoGarbageCollect(this: *const VirtualMachine) void {
         if (this.aggressive_garbage_collection != .none) {
-            _ = this.garbageCollect(this.aggressive_garbage_collection == .aggressive);
+            _ = this.garbageCollect(this.aggressive_garbage_collection == .aggressive, false);
         }
     }
 

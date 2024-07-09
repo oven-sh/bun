@@ -112,15 +112,17 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
 
       super((res, rej) => {
         resolve = (code, stdout, stderr) => {
-          const out = new ShellOutput(stdout, stderr, code);
+          let out = new ShellOutput(stdout, stderr, code);
           if (this.#throws && code !== 0) {
             potentialError!.initialize(out, code);
             rej(potentialError);
+            out = undefined;
           } else {
             // Set to undefined to hint to the GC that this is unused so it can
             // potentially GC it earlier
             potentialError = undefined;
             res(out);
+            out = undefined;
           }
         };
         reject = (code, stdout, stderr) => {
@@ -164,7 +166,7 @@ export function createBunShellTemplateFunction(createShellInterpreter, createPar
         let interp = createShellInterpreter(this.#resolve, this.#reject, this.#args);
         this.#args = undefined;
         interp.run();
-        interp = undefined;
+        // process.nextTick(() => interp.run());
       }
     }
 

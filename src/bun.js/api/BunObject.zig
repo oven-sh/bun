@@ -1065,9 +1065,9 @@ pub fn generateHeapSnapshot(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame
 }
 
 pub fn runGC(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-    const arguments_ = callframe.arguments(1);
+    const arguments_ = callframe.arguments(2);
     const arguments = arguments_.slice();
-    return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean());
+    return globalObject.bunVM().garbageCollect(arguments.len > 0 and arguments[0].isBoolean() and arguments[0].toBoolean(), arguments.len > 1 and arguments[1].isBoolean() and arguments[1].toBoolean());
 }
 pub fn shrink(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
     globalObject.vm().shrinkFootprint();

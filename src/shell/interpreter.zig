@@ -1709,6 +1709,7 @@ pub const Interpreter = struct {
             this.root_shell._buffered_stdout.owned.deinitWithAllocator(bun.default_allocator);
         }
         this.this_jsvalue = .zero;
+        this.args.deinit();
         this.allocator.destroy(this);
     }
 

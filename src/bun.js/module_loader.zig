@@ -893,12 +893,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = .{
-                    .task = JSC.Task.init(this),
-                    .auto_delete = true,
-                };
-                this.vm().enqueueTaskConcurrent(concurrent_task);
+                this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn onPoll(this: *Queue) void {

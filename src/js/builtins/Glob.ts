@@ -13,5 +13,9 @@ export function scan(this: Glob, opts) {
 }
 
 export function scanSync(this: Glob, opts) {
-  return this.$resolveSync(opts) || [];
+  const arr = this.$resolveSync(opts) || [];
+  function* iter() {
+    yield* arr;
+  }
+  return iter();
 }

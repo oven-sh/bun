@@ -3137,7 +3137,7 @@ pub const HTTPClientResult = struct {
     }
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
-        return if (this.fail) |e| e == error.Aborted else false;
+        return if (this.fail) |e| (e == error.Aborted or e == error.AbortedBeforeConnecting) else false;
     }
 
     pub const Callback = struct {

@@ -871,14 +871,12 @@ pub const Fetch = struct {
             }
 
             this.check_server_identity.deinit();
-           
-            if(this.getSignal()) |signal| {
+
+            if (this.getSignal()) |signal| {
                 this.signal.deinit();
                 signal.detach(this);
             }
         }
-
-
 
         fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
@@ -897,7 +895,7 @@ pub const Fetch = struct {
         }
 
         fn getSignal(this: *FetchTasklet) ?*JSC.WebCore.AbortSignal {
-            if(this.signal.get()) |signal_js| {
+            if (this.signal.get()) |signal_js| {
                 return signal_js.as(JSC.WebCore.AbortSignal);
             }
             return null;

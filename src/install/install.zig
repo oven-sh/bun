@@ -95,8 +95,8 @@ pub fn initializeStore() void {
     }
 
     initialized_store = true;
-    JSAst.Expr.Data.Store.create(default_allocator);
-    JSAst.Stmt.Data.Store.create(default_allocator);
+    JSAst.Expr.Data.Store.create();
+    JSAst.Stmt.Data.Store.create();
 }
 
 /// The default store we use pre-allocates around 16 MB of memory per thread
@@ -2777,7 +2777,7 @@ pub const PackageManager = struct {
             if (comptime opts.init_reset_store)
                 initializeStore();
 
-            const json_result = json_parser.ParsePackageJSONUTF8WithOpts(
+            const json = json_parser.ParsePackageJSONUTF8WithOpts(
                 &source,
                 log,
                 allocator,
@@ -2788,12 +2788,13 @@ pub const PackageManager = struct {
                     .always_decode_escape_sequences = opts.always_decode_escape_sequences,
                     .guess_indentation = opts.guess_indentation,
                 },
-            );
-
-            const json = json_result catch |err| return .{ .parse_err = err };
+            ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
+                return .{ .parse_err = err };
+            };
 
             entry.value_ptr.* = .{
-                .root = json.root.deepClone(allocator) catch bun.outOfMemory(),
+                .root = json.root.deepClone(bun.default_allocator) catch bun.outOfMemory(),
                 .source = source,
                 .indentation = json.indentation,
             };

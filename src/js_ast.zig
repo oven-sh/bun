@@ -60,6 +60,8 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
     const backing_allocator = bun.default_allocator;
 
+    const log = Output.scoped(.Store, false);
+
     return struct {
         const Store = @This();
 
@@ -100,6 +102,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn init() *Store {
+            log("Store.init", .{});
             const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
 
             prealloc.first_block.bytes_used = 0;
@@ -127,6 +130,8 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
+            log("Data Store Reset", .{});
+
             if (Environment.isDebug) {
                 var it: ?*Block = store.firstBlock();
                 while (it) |next| : (it = next.next) {
@@ -3131,9 +3136,7 @@ pub const Stmt = struct {
             pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
             pub threadlocal var disable_reset = false;
 
-            pub fn create(allocator: std.mem.Allocator) void {
-                _ = allocator; // autofix
-
+            pub fn create() void {
                 if (instance != null or memory_allocator != null) {
                     return;
                 }
@@ -5936,9 +5939,7 @@ pub const Expr = struct {
             pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
             pub threadlocal var disable_reset = false;
 
-            pub fn create(allocator: std.mem.Allocator) void {
-                _ = allocator; // autofix
-
+            pub fn create() void {
                 if (instance != null or memory_allocator != null) {
                     return;
                 }

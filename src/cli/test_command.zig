@@ -787,8 +787,8 @@ pub const TestCommand = struct {
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var vm = try JSC.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,

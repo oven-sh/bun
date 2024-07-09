@@ -751,7 +751,7 @@ pub const Fetch = struct {
         /// We always clone url and proxy (if informed)
         url_proxy_buffer: []const u8 = "",
 
-        signal: ?*JSC.WebCore.AbortSignal = null,
+        signal: JSC.Strong = .{},
         signals: http.Signals = .{},
         signal_store: http.Signals.Store = .{},
         has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
@@ -871,12 +871,14 @@ pub const Fetch = struct {
             }
 
             this.check_server_identity.deinit();
-
-            if (this.signal) |signal| {
-                this.signal = null;
+           
+            if(this.getSignal()) |signal| {
+                this.signal.deinit();
                 signal.detach(this);
             }
         }
+
+
 
         fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
@@ -894,6 +896,12 @@ pub const Fetch = struct {
             bun.default_allocator.destroy(reporter);
         }
 
+        fn getSignal(this: *FetchTasklet) ?*JSC.WebCore.AbortSignal {
+            if(this.signal.get()) |signal_js| {
+                return signal_js.as(JSC.WebCore.AbortSignal);
+            }
+            return null;
+        }
         fn getCurrentResponse(this: *FetchTasklet) ?*Response {
             // we need a body to resolve the promise when buffering
             if (this.native_response) |response| {
@@ -1251,7 +1259,7 @@ pub const Fetch = struct {
             if (this.abort_reason != .zero) {
                 return this.abort_reason;
             }
-            if (this.signal) |signal| {
+            if (this.getSignal()) |signal| {
                 if (signal.aborted()) {
                     this.abort_reason = signal.abortReason();
                     if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
@@ -1657,8 +1665,8 @@ pub const Fetch = struct {
                 fetch_tasklet.http.?.request_body = .{ .sendfile = fetch_tasklet.request_body.Sendfile };
             }
 
-            if (fetch_tasklet.signal) |signal| {
-                fetch_tasklet.signal = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
+            if (fetch_tasklet.getSignal()) |signal| {
+                _ = signal.listen(FetchTasklet, fetch_tasklet, FetchTasklet.abortListener);
             }
             return fetch_tasklet;
         }
@@ -1690,7 +1698,7 @@ pub const Fetch = struct {
             redirect_type: FetchRedirect = FetchRedirect.follow,
             proxy: ?ZigURL = null,
             url_proxy_buffer: []const u8 = "",
-            signal: ?*JSC.WebCore.AbortSignal = null,
+            signal: JSC.Strong = .{},
             globalThis: ?*JSGlobalObject,
             // Custom Hostname
             hostname: ?[]u8 = null,
@@ -1896,7 +1904,7 @@ pub const Fetch = struct {
 
         var proxy: ?ZigURL = null;
         var redirect_type: FetchRedirect = FetchRedirect.follow;
-        var signal: ?*JSC.WebCore.AbortSignal = null;
+        var signal: JSC.Strong = .{};
         // Custom Hostname
         var hostname: ?[]u8 = null;
         var unix_socket_path: ZigString.Slice = ZigString.Slice.empty;
@@ -2083,9 +2091,8 @@ pub const Fetch = struct {
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {
-                            if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
-                                _ = signal_.ref();
-                                signal = signal_;
+                            if (signal_arg.as(JSC.WebCore.AbortSignal)) |_| {
+                                signal = JSC.Strong.create(signal_arg, globalThis);
                             }
                         }
 
@@ -2252,9 +2259,8 @@ pub const Fetch = struct {
                         return .zero;
                     }
 
-                    if (request.signal) |signal_| {
-                        _ = signal_.ref();
-                        signal = signal_;
+                    if (Request.signalGetCached(first_arg)) |signal_arg| {
+                        signal = JSC.Strong.create(signal_arg, globalThis);
                     }
                 }
             }
@@ -2388,9 +2394,8 @@ pub const Fetch = struct {
                         }
 
                         if (options.get(globalThis, "signal")) |signal_arg| {
-                            if (signal_arg.as(JSC.WebCore.AbortSignal)) |signal_| {
-                                _ = signal_.ref();
-                                signal = signal_;
+                            if (signal_arg.as(JSC.WebCore.AbortSignal)) |_| {
+                                signal = JSC.Strong.create(signal_arg, globalThis);
                             }
                         }
 

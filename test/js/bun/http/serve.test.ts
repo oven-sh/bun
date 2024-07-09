@@ -198,7 +198,7 @@ it("should be able to stop in the middle of a file response", async () => {
       expect(response.status).toBe(200);
     } catch {}
   }
-  const fixture = path.join(import.meta.dir, "server-bigfile-send.fixture.js");
+  const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
   for (let i = 0; i < 10; i++) {
     const process = Bun.spawn([bunExe(), fixture], {
       env: bunEnv,

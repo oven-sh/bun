@@ -460,12 +460,9 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    const concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-    concurrent.* = JSC.ConcurrentTask{
-        .task = Task.init(task),
-        .auto_delete = true,
-    };
-    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(concurrent);
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
+        JSC.ConcurrentTask.create(Task.init(task)),
+    );
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {

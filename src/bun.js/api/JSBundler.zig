@@ -683,16 +683,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
-                completion.deref();
-                this.deinit();
-                return;
-            };
-            concurrent_task.* = JSC.ConcurrentTask{
-                .auto_delete = true,
-                .task = this.js_task.task(),
-            };
-            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
         }
 
         pub fn runOnJSThread(this: *Resolve) void {
@@ -839,15 +830,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
-                completion.deref();
-                this.deinit();
-                return;
-            };
-            concurrent_task.* = JSC.ConcurrentTask{
-                .auto_delete = true,
-                .task = this.js_task.task(),
-            };
+            const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 

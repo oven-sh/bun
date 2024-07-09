@@ -52,25 +52,21 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         break :brk .{ largest_size, largest_align };
     };
 
+    const backing_allocator = bun.default_allocator;
+
     return struct {
-        const Allocator = std.mem.Allocator;
         const Store = @This();
 
-        backing_allocator: Allocator,
-        head: *Block,
         current: *Block,
-
         debug_lock: std.debug.SafetyLock = .{},
 
         pub const Block = struct {
-            pub const size = largest_size * count;
+            pub const size = largest_size * count * 2;
             pub const Size = std.math.IntFittingRange(0, size + largest_size);
 
             buffer: [size]u8 align(largest_align) = undefined,
             bytes_used: Size = 0,
-
             next: ?*Block = null,
-            prev: ?*Block = null,
 
             pub fn tryAlloc(block: *Block, comptime T: type) ?*T {
                 const start = std.mem.alignForward(usize, block.bytes_used, @alignOf(T));
@@ -93,16 +89,17 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
             first_block: Block,
         };
 
-        pub fn init(backing_allocator: Allocator) *Store {
+        pub fn firstBlock(store: *Store) *Block {
+            return &@as(*PreAlloc, @fieldParentPtr("metadata", store)).first_block;
+        }
+
+        pub fn init() *Store {
             const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
 
             prealloc.first_block.bytes_used = 0;
-            prealloc.first_block.prev = null;
             prealloc.first_block.next = null;
 
             prealloc.metadata = .{
-                .backing_allocator = backing_allocator,
-                .head = &prealloc.first_block,
                 .current = &prealloc.first_block,
             };
 
@@ -110,30 +107,30 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn deinit(store: *Store) void {
-            var it = store.head.next; // do not free `store.head`
+            var it = store.firstBlock().next; // do not free `store.head`
             while (it) |next| {
                 if (Environment.isDebug)
                     @memset(next.buffer, undefined);
                 it = next.next;
-                store.backing_allocator.destroy(next);
+                backing_allocator.destroy(next);
             }
 
             const prealloc: PreAlloc = @fieldParentPtr("metadata", store);
             bun.assert(&prealloc.first_block == store.head);
+            backing_allocator.destroy(prealloc);
         }
 
         pub fn reset(store: *Store) void {
-            store.current = store.head;
-
             if (Environment.isDebug) {
-                var it: ?*Block = store.head;
+                var it: ?*Block = store.firstBlock();
                 while (it) |next| : (it = next.next) {
                     next.bytes_used = undefined;
                     @memset(&next.buffer, undefined);
                 }
             }
 
-            store.head.bytes_used = 0;
+            store.current = store.firstBlock();
+            store.current.bytes_used = 0;
         }
 
         fn allocate(store: *Store, comptime T: type) *T {
@@ -148,14 +145,12 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
                 return ptr;
 
             // a new block is needed
-            const next_block = if (store.head.next) |next| brk: {
+            const next_block = if (store.current.next) |next| brk: {
                 next.bytes_used = 0;
                 break :brk next;
             } else brk: {
-                // allocate a new block. TODO: investigate more allocation strategies
-                const new_block = store.backing_allocator.create(Block) catch
+                const new_block = backing_allocator.create(Block) catch
                     bun.outOfMemory();
-                new_block.prev = store.current;
                 new_block.next = null;
                 new_block.bytes_used = 0;
                 break :brk new_block;
@@ -3130,11 +3125,13 @@ pub const Stmt = struct {
             pub threadlocal var disable_reset = false;
 
             pub fn create(allocator: std.mem.Allocator) void {
+                _ = allocator; // autofix
+
                 if (instance != null or memory_allocator != null) {
                     return;
                 }
 
-                instance = StoreType.init(allocator);
+                instance = StoreType.init();
             }
 
             pub fn reset() void {
@@ -5933,11 +5930,13 @@ pub const Expr = struct {
             pub threadlocal var disable_reset = false;
 
             pub fn create(allocator: std.mem.Allocator) void {
+                _ = allocator; // autofix
+
                 if (instance != null or memory_allocator != null) {
                     return;
                 }
 
-                instance = StoreType.init(allocator);
+                instance = StoreType.init();
             }
 
             pub fn reset() void {

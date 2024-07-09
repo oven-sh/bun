@@ -43,14 +43,14 @@ pub const ResourceUsage = struct {
     pub fn constructor(
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*Subprocess {
+    ) ?*Subprocess {
         return null;
     }
 
     pub fn getCPUTime(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var cpu = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         const rusage = this.rusage;
 
@@ -67,28 +67,28 @@ pub const ResourceUsage = struct {
     pub fn getMaxRSS(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.maxrss);
     }
 
     pub fn getSharedMemorySize(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.ixrss);
     }
 
     pub fn getSwapCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nswap);
     }
 
     pub fn getOps(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var ops = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ops.put(globalObject, JSC.ZigString.static("in"), JSC.JSValue.jsNumber(this.rusage.inblock));
         ops.put(globalObject, JSC.ZigString.static("out"), JSC.JSValue.jsNumber(this.rusage.oublock));
@@ -98,7 +98,7 @@ pub const ResourceUsage = struct {
     pub fn getMessages(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var msgs = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         msgs.put(globalObject, JSC.ZigString.static("sent"), JSC.JSValue.jsNumber(this.rusage.msgsnd));
         msgs.put(globalObject, JSC.ZigString.static("received"), JSC.JSValue.jsNumber(this.rusage.msgrcv));
@@ -108,14 +108,14 @@ pub const ResourceUsage = struct {
     pub fn getSignalCount(
         this: *ResourceUsage,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSC.JSValue.jsNumber(this.rusage.nsignals);
     }
 
     pub fn getContextSwitches(
         this: *ResourceUsage,
         globalObject: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var ctx = JSC.JSValue.createEmptyObjectWithNullPrototype(globalObject);
         ctx.put(globalObject, JSC.ZigString.static("voluntary"), JSC.JSValue.jsNumber(this.rusage.nvcsw));
         ctx.put(globalObject, JSC.ZigString.static("involuntary"), JSC.JSValue.jsNumber(this.rusage.nivcsw));
@@ -176,7 +176,7 @@ pub const Subprocess = struct {
             };
         }
     };
-    process: *Process = undefined,
+    process: *Process,
     stdin: Writable,
     stdout: Readable,
     stderr: Readable,
@@ -208,6 +208,7 @@ pub const Subprocess = struct {
         is_sync: bool = false,
         killed: bool = false,
         has_stdin_destructor_called: bool = false,
+        finalized: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -226,7 +227,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         globalObject: *JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return this.createResourceUsageObject(globalObject);
     }
 
@@ -278,7 +279,7 @@ pub const Subprocess = struct {
     }
 
     pub fn updateHasPendingActivity(this: *Subprocess) void {
-        @fence(.SeqCst);
+        @fence(.seq_cst);
         if (comptime Environment.isDebug) {
             log("updateHasPendingActivity() {any} -> {any}", .{
                 this.has_pending_activity.raw,
@@ -287,7 +288,7 @@ pub const Subprocess = struct {
         }
         this.has_pending_activity.store(
             this.hasPendingActivityNonThreadsafe(),
-            .Monotonic,
+            .monotonic,
         );
     }
 
@@ -341,8 +342,8 @@ pub const Subprocess = struct {
     }
 
     pub fn hasPendingActivity(this: *Subprocess) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_activity.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_activity.load(.acquire);
     }
 
     pub fn ref(this: *Subprocess) void {
@@ -385,7 +386,7 @@ pub const Subprocess = struct {
     pub fn constructor(
         _: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) ?*Subprocess {
+    ) ?*Subprocess {
         return null;
     }
 
@@ -442,6 +443,13 @@ pub const Subprocess = struct {
                     .capture => Output.panic("TODO: implement capture support in Stdio readable", .{}),
                 };
             }
+
+            if (comptime Environment.isPosix) {
+                if (stdio == .pipe) {
+                    _ = bun.sys.setNonblocking(result.?);
+                }
+            }
+
             return switch (stdio) {
                 .inherit => Readable{ .inherit = {} },
                 .ignore => Readable{ .ignore = {} },
@@ -552,7 +560,7 @@ pub const Subprocess = struct {
     pub fn getStderr(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stderr);
         return this.stderr.toJS(globalThis, this.hasExited());
     }
@@ -560,7 +568,7 @@ pub const Subprocess = struct {
     pub fn getStdin(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stdin);
         return this.stdin.toJS(globalThis, this);
     }
@@ -568,16 +576,44 @@ pub const Subprocess = struct {
     pub fn getStdout(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.observable_getters.insert(.stdout);
         return this.stdout.toJS(globalThis, this.hasExited());
+    }
+
+    pub fn asyncDispose(
+        this: *Subprocess,
+        global: *JSGlobalObject,
+        _: *JSC.CallFrame,
+    ) JSValue {
+        if (this.process.hasExited()) {
+            // rely on GC to clean everything up in this case
+            return .undefined;
+        }
+
+        // unref streams so that this disposed process will not prevent
+        // the process from exiting causing a hang
+        this.stdin.unref();
+        this.stdout.unref();
+        this.stderr.unref();
+
+        switch (this.tryKill(SignalCode.default)) {
+            .result => {},
+            .err => |err| {
+                // Signal 9 should always be fine, but just in case that somehow fails.
+                global.throwValue(err.toJSC(global));
+                return .zero;
+            },
+        }
+
+        return this.getExited(global);
     }
 
     pub fn kill(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         this.this_jsvalue = callframe.this();
 
         var arguments = callframe.arguments(1);
@@ -658,12 +694,12 @@ pub const Subprocess = struct {
         this.process.close();
     }
 
-    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.ref();
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.unref();
         return JSC.JSValue.jsUndefined();
     }
@@ -672,10 +708,16 @@ pub const Subprocess = struct {
         this.flags.has_stdin_destructor_called = true;
         this.weak_file_sink_stdin_ptr = null;
 
-        this.updateHasPendingActivity();
+        if (this.flags.finalized) {
+            // if the process has already been garbage collected, we can free the memory now
+            bun.default_allocator.destroy(this);
+        } else {
+            // otherwise update the pending activity flag
+            this.updateHasPendingActivity();
+        }
     }
 
-    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
                 global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
@@ -700,7 +742,7 @@ pub const Subprocess = struct {
 
     pub fn disconnect(this: *Subprocess) void {
         const ipc_data = this.ipc_data orelse return;
-        ipc_data.socket.close(0, null);
+        ipc_data.socket.close(.normal);
         this.ipc_data = null;
     }
 
@@ -711,21 +753,21 @@ pub const Subprocess = struct {
     pub fn getPid(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSValue.jsNumber(this.pid());
     }
 
     pub fn getKilled(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         return JSValue.jsBoolean(this.hasKilled());
     }
 
     pub fn getStdio(
         this: *Subprocess,
         global: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const array = JSValue.createEmptyArray(global, 0);
         array.push(global, .null);
         array.push(global, .null); // TODO: align this with options
@@ -1140,7 +1182,7 @@ pub const Subprocess = struct {
         // When the stream has closed we need to be notified to prevent a use-after-free
         // We can test for this use-after-free by enabling hot module reloading on a file and then saving it twice
         pub fn onClose(this: *Writable, _: ?bun.sys.Error) void {
-            const process = @fieldParentPtr(Subprocess, "stdin", this);
+            const process: *Subprocess = @fieldParentPtr("stdin", this);
 
             if (process.this_jsvalue != .zero) {
                 if (Subprocess.stdinGetCached(process.this_jsvalue)) |existing_value| {
@@ -1227,6 +1269,13 @@ pub const Subprocess = struct {
                     },
                 }
             }
+
+            if (comptime Environment.isPosix) {
+                if (stdio == .pipe) {
+                    _ = bun.sys.setNonblocking(result.?);
+                }
+            }
+
             switch (stdio) {
                 .dup2 => @panic("TODO dup2 stdio"),
                 .pipe => {
@@ -1306,7 +1355,7 @@ pub const Subprocess = struct {
         }
 
         pub fn finalize(this: *Writable) void {
-            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
             if (subprocess.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
                     JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
@@ -1514,13 +1563,18 @@ pub const Subprocess = struct {
 
         this.process.detach();
         this.process.deref();
-        bun.default_allocator.destroy(this);
+
+        this.flags.finalized = true;
+        if (this.weak_file_sink_stdin_ptr == null) {
+            // if no file sink exists we can free immediately
+            bun.default_allocator.destroy(this);
+        }
     }
 
     pub fn getExited(
         this: *Subprocess,
         globalThis: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         switch (this.process.status) {
             .exited => |exit| {
                 return JSC.JSPromise.resolvedPromiseValue(globalThis, JSValue.jsNumber(exit.code));
@@ -1544,7 +1598,7 @@ pub const Subprocess = struct {
     pub fn getExitCode(
         this: *Subprocess,
         _: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.process.status == .exited) {
             return JSC.JSValue.jsNumber(this.process.status.exited.code);
         }
@@ -1554,10 +1608,10 @@ pub const Subprocess = struct {
     pub fn getSignalCode(
         this: *Subprocess,
         global: *JSGlobalObject,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         if (this.process.signalCode()) |signal| {
             if (signal.name()) |name|
-                return JSC.ZigString.init(name).toValueGC(global)
+                return JSC.ZigString.init(name).toJS(global)
             else
                 return JSC.JSValue.jsNumber(@intFromEnum(signal));
         }
@@ -1674,7 +1728,7 @@ pub const Subprocess = struct {
                     defer arg0.deinit();
 
                     if (argv0 == null) {
-                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, arg0.slice()) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;
@@ -1684,7 +1738,7 @@ pub const Subprocess = struct {
                             return .zero;
                         };
                     } else {
-                        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var path_buf: bun.PathBuffer = undefined;
                         const resolved = Which.which(&path_buf, PATH, cwd, bun.sliceTo(argv0.?, 0)) orelse {
                             globalThis.throwInvalidArguments("Executable not found in $PATH: \"{s}\"", .{arg0.slice()});
                             return .zero;
@@ -1707,7 +1761,6 @@ pub const Subprocess = struct {
                     if (arg.len == 0) {
                         continue;
                     }
-
                     argv.appendAssumeCapacity(arg.toOwnedSliceZ(allocator) catch {
                         globalThis.throwOutOfMemory();
                         return .zero;
@@ -2005,9 +2058,9 @@ pub const Subprocess = struct {
         var posix_ipc_info: if (Environment.isPosix) IPC.Socket else void = undefined;
         if (Environment.isPosix and !is_sync) {
             if (maybe_ipc_mode != null) {
-                posix_ipc_info = .{
+                posix_ipc_info = IPC.Socket.from(
                     // we initialize ext later in the function
-                    .socket = uws.us_socket_from_fd(
+                    uws.us_socket_from_fd(
                         jsc_vm.rareData().spawnIPCContext(jsc_vm),
                         @sizeOf(*Subprocess),
                         spawned.extra_pipes.items[0].cast(),
@@ -2017,7 +2070,7 @@ pub const Subprocess = struct {
                         globalThis.throw("failed to create socket pair", .{});
                         return .zero;
                     },
-                };
+                );
             }
         }
 
@@ -2078,8 +2131,7 @@ pub const Subprocess = struct {
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {
-                const ptr = posix_ipc_info.ext(*Subprocess);
-                ptr.?.* = subprocess;
+                posix_ipc_info.ext(*Subprocess).* = subprocess;
             } else {
                 if (ipc_data.configureServer(
                     Subprocess,
@@ -2201,8 +2253,6 @@ pub const Subprocess = struct {
 
         return sync_value;
     }
-
-    const os = std.os;
 
     pub fn handleIPCMessage(
         this: *Subprocess,

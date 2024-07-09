@@ -8,6 +8,7 @@ const FeatureFlags = @import("./feature_flags.zig");
 const Allocator = mem.Allocator;
 const assert = bun.assert;
 const bun = @import("root").bun;
+const log = bun.Output.scoped(.mimalloc, true);
 
 pub const GlobalArena = struct {
     arena: Arena,
@@ -202,7 +203,7 @@ pub const Arena = struct {
     pub const supports_posix_memalign = true;
 
     fn alignedAlloc(heap: *mimalloc.Heap, len: usize, alignment: usize) ?[*]u8 {
-        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
+        log("Malloc: {d}\n", .{len});
 
         const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_heap_malloc_aligned(heap, len, alignment)

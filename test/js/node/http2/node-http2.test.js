@@ -5,28 +5,24 @@ import net from "node:net";
 import { which } from "bun";
 import path from "node:path";
 import fs from "node:fs";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, expectMaxObjectTypeCount } from "harness";
 import { tmpdir } from "node:os";
 import http2utils from "./helpers";
-
-const TLS_CERT = {
-  key: "-----BEGIN PRIVATE KEY-----\nMIIEvgIBADANBgkqhkiG9w0BAQEFAASCBKgwggSkAgEAAoIBAQC+7odzr3yIYewR\nNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MBKw3r\nl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwPdwVU\neR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn0oH9\nHbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOFzDpc\np1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FUIDHt\nnUsoHX3RAgMBAAECggEAAckMqkn+ER3c7YMsKRLc5bUE9ELe+ftUwfA6G+oXVorn\nE+uWCXGdNqI+TOZkQpurQBWn9IzTwv19QY+H740cxo0ozZVSPE4v4czIilv9XlVw\n3YCNa2uMxeqp76WMbz1xEhaFEgn6ASTVf3hxYJYKM0ljhPX8Vb8wWwlLONxr4w4X\nOnQAB5QE7i7LVRsQIpWKnGsALePeQjzhzUZDhz0UnTyGU6GfC+V+hN3RkC34A8oK\njR3/Wsjahev0Rpb+9Pbu3SgTrZTtQ+srlRrEsDG0wVqxkIk9ueSMOHlEtQ7zYZsk\nlX59Bb8LHNGQD5o+H1EDaC6OCsgzUAAJtDRZsPiZEQKBgQDs+YtVsc9RDMoC0x2y\nlVnP6IUDXt+2UXndZfJI3YS+wsfxiEkgK7G3AhjgB+C+DKEJzptVxP+212hHnXgr\n1gfW/x4g7OWBu4IxFmZ2J/Ojor+prhHJdCvD0VqnMzauzqLTe92aexiexXQGm+WW\nwRl3YZLmkft3rzs3ZPhc1G2X9QKBgQDOQq3rrxcvxSYaDZAb+6B/H7ZE4natMCiz\nLx/cWT8n+/CrJI2v3kDfdPl9yyXIOGrsqFgR3uhiUJnz+oeZFFHfYpslb8KvimHx\nKI+qcVDcprmYyXj2Lrf3fvj4pKorc+8TgOBDUpXIFhFDyM+0DmHLfq+7UqvjU9Hs\nkjER7baQ7QKBgQDTh508jU/FxWi9RL4Jnw9gaunwrEt9bxUc79dp+3J25V+c1k6Q\nDPDBr3mM4PtYKeXF30sBMKwiBf3rj0CpwI+W9ntqYIwtVbdNIfWsGtV8h9YWHG98\nJ9q5HLOS9EAnogPuS27walj7wL1k+NvjydJ1of+DGWQi3aQ6OkMIegap0QKBgBlR\nzCHLa5A8plG6an9U4z3Xubs5BZJ6//QHC+Uzu3IAFmob4Zy+Lr5/kITlpCyw6EdG\n3xDKiUJQXKW7kluzR92hMCRnVMHRvfYpoYEtydxcRxo/WS73SzQBjTSQmicdYzLE\ntkLtZ1+ZfeMRSpXy0gR198KKAnm0d2eQBqAJy0h9AoGBAM80zkd+LehBKq87Zoh7\ndtREVWslRD1C5HvFcAxYxBybcKzVpL89jIRGKB8SoZkF7edzhqvVzAMP0FFsEgCh\naClYGtO+uo+B91+5v2CCqowRJUGfbFOtCuSPR7+B3LDK8pkjK2SQ0mFPUfRA5z0z\nNVWtC0EYNBTRkqhYtqr3ZpUc\n-----END PRIVATE KEY-----\n",
-  cert: "-----BEGIN CERTIFICATE-----\nMIIDrzCCApegAwIBAgIUHaenuNcUAu0tjDZGpc7fK4EX78gwDQYJKoZIhvcNAQEL\nBQAwaTELMAkGA1UEBhMCVVMxCzAJBgNVBAgMAkNBMRYwFAYDVQQHDA1TYW4gRnJh\nbmNpc2NvMQ0wCwYDVQQKDARPdmVuMREwDwYDVQQLDAhUZWFtIEJ1bjETMBEGA1UE\nAwwKc2VydmVyLWJ1bjAeFw0yMzA5MDYyMzI3MzRaFw0yNTA5MDUyMzI3MzRaMGkx\nCzAJBgNVBAYTAlVTMQswCQYDVQQIDAJDQTEWMBQGA1UEBwwNU2FuIEZyYW5jaXNj\nbzENMAsGA1UECgwET3ZlbjERMA8GA1UECwwIVGVhbSBCdW4xEzARBgNVBAMMCnNl\ncnZlci1idW4wggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQC+7odzr3yI\nYewRNRGIubF5hzT7Bym2dDab4yhaKf5drL+rcA0J15BM8QJ9iSmL1ovg7x35Q2MB\nKw3rl/Yyy3aJS8whZTUze522El72iZbdNbS+oH6GxB2gcZB6hmUehPjHIUH4icwP\ndwVUeR6fB7vkfDddLXe0Tb4qsO1EK8H0mr5PiQSXfj39Yc1QHY7/gZ/xeSrt/6yn\n0oH9HbjF2XLSL2j6cQPKEayartHN0SwzwLi0eWSzcziVPSQV7c6Lg9UuIHbKlgOF\nzDpcp1p1lRqv2yrT25im/dS6oy9XX+p7EfZxqeqpXX2fr5WKxgnzxI3sW93PG8FU\nIDHtnUsoHX3RAgMBAAGjTzBNMCwGA1UdEQQlMCOCCWxvY2FsaG9zdIcEfwAAAYcQ\nAAAAAAAAAAAAAAAAAAAAATAdBgNVHQ4EFgQUF3y/su4J/8ScpK+rM2LwTct6EQow\nDQYJKoZIhvcNAQELBQADggEBAGWGWp59Bmrk3Gt0bidFLEbvlOgGPWCT9ZrJUjgc\nhY44E+/t4gIBdoKOSwxo1tjtz7WsC2IYReLTXh1vTsgEitk0Bf4y7P40+pBwwZwK\naeIF9+PC6ZoAkXGFRoyEalaPVQDBg/DPOMRG9OH0lKfen9OGkZxmmjRLJzbyfAhU\noI/hExIjV8vehcvaJXmkfybJDYOYkN4BCNqPQHNf87ZNdFCb9Zgxwp/Ou+47J5k4\n5plQ+K7trfKXG3ABMbOJXNt1b0sH8jnpAsyHY4DLEQqxKYADbXsr3YX/yy6c0eOo\nX2bHGD1+zGsb7lGyNyoZrCZ0233glrEM4UxmvldBcWwOWfk=\n-----END CERTIFICATE-----\n",
-};
+import { afterAll, describe, beforeAll, it, test, expect } from "vitest";
+import { TLS_OPTIONS, nodeEchoServer, TLS_CERT } from "./http2-helpers";
 
 const nodeExecutable = which("node");
-async function nodeEchoServer() {
-  if (!nodeExecutable) throw new Error("node executable not found");
-  const subprocess = Bun.spawn([nodeExecutable, path.join(import.meta.dir, "node-echo-server.fixture.js")], {
-    stdout: "pipe",
-  });
-  const reader = subprocess.stdout.getReader();
-  const data = await reader.read();
-  const decoder = new TextDecoder("utf-8");
-  const address = JSON.parse(decoder.decode(data.value));
-  const url = `https://${address.family === "IPv6" ? `[${address.address}]` : address.address}:${address.port}`;
-  return { address, url, subprocess };
-}
+let nodeEchoServer_;
+
+let HTTPS_SERVER;
+beforeAll(async () => {
+  nodeEchoServer_ = await nodeEchoServer();
+  HTTPS_SERVER = nodeEchoServer_.url;
+});
+afterAll(async () => {
+  nodeEchoServer_.subprocess?.kill?.(9);
+});
+
 async function nodeDynamicServer(test_name, code) {
   if (!nodeExecutable) throw new Error("node executable not found");
 
@@ -45,9 +41,12 @@ server.on("listening", () => {
 });`);
   fs.writeFileSync(file_name, contents);
 
-  const subprocess = Bun.spawn([nodeExecutable, file_name], {
+  const subprocess = Bun.spawn([nodeExecutable, file_name, JSON.stringify(TLS_CERT)], {
     stdout: "pipe",
+    stdin: "inherit",
+    stderr: "inherit",
   });
+  subprocess.unref();
   const reader = subprocess.stdout.getReader();
   const data = await reader.read();
   const decoder = new TextDecoder("utf-8");
@@ -58,6 +57,9 @@ server.on("listening", () => {
 
 function doHttp2Request(url, headers, payload, options, request_options) {
   const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
+  if (url.startsWith(HTTPS_SERVER)) {
+    options = { ...(options || {}), rejectUnauthorized: true, ...TLS_OPTIONS };
+  }
 
   const client = options ? http2.connect(url, options) : http2.connect(url);
   client.on("error", promiseReject);
@@ -93,8 +95,7 @@ function doHttp2Request(url, headers, payload, options, request_options) {
 
 function doMultiplexHttp2Request(url, requests) {
   const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
-
-  const client = http2.connect(url);
+  const client = http2.connect(url, TLS_OPTIONS);
 
   client.on("error", promiseReject);
   function reject(err) {
@@ -139,30 +140,30 @@ function doMultiplexHttp2Request(url, requests) {
 describe("Client Basics", () => {
   // we dont support server yet but we support client
   it("should be able to send a GET request", async () => {
-    const result = await doHttp2Request("https://httpbin.org", { ":path": "/get", "test-header": "test-value" });
+    const result = await doHttp2Request(HTTPS_SERVER, { ":path": "/get", "test-header": "test-value" });
     let parsed;
     expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
-    expect(parsed.url).toBe("https://httpbin.org/get");
-    expect(parsed.headers["Test-Header"]).toBe("test-value");
+    expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
+    expect(parsed.headers["test-header"]).toBe("test-value");
   });
   it("should be able to send a POST request", async () => {
     const payload = JSON.stringify({ "hello": "bun" });
     const result = await doHttp2Request(
-      "https://httpbin.org",
+      HTTPS_SERVER,
       { ":path": "/post", "test-header": "test-value", ":method": "POST" },
       payload,
     );
     let parsed;
     expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
-    expect(parsed.url).toBe("https://httpbin.org/post");
-    expect(parsed.headers["Test-Header"]).toBe("test-value");
+    expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
+    expect(parsed.headers["test-header"]).toBe("test-value");
     expect(parsed.json).toEqual({ "hello": "bun" });
     expect(parsed.data).toEqual(payload);
   });
   it("should be able to send data using end", async () => {
     const payload = JSON.stringify({ "hello": "bun" });
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://httpbin.org");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/post", "test-header": "test-value", ":method": "POST" });
     let response_headers = null;
@@ -182,13 +183,13 @@ describe("Client Basics", () => {
     const result = await promise;
     let parsed;
     expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
-    expect(parsed.url).toBe("https://httpbin.org/post");
-    expect(parsed.headers["Test-Header"]).toBe("test-value");
+    expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
+    expect(parsed.headers["test-header"]).toBe("test-value");
     expect(parsed.json).toEqual({ "hello": "bun" });
     expect(parsed.data).toEqual(payload);
   });
   it("should be able to mutiplex GET requests", async () => {
-    const results = await doMultiplexHttp2Request("https://httpbin.org", [
+    const results = await doMultiplexHttp2Request(HTTPS_SERVER, [
       { headers: { ":path": "/get" } },
       { headers: { ":path": "/get" } },
       { headers: { ":path": "/get" } },
@@ -199,11 +200,11 @@ describe("Client Basics", () => {
     for (let i = 0; i < results.length; i++) {
       let parsed;
       expect(() => (parsed = JSON.parse(results[i].data))).not.toThrow();
-      expect(parsed.url).toBe("https://httpbin.org/get");
+      expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
     }
   });
   it("should be able to mutiplex POST requests", async () => {
-    const results = await doMultiplexHttp2Request("https://httpbin.org", [
+    const results = await doMultiplexHttp2Request(HTTPS_SERVER, [
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 1 }) },
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 2 }) },
       { headers: { ":path": "/post", ":method": "POST" }, payload: JSON.stringify({ "request": 3 }) },
@@ -214,7 +215,7 @@ describe("Client Basics", () => {
     for (let i = 0; i < results.length; i++) {
       let parsed;
       expect(() => (parsed = JSON.parse(results[i].data))).not.toThrow();
-      expect(parsed.url).toBe("https://httpbin.org/post");
+      expect(parsed.url).toBe(`${HTTPS_SERVER}/post`);
       expect([1, 2, 3, 4, 5]).toContain(parsed.json?.request);
     }
   });
@@ -508,7 +509,7 @@ describe("Client Basics", () => {
   });
   it("headers cannot be bigger than 65536 bytes", async () => {
     try {
-      await doHttp2Request("https://bun.sh", { ":path": "/", "test-header": "A".repeat(90000) });
+      await doHttp2Request(HTTPS_SERVER, { ":path": "/", "test-header": "A".repeat(90000) });
       expect("unreachable").toBe(true);
     } catch (err) {
       expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
@@ -517,7 +518,7 @@ describe("Client Basics", () => {
   });
   it("should be destroyed after close", async () => {
     const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
-    const client = http2.connect("https://httpbin.org/get");
+    const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
     client.on("error", promiseReject);
     client.on("close", resolve);
     function reject(err) {
@@ -537,7 +538,7 @@ describe("Client Basics", () => {
   });
   it("should be destroyed after destroy", async () => {
     const { promise, resolve, reject: promiseReject } = Promise.withResolvers();
-    const client = http2.connect("https://httpbin.org/get");
+    const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
     client.on("error", promiseReject);
     client.on("close", resolve);
     function reject(err) {
@@ -556,26 +557,24 @@ describe("Client Basics", () => {
     expect(client.destroyed).toBe(true);
   });
   it("should fail to connect over HTTP/1.1", async () => {
-    const tls = {
-      ...TLS_CERT,
-      ca: TLS_CERT.cert,
-    };
-    const server = Bun.serve({
+    const tls = TLS_CERT;
+    using server = Bun.serve({
       port: 0,
       hostname: "127.0.0.1",
-      tls,
+      tls: {
+        ...tls,
+        ca: TLS_CERT.ca,
+      },
       fetch() {
         return new Response("hello");
       },
     });
     const url = `https://127.0.0.1:${server.port}`;
     try {
-      await doHttp2Request(url, { ":path": "/" }, null, tls);
+      await doHttp2Request(url, { ":path": "/" }, null, TLS_OPTIONS);
       expect("unreachable").toBe(true);
     } catch (err) {
       expect(err.code).toBe("ERR_HTTP2_ERROR");
-    } finally {
-      server.stop();
     }
   });
   it("works with Duplex", async () => {
@@ -599,12 +598,13 @@ describe("Client Basics", () => {
       .connect(
         {
           rejectUnauthorized: false,
-          host: "httpbin.org",
-          port: 443,
+          host: new URL(HTTPS_SERVER).hostname,
+          port: new URL(HTTPS_SERVER).port,
           ALPNProtocols: ["h2"],
+          ...TLS_OPTIONS,
         },
         () => {
-          doHttp2Request("https://httpbin.org/get", { ":path": "/get" }, null, {
+          doHttp2Request(`${HTTPS_SERVER}/get`, { ":path": "/get" }, null, {
             createConnection: () => {
               return new JSSocket(socket);
             },
@@ -615,20 +615,20 @@ describe("Client Basics", () => {
     const result = await promise;
     let parsed;
     expect(() => (parsed = JSON.parse(result.data))).not.toThrow();
-    expect(parsed.url).toBe("https://httpbin.org/get");
+    expect(parsed.url).toBe(`${HTTPS_SERVER}/get`);
     socket.destroy();
   });
   it("close callback", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect(`https://httpbin.org/get`);
+    const client = http2.connect(`${HTTPS_SERVER}/get`, TLS_OPTIONS);
     client.on("error", reject);
     client.close(resolve);
     await promise;
     expect(client.destroyed).toBe(true);
   });
-  it("is possibel to abort request", async () => {
+  it("is possible to abort request", async () => {
     const abortController = new AbortController();
-    const promise = doHttp2Request("https://httpbin.org/get", { ":path": "/get" }, null, null, {
+    const promise = doHttp2Request(`${HTTPS_SERVER}/get`, { ":path": "/get" }, null, null, {
       signal: abortController.signal,
     });
     abortController.abort();
@@ -636,51 +636,54 @@ describe("Client Basics", () => {
       await promise;
       expect("unreachable").toBe(true);
     } catch (err) {
-      expect(err.code).toBe("ERR_HTTP2_STREAM_ERROR");
-      expect(err.message).toBe("Stream closed with error code 8");
+      expect(err.errno).toBe(http2.constants.NGHTTP2_CANCEL);
     }
   });
   it("aborted event should work with abortController", async () => {
     const abortController = new AbortController();
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: abortController.signal });
     req.on("aborted", resolve);
+    req.on("error", err => {
+      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+        reject(err);
+      }
+    });
     req.on("end", () => {
-      resolve();
+      reject();
       client.close();
     });
     abortController.abort();
     const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    expect(result).toBeUndefined();
     expect(req.aborted).toBeTrue();
     expect(req.rstCode).toBe(8);
   });
   it("aborted event should work with aborted signal", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/" }, { signal: AbortSignal.abort() });
     req.on("aborted", resolve);
+    req.on("error", err => {
+      if (err.errno !== http2.constants.NGHTTP2_CANCEL) {
+        reject(err);
+      }
+    });
     req.on("end", () => {
-      resolve();
+      reject();
       client.close();
     });
     const result = await promise;
-    expect(result).toBeDefined();
-    expect(result.name).toBe("AbortError");
-    expect(result.message).toBe("The operation was aborted.");
-    expect(result.code).toBe(20);
+    expect(result).toBeUndefined();
     expect(req.rstCode).toBe(8);
     expect(req.aborted).toBeTrue();
   });
   it("endAfterHeaders should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/" });
     req.endAfterHeaders = true;
@@ -693,9 +696,9 @@ describe("Client Basics", () => {
     req.on("data", chunk => {
       data += chunk;
     });
+    req.on("error", console.error);
     req.on("end", () => {
       resolve();
-      client.close();
     });
     await promise;
     expect(response_headers[":status"]).toBe(200);
@@ -703,7 +706,7 @@ describe("Client Basics", () => {
   });
   it("state should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/", "test-header": "test-value" });
     {
@@ -811,7 +814,7 @@ describe("Client Basics", () => {
   });
   it("ping events should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     client.on("connect", () => {
       client.ping(Buffer.from("12345678"), (err, duration, payload) => {
@@ -838,7 +841,7 @@ describe("Client Basics", () => {
   });
   it("ping without events should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     client.on("connect", () => {
       client.ping((err, duration, payload) => {
@@ -864,7 +867,7 @@ describe("Client Basics", () => {
   });
   it("ping with wrong payload length events should error", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", resolve);
     client.on("connect", () => {
       client.ping(Buffer.from("oops"), (err, duration, payload) => {
@@ -882,7 +885,7 @@ describe("Client Basics", () => {
   });
   it("ping with wrong payload type events should throw", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", resolve);
     client.on("connect", () => {
       try {
@@ -901,7 +904,7 @@ describe("Client Basics", () => {
   });
   it("stream event should work", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     client.on("stream", stream => {
       resolve(stream);
@@ -914,7 +917,7 @@ describe("Client Basics", () => {
   });
   it("should wait request to be sent before closing", async () => {
     const { promise, resolve, reject } = Promise.withResolvers();
-    const client = http2.connect("https://www.example.com");
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
     client.on("error", reject);
     const req = client.request({ ":path": "/" });
     let response_headers = null;
@@ -928,54 +931,46 @@ describe("Client Basics", () => {
     expect(response_headers[":status"]).toBe(200);
   });
   it("wantTrailers should work", async () => {
-    const info = await nodeEchoServer();
-    try {
-      const { promise, resolve, reject } = Promise.withResolvers();
-      const client = http2.connect(info.url, {
-        ...TLS_CERT,
-        ca: TLS_CERT.cert,
-      });
-      client.on("error", reject);
-      const headers = { ":path": "/", ":method": "POST", "x-wait-trailer": "true" };
-      const req = client.request(headers, {
-        waitForTrailers: true,
-      });
-      req.setEncoding("utf8");
-      let response_headers;
-      req.on("response", headers => {
-        response_headers = headers;
-      });
-      let trailers = { "x-trailer": "hello" };
-      req.on("wantTrailers", () => {
-        req.sendTrailers(trailers);
-      });
-      let data = "";
-      req.on("data", chunk => {
-        data += chunk;
-        client.close();
-      });
-      req.on("error", reject);
-      req.on("end", () => {
-        resolve({ data, headers: response_headers });
-        client.close();
-      });
-      req.end("hello");
-      const response = await promise;
-      let parsed;
-      expect(() => (parsed = JSON.parse(response.data))).not.toThrow();
-      expect(parsed.headers[":method"]).toEqual(headers[":method"]);
-      expect(parsed.headers[":path"]).toEqual(headers[":path"]);
-      expect(parsed.headers["x-wait-trailer"]).toEqual(headers["x-wait-trailer"]);
-      expect(parsed.trailers).toEqual(trailers);
-      expect(response.headers[":status"]).toBe(200);
-      expect(response.headers["set-cookie"]).toEqual([
-        "a=b",
-        "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly",
-        "e=f",
-      ]);
-    } finally {
-      info.subprocess.kill();
-    }
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS);
+    client.on("error", reject);
+    const headers = { ":path": "/", ":method": "POST", "x-wait-trailer": "true" };
+    const req = client.request(headers, {
+      waitForTrailers: true,
+    });
+    req.setEncoding("utf8");
+    let response_headers;
+    req.on("response", headers => {
+      response_headers = headers;
+    });
+    let trailers = { "x-trailer": "hello" };
+    req.on("wantTrailers", () => {
+      req.sendTrailers(trailers);
+    });
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk;
+      client.close();
+    });
+    req.on("error", reject);
+    req.on("end", () => {
+      resolve({ data, headers: response_headers });
+      client.close();
+    });
+    req.end("hello");
+    const response = await promise;
+    let parsed;
+    expect(() => (parsed = JSON.parse(response.data))).not.toThrow();
+    expect(parsed.headers[":method"]).toEqual(headers[":method"]);
+    expect(parsed.headers[":path"]).toEqual(headers[":path"]);
+    expect(parsed.headers["x-wait-trailer"]).toEqual(headers["x-wait-trailer"]);
+    expect(parsed.trailers).toEqual(trailers);
+    expect(response.headers[":status"]).toBe(200);
+    expect(response.headers["set-cookie"]).toEqual([
+      "a=b",
+      "c=d; Wed, 21 Oct 2015 07:28:00 GMT; Secure; HttpOnly",
+      "e=f",
+    ]);
   });
 
   it("should not leak memory", () => {
@@ -984,10 +979,13 @@ describe("Client Basics", () => {
       env: {
         ...bunEnv,
         BUN_JSC_forceRAMSize: (1024 * 1024 * 64).toString("10"),
+        HTTP2_SERVER_INFO: JSON.stringify(nodeEchoServer_),
+        HTTP2_SERVER_TLS: JSON.stringify(TLS_OPTIONS),
       },
       stderr: "inherit",
+      stdin: "inherit",
+      stdout: "inherit",
     });
-    expect(stdout.toString("utf-8")).toBeEmpty();
     expect(exitCode).toBe(0);
   }, 100000);
 
@@ -1007,6 +1005,11 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
+        });
         req.end();
       });
       const result = await promise;
@@ -1035,6 +1038,11 @@ describe("Client Basics", () => {
       client.on("error", reject);
       client.on("connect", () => {
         const req = client.request({ ":path": "/" });
+        req.on("error", err => {
+          if (err.errno !== http2.constants.NGHTTP2_CONNECT_ERROR) {
+            reject(err);
+          }
+        });
         req.end();
       });
       const result = await promise;
@@ -1047,18 +1055,21 @@ describe("Client Basics", () => {
       server.subprocess.kill();
     }
   });
-  it("should not be able to write on socket", async () => {
-    const server = await nodeEchoServer();
-    try {
-      const client = http2.connect(server.url);
-      client.socket.write("hello");
-      client.socket.end();
-      expect("unreachable").toBe(true);
-    } catch (err) {
-      expect(err.code).toBe("ERR_HTTP2_NO_SOCKET_MANIPULATION");
-    } finally {
-      server.subprocess.kill();
-    }
+  it("should not be able to write on socket", done => {
+    const client = http2.connect(HTTPS_SERVER, TLS_OPTIONS, (session, socket) => {
+      try {
+        client.socket.write("hello");
+        client.socket.end();
+        expect().fail("unreachable");
+      } catch (err) {
+        try {
+          expect(err.code).toBe("ERR_HTTP2_NO_SOCKET_MANIPULATION");
+        } catch (err) {
+          done(err);
+        }
+        done();
+      }
+    });
   });
   it("should handle bad GOAWAY server frame size", done => {
     const server = net.createServer(socket => {

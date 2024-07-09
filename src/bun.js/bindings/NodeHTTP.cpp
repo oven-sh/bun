@@ -222,7 +222,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
         } else {
-            nameString = String({ nameView.characters8(), nameView.length() });
+            nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
         }
 

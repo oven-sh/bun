@@ -25,17 +25,26 @@ on:
         type: boolean
       no-cache:
         type: boolean
+      bun-version:
+        type: string
+        default: 1.1.7
 
 env:
   # Must specify exact version of LLVM for Windows
-  LLVM_VERSION: 17.0.6
-  BUN_VERSION: 1.1.2
+  LLVM_VERSION: 16.0.6
+  BUN_VERSION: ${{ inputs.bun-version }}
+  BUN_GARBAGE_COLLECTOR_LEVEL: 1
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: 1
+  CI: true
+  USE_LTO: 1
 
 jobs:
   build-submodules:
     name: Build Submodules
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false
@@ -66,14 +75,10 @@ jobs:
           path: bun-deps
           key: bun-${{ inputs.tag }}-deps-${{ steps.hash.outputs.hash }}
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
-        name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
-      - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Clone Submodules
         run: |
@@ -83,12 +88,10 @@ jobs:
         env:
           CPU_TARGET: ${{ inputs.cpu }}
           CCACHE_DIR: ccache
+          USE_LTO: 1
         run: |
           .\scripts\env.ps1 ${{ contains(inputs.tag, '-baseline') && '-Baseline' || '' }}
-          Invoke-WebRequest -Uri "https://www.nasm.us/pub/nasm/releasebuilds/2.16.01/win64/nasm-2.16.01-win64.zip" -OutFile nasm.zip
-          Expand-Archive nasm.zip (mkdir -Force "nasm")
-          $Nasm = (Get-ChildItem "nasm")
-          $env:Path += ";${Nasm}"
+          choco install -y nasm --version=2.16.01
           $env:BUN_DEPS_OUT_DIR = (mkdir -Force "./bun-deps")
           .\scripts\all-dependencies.ps1
       - name: Save Cache
@@ -116,7 +119,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Codegen
         run: |
           ./scripts/cross-compile-codegen.sh win32 x64
@@ -136,6 +139,8 @@ jobs:
     needs: codegen
     runs-on: ${{ inputs.runs-on }}
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false
@@ -144,17 +149,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - if: ${{ !inputs.no-cache }}
         name: Restore Cache
         uses: actions/cache@v4
@@ -172,6 +174,7 @@ jobs:
         env:
           CPU_TARGET: ${{ inputs.cpu }}
           CCACHE_DIR: ccache
+          USE_LTO: 1
         run: |
           # $CANARY_REVISION = if (Test-Path build/.canary_revision) { Get-Content build/.canary_revision } else { "0" }
           $CANARY_REVISION = 0
@@ -181,6 +184,7 @@ jobs:
           cd build
           cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
             -DNO_CODEGEN=1 `
+            -DUSE_LTO=1 `
             -DNO_CONFIGURE_DEPENDS=1 `
             "-DCANARY=${CANARY_REVISION}" `
             -DBUN_CPP_ONLY=1 ${{ contains(inputs.tag, '-baseline') && '-DUSE_BASELINE_BUILD=1' || '' }}
@@ -215,6 +219,8 @@ jobs:
       - build-zig
       - codegen
     steps:
+      - name: Install VS2022 BuildTools 17.9.7
+        run: choco install -y visualstudio2022buildtools --version=117.9.7.0 --params "--add Microsoft.VisualStudio.Component.VC.Tools.x86.x64 --installChannelUri https://aka.ms/vs/17/release/180911598_-255012421/channel"
       - name: Setup Git
         run: |
           git config --global core.autocrlf false
@@ -223,17 +229,14 @@ jobs:
         uses: actions/checkout@v4
         with:
           submodules: recursive
-      - name: Install LLVM
-        uses: KyleMayes/install-llvm-action@8b37482c5a2997a3ab5dbf6561f8109e2eaa7d3b
-        with:
-          version: ${{ env.LLVM_VERSION }}
       - name: Install Ninja
         run: |
           choco install -y ninja
+          choco install -y llvm --version=${{ env.LLVM_VERSION }} --force
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: ${{ env.BUN_VERSION }}
+          bun-version: ${{ inputs.bun-version }}
       - name: Download bun-${{ inputs.tag }}-deps
         uses: actions/download-artifact@v4
         with:
@@ -277,9 +280,10 @@ jobs:
             -DNO_CONFIGURE_DEPENDS=1 `
             "-DCANARY=${CANARY_REVISION}" `
             -DBUN_LINK_ONLY=1 `
+            -DUSE_LTO=1 `
             "-DBUN_DEPS_OUT_DIR=$(Resolve-Path ../bun-deps)" `
             "-DBUN_CPP_ARCHIVE=$(Resolve-Path ../bun-cpp/bun-cpp-objects.a)" `
-            "-DBUN_ZIG_OBJ=$(Resolve-Path ../bun-zig/bun-zig.o)" `
+            "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path ../bun-zig)" `
             ${{ contains(inputs.tag, '-baseline') && '-DUSE_BASELINE_BUILD=1' || '' }}
           if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
           ninja -v
@@ -294,8 +298,6 @@ jobs:
           cp -r build\bun.exe "$Dist\bun.exe"
           cp -r build\bun.pdb "$Dist\bun.pdb"
           Compress-Archive -Force "$Dist" "$Dist.zip"
-          $env:BUN_GARBAGE_COLLECTOR_LEVEL = "1"
-          $env:BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING = "1"
           .\build\bun.exe --print "JSON.stringify(require('bun:internal-for-testing').crash_handler.getFeatureData())" > .\features.json
       - name: Upload bun-${{ inputs.tag }}
         uses: actions/upload-artifact@v4

@@ -1,19 +1,17 @@
-import { describe, it, expect } from "bun:test";
-import { bunExe, bunEnv, gc } from "harness";
+import { describe, expect, it } from "bun:test";
+import crypto from "crypto";
 import { readFileSync } from "fs";
-import { join, resolve } from "path";
+import { bunEnv, bunExe, gc, tls } from "harness";
+import { createServer } from "net";
+import { join } from "path";
 import process from "process";
-
 const TEST_WEBSOCKET_HOST = process.env.TEST_WEBSOCKET_HOST || "wss://ws.postman-echo.com/raw";
 const isWindows = process.platform === "win32";
-const COMMON_CERT = {
-  cert: "-----BEGIN CERTIFICATE-----\nMIIDXTCCAkWgAwIBAgIJAKLdQVPy90jjMA0GCSqGSIb3DQEBCwUAMEUxCzAJBgNV\nBAYTAkFVMRMwEQYDVQQIDApTb21lLVN0YXRlMSEwHwYDVQQKDBhJbnRlcm5ldCBX\naWRnaXRzIFB0eSBMdGQwHhcNMTkwMjAzMTQ0OTM1WhcNMjAwMjAzMTQ0OTM1WjBF\nMQswCQYDVQQGEwJBVTETMBEGA1UECAwKU29tZS1TdGF0ZTEhMB8GA1UECgwYSW50\nZXJuZXQgV2lkZ2l0cyBQdHkgTHRkMIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIB\nCgKCAQEA7i7IIEdICTiSTVx+ma6xHxOtcbd6wGW3nkxlCkJ1UuV8NmY5ovMsGnGD\nhJJtUQ2j5ig5BcJUf3tezqCNW4tKnSOgSISfEAKvpn2BPvaFq3yx2Yjz0ruvcGKp\nDMZBXmB/AAtGyN/UFXzkrcfppmLHJTaBYGG6KnmU43gPkSDy4iw46CJFUOupc51A\nFIz7RsE7mbT1plCM8e75gfqaZSn2k+Wmy+8n1HGyYHhVISRVvPqkS7gVLSVEdTea\nUtKP1Vx/818/HDWk3oIvDVWI9CFH73elNxBkMH5zArSNIBTehdnehyAevjY4RaC/\nkK8rslO3e4EtJ9SnA4swOjCiqAIQEwIDAQABo1AwTjAdBgNVHQ4EFgQUv5rc9Smm\n9c4YnNf3hR49t4rH4yswHwYDVR0jBBgwFoAUv5rc9Smm9c4YnNf3hR49t4rH4ysw\nDAYDVR0TBAUwAwEB/zANBgkqhkiG9w0BAQsFAAOCAQEATcL9CAAXg0u//eYUAlQa\nL+l8yKHS1rsq1sdmx7pvsmfZ2g8ONQGfSF3TkzkI2OOnCBokeqAYuyT8awfdNUtE\nEHOihv4ZzhK2YZVuy0fHX2d4cCFeQpdxno7aN6B37qtsLIRZxkD8PU60Dfu9ea5F\nDDynnD0TUabna6a0iGn77yD8GPhjaJMOz3gMYjQFqsKL252isDVHEDbpVxIzxPmN\nw1+WK8zRNdunAcHikeoKCuAPvlZ83gDQHp07dYdbuZvHwGj0nfxBLc9qt90XsBtC\n4IYR7c/bcLMmKXYf0qoQ4OzngsnPI5M+v9QEHvYWaKVwFY4CTcSNJEwfXw+BAeO5\nOA==\n-----END CERTIFICATE-----",
-  key: "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDuLsggR0gJOJJN\nXH6ZrrEfE61xt3rAZbeeTGUKQnVS5Xw2Zjmi8ywacYOEkm1RDaPmKDkFwlR/e17O\noI1bi0qdI6BIhJ8QAq+mfYE+9oWrfLHZiPPSu69wYqkMxkFeYH8AC0bI39QVfOSt\nx+mmYsclNoFgYboqeZTjeA+RIPLiLDjoIkVQ66lznUAUjPtGwTuZtPWmUIzx7vmB\n+pplKfaT5abL7yfUcbJgeFUhJFW8+qRLuBUtJUR1N5pS0o/VXH/zXz8cNaTegi8N\nVYj0IUfvd6U3EGQwfnMCtI0gFN6F2d6HIB6+NjhFoL+QryuyU7d7gS0n1KcDizA6\nMKKoAhATAgMBAAECggEAd5g/3o1MK20fcP7PhsVDpHIR9faGCVNJto9vcI5cMMqP\n6xS7PgnSDFkRC6EmiLtLn8Z0k2K3YOeGfEP7lorDZVG9KoyE/doLbpK4MfBAwBG1\nj6AHpbmd5tVzQrnNmuDjBBelbDmPWVbD0EqAFI6mphXPMqD/hFJWIz1mu52Kt2s6\n++MkdqLO0ORDNhKmzu6SADQEcJ9Suhcmv8nccMmwCsIQAUrfg3qOyqU4//8QB8ZM\njosO3gMUesihVeuF5XpptFjrAliPgw9uIG0aQkhVbf/17qy0XRi8dkqXj3efxEDp\n1LSqZjBFiqJlFchbz19clwavMF/FhxHpKIhhmkkRSQKBgQD9blaWSg/2AGNhRfpX\nYq+6yKUkUD4jL7pmX1BVca6dXqILWtHl2afWeUorgv2QaK1/MJDH9Gz9Gu58hJb3\nymdeAISwPyHp8euyLIfiXSAi+ibKXkxkl1KQSweBM2oucnLsNne6Iv6QmXPpXtro\nnTMoGQDS7HVRy1on5NQLMPbUBQKBgQDwmN+um8F3CW6ZV1ZljJm7BFAgNyJ7m/5Q\nYUcOO5rFbNsHexStrx/h8jYnpdpIVlxACjh1xIyJ3lOCSAWfBWCS6KpgeO1Y484k\nEYhGjoUsKNQia8UWVt+uWnwjVSDhQjy5/pSH9xyFrUfDg8JnSlhsy0oC0C/PBjxn\nhxmADSLnNwKBgQD2A51USVMTKC9Q50BsgeU6+bmt9aNMPvHAnPf76d5q78l4IlKt\nwMs33QgOExuYirUZSgjRwknmrbUi9QckRbxwOSqVeMOwOWLm1GmYaXRf39u2CTI5\nV9gTMHJ5jnKd4gYDnaA99eiOcBhgS+9PbgKSAyuUlWwR2ciL/4uDzaVeDQKBgDym\nvRSeTRn99bSQMMZuuD5N6wkD/RxeCbEnpKrw2aZVN63eGCtkj0v9LCu4gptjseOu\n7+a4Qplqw3B/SXN5/otqPbEOKv8Shl/PT6RBv06PiFKZClkEU2T3iH27sws2EGru\nw3C3GaiVMxcVewdg1YOvh5vH8ZVlxApxIzuFlDvnAoGAN5w+gukxd5QnP/7hcLDZ\nF+vesAykJX71AuqFXB4Wh/qFY92CSm7ImexWA/L9z461+NKeJwb64Nc53z59oA10\n/3o2OcIe44kddZXQVP6KTZBd7ySVhbtOiK3/pCy+BQRsrC7d71W914DxNWadwZ+a\njtwwKjDzmPwdIXDSQarCx0U=\n-----END PRIVATE KEY-----",
-  passphrase: "1234",
-};
+const COMMON_CERT = { ...tls };
+
 describe("WebSocket", () => {
   it("should connect", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -39,7 +37,6 @@ describe("WebSocket", () => {
     });
     ws.close();
     await closed;
-    server.stop(true);
     Bun.gc(true);
   });
 
@@ -59,7 +56,7 @@ describe("WebSocket", () => {
   });
 
   it("should connect many times over https", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -76,7 +73,7 @@ describe("WebSocket", () => {
         open(ws) {},
       },
     });
-    try {
+    {
       for (let i = 0; i < 1000; i++) {
         const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
         await new Promise((resolve, reject) => {
@@ -91,13 +88,11 @@ describe("WebSocket", () => {
         await closed;
       }
       Bun.gc(true);
-    } finally {
-      server.stop(true);
     }
   });
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -119,7 +114,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -141,8 +136,8 @@ describe("WebSocket", () => {
         const client = WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
 
       {
@@ -150,16 +145,14 @@ describe("WebSocket", () => {
         const client = WebSocket(url, { tls: { rejectUnauthorized: true } });
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
-    } finally {
-      server.stop(true);
     }
   });
 
   it("rejectUnauthorized should NOT reject self-sign certs when false", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: COMMON_CERT,
       fetch(req, server) {
@@ -181,7 +174,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -206,8 +199,6 @@ describe("WebSocket", () => {
         expect(["Hello from Bun!", "Hello from client!"]).toEqual(messages);
         expect(result.code).toBe(1000);
       }
-    } finally {
-      server.stop(true);
     }
   });
 
@@ -218,7 +209,7 @@ describe("WebSocket", () => {
       passphrase: "123123123",
     };
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       tls: UNTRUSTED_CERT,
       fetch(req, server) {
@@ -240,7 +231,7 @@ describe("WebSocket", () => {
       },
     });
 
-    try {
+    {
       function testClient(client) {
         const { promise, resolve, reject } = Promise.withResolvers();
         let messages = [];
@@ -261,11 +252,9 @@ describe("WebSocket", () => {
         const client = WebSocket(url);
         const { result, messages } = await testClient(client);
         expect(["Hello from Bun!", "Hello from client!"]).not.toEqual(messages);
-        expect(result.code).toBe(1006);
-        expect(result.reason).toBe("Failed to connect");
+        expect(result.code).toBe(1015);
+        expect(result.reason).toBe("TLS handshake failed");
       }
-    } finally {
-      server.stop(true);
     }
   });
 
@@ -464,40 +453,204 @@ describe("WebSocket", () => {
     gc(true);
   });
 
-  it("should report failing websocket construction to onerror/onclose", async () => {
-    let did_report_error = false;
-    let did_report_close = false;
+  // If this test fails locally, check that ATT DNS error assist is disabled
+  // or, make sure that your DNS server is pointed to a DNS server that does not mitm your requests
+  it("should report failing websocket connection in onerror and onclose for DNS resolution error", async () => {
+    const url = `ws://aposdkpaosdkpasodk.com`;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
 
-    try {
-      const url = `wss://some-random-domain.smth`;
-      await new Promise((resolve, reject) => {
-        const ws = new WebSocket(url, {});
-        let timeout = setTimeout(() => {
-          reject.call();
-        }, 500);
+    const ws = new WebSocket(url, {});
+    ws.onopen = () => reject(new Error("should not be called"));
+    ws.onmessage = () => reject(new Error("should not be called"));
+    ws.onerror = () => {
+      resolve();
+    };
+    ws.onclose = () => resolve2();
+    await Promise.all([promise, promise2]);
+  });
 
-        ws.onclose = () => {
-          did_report_close = true;
-          clearTimeout(timeout);
-          resolve.call();
-        };
+  // We want to test that the `onConnectError` callback gets called.
+  it("should report failing websocket connection in onerror and onclose for connection refused", async () => {
+    const url = `ws://localhost:65412`;
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();
 
-        ws.onerror = () => {
-          did_report_error = true;
-        };
+    const ws = new WebSocket(url, {});
+    ws.onopen = () => reject(new Error("should not be called"));
+    ws.onmessage = () => reject(new Error("should not be called"));
+    ws.onerror = () => {
+      resolve();
+    };
+    ws.onclose = () => resolve2();
+    await Promise.all([promise, promise2]);
+  });
+
+  it("instances should be finalized when GC'd", async () => {
+    const { expect } = require("bun:test");
+
+    using server = Bun.serve({
+      port: 0,
+      fetch(req, server) {
+        return server.upgrade(req);
+      },
+      websocket: {
+        open() {},
+        data() {},
+        message() {},
+        drain() {},
+      },
+    });
+
+    function openAndCloseWS() {
+      const { promise, resolve } = Promise.withResolvers();
+      const sock = new WebSocket(server.url.href.replace("http", "ws"));
+      sock.addEventListener("open", _ => {
+        sock.addEventListener("close", () => {
+          resolve();
+        });
+        sock.close();
       });
-    } finally {
+
+      return promise;
     }
 
-    expect(did_report_error).toBe(true);
-    expect(did_report_close).toBe(true);
+    function getWebSocketCount() {
+      Bun.gc(true);
+      const objectTypeCounts = require("bun:jsc").heapStats().objectTypeCounts || {
+        WebSocket: 0,
+      };
+      return objectTypeCounts.WebSocket || 0;
+    }
+    let current_websocket_count = 0;
+    let initial_websocket_count = 0;
+
+    for (let i = 0; i < 1000; i++) {
+      await openAndCloseWS();
+      if (i % 100 === 0) {
+        current_websocket_count = getWebSocketCount();
+        // if we have more than 20 websockets open, we have a problem
+        expect(current_websocket_count).toBeLessThanOrEqual(20);
+        if (initial_websocket_count === 0) {
+          initial_websocket_count = current_websocket_count;
+        }
+      }
+    }
+    // wait next tick to run the last time
+    await Bun.sleep(1);
+    current_websocket_count = getWebSocketCount();
+    // expect that current and initial websocket be close to the same (normaly 1 or 2 difference)
+    expect(Math.abs(current_websocket_count - initial_websocket_count)).toBeLessThanOrEqual(5);
+  });
+
+  it("should be able to send big messages", async () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    const ws = new WebSocket("https://echo.websocket.org/");
+
+    const payload = crypto.randomBytes(1024 * 16);
+    const iterations = 10;
+    const expected = payload.byteLength * iterations;
+
+    let total_received = 0;
+    const timeout = setTimeout(() => {
+      ws.close();
+    }, 4000);
+    ws.addEventListener("close", e => {
+      clearTimeout(timeout);
+      resolve(total_received);
+    });
+
+    ws.addEventListener("message", e => {
+      if (typeof e.data === "string") {
+        return;
+      }
+      const received = e.data.byteLength || e.data.size || 0;
+      total_received += received;
+      if (total_received >= expected) {
+        ws.close();
+      }
+    });
+    ws.addEventListener("error", reject);
+    ws.addEventListener("open", () => {
+      for (let i = 0; i < 10; i++) {
+        ws.send(payload);
+      }
+    });
+
+    expect(await promise).toBe(expected);
+  });
+
+  it("headers should keep the original case", async () => {
+    const receivedHeaders = [];
+    const { promise, resolve } = Promise.withResolvers();
+    const server = createServer(socket => {
+      socket.on("data", data => {
+        const request = data.toString();
+        const headers = request.split("\r\n").slice(1);
+
+        for (const header of headers) {
+          const [key, value] = header.split(": ");
+          if (key) {
+            receivedHeaders.push(key);
+          }
+        }
+
+        const response = "HTTP/1.1 403 Forbidden\r\nContent-Type: text/plain\r\nContent-Length: 0\r\n\r\n";
+
+        socket.write(response);
+        socket.end();
+      });
+
+      socket.on("error", err => {
+        console.error("Socket error:", err);
+      });
+    });
+
+    server.listen(0, () => {
+      const address = server.address();
+      const ws = new WebSocket(`ws://localhost:${address.port}`, {
+        headers: {
+          Origin: "https://bun.sh",
+          MyCustomHeader: "Hello, World!",
+          Custom_Header_2: "Hello, World!",
+          "Custom-Header-3": "Hello, World!",
+          mycustomheader4: "Hello, World!",
+        },
+      });
+
+      ws.onclose = () => {
+        resolve();
+      };
+    });
+
+    try {
+      await promise;
+
+      expect(receivedHeaders).toContain("MyCustomHeader");
+      expect(receivedHeaders).toContain("Custom_Header_2");
+      expect(receivedHeaders).toContain("Custom-Header-3");
+      expect(receivedHeaders).toContain("Origin");
+      expect(receivedHeaders).toContain("Sec-WebSocket-Key");
+      expect(receivedHeaders).toContain("Sec-WebSocket-Version");
+      expect(receivedHeaders).toContain("Upgrade");
+      expect(receivedHeaders).toContain("Connection");
+      expect(receivedHeaders).toContain("Host");
+      expect(receivedHeaders).toContain("mycustomheader4");
+
+      for (const header of receivedHeaders) {
+        if (header === "mycustomheader4") continue;
+        expect(header).not.toBe(header.toLowerCase());
+      }
+    } finally {
+      server.close();
+    }
   });
 });
 
 describe("websocket in subprocess", () => {
   it("should exit", async () => {
     let messageReceived = false;
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -527,7 +680,6 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
-    server.stop(true);
   });
 
   it("should exit after killed", async () => {
@@ -541,11 +693,9 @@ describe("websocket in subprocess", () => {
 
     subprocess.kill();
 
-    if (isWindows) {
-      expect(await subprocess.exited).toBe(1);
-    } else {
-      expect(await subprocess.exited).toBe(143);
-    }
+    expect(await subprocess.exited).toBe(143); // 128 + 15 (SIGTERM)
+    expect(subprocess.exitCode).toBe(null);
+    expect(subprocess.signalCode).toBe("SIGTERM");
   });
 
   it("should exit with invalid url", async () => {
@@ -563,7 +713,8 @@ describe("websocket in subprocess", () => {
   it("should exit after timeout", async () => {
     let messageReceived = false;
     let start = 0;
-    const server = Bun.serve({
+    let end = 0;
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         if (server.upgrade(req)) {
@@ -579,7 +730,7 @@ describe("websocket in subprocess", () => {
         },
         message(ws, message) {
           messageReceived = true;
-          expect(performance.now() - start >= 300).toBe(true);
+          end = performance.now();
           ws.close();
         },
         close(ws) {},
@@ -595,7 +746,7 @@ describe("websocket in subprocess", () => {
 
     expect(await subprocess.exited).toBe(0);
     expect(messageReceived).toBe(true);
-    server.stop(true);
+    expect(Math.ceil(end - start)).toBeGreaterThanOrEqual(290);
   });
 
   it("should exit after server stop and 0 messages", async () => {

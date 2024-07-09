@@ -34,6 +34,7 @@
 #include <wtf/persistence/PersistentCoders.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/UTF8Conversion.h>
+#include "headers-handwritten.h"
 
 namespace WebCore {
 
@@ -549,7 +550,7 @@ const uint8_t* DataSegment::data() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> const uint8_t* { return data->data(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.data()); },
+        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.span().data()); },
         [](const Provider& provider) -> const uint8_t* { return provider.data(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -572,7 +573,7 @@ size_t DataSegment::size() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> size_t { return data->size(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> size_t { return data.size(); },
+        [](const FileSystem::MappedFileData& data) -> size_t { return data.span().size(); },
         [](const Provider& provider) -> size_t { return provider.size(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -609,7 +610,7 @@ void SharedBufferBuilder::initialize(Ref<FragmentedSharedBuffer>&& buffer)
 
 RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
 {
-    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate(nullptr, 0);
+    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate({});
 }
 
 Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
@@ -625,7 +626,7 @@ Ref<SharedBuffer> SharedBufferBuilder::takeAsContiguous()
 RefPtr<ArrayBuffer> SharedBufferBuilder::takeAsArrayBuffer()
 {
     if (!m_buffer)
-        return ArrayBuffer::tryCreate(nullptr, 0);
+        return ArrayBuffer::tryCreate({});
     return take()->tryCreateArrayBuffer();
 }
 
@@ -667,22 +668,15 @@ RefPtr<SharedBuffer> utf8Buffer(const String& string)
     }
 
     Vector<uint8_t> buffer(length * 3);
-
-    // Convert to runs of 8-bit characters.
-    char* p = reinterpret_cast<char*>(buffer.data());
+    WTF::Unicode::ConversionResult<char8_t> result;
     if (length) {
-        if (string.is8Bit()) {
-            const LChar* d = string.characters8();
-            if (!WTF::Unicode::convertLatin1ToUTF8(&d, d + length, &p, p + buffer.size()))
-                return nullptr;
-        } else {
-            const UChar* d = string.characters16();
-            if (WTF::Unicode::convertUTF16ToUTF8(&d, d + length, &p, p + buffer.size()) != WTF::Unicode::ConversionResult::Success)
-                return nullptr;
-        }
+        if (string.is8Bit())
+            result = WTF::Unicode::convert(string.span8(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
+        else
+            result = WTF::Unicode::convert(string.span16(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
     }
 
-    buffer.shrink(p - reinterpret_cast<char*>(buffer.data()));
+    buffer.shrink(result.buffer.size());
     return SharedBuffer::create(WTFMove(buffer));
 }
 

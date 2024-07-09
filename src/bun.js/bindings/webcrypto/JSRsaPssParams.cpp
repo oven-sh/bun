@@ -28,7 +28,6 @@
 #include "JSDOMConvertStrings.h"
 #include <JavaScriptCore/JSCInlines.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -42,7 +41,7 @@ template<> CryptoAlgorithmRsaPssParams convertDictionary<CryptoAlgorithmRsaPssPa
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmRsaPssParams result;
     JSValue nameValue;
@@ -50,28 +49,28 @@ template<> CryptoAlgorithmRsaPssParams convertDictionary<CryptoAlgorithmRsaPssPa
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "RsaPssParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "RsaPssParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue saltLengthValue;
     if (isNullOrUndefined)
         saltLengthValue = jsUndefined();
     else {
         saltLengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "saltLength"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!saltLengthValue.isUndefined()) {
         result.saltLength = convert<IDLEnforceRangeAdaptor<IDLUnsignedLong>>(lexicalGlobalObject, saltLengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "saltLength", "RsaPssParams", "unsigned long");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "saltLength"_s, "RsaPssParams"_s, "unsigned long"_s);
+        return {};
     }
     return result;
 }

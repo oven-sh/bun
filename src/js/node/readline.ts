@@ -2989,10 +2989,11 @@ class Readline {
    * flushed to the associated `stream`.
    */
   commit() {
-    return new Promise(resolve => {
-      this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
-      this.#todo = [];
-    });
+    const { resolve, promise } = $newPromiseCapability(Promise);
+    this.#stream.write(ArrayPrototypeJoin.$call(this.#todo, ""), resolve);
+    this.#todo = [];
+
+    return promise;
   }
 
   /**
@@ -3019,21 +3020,21 @@ var PromisesInterface = class Interface extends _Interface {
         return PromiseReject(new AbortError(undefined, { cause: signal.reason }));
       }
     }
-    return new Promise((resolve, reject) => {
-      var cb = resolve;
-      if (options?.signal) {
-        var onAbort = () => {
-          this[kQuestionCancel]();
-          reject(new AbortError(undefined, { cause: signal.reason }));
-        };
-        signal.addEventListener("abort", onAbort, { once: true });
-        cb = answer => {
-          signal.removeEventListener("abort", onAbort);
-          resolve(answer);
-        };
-      }
-      this[kQuestion](query, cb);
-    });
+    const { promise, resolve, reject } = $newPromiseCapability(Promise);
+    var cb = resolve;
+    if (options?.signal) {
+      var onAbort = () => {
+        this[kQuestionCancel]();
+        reject(new AbortError(undefined, { cause: signal.reason }));
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      cb = answer => {
+        signal.removeEventListener("abort", onAbort);
+        resolve(answer);
+      };
+    }
+    this[kQuestion](query, cb);
+    return promise;
   }
 };
 

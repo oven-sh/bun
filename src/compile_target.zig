@@ -12,7 +12,7 @@ const Output = bun.Output;
 const CompileTarget = @This();
 
 os: Environment.OperatingSystem = Environment.os,
-arch: Environment.Archictecture = Environment.arch,
+arch: Environment.Architecture = Environment.arch,
 baseline: bool = !Environment.enableSIMD,
 version: bun.Semver.Version = .{
     .major = @truncate(Environment.version.major),
@@ -137,8 +137,8 @@ const HTTP = bun.http;
 const MutableString = bun.MutableString;
 const Global = bun.Global;
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
-    try HTTP.HTTPThread.init();
-    var refresher = std.Progress{};
+    HTTP.HTTPThread.init();
+    var refresher = bun.Progress{};
 
     {
         refresher.refresh();
@@ -264,15 +264,15 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 defer tmpdir.close();
                 defer std.fs.cwd().deleteTree(tempdir_name) catch {};
                 _ = libarchive.Archive.extractToDir(
-                    compressed_archive_bytes.list.items,
+                    tarball_bytes.items,
                     tmpdir,
                     null,
                     void,
                     {},
-                    // "package/bin"
-                    2,
-                    true,
-                    false,
+                    .{
+                        // "package/bin"
+                        .depth_to_skip = 2,
+                    },
                 ) catch |err| {
                     node.end();
                     Output.err(err,
@@ -340,7 +340,7 @@ pub fn from(input_: []const u8) CompileTarget {
         const token = splitter.next() orelse break;
         if (token.len == 0) continue;
 
-        if (Environment.Archictecture.names.get(token)) |arch| {
+        if (Environment.Architecture.names.get(token)) |arch| {
             this.arch = arch;
             found_arch = true;
             continue;

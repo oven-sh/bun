@@ -13,8 +13,28 @@ if (process.argv.length > 2) {
 }
 
 const b = await launch({
-  headless: (process.env.BUN_TEST_HEADLESS ?? "1") === "0",
+  // While puppeteer is migrating to their new headless: `true` mode,
+  // this causes strange issues on macOS in the cloud (AWS and MacStadium).
+  //
+  // There is a GitHub issue, but the discussion is unhelpful:
+  // https://github.com/puppeteer/puppeteer/issues/10153
+  //
+  // Fixes: 'TargetCloseError: Protocol error (Target.setAutoAttach): Target closed'
+  headless: "shell",
   dumpio: true,
+  pipe: true,
+  args: [
+    // Fixes: 'dock_plist is not an NSDictionary'
+    "--no-sandbox",
+    "--single-process",
+    "--disable-setuid-sandbox",
+    "--disable-dev-shm-usage",
+    // Fixes: 'Navigating frame was detached'
+    "--disable-features=site-per-process",
+    // Uncomment if you want debug logs from Chromium:
+    // "--enable-logging=stderr",
+    // "--v=1",
+  ],
 });
 
 async function main() {

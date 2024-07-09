@@ -342,9 +342,10 @@ const Socket = (function (InternalSocket) {
     pauseOnConnect = false;
     #upgraded;
     #unrefOnConnected = false;
+    #handlers = Socket.#Handlers;
 
     constructor(options) {
-      const { socket, signal, write, read, allowHalfOpen = false, ...opts } = options || {};
+      const { socket, signal, write, read, allowHalfOpen = false, onread = null, ...opts } = options || {};
       super({
         ...opts,
         allowHalfOpen,
@@ -358,6 +359,26 @@ const Socket = (function (InternalSocket) {
       this.#upgraded = null;
       if (socket instanceof Socket) {
         this.#socket = socket;
+      }
+      if (onread) {
+        if (typeof onread !== "object") {
+          throw new TypeError("onread must be an object");
+        }
+        if (typeof onread.callback !== "function") {
+          throw new TypeError("onread.callback must be a function");
+        }
+        // when the onread option is specified we use a different handlers object
+        this.#handlers = {
+          ...Socket.#Handlers,
+          data({ data: self }, buffer) {
+            if (!self) return;
+            try {
+              onread.callback(buffer.length, buffer);
+            } catch (e) {
+              self.emit("error", e);
+            }
+          },
+        };
       }
 
       if (signal) {
@@ -401,66 +422,47 @@ const Socket = (function (InternalSocket) {
       process.nextTick(closeNT, connection);
     }
 
-    connect(port, host, connectListener) {
-      var path;
-      var connection = this.#socket;
-      var _checkServerIdentity = undefined;
-      if (typeof port === "string") {
-        path = port;
-        port = undefined;
+    connect(...args) {
+      const [options, connectListener] = normalizeArgs(args);
+      let connection = this.#socket;
 
-        if (typeof host === "function") {
-          connectListener = host;
-          host = undefined;
-        }
-      } else if (typeof host == "function") {
-        if (typeof port === "string") {
-          path = port;
-          port = undefined;
-        }
+      let {
+        fd,
+        port,
+        host,
+        path,
+        socket,
+        // TODOs
+        localAddress,
+        localPort,
+        family,
+        hints,
+        lookup,
+        noDelay,
+        keepAlive,
+        keepAliveInitialDelay,
+        requestCert,
+        rejectUnauthorized,
+        pauseOnConnect,
+        servername,
+        checkServerIdentity,
+        session,
+      } = options;
 
-        connectListener = host;
-        host = undefined;
+      this.servername = servername;
+
+      if (socket) {
+        connection = socket;
       }
-      if (typeof port == "object") {
-        var {
-          fd,
-          port,
-          host,
-          path,
-          socket,
-          // TODOs
-          localAddress,
-          localPort,
-          family,
-          hints,
-          lookup,
-          noDelay,
-          keepAlive,
-          keepAliveInitialDelay,
-          requestCert,
-          rejectUnauthorized,
-          pauseOnConnect,
-          servername,
-          checkServerIdentity,
-          session,
-        } = port;
-        _checkServerIdentity = checkServerIdentity;
-        this.servername = servername;
-        if (socket) {
-          connection = socket;
-        }
-        if (fd) {
-          bunConnect({
-            data: this,
-            fd,
-            socket: Socket.#Handlers,
-            tls,
-          }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
-          });
-        }
+      if (fd) {
+        bunConnect({
+          data: this,
+          fd: fd,
+          socket: this.#handlers,
+        }).catch(error => {
+          this.emit("error", error);
+          this.emit("close");
+        });
       }
 
       this.pauseOnConnect = pauseOnConnect;
@@ -495,7 +497,7 @@ const Socket = (function (InternalSocket) {
           tls.requestCert = true;
           tls.session = session || tls.session;
           this.servername = tls.servername;
-          tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity;
+          tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
           this[bunTLSConnectOptions] = tls;
           if (!connection && tls.socket) {
             connection = tls.socket;
@@ -529,7 +531,7 @@ const Socket = (function (InternalSocket) {
             const result = socket.upgradeTLS({
               data: this,
               tls,
-              socket: Socket.#Handlers,
+              socket: this.#handlers,
             });
             if (result) {
               const [raw, tls] = result;
@@ -554,7 +556,7 @@ const Socket = (function (InternalSocket) {
               const result = socket.upgradeTLS({
                 data: this,
                 tls,
-                socket: Socket.#Handlers,
+                socket: this.#handlers,
               });
 
               if (result) {
@@ -576,7 +578,7 @@ const Socket = (function (InternalSocket) {
           bunConnect({
             data: this,
             unix: path,
-            socket: Socket.#Handlers,
+            socket: this.#handlers,
             tls,
           }).catch(error => {
             this.emit("error", error);
@@ -588,7 +590,7 @@ const Socket = (function (InternalSocket) {
             data: this,
             hostname: host || "localhost",
             port: port,
-            socket: Socket.#Handlers,
+            socket: this.#handlers,
             tls,
           }).catch(error => {
             this.emit("error", error);
@@ -598,6 +600,11 @@ const Socket = (function (InternalSocket) {
       } catch (error) {
         process.nextTick(emitErrorAndCloseNextTick, this, error);
       }
+      // reset the underlying writable object when establishing a new connection
+      // this is a function on `Duplex`, originally defined on `Writable`
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L311
+      // https://github.com/nodejs/node/blob/c5cfdd48497fe9bd8dbd55fd1fca84b321f48ec1/lib/net.js#L1126
+      this._undestroy();
       return this;
     }
 
@@ -980,6 +987,54 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
+function normalizeArgs(args) {
+  while (args[args.length - 1] == null) args.pop();
+  let arr;
+
+  if (args.length === 0) {
+    arr = [{}, null];
+    return arr;
+  }
+
+  const arg0 = args[0];
+  let options: any = {};
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (isPipeName(arg0)) {
+    options.path = arg0;
+  } else {
+    options.port = arg0;
+    if (args.length > 1 && typeof args[1] === "string") {
+      options.host = args[1];
+    }
+  }
+
+  const cb = args[args.length - 1];
+  if (typeof cb !== "function") arr = [options, null];
+  else arr = [options, cb];
+
+  return arr;
+}
+
+function isPipeName(s) {
+  return typeof s === "string" && toNumber(s) === false;
+}
+
+function toNumber(x) {
+  return (x = Number(x)) >= 0 ? x : false;
+}
+
+// TODO:
+class BlockList {
+  constructor() {}
+
+  addSubnet(net, prefix, type) {}
+
+  check(address, type) {
+    return false;
+  }
+}
+
 export default {
   createServer,
   Server,
@@ -990,4 +1045,12 @@ export default {
   isIPv6,
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
+  _normalizeArgs: normalizeArgs,
+
+  getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
+  setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),
+  getDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "getDefaultAutoSelectFamilyAttemptTimeout"),
+  setDefaultAutoSelectFamilyAttemptTimeout: $zig("node_net_binding.zig", "setDefaultAutoSelectFamilyAttemptTimeout"),
+
+  BlockList,
 };

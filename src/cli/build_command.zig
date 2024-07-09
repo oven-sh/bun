@@ -133,8 +133,10 @@ pub const BuildCommand = struct {
                 return;
             }
 
-            this_bundler.options.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
-            this_bundler.resolver.opts.public_path = bun.StandaloneModuleGraph.base_public_path ++ "root/";
+            const base_public_path = bun.StandaloneModuleGraph.targetBasePublicPath(compile_target.os, "root/");
+
+            this_bundler.options.public_path = base_public_path;
+            this_bundler.resolver.opts.public_path = base_public_path;
 
             if (outfile.len == 0) {
                 outfile = std.fs.path.basename(this_bundler.options.entry_points[0]);
@@ -182,7 +184,7 @@ pub const BuildCommand = struct {
         this_bundler.options.output_dir = ctx.bundler_options.outdir;
         this_bundler.resolver.opts.output_dir = ctx.bundler_options.outdir;
 
-        var src_root_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var src_root_dir_buf: bun.PathBuffer = undefined;
         const src_root_dir: string = brk1: {
             const path = brk2: {
                 if (ctx.bundler_options.root_dir.len > 0) {
@@ -196,7 +198,7 @@ pub const BuildCommand = struct {
                 break :brk2 resolve_path.getIfExistsLongestCommonPath(this_bundler.options.entry_points) orelse ".";
             };
 
-            var dir = bun.openDirForPath(&(try std.os.toPosixPath(path))) catch |err| {
+            var dir = bun.openDirForPath(&(try std.posix.toPosixPath(path))) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> opening root directory {}", .{ @errorName(err), bun.fmt.quote(path) });
                 Global.exit(1);
             };
@@ -414,7 +416,7 @@ pub const BuildCommand = struct {
 
                         Output.pretty(" <green>compile<r>  <b><blue>{s}{s}<r>", .{
                             outfile,
-                            if (Environment.isWindows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
+                            if (compile_target.os == .windows and !strings.hasSuffixComptime(outfile, ".exe")) ".exe" else "",
                         });
 
                         if (is_cross_compile) {
@@ -431,7 +433,7 @@ pub const BuildCommand = struct {
                     // So don't do that unless we actually need to.
                     // const do_we_need_to_close = !FeatureFlags.store_file_descriptors or (@intCast(usize, root_dir.fd) + open_file_limit) < output_files.len;
 
-                    var filepath_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var filepath_buf: bun.PathBuffer = undefined;
                     filepath_buf[0] = '.';
                     filepath_buf[1] = '/';
 
@@ -458,7 +460,7 @@ pub const BuildCommand = struct {
                                     }
                                 }
                                 const JSC = bun.JSC;
-                                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                                var path_buf: bun.PathBuffer = undefined;
                                 switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                                     &path_buf,
                                     JSC.Node.Arguments.WriteFile{
@@ -512,7 +514,7 @@ pub const BuildCommand = struct {
                         try writer.writeAll(rel_path);
                         try writer.writeByteNTimes(' ', padding_count);
                         const size = @as(f64, @floatFromInt(f.size)) / 1000.0;
-                        try std.fmt.formatFloatDecimal(size, .{ .precision = 2 }, writer);
+                        try std.fmt.formatType(size, "d", .{ .precision = 2 }, writer, 1);
                         try writer.writeAll(" KB\n");
                     }
 

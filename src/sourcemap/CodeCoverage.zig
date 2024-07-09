@@ -3,6 +3,7 @@ const std = @import("std");
 const LineOffsetTable = bun.sourcemap.LineOffsetTable;
 const SourceMap = bun.sourcemap;
 const Bitset = bun.bit_set.DynamicBitSetUnmanaged;
+const LinesHits = @import("../baby_list.zig").BabyList(u32);
 const Output = bun.Output;
 const prettyFmt = Output.prettyFmt;
 
@@ -24,19 +25,15 @@ pub const CodeCoverageReport = struct {
     source_url: bun.JSC.ZigString.Slice,
     executable_lines: Bitset,
     lines_which_have_executed: Bitset,
+    line_hits: LinesHits = .{},
     functions: std.ArrayListUnmanaged(Block),
     functions_which_have_executed: Bitset,
     stmts_which_have_executed: Bitset,
     stmts: std.ArrayListUnmanaged(Block),
     total_lines: u32 = 0,
 
-    pub const Block = struct {
-        start_line: u32 = 0,
-        end_line: u32 = 0,
-    };
-
     pub fn linesCoverageFraction(this: *const CodeCoverageReport) f64 {
-        var intersected = this.executable_lines.clone(bun.default_allocator) catch @panic("OOM");
+        var intersected = this.executable_lines.clone(bun.default_allocator) catch bun.outOfMemory();
         defer intersected.deinit(bun.default_allocator);
         intersected.setIntersection(this.lines_which_have_executed);
 
@@ -68,156 +65,213 @@ pub const CodeCoverageReport = struct {
         return (@as(f64, @floatFromInt(this.functions_which_have_executed.count())) / total_count);
     }
 
-    pub fn writeFormatWithValues(
-        filename: []const u8,
-        max_filename_length: usize,
-        vals: CoverageFraction,
-        failing: CoverageFraction,
-        failed: bool,
-        writer: anytype,
-        indent_name: bool,
-        comptime enable_colors: bool,
-    ) !void {
-        if (comptime enable_colors) {
-            if (failed) {
-                try writer.writeAll(comptime prettyFmt("<r><b><red>", true));
-            } else {
-                try writer.writeAll(comptime prettyFmt("<r><b><green>", true));
+    pub const Text = struct {
+        pub fn writeFormatWithValues(
+            filename: []const u8,
+            max_filename_length: usize,
+            vals: CoverageFraction,
+            failing: CoverageFraction,
+            failed: bool,
+            writer: anytype,
+            indent_name: bool,
+            comptime enable_colors: bool,
+        ) !void {
+            if (comptime enable_colors) {
+                if (failed) {
+                    try writer.writeAll(comptime prettyFmt("<r><b><red>", true));
+                } else {
+                    try writer.writeAll(comptime prettyFmt("<r><b><green>", true));
+                }
             }
-        }
 
-        if (indent_name) {
-            try writer.writeAll(" ");
-        }
-
-        try writer.writeAll(filename);
-        try writer.writeByteNTimes(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
-        try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
-
-        if (comptime enable_colors) {
-            if (vals.functions < failing.functions) {
-                try writer.writeAll(comptime prettyFmt("<b><red>", true));
-            } else {
-                try writer.writeAll(comptime prettyFmt("<b><green>", true));
+            if (indent_name) {
+                try writer.writeAll(" ");
             }
-        }
 
-        try writer.print("{d: >7.2}", .{vals.functions * 100.0});
-        // try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
-        // if (comptime enable_colors) {
-        //     // if (vals.stmts < failing.stmts) {
-        //     try writer.writeAll(comptime prettyFmt("<d>", true));
-        //     // } else {
-        //     //     try writer.writeAll(comptime prettyFmt("<d>", true));
-        //     // }
-        // }
-        // try writer.print("{d: >8.2}", .{vals.stmts * 100.0});
-        try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
+            try writer.writeAll(filename);
+            try writer.writeByteNTimes(' ', (max_filename_length - filename.len + @as(usize, @intFromBool(!indent_name))));
+            try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
-        if (comptime enable_colors) {
-            if (vals.lines < failing.lines) {
-                try writer.writeAll(comptime prettyFmt("<b><red>", true));
-            } else {
-                try writer.writeAll(comptime prettyFmt("<b><green>", true));
+            if (comptime enable_colors) {
+                if (vals.functions < failing.functions) {
+                    try writer.writeAll(comptime prettyFmt("<b><red>", true));
+                } else {
+                    try writer.writeAll(comptime prettyFmt("<b><green>", true));
+                }
             }
+
+            try writer.print("{d: >7.2}", .{vals.functions * 100.0});
+            // try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
+            // if (comptime enable_colors) {
+            //     // if (vals.stmts < failing.stmts) {
+            //     try writer.writeAll(comptime prettyFmt("<d>", true));
+            //     // } else {
+            //     //     try writer.writeAll(comptime prettyFmt("<d>", true));
+            //     // }
+            // }
+            // try writer.print("{d: >8.2}", .{vals.stmts * 100.0});
+            try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
+
+            if (comptime enable_colors) {
+                if (vals.lines < failing.lines) {
+                    try writer.writeAll(comptime prettyFmt("<b><red>", true));
+                } else {
+                    try writer.writeAll(comptime prettyFmt("<b><green>", true));
+                }
+            }
+
+            try writer.print("{d: >7.2}", .{vals.lines * 100.0});
         }
 
-        try writer.print("{d: >7.2}", .{vals.lines * 100.0});
-    }
+        pub fn writeFormat(
+            report: *const CodeCoverageReport,
+            max_filename_length: usize,
+            fraction: *CoverageFraction,
+            base_path: []const u8,
+            writer: anytype,
+            comptime enable_colors: bool,
+        ) !void {
+            const failing = fraction.*;
+            const fns = report.functionCoverageFraction();
+            const lines = report.linesCoverageFraction();
+            const stmts = report.stmtsCoverageFraction();
+            fraction.functions = fns;
+            fraction.lines = lines;
+            fraction.stmts = stmts;
 
-    pub fn writeFormat(
-        report: *const CodeCoverageReport,
-        max_filename_length: usize,
-        fraction: *CoverageFraction,
-        base_path: []const u8,
-        writer: anytype,
-        comptime enable_colors: bool,
-    ) !void {
-        const failing = fraction.*;
-        const fns = report.functionCoverageFraction();
-        const lines = report.linesCoverageFraction();
-        const stmts = report.stmtsCoverageFraction();
-        fraction.functions = fns;
-        fraction.lines = lines;
-        fraction.stmts = stmts;
+            const failed = fns < failing.functions or lines < failing.lines; // or stmts < failing.stmts;
+            fraction.failing = failed;
 
-        const failed = fns < failing.functions or lines < failing.lines; // or stmts < failing.stmts;
-        fraction.failing = failed;
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
 
-        var filename = report.source_url.slice();
-        if (base_path.len > 0) {
-            filename = bun.path.relative(base_path, filename);
-        }
+            try writeFormatWithValues(
+                filename,
+                max_filename_length,
+                fraction.*,
+                failing,
+                failed,
+                writer,
+                true,
+                enable_colors,
+            );
 
-        try writeFormatWithValues(
-            filename,
-            max_filename_length,
-            fraction.*,
-            failing,
-            failed,
-            writer,
-            true,
-            enable_colors,
-        );
+            try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
 
-        try writer.writeAll(comptime prettyFmt("<r><d> | <r>", enable_colors));
+            var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
+            defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
+            executable_lines_that_havent_been_executed.toggleAll();
 
-        var executable_lines_that_havent_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch @panic("OOM");
-        defer executable_lines_that_havent_been_executed.deinit(bun.default_allocator);
-        executable_lines_that_havent_been_executed.toggleAll();
+            // This sets statements in executed scopes
+            executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
 
-        // This sets statements in executed scopes
-        executable_lines_that_havent_been_executed.setIntersection(report.executable_lines);
+            var iter = executable_lines_that_havent_been_executed.iterator(.{});
+            var start_of_line_range: usize = 0;
+            var prev_line: usize = 0;
+            var is_first = true;
 
-        var iter = executable_lines_that_havent_been_executed.iterator(.{});
-        var start_of_line_range: usize = 0;
-        var prev_line: usize = 0;
-        var is_first = true;
+            while (iter.next()) |next_line| {
+                if (next_line == (prev_line + 1)) {
+                    prev_line = next_line;
+                    continue;
+                } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
+                    start_of_line_range = next_line;
+                    prev_line = next_line;
+                    continue;
+                }
 
-        while (iter.next()) |next_line| {
-            if (next_line == (prev_line + 1)) {
+                if (is_first) {
+                    is_first = false;
+                } else {
+                    try writer.print(comptime prettyFmt("<r><d>,<r>", enable_colors), .{});
+                }
+
+                if (start_of_line_range == prev_line) {
+                    try writer.print(comptime prettyFmt("<red>{d}", enable_colors), .{start_of_line_range + 1});
+                } else {
+                    try writer.print(comptime prettyFmt("<red>{d}-{d}", enable_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                }
+
                 prev_line = next_line;
-                continue;
-            } else if (is_first and start_of_line_range == 0 and prev_line == 0) {
                 start_of_line_range = next_line;
-                prev_line = next_line;
-                continue;
             }
 
-            if (is_first) {
-                is_first = false;
-            } else {
-                try writer.print(comptime prettyFmt("<r><d>,<r>", enable_colors), .{});
-            }
+            if (prev_line != start_of_line_range) {
+                if (is_first) {
+                    is_first = false;
+                } else {
+                    try writer.print(comptime prettyFmt("<r><d>,<r>", enable_colors), .{});
+                }
 
-            if (start_of_line_range == prev_line) {
-                try writer.print(comptime prettyFmt("<red>{d}", enable_colors), .{start_of_line_range + 1});
-            } else {
-                try writer.print(comptime prettyFmt("<red>{d}-{d}", enable_colors), .{ start_of_line_range + 1, prev_line + 1 });
-            }
-
-            prev_line = next_line;
-            start_of_line_range = next_line;
-        }
-
-        if (prev_line != start_of_line_range) {
-            if (is_first) {
-                is_first = false;
-            } else {
-                try writer.print(comptime prettyFmt("<r><d>,<r>", enable_colors), .{});
-            }
-
-            if (start_of_line_range == prev_line) {
-                try writer.print(comptime prettyFmt("<red>{d}", enable_colors), .{start_of_line_range + 1});
-            } else {
-                try writer.print(comptime prettyFmt("<red>{d}-{d}", enable_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                if (start_of_line_range == prev_line) {
+                    try writer.print(comptime prettyFmt("<red>{d}", enable_colors), .{start_of_line_range + 1});
+                } else {
+                    try writer.print(comptime prettyFmt("<red>{d}-{d}", enable_colors), .{ start_of_line_range + 1, prev_line + 1 });
+                }
             }
         }
-    }
+    };
+
+    pub const Lcov = struct {
+        pub fn writeFormat(
+            report: *const CodeCoverageReport,
+            base_path: []const u8,
+            writer: anytype,
+        ) !void {
+            var filename = report.source_url.slice();
+            if (base_path.len > 0) {
+                filename = bun.path.relative(base_path, filename);
+            }
+
+            // TN: test name
+            // Empty value appears fine. For example, `TN:`.
+            try writer.writeAll("TN:\n");
+
+            // SF: Source File path
+            // For example, `SF:path/to/source.ts`
+            try writer.print("SF:{s}\n", .{filename});
+
+            // ** Per-function coverage not supported yet, since JSC does not support function names yet. **
+            // FN: line number,function name
+
+            // FNF: functions found
+            try writer.print("FNF:{d}\n", .{report.functions.items.len});
+
+            // FNH: functions hit
+            try writer.print("FNH:{d}\n", .{report.functions_which_have_executed.count()});
+
+            var executable_lines_that_have_been_executed = report.lines_which_have_executed.clone(bun.default_allocator) catch bun.outOfMemory();
+            defer executable_lines_that_have_been_executed.deinit(bun.default_allocator);
+            // This sets statements in executed scopes
+            executable_lines_that_have_been_executed.setIntersection(report.executable_lines);
+            var iter = executable_lines_that_have_been_executed.iterator(.{});
+
+            // ** Branch coverage not supported yet, since JSC does not support those yet. ** //
+            // BRDA: line, block, (expressions,count)+
+            // BRF: branches found
+            // BRH: branches hit
+            const line_hits = report.line_hits.slice();
+            while (iter.next()) |line| {
+                // DA: line number, hit count
+                try writer.print("DA:{d},{d}\n", .{ line + 1, line_hits[line] });
+            }
+
+            // LF: lines found
+            try writer.print("LF:{d}\n", .{report.total_lines});
+
+            // LH: lines hit
+            try writer.print("LH:{d}\n", .{executable_lines_that_have_been_executed.count()});
+
+            try writer.writeAll("end_of_record\n");
+        }
+    };
 
     pub fn deinit(this: *CodeCoverageReport, allocator: std.mem.Allocator) void {
         this.executable_lines.deinit(allocator);
         this.lines_which_have_executed.deinit(allocator);
+        this.line_hits.deinitWithAllocator(allocator);
         this.functions.deinit(allocator);
         this.stmts.deinit(allocator);
         this.functions_which_have_executed.deinit(allocator);
@@ -260,7 +314,7 @@ pub const CodeCoverageReport = struct {
                 return;
             }
 
-            this.result.* = this.byte_range_mapping.generateCodeCoverageReportFromBlocks(
+            this.result.* = this.byte_range_mapping.generateReportFromBlocks(
                 this.allocator,
                 this.byte_range_mapping.source_url,
                 blocks,
@@ -326,13 +380,13 @@ pub const ByteRangeMapping = struct {
     pub threadlocal var map: ?*HashMap = null;
     pub fn generate(str: bun.String, source_contents_str: bun.String, source_id: i32) callconv(.C) void {
         var _map = map orelse brk: {
-            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch @panic("OOM");
+            map = bun.JSC.VirtualMachine.get().allocator.create(HashMap) catch bun.outOfMemory();
             map.?.* = HashMap.init(bun.JSC.VirtualMachine.get().allocator);
             break :brk map.?;
         };
         var slice = str.toUTF8(bun.default_allocator);
         const hash = bun.hash(slice.slice());
-        var entry = _map.getOrPut(hash) catch @panic("Out of memory");
+        var entry = _map.getOrPut(hash) catch bun.outOfMemory();
         if (entry.found_existing) {
             entry.value_ptr.deinit();
         }
@@ -357,7 +411,7 @@ pub const ByteRangeMapping = struct {
         return entry;
     }
 
-    pub fn generateCodeCoverageReportFromBlocks(
+    pub fn generateReportFromBlocks(
         this: *ByteRangeMapping,
         allocator: std.mem.Allocator,
         source_url: bun.JSC.ZigString.Slice,
@@ -369,11 +423,10 @@ pub const ByteRangeMapping = struct {
 
         var executable_lines: Bitset = Bitset{};
         var lines_which_have_executed: Bitset = Bitset{};
-        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(
-            source_url.slice(),
-        );
+        const parsed_mappings_ = bun.JSC.VirtualMachine.get().source_mappings.get(source_url.slice());
+        var line_hits = LinesHits{};
 
-        var functions = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
+        var functions = std.ArrayListUnmanaged(Block){};
         try functions.ensureTotalCapacityPrecise(allocator, function_blocks.len);
         errdefer functions.deinit(allocator);
         var functions_which_have_executed: Bitset = try Bitset.initEmpty(allocator, function_blocks.len);
@@ -381,7 +434,7 @@ pub const ByteRangeMapping = struct {
         var stmts_which_have_executed: Bitset = try Bitset.initEmpty(allocator, blocks.len);
         errdefer stmts_which_have_executed.deinit(allocator);
 
-        var stmts = std.ArrayListUnmanaged(CodeCoverageReport.Block){};
+        var stmts = std.ArrayListUnmanaged(Block){};
         try stmts.ensureTotalCapacityPrecise(allocator, function_blocks.len);
         errdefer stmts.deinit(allocator);
 
@@ -393,7 +446,16 @@ pub const ByteRangeMapping = struct {
             line_count = @truncate(line_starts.len);
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
+            line_hits = try LinesHits.initCapacity(allocator, line_count);
+            line_hits.len = line_count;
+            const line_hits_slice = line_hits.slice();
+            @memset(line_hits_slice, 0);
+
+            errdefer line_hits.deinitWithAllocator(allocator);
+
             for (blocks, 0..) |block, i| {
+                if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(block.startOffset, block.endOffset));
                 const max: usize = @intCast(@max(block.startOffset, block.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);
@@ -412,9 +474,10 @@ pub const ByteRangeMapping = struct {
                     min_line = @min(min_line, line);
                     max_line = @max(max_line, line);
 
-                    executable_lines.set(@intCast(new_line_index));
+                    executable_lines.set(line);
                     if (has_executed) {
-                        lines_which_have_executed.set(@intCast(new_line_index));
+                        lines_which_have_executed.set(line);
+                        line_hits_slice[line] += 1;
                     }
                 }
 
@@ -430,6 +493,8 @@ pub const ByteRangeMapping = struct {
             }
 
             for (function_blocks, 0..) |function, i| {
+                if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(function.startOffset, function.endOffset));
                 const max: usize = @intCast(@max(function.startOffset, function.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);
@@ -453,6 +518,7 @@ pub const ByteRangeMapping = struct {
                 // functions that have executed have non-executable lines in them and thats fine.
                 if (!did_fn_execute) {
                     const end = @min(max_line, line_count);
+                    @memset(line_hits_slice[min_line..end], 0);
                     for (min_line..end) |line| {
                         executable_lines.set(line);
                         lines_which_have_executed.unset(line);
@@ -471,8 +537,15 @@ pub const ByteRangeMapping = struct {
             line_count = @as(u32, @truncate(parsed_mapping.input_line_count)) + 1;
             executable_lines = try Bitset.initEmpty(allocator, line_count);
             lines_which_have_executed = try Bitset.initEmpty(allocator, line_count);
+            line_hits = try LinesHits.initCapacity(allocator, line_count);
+            line_hits.len = line_count;
+            const line_hits_slice = line_hits.slice();
+            @memset(line_hits_slice, 0);
+            errdefer line_hits.deinitWithAllocator(allocator);
 
             for (blocks, 0..) |block, i| {
+                if (block.endOffset < 0 or block.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(block.startOffset, block.endOffset));
                 const max: usize = @intCast(@max(block.startOffset, block.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);
@@ -495,6 +568,7 @@ pub const ByteRangeMapping = struct {
                         executable_lines.set(line);
                         if (has_executed) {
                             lines_which_have_executed.set(line);
+                            line_hits_slice[line] += 1;
                         }
 
                         min_line = @min(min_line, line);
@@ -514,6 +588,8 @@ pub const ByteRangeMapping = struct {
             }
 
             for (function_blocks, 0..) |function, i| {
+                if (function.endOffset < 0 or function.startOffset < 0) continue; // does not map to anything
+
                 const min: usize = @intCast(@min(function.startOffset, function.endOffset));
                 const max: usize = @intCast(@max(function.startOffset, function.endOffset));
                 var min_line: u32 = std.math.maxInt(u32);
@@ -551,6 +627,7 @@ pub const ByteRangeMapping = struct {
                     for (min_line..end) |line| {
                         executable_lines.set(line);
                         lines_which_have_executed.unset(line);
+                        line_hits_slice[line] = 0;
                     }
                 }
 
@@ -565,11 +642,12 @@ pub const ByteRangeMapping = struct {
             unreachable;
         }
 
-        return CodeCoverageReport{
+        return .{
             .source_url = source_url,
             .functions = functions,
             .executable_lines = executable_lines,
             .lines_which_have_executed = lines_which_have_executed,
+            .line_hits = line_hits,
             .total_lines = line_count,
             .stmts = stmts,
             .functions_which_have_executed = functions_which_have_executed,
@@ -594,7 +672,7 @@ pub const ByteRangeMapping = struct {
         }
         var url_slice = source_url.toUTF8(bun.default_allocator);
         defer url_slice.deinit();
-        var report = this.generateCodeCoverageReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
+        var report = this.generateReportFromBlocks(bun.default_allocator, url_slice, blocks, function_blocks, ignore_sourcemap) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };
@@ -607,7 +685,7 @@ pub const ByteRangeMapping = struct {
         var buffered_writer = mutable_str.bufferedWriter();
         var writer = buffered_writer.writer();
 
-        report.writeFormat(source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
+        CodeCoverageReport.Text.writeFormat(&report, source_url.utf8ByteLength(), &coverage_fraction, "", &writer, false) catch {
             globalThis.throwOutOfMemory();
             return .zero;
         };
@@ -648,4 +726,9 @@ pub const CoverageFraction = struct {
     stmts: f64 = 0.75,
 
     failing: bool = false,
+};
+
+pub const Block = struct {
+    start_line: u32 = 0,
+    end_line: u32 = 0,
 };

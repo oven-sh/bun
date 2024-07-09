@@ -2,5 +2,6 @@ src/bun.js/WebKit
 src/deps
 test/snapshots
 test/js/deno
+test/node.js
 src/react-refresh.js
 *.min.js

@@ -95,7 +95,7 @@ Worker::Worker(ScriptExecutionContext& context, WorkerOptions&& options)
     : EventTargetWithInlineData()
     , ContextDestructionObserver(&context)
     , m_options(WTFMove(options))
-    , m_identifier("worker:" + Inspector::IdentifiersFactory::createIdentifier())
+    , m_identifier(makeString("worker:"_s, Inspector::IdentifiersFactory::createIdentifier()))
     , m_clientIdentifier(ScriptExecutionContext::generateIdentifier())
 {
     // static bool addedListener;
@@ -259,10 +259,6 @@ void Worker::terminate()
 
 bool Worker::hasPendingActivity() const
 {
-    if (this->refCount() > 0) {
-        return true;
-    }
-
     if (this->m_isOnline) {
         return !this->m_isClosing;
     }
@@ -373,6 +369,7 @@ void Worker::dispatchExit(int32_t exitCode)
             auto event = CloseEvent::create(exitCode == 0, static_cast<unsigned short>(exitCode), exitCode == 0 ? "Worker terminated normally"_s : "Worker exited abnormally"_s);
             protectedThis->dispatchCloseEvent(event);
         }
+        protectedThis->m_wasTerminated = true;
     });
 }
 

@@ -14,6 +14,14 @@ bench(`Buffer(${uuid.byteLength}).toString('base64')`, () => {
   return uuid.toString("base64");
 });
 
+bench(`Buffer(${bigBuffer.byteLength}).toString('base64url')`, () => {
+  return bigBuffer.toString("base64url");
+});
+
+bench(`Buffer(${uuid.byteLength}).toString('base64url')`, () => {
+  return uuid.toString("base64url");
+});
+
 bench(`Buffer(${bigBuffer.byteLength}).toString('hex')`, () => {
   return bigBuffer.toString("hex");
 });

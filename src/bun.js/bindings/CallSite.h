@@ -9,6 +9,7 @@
 
 #include <JavaScriptCore/JSObject.h>
 #include "BunClientData.h"
+#include "wtf/text/OrdinalNumber.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -31,8 +32,8 @@ private:
     JSC::WriteBarrier<JSC::Unknown> m_function;
     JSC::WriteBarrier<JSC::Unknown> m_functionName;
     JSC::WriteBarrier<JSC::Unknown> m_sourceURL;
-    int32_t m_lineNumber = -1;
-    int32_t m_columnNumber = -1;
+    OrdinalNumber m_lineNumber;
+    OrdinalNumber m_columnNumber;
     unsigned int m_flags;
 
 public:
@@ -70,23 +71,23 @@ public:
     JSC::JSValue function() const { return m_function.get(); }
     JSC::JSValue functionName() const { return m_functionName.get(); }
     JSC::JSValue sourceURL() const { return m_sourceURL.get(); }
-    int32_t lineNumber() const { return m_lineNumber; }
-    int32_t columnNumber() const { return m_columnNumber; }
+    OrdinalNumber lineNumber() const { return m_lineNumber; }
+    OrdinalNumber columnNumber() const { return m_columnNumber; }
     bool isEval() const { return m_flags & static_cast<unsigned int>(Flags::IsEval); }
     bool isConstructor() const { return m_flags & static_cast<unsigned int>(Flags::IsConstructor); }
     bool isStrict() const { return m_flags & static_cast<unsigned int>(Flags::IsStrict); }
     bool isNative() const { return m_flags & static_cast<unsigned int>(Flags::IsNative); }
 
-    void setLineNumber(int32_t lineNumber) { m_lineNumber = lineNumber; }
-    void setColumnNumber(int32_t columnNumber) { m_columnNumber = columnNumber; }
+    void setLineNumber(OrdinalNumber lineNumber) { m_lineNumber = lineNumber; }
+    void setColumnNumber(OrdinalNumber columnNumber) { m_columnNumber = columnNumber; }
 
     void formatAsString(JSC::VM& vm, JSC::JSGlobalObject* globalObject, WTF::StringBuilder& sb);
 
 private:
     CallSite(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
-        , m_lineNumber(-1)
-        , m_columnNumber(-1)
+        , m_lineNumber(OrdinalNumber::beforeFirst())
+        , m_columnNumber(OrdinalNumber::beforeFirst())
         , m_flags(0)
     {
     }
@@ -96,4 +97,5 @@ private:
     DECLARE_VISIT_CHILDREN;
 };
 
+JSValue createNativeFrameForTesting(Zig::GlobalObject* globalObject);
 }

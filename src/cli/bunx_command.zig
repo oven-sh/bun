@@ -9,13 +9,14 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
-const Command = @import("../cli.zig").Command;
+const cli = @import("../cli.zig");
+const Command = cli.Command;
 const Run = @import("./run_command.zig").RunCommand;
 
 const debug = Output.scoped(.bunx, false);
 
 pub const BunxCommand = struct {
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     /// Adds `create-` to the string, but also handles scoped packages correctly.
     /// Always clones the string in the process.
@@ -63,7 +64,7 @@ pub const BunxCommand = struct {
     const nanoseconds_cache_valid = seconds_cache_valid * 1000000000;
 
     fn getBinNameFromSubpath(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, subpath_z: [:0]const u8) ![]const u8 {
-        const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, std.os.O.RDONLY, 0).unwrap();
+        const target_package_json_fd = try bun.sys.openat(dir_fd, subpath_z, bun.O.RDONLY, 0).unwrap();
         const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
         defer target_package_json.close();
@@ -110,7 +111,7 @@ pub const BunxCommand = struct {
         if (expr.asProperty("directories")) |dirs| {
             if (dirs.expr.asProperty("bin")) |bin_prop| {
                 if (bin_prop.expr.asString(bundler.allocator)) |dir_name| {
-                    const bin_dir = try bun.sys.openatA(dir_fd, dir_name, std.os.O.RDONLY | std.os.O.DIRECTORY, 0).unwrap();
+                    const bin_dir = try bun.sys.openatA(dir_fd, dir_name, bun.O.RDONLY | bun.O.DIRECTORY, 0).unwrap();
                     defer _ = bun.sys.close(bin_dir);
                     const dir = std.fs.Dir{ .fd = bin_dir.cast() };
                     var iterator = bun.DirIterator.iterate(dir, .u8);
@@ -134,20 +135,20 @@ pub const BunxCommand = struct {
     }
 
     fn getBinNameFromProjectDirectory(bundler: *bun.Bundler, dir_fd: bun.FileDescriptor, package_name: []const u8) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         const subpath_z = std.fmt.bufPrintZ(&subpath, bun.pathLiteral("node_modules/{s}/package.json"), .{package_name}) catch unreachable;
         return try getBinNameFromSubpath(bundler, dir_fd, subpath_z);
     }
 
     fn getBinNameFromTempDirectory(bundler: *bun.Bundler, tempdir_name: []const u8, package_name: []const u8, with_stale_check: bool) ![]const u8 {
-        var subpath: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var subpath: bun.PathBuffer = undefined;
         if (with_stale_check) {
             const subpath_z = std.fmt.bufPrintZ(
                 &subpath,
                 bun.pathLiteral("{s}/package.json"),
                 .{tempdir_name},
             ) catch unreachable;
-            const target_package_json_fd = bun.sys.openat(bun.toFD(std.fs.cwd().fd), subpath_z, std.os.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
+            const target_package_json_fd = bun.sys.openat(bun.FD.cwd(), subpath_z, bun.O.RDONLY, 0).unwrap() catch return error.NeedToInstall;
             const target_package_json = bun.sys.File{ .handle = target_package_json_fd };
 
             const is_stale = is_stale: {
@@ -185,7 +186,7 @@ pub const BunxCommand = struct {
             .{ tempdir_name, package_name },
         ) catch unreachable;
 
-        return try getBinNameFromSubpath(bundler, bun.toFD(std.fs.cwd().fd), subpath_z);
+        return try getBinNameFromSubpath(bundler, bun.FD.cwd(), subpath_z);
     }
 
     /// Check the enclosing package.json for a matching "bin"
@@ -220,6 +221,8 @@ pub const BunxCommand = struct {
         var maybe_package_name: ?string = null;
         var verbose_install = false;
         var silent_install = false;
+        var has_version = false;
+        var has_revision = false;
         {
             var found_subcommand_name = false;
 
@@ -230,7 +233,11 @@ pub const BunxCommand = struct {
                 }
 
                 if (positional.len > 0 and positional[0] == '-') {
-                    if (strings.eqlComptime(positional, "--verbose")) {
+                    if (strings.eqlComptime(positional, "--version") or strings.eqlComptime(positional, "-v")) {
+                        has_version = true;
+                    } else if (strings.eqlComptime(positional, "--revision")) {
+                        has_revision = true;
+                    } else if (strings.eqlComptime(positional, "--verbose")) {
                         verbose_install = true;
                     } else if (strings.eqlComptime(positional, "--silent")) {
                         silent_install = true;
@@ -249,7 +256,13 @@ pub const BunxCommand = struct {
 
         // check if package_name_for_update_request is empty string or " "
         if (maybe_package_name == null or maybe_package_name.?.len == 0) {
-            exitWithUsage();
+            if (has_revision) {
+                cli.printRevisionAndExit();
+            } else if (has_version) {
+                cli.printVersionAndExit();
+            } else {
+                exitWithUsage();
+            }
         }
 
         const package_name = maybe_package_name.?;
@@ -479,7 +492,7 @@ pub const BunxCommand = struct {
                 if (bun.strings.hasPrefix(out, bunx_cache_dir)) {
                     const is_stale = is_stale: {
                         if (Environment.isWindows) {
-                            const fd = bun.sys.openat(bun.invalid_fd, destination, std.os.O.RDONLY, 0).unwrap() catch {
+                            const fd = bun.sys.openat(bun.invalid_fd, destination, bun.O.RDONLY, 0).unwrap() catch {
                                 // if we cant open this, we probably will just fail when we run it
                                 // and that error message is likely going to be better than the one from `bun add`
                                 break :is_stale false;
@@ -499,7 +512,7 @@ pub const BunxCommand = struct {
                                 else => break :is_stale true,
                             }
                         } else {
-                            var stat: std.os.Stat = undefined;
+                            var stat: std.posix.Stat = undefined;
                             const rc = std.c.stat(destination, &stat);
                             if (rc != 0) {
                                 break :is_stale true;

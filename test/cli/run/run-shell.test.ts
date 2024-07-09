@@ -1,11 +1,10 @@
 import { expect, test } from "bun:test";
-import { mkdirSync, realpathSync } from "fs";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
+import { mkdirSync } from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
 
 test("running a shell script works", async () => {
-  const dir = join(realpathSync(tmpdir()), "bun-run-shell");
+  const dir = tmpdirSync();
   mkdirSync(dir, { recursive: true });
   await Bun.write(join(dir, "something.sh"), "echo wah");
   let { stdout, stderr } = Bun.spawnSync({

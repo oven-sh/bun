@@ -38,7 +38,7 @@ pub const Loader = struct {
     @".env": ?logger.Source = null,
 
     // only populated with files specified explicitely (e.g. --env-file arg)
-    custom_files_loaded: std.StringArrayHashMap(logger.Source),
+    custom_files_loaded: bun.StringArrayHashMap(logger.Source),
 
     quiet: bool = false,
 
@@ -112,6 +112,9 @@ pub const Loader = struct {
         }
     }
 
+    /// Checks whether `NODE_TLS_REJECT_UNAUTHORIZED` is set to `0` or `false`.
+    ///
+    /// **Prefer VirtualMachine.getTLSRejectUnauthorized()** for JavaScript, as individual workers could have different settings.
     pub fn getTLSRejectUnauthorized(this: *Loader) bool {
         if (this.reject_unauthorized) |reject_unauthorized| {
             return reject_unauthorized;
@@ -166,7 +169,7 @@ pub const Loader = struct {
                     }
                     //strips .
                     if (host[0] == '.') {
-                        host = host[1.. :0];
+                        host = host[1..];
                     }
                     //hostname ends with suffix
                     if (strings.endsWith(url.hostname, host)) {
@@ -193,7 +196,7 @@ pub const Loader = struct {
 
         // if they have ccache installed, put it in env variable `CMAKE_CXX_COMPILER_LAUNCHER` so
         // cmake can use it to hopefully speed things up
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const ccache_path = bun.which(
             &buf,
             this.get("PATH") orelse return,
@@ -238,6 +241,28 @@ pub const Loader = struct {
         try this.map.put("NODE", node_path_to_use);
         try this.map.put("npm_node_execpath", node_path_to_use);
         return true;
+    }
+
+    pub fn getAs(this: *const Loader, comptime T: type, key: string) ?T {
+        const value = this.get(key) orelse return null;
+        switch (comptime T) {
+            bool => {
+                if (strings.eqlComptime(value, "")) return false;
+                if (strings.eqlComptime(value, "0")) return false;
+                if (strings.eqlComptime(value, "NO")) return false;
+                if (strings.eqlComptime(value, "OFF")) return false;
+                if (strings.eqlComptime(value, "false")) return false;
+
+                return true;
+            },
+            else => @compileError("Implement getAs for this type"),
+        }
+    }
+
+    pub var has_no_clear_screen_cli_flag: ?bool = null;
+    /// Returns whether the `BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD` env var is set to something truthy
+    pub fn hasSetNoClearTerminalOnReload(this: *const Loader, default_value: bool) bool {
+        return (has_no_clear_screen_cli_flag orelse this.getAs(bool, "BUN_CONFIG_NO_CLEAR_TERMINAL_ON_RELOAD")) orelse default_value;
     }
 
     pub fn get(this: *const Loader, key: string) ?string {
@@ -426,7 +451,7 @@ pub const Loader = struct {
         return Loader{
             .map = map,
             .allocator = allocator,
-            .custom_files_loaded = std.StringArrayHashMap(logger.Source).init(allocator),
+            .custom_files_loaded = bun.StringArrayHashMap(logger.Source).init(allocator),
         };
     }
 
@@ -1063,7 +1088,7 @@ const Parser = struct {
 };
 
 pub const Map = struct {
-    const HashTableValue = struct {
+    pub const HashTableValue = struct {
         value: string,
         conditional: bool,
     };
@@ -1071,7 +1096,7 @@ pub const Map = struct {
     // An issue with this exact implementation is unicode characters can technically appear in these
     // keys, and we use a simple toLowercase function that only applies to ascii, so this will make
     // some strings collide.
-    const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
+    pub const HashTable = (if (Environment.isWindows) bun.CaseInsensitiveASCIIStringArrayHashMap else bun.StringArrayHashMap)(HashTableValue);
 
     const GetOrPutResult = HashTable.GetOrPutResult;
 
@@ -1245,7 +1270,11 @@ pub const Map = struct {
     }
 
     pub fn remove(this: *Map, key: string) void {
-        this.map.remove(key);
+        _ = this.map.swapRemove(key);
+    }
+
+    pub fn cloneWithAllocator(this: *const Map, new_allocator: std.mem.Allocator) !Map {
+        return .{ .map = try this.map.cloneWithAllocator(new_allocator) };
     }
 };
 

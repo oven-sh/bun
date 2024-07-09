@@ -15,6 +15,7 @@
 .vs
 .vscode/clang*
 .vscode/cpp*
+.zig-cache
 *.a
 *.bc
 *.big
@@ -54,6 +55,7 @@
 /test.js
 /test.ts
 /testdir
+/test.zig
 build
 build.ninja
 bun-binary
@@ -141,3 +143,5 @@ x64
 yarn.lock
 zig-cache
 zig-out
+test/node.js/upstream
+.zig-cache

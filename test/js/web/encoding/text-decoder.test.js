@@ -216,7 +216,9 @@ describe("TextDecoder", () => {
 
     text += ` ✨ Sparkles 🔥 Fire 😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰`;
     gcTrace(true);
-    expect(decoder.decode(encoder.encode(text))).toBe(text);
+    const result = decoder.decode(encoder.encode(text));
+    expect(result).toBe(text);
+    expect(result).toBeUTF16String();
     gcTrace(true);
     const bytes = new Uint8Array(getByteLength(text) * 8);
     gcTrace(true);

@@ -25,6 +25,8 @@
 #include <libusockets.h>
 #include <iostream>
 
+extern "C" int bun_is_exiting();
+
 namespace uWS {
 struct Loop {
 private:
@@ -89,14 +91,17 @@ private:
     /* What to do with loops created with existingNativeLoop? */
     struct LoopCleaner {
         ~LoopCleaner() {
-            if(loop && cleanMe) {
+            // There's no need to call this destructor if Bun is in the process of exiting.
+            // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
+            // such as uv_tty_t 
+            if(loop && cleanMe && !bun_is_exiting()) {
                 loop->free();
             }
         }
         Loop *loop = nullptr;
         bool cleanMe = false;
     };
-
+    
     static LoopCleaner &getLazyLoop() {
         static thread_local LoopCleaner lazyLoop;
         return lazyLoop;

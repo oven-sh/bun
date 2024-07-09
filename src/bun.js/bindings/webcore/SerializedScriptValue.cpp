@@ -903,12 +903,15 @@ public:
             return true;
         }
         writeLittleEndian<uint8_t>(out, StringTag);
+        const auto length = string.length();
         if (string.is8Bit()) {
-            writeLittleEndian(out, string.length() | StringDataIs8BitFlag);
-            return writeLittleEndian(out, string.characters8(), string.length());
+            const auto span = string.span8();
+            writeLittleEndian(out, length | StringDataIs8BitFlag);
+            return writeLittleEndian(out, span.data(), length);
         }
-        writeLittleEndian(out, string.length());
-        return writeLittleEndian(out, string.characters16(), string.length());
+        const auto span = string.span16();
+        writeLittleEndian(out, length);
+        return writeLittleEndian(out, span.data(), length);
     }
 
 private:
@@ -2063,11 +2066,11 @@ private:
         if (!length)
             return;
         if (str.is8Bit()) {
-            if (!writeLittleEndian(m_buffer, str.characters8(), length))
+            if (!writeLittleEndian(m_buffer, str.span8().data(), length))
                 fail();
             return;
         }
-        if (!writeLittleEndian(m_buffer, str.characters16(), length))
+        if (!writeLittleEndian(m_buffer, str.span16().data(), length))
             fail();
     }
 
@@ -2417,7 +2420,7 @@ private:
     SerializationForStorage m_forStorage;
 };
 
-void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
+SYSV_ABI void SerializedScriptValue::writeBytesForBun(CloneSerializer* ctx, const uint8_t* data, uint32_t size)
 {
     ctx->write(data, size);
 }
@@ -3241,7 +3244,7 @@ private:
         if (is8Bit) {
             if ((end - ptr) < static_cast<int>(length))
                 return false;
-            str = Identifier::fromString(vm, {reinterpret_cast<const LChar*>(ptr), length});
+            str = Identifier::fromString(vm, { reinterpret_cast<const LChar*>(ptr), length });
             ptr += length;
             return true;
         }
@@ -3251,7 +3254,7 @@ private:
             return false;
 
 #if ASSUME_LITTLE_ENDIAN
-        str = Identifier::fromString(vm, {reinterpret_cast<const UChar*>(ptr), length});
+        str = Identifier::fromString(vm, { reinterpret_cast<const UChar*>(ptr), length });
         ptr += length * sizeof(UChar);
 #else
         UChar* characters;
@@ -3403,7 +3406,7 @@ private:
             return false;
         if (m_ptr + length > m_end)
             return false;
-        arrayBuffer = ArrayBuffer::tryCreate(m_ptr, length);
+        arrayBuffer = ArrayBuffer::tryCreate({ m_ptr, length });
         if (!arrayBuffer)
             return false;
         m_ptr += length;
@@ -4726,14 +4729,7 @@ private:
                 fail();
                 return JSValue();
             }
-            auto scope = DECLARE_THROW_SCOPE(m_lexicalGlobalObject->vm());
-            JSValue result = JSC::JSWebAssemblyModule::createStub(m_lexicalGlobalObject->vm(), m_lexicalGlobalObject, m_globalObject->webAssemblyModuleStructure(), m_wasmModules->at(index));
-            // Since we are cloning a JSWebAssemblyModule, it's impossible for that
-            // module to not have been a valid module. Therefore, createStub should
-            // not throw.
-            scope.releaseAssertNoException();
-            m_gcBuffer.appendWithCrashOnOverflow(result);
-            return result;
+            return JSC::JSWebAssemblyModule::create(m_lexicalGlobalObject->vm(), m_globalObject->webAssemblyModuleStructure(), Ref { *m_wasmModules->at(index) });
         }
         case WasmMemoryTag: {
             if (m_version >= 12) {
@@ -5683,7 +5679,7 @@ Ref<JSC::ArrayBuffer> SerializedScriptValue::toArrayBuffer()
 
     this->ref();
     auto arrayBuffer = ArrayBuffer::createFromBytes(
-        this->m_data.data(), this->m_data.size(), createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
+        { this->m_data.data(), this->m_data.size() }, createSharedTask<void(void*)>([protectedThis = Ref { *this }](void* p) {
             protectedThis->deref();
         }));
 

@@ -281,7 +281,7 @@ void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* 
 
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, const void* data, size_t length)
 {
-    fulfillPromiseWithArrayBuffer(WTFMove(promise), ArrayBuffer::tryCreate(data, length).get());
+    fulfillPromiseWithArrayBuffer(WTFMove(promise), ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(data), length }).get());
 }
 
 bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)

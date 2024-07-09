@@ -85,7 +85,7 @@ class SerializedScriptValue : public ThreadSafeRefCounted<SerializedScriptValue>
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(SerializedScriptValue);
 
 public:
-    static void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
+    static SYSV_ABI void writeBytesForBun(CloneSerializer*, const uint8_t*, uint32_t);
 
     WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, Vector<RefPtr<MessagePort>>&, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default);
     // WEBCORE_EXPORT static ExceptionOr<Ref<SerializedScriptValue>> create(JSC::JSGlobalObject&, JSC::JSValue, Vector<JSC::Strong<JSC::JSObject>>&& transfer, SerializationForStorage = SerializationForStorage::No, SerializationContext = SerializationContext::Default);

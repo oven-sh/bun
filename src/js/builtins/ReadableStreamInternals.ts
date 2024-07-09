@@ -1862,11 +1862,11 @@ export function readableStreamIntoText(stream) {
   return closer.promise.$then($withoutUTF8BOM);
 }
 
-export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
+export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUint8Array) {
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
-  sink.start(highWaterMark ? { highWaterMark } : {});
+  sink.start({ highWaterMark, asUint8Array });
   var capability = $newPromiseCapability(Promise);
   var ended = false;
   var pull = underlyingSource.pull;

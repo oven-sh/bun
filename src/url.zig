@@ -40,6 +40,10 @@ pub const URL = struct {
         return strings.eqlComptime(this.protocol, "file");
     }
 
+    pub fn isBlob(this: *const URL) bool {
+        return this.href.len == JSC.WebCore.ObjectURLRegistry.specifier_len and strings.hasPrefixComptime(this.href, "blob:");
+    }
+
     pub fn fromJS(js_value: JSC.JSValue, globalObject: *JSC.JSGlobalObject, allocator: std.mem.Allocator) !URL {
         var href = JSC.URL.hrefFromJS(globalObject, js_value);
         if (href.tag == .Dead) {
@@ -976,7 +980,7 @@ pub const FormData = struct {
     pub fn jsFunctionFromMultipartData(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         JSC.markBinding(@src());
 
         const args_ = callframe.arguments(2);

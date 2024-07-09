@@ -207,8 +207,8 @@ After cloning a template, `bun create` will automatically remove the `"bun-creat
 
 ---
 
-- `GITHUB_ACCESS_TOKEN`
-- This lets `bun create` work with private repositories or if you get rate-limited
+- `GITHUB_TOKEN` (or `GITHUB_ACCESS_TOKEN`)
+- This lets `bun create` work with private repositories or if you get rate-limited. `GITHUB_TOKEN` is chosen over `GITHUB_ACCESS_TOKEN` if both exist.
 
 {% /table %}
 

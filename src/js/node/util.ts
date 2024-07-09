@@ -285,6 +285,7 @@ export default Object.assign(cjs_exports, {
   formatWithOptions,
   stripVTControlCharacters,
   deprecate,
+  debug: debuglog,
   debuglog,
   _extend,
   inspect,

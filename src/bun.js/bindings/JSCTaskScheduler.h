@@ -12,14 +12,14 @@ public:
     {
     }
 
-    static void onAddPendingWork(std::unique_ptr<JSC::DeferredWorkTimer::TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind);
+    static void onAddPendingWork(Ref<JSC::DeferredWorkTimer::TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind);
     static void onScheduleWorkSoon(JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(JSC::DeferredWorkTimer::Ticket ticket);
 
 public:
     Lock m_lock;
-    HashSet<std::unique_ptr<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;
-    HashSet<std::unique_ptr<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsOther;
+    HashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsKeepingEventLoopAlive;
+    HashSet<Ref<JSC::DeferredWorkTimer::TicketData>> m_pendingTicketsOther;
 };
 
 }

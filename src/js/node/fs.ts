@@ -1,5 +1,4 @@
 // Hardcoded module "node:fs"
-var ReadStream;
 var WriteStream;
 const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
@@ -10,6 +9,7 @@ const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
 const DatePrototypeGetTime = Date.prototype.getTime;
 const isDate = types.isDate;
+const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 // Private exports
 const { FileHandle, kRef, kUnref, kFd, fs } = promises.$data;
@@ -23,13 +23,24 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    const err = new TypeError("Callback must be a function");
+    const err = new TypeError('The "cb" argument must be of type function. Received ' + typeof callback);
     err.code = "ERR_INVALID_ARG_TYPE";
     throw err;
   }
 
   return callback;
 }
+
+// Micro-optimization: avoid creating a new function for every call
+// bind() is slightly more optimized in JSC
+// This code is equivalent to:
+//
+// function () { callback(null); }
+//
+function nullcallback(callback) {
+  return FunctionPrototypeBind.$call(callback, undefined, null);
+}
+const FunctionPrototypeBind = nullcallback.bind;
 
 class FSWatcher extends EventEmitter {
   #watcher;
@@ -51,17 +62,10 @@ class FSWatcher extends EventEmitter {
     this.#listener = listener;
     try {
       this.#watcher = fs.watch(path, options || {}, this.#onEvent.bind(this));
-    } catch (e) {
-      if (!e.message?.startsWith("FileNotFound")) {
-        throw e;
-      }
-      const notFound = new Error(`ENOENT: no such file or directory, watch '${path}'`);
-      notFound.code = "ENOENT";
-      notFound.errno = -2;
-      notFound.path = path;
-      notFound.syscall = "watch";
-      notFound.filename = path;
-      throw notFound;
+    } catch (e: any) {
+      e.path = path;
+      e.filename = path;
+      throw e;
     }
   }
 
@@ -74,6 +78,12 @@ class FSWatcher extends EventEmitter {
       });
       return;
     } else if (eventType === "error") {
+      // TODO: Next.js/watchpack causes this to emits weird EACCES errors on
+      // paths that shouldn't be watched. A better solution is to figure out why
+      // these paths get watched in the first place. For now we will rewrite the
+      // .code, which will cause their code path to ignore the error.
+      if (filenameOrError.code === "EACCES") filenameOrError.code = "EPERM";
+
       this.emit(eventType, filenameOrError);
     } else {
       this.emit("change", eventType, filenameOrError);
@@ -138,11 +148,25 @@ class StatWatcher extends EventEmitter {
   }
 }
 
-var access = function access(...args) {
-    callbackify(fs.access, args);
+var access = function access(path, mode, callback) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.access(path, mode).then(nullcallback(callback), callback);
   },
-  appendFile = function appendFile(...args) {
-    callbackify(fs.appendFile, args);
+  appendFile = function appendFile(path, data, options, callback) {
+    if (!$isCallable(callback)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.appendFile(path, data, options).then(nullcallback(callback), callback);
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
@@ -155,22 +179,36 @@ var access = function access(...args) {
       throw err;
     }
   },
-  rm = function rm(...args) {
-    callbackify(fs.rm, args);
+  rm = function rm(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+    fs.rm(path, options).then(nullcallback(callback), callback);
   },
-  rmdir = function rmdir(...args) {
-    callbackify(fs.rmdir, args);
+  rmdir = function rmdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    fs.rmdir(path, options).then(nullcallback(callback), callback);
   },
-  copyFile = function copyFile(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.copyFile(...args).then(result => callback(null, result), callback);
+  copyFile = function copyFile(src, dest, mode, callback) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = 0;
+    }
+
+    ensureCallback(callback);
+
+    fs.copyFile(src, dest, mode).then(nullcallback(callback), callback);
   },
   exists = function exists(path, callback) {
-    if (typeof callback !== "function") {
-      const err = new TypeError("Callback must be a function");
-      err.code = "ERR_INVALID_ARG_TYPE";
-      throw err;
-    }
+    ensureCallback(callback);
+
     try {
       fs.exists.$apply(fs, [path]).then(
         existed => callback(existed),
@@ -180,50 +218,111 @@ var access = function access(...args) {
       callback(false);
     }
   },
-  chown = function chown(...args) {
-    callbackify(fs.chown, args);
+  chown = function chown(path, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.chown(path, uid, gid).then(nullcallback(callback), callback);
   },
-  chmod = function chmod(...args) {
-    callbackify(fs.chmod, args);
+  chmod = function chmod(path, mode, callback) {
+    ensureCallback(callback);
+
+    fs.chmod(path, mode).then(nullcallback(callback), callback);
   },
-  fchmod = function fchmod(...args) {
-    callbackify(fs.fchmod, args);
+  fchmod = function fchmod(fd, mode, callback) {
+    ensureCallback(callback);
+
+    fs.fchmod(fd, mode).then(nullcallback(callback), callback);
   },
-  fchown = function fchown(...args) {
-    callbackify(fs.fchown, args);
+  fchown = function fchown(fd, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.fchown(fd, uid, gid).then(nullcallback(callback), callback);
   },
-  fstat = function fstat(...args) {
-    callbackify(fs.fstat, args);
+  fstat = function fstat(fd, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    fs.fstat(fd, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  fsync = function fsync(...args) {
-    callbackify(fs.fsync, args);
+  fsync = function fsync(fd, callback) {
+    ensureCallback(callback);
+
+    fs.fsync(fd).then(nullcallback(callback), callback);
   },
-  ftruncate = function ftruncate(...args) {
-    callbackify(fs.ftruncate, args);
+  ftruncate = function ftruncate(fd, len, callback) {
+    if ($isCallable(len)) {
+      callback = len;
+      len = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.ftruncate(fd, len).then(nullcallback(callback), callback);
   },
-  futimes = function futimes(...args) {
-    callbackify(fs.futimes, args);
+  futimes = function futimes(fd, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
-  lchmod = function lchmod(...args) {
-    callbackify(fs.lchmod, args);
+  lchmod = function lchmod(path, mode, callback) {
+    ensureCallback(callback);
+
+    fs.lchmod(path, mode).then(nullcallback(callback), callback);
   },
-  lchown = function lchown(...args) {
-    callbackify(fs.lchown, args);
+  lchown = function lchown(path, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.lchown(path, uid, gid).then(nullcallback(callback), callback);
   },
-  link = function link(...args) {
-    callbackify(fs.link, args);
+  link = function link(existingPath, newPath, callback) {
+    ensureCallback(callback);
+
+    fs.link(existingPath, newPath).then(nullcallback(callback), callback);
   },
-  mkdir = function mkdir(...args) {
-    callbackify(fs.mkdir, args);
+  mkdir = function mkdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.mkdir(path, options).then(nullcallback(callback), callback);
   },
-  mkdtemp = function mkdtemp(...args) {
-    callbackify(fs.mkdtemp, args);
+  mkdtemp = function mkdtemp(prefix, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.mkdtemp(prefix, options).then(function (folder) {
+      callback(null, folder);
+    }, callback);
   },
-  open = function open(...args) {
-    callbackify(fs.open, args);
+  open = function open(path, flags, mode, callback) {
+    if (arguments.length < 3) {
+      callback = flags;
+    } else if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.open(path, flags, mode).then(function (fd) {
+      callback(null, fd);
+    }, callback);
   },
-  fdatasync = function fdatasync(...args) {
-    callbackify(fs.fdatasync, args);
+  fdatasync = function fdatasync(fd, callback) {
+    ensureCallback(callback);
+
+    fs.fdatasync(fd).then(nullcallback(callback), callback);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     let offset = offsetOrOptions;
@@ -256,60 +355,151 @@ var access = function access(...args) {
       err => callback(err),
     );
   },
-  write = function write(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    const promise = fs.write(...args.slice(0, -1));
-    const bufferOrString = args[1];
+  write = function write(fd, buffer, offsetOrOptions, length, position, callback) {
+    function wrapper(bytesWritten) {
+      callback(null, bytesWritten, buffer);
+    }
 
-    promise.then(
-      bytesWritten => callback(null, bytesWritten, bufferOrString),
-      err => callback(err),
-    );
-  },
-  readdir = function readdir(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
+    if ($isTypedArrayView(buffer)) {
+      callback ||= position || length || offsetOrOptions;
+      ensureCallback(callback);
 
-    fs.readdir(...args.slice(0, -1)).then(result => callback(null, result), callback);
+      fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
+      return;
+    }
+
+    if (!$isCallable(position)) {
+      if ($isCallable(offsetOrOptions)) {
+        position = offsetOrOptions;
+        offsetOrOptions = undefined;
+      } else {
+        position = length;
+      }
+      length = "utf8";
+    }
+
+    callback = position;
+    ensureCallback(callback);
+
+    fs.write(fd, buffer, offsetOrOptions, length).then(wrapper, callback);
   },
-  readFile = function readFile(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.readFile(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  readdir = function readdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.readdir(path, options).then(function (files) {
+      callback(null, files);
+    }, callback);
   },
-  writeFile = function writeFile(...args) {
-    callbackify(fs.writeFile, args);
+  readFile = function readFile(path, options, callback) {
+    callback ||= options;
+    ensureCallback(callback);
+
+    fs.readFile(path, options).then(function (data) {
+      callback(null, data);
+    }, callback);
   },
-  readlink = function readlink(...args) {
-    callbackify(fs.readlink, args);
+  writeFile = function writeFile(path, data, options, callback) {
+    callback ||= options;
+    ensureCallback(callback);
+
+    fs.writeFile(path, data, options).then(nullcallback(callback), callback);
   },
-  realpath = function realpath(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.realpath(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  readlink = function readlink(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.readlink(path, options).then(function (linkString) {
+      callback(null, linkString);
+    }, callback);
   },
-  rename = function rename(...args) {
-    callbackify(fs.rename, args);
+  realpath = function realpath(p, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.realpath(p, options).then(function (resolvedPath) {
+      callback(null, resolvedPath);
+    }, callback);
   },
-  lstat = function lstat(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.lstat(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  rename = function rename(oldPath, newPath, callback) {
+    ensureCallback(callback);
+
+    fs.rename(oldPath, newPath).then(nullcallback(callback), callback);
   },
-  stat = function stat(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.stat(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  lstat = function lstat(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.lstat(path, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  symlink = function symlink(...args) {
-    callbackify(fs.symlink, args);
+  stat = function stat(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.stat(path, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  truncate = function truncate(...args) {
-    callbackify(fs.truncate, args);
+  symlink = function symlink(target, path, type, callback) {
+    if (callback === undefined) {
+      callback = type;
+      ensureCallback(callback);
+      type = undefined;
+    }
+
+    fs.symlink(target, path, type).then(callback, callback);
   },
-  unlink = function unlink(...args) {
-    callbackify(fs.unlink, args);
+  truncate = function truncate(path, len, callback) {
+    if (typeof path === "number") {
+      // Apparently, node supports this
+      ftruncate(path, len, callback);
+      return;
+    }
+
+    if ($isCallable(len)) {
+      callback = len;
+      len = undefined;
+    }
+
+    ensureCallback(callback);
+    fs.truncate(path, len).then(nullcallback(callback), callback);
   },
-  utimes = function utimes(...args) {
-    callbackify(fs.utimes, args);
+  unlink = function unlink(path, callback) {
+    ensureCallback(callback);
+
+    fs.unlink(path).then(nullcallback(callback), callback);
   },
-  lutimes = function lutimes(...args) {
-    callbackify(fs.lutimes, args);
+  utimes = function utimes(path, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.utimes(path, atime, mtime).then(nullcallback(callback), callback);
+  },
+  lutimes = function lutimes(path, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.lutimes(path, atime, mtime).then(nullcallback(callback), callback);
   },
   accessSync = fs.accessSync.bind(fs),
   appendFileSync = fs.appendFileSync.bind(fs),
@@ -387,8 +577,17 @@ var access = function access(...args) {
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
   },
-  opendir = function opendir(...args) {
-    callbackify(promises.opendir, args);
+  opendir = function opendir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    promises.opendir(path, options).then(function (dir) {
+      callback(null, dir);
+    }, callback);
   };
 
 // TODO: make symbols a separate export somewhere
@@ -498,13 +697,13 @@ function callbackify(fsFunction, args) {
 // _events
 // _eventsCount
 // _maxListener
-var readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath");
+const readStreamPathFastPathSymbol = Symbol.for("Bun.Node.readStreamPathFastPath");
 const readStreamSymbol = Symbol.for("Bun.NodeReadStream");
 const readStreamPathOrFdSymbol = Symbol.for("Bun.NodeReadStreamPathOrFd");
 const writeStreamSymbol = Symbol.for("Bun.NodeWriteStream");
-var writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
-var writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall");
-var kIoDone = Symbol.for("kIoDone");
+const writeStreamPathFastPathSymbol = Symbol.for("Bun.NodeWriteStreamFastPath");
+const writeStreamPathFastPathCallSymbol = Symbol.for("Bun.NodeWriteStreamFastPathCall");
+const kIoDone = Symbol.for("kIoDone");
 
 var defaultReadStreamOptions = {
   file: undefined,
@@ -536,368 +735,308 @@ var defaultReadStreamOptions = {
   autoDestroy: true,
 };
 
-let kHandle = Symbol("kHandle");
-
-var ReadStreamClass;
-
-ReadStream = (function (InternalReadStream) {
-  ReadStreamClass = InternalReadStream;
-  Object.defineProperty(ReadStreamClass.prototype, Symbol.toStringTag, {
-    value: "ReadStream",
-    enumerable: false,
-  });
-  function ReadStream(path, options) {
-    return new InternalReadStream(path, options);
-  }
-  ReadStream.prototype = InternalReadStream.prototype;
-  return Object.defineProperty(ReadStream, Symbol.hasInstance, {
-    value(instance) {
-      return instance instanceof InternalReadStream;
-    },
-  });
-})(
-  class ReadStream extends Stream._getNativeReadableStreamPrototype(2, Stream.Readable) {
-    constructor(pathOrFd, options = defaultReadStreamOptions) {
-      if (typeof options === "string") {
-        options = { encoding: options };
-      }
-
-      if (!$isObject(options) && !$isCallable(options)) {
-        throw new TypeError("Expected options to be an object or a string");
-      }
-
-      var {
-        flags = defaultReadStreamOptions.flags,
-        encoding = defaultReadStreamOptions.encoding,
-        mode = defaultReadStreamOptions.mode,
-        autoClose = defaultReadStreamOptions.autoClose,
-        emitClose = defaultReadStreamOptions.emitClose,
-        start = defaultReadStreamOptions.start,
-        end = defaultReadStreamOptions.end,
-        autoDestroy = defaultReadStreamOptions.autoClose,
-        fs: overridden_fs = defaultReadStreamOptions.fs,
-        highWaterMark = defaultReadStreamOptions.highWaterMark,
-        fd = defaultReadStreamOptions.fd,
-      } = options;
-
-      if (pathOrFd?.constructor?.name === "URL") {
-        pathOrFd = Bun.fileURLToPath(pathOrFd);
-      }
-
-      // This is kinda hacky but we create a temporary object to assign props that we will later pull into the `this` context after we call super
-      var tempThis = {};
-      let handle = null;
-      if (fd != null) {
-        if (typeof fd !== "number") {
-          if (fd instanceof FileHandle) {
-            tempThis.fd = fd[kFd];
-            if (tempThis.fd < 0) {
-              throw new Error("Expected a valid file descriptor");
-            }
-            fd[kRef]();
-            handle = fd;
-          } else {
-            throw new TypeError("Expected options.fd to be a number or FileHandle");
-          }
-        } else {
-          tempThis.fd = tempThis[readStreamPathOrFdSymbol] = fd;
-        }
-        tempThis.autoClose = false;
-      } else if (typeof pathOrFd === "string") {
-        if (pathOrFd.startsWith("file://")) {
-          pathOrFd = Bun.fileURLToPath(pathOrFd);
-        }
-        if (pathOrFd.length === 0) {
-          throw new TypeError("Expected path to be a non-empty string");
-        }
-        tempThis.path = tempThis.file = tempThis[readStreamPathOrFdSymbol] = pathOrFd;
-      } else if (typeof pathOrFd === "number") {
-        pathOrFd |= 0;
-        if (pathOrFd < 0) {
-          throw new TypeError("Expected fd to be a positive integer");
-        }
-        tempThis.fd = tempThis[readStreamPathOrFdSymbol] = pathOrFd;
-
-        tempThis.autoClose = false;
-      } else {
-        throw new TypeError("Expected a path or file descriptor");
-      }
-
-      // If fd not open for this file, open it
-      if (tempThis.fd === undefined) {
-        // NOTE: this fs is local to constructor, from options
-        tempThis.fd = overridden_fs.openSync(pathOrFd, flags, mode);
-      }
-
-      // Get FileRef from fd
-      var fileRef = Bun.file(tempThis.fd);
-
-      // Get the stream controller
-      // We need the pointer to the underlying stream controller for the NativeReadable
-      var stream = fileRef.stream();
-      var ptr = stream.$bunNativePtr;
-      if (!ptr) {
-        throw new Error("Failed to get internal stream controller. This is a bug in Bun");
-      }
-
-      super(ptr, {
-        ...options,
-        encoding,
-        autoDestroy,
-        autoClose,
-        emitClose,
-        highWaterMark,
-      });
-
-      // Assign the tempThis props to this
-      Object.assign(this, tempThis);
-      this.#handle = handle;
-      this.end = end;
-      this._read = this.#internalRead;
-      this.start = start;
-      this.flags = flags;
-      this.mode = mode;
-      this.emitClose = emitClose;
-
-      this[readStreamPathFastPathSymbol] =
-        start === 0 &&
-        end === Infinity &&
-        autoClose &&
-        fs === defaultReadStreamOptions.fs &&
-        // is it an encoding which we don't need to decode?
-        (encoding === "buffer" ||
-          encoding === "binary" ||
-          encoding == null ||
-          encoding === "utf-8" ||
-          encoding === "utf8");
-      this._readableState.autoClose = autoDestroy = autoClose;
-      this._readableState.highWaterMark = highWaterMark;
-
-      if (start !== undefined) {
-        this.pos = start;
-      }
-
-      $assert(overridden_fs);
-      this.#fs = overridden_fs;
-    }
-    #handle;
-    #fs;
-    file;
-    path;
-    fd = null;
-    flags;
-    mode;
-    start;
-    end;
-    pos;
-    bytesRead = 0;
-    #fileSize = -1;
-    _read;
-
-    [readStreamSymbol] = true;
-    [readStreamPathOrFdSymbol];
-    [readStreamPathFastPathSymbol];
-
-    _construct(callback) {
-      if (super._construct) {
-        super._construct(callback);
-      } else {
-        callback();
-      }
-      this.emit("open", this.fd);
-      this.emit("ready");
-    }
-
-    _destroy(err, cb) {
-      try {
-        this[readStreamPathFastPathSymbol] = false;
-        var handle = this.#handle;
-        if (handle) {
-          handle[kUnref]();
-          this.fd = null;
-          this.#handle = null;
-          super._destroy(err, cb);
-          return;
-        }
-
-        var fd = this.fd;
-        if (!fd) {
-          super._destroy(err, cb);
-        } else {
-          $assert(this.#fs);
-          this.#fs.close(fd, er => {
-            super._destroy(er || err, cb);
-          });
-          this.fd = null;
-        }
-      } catch (e) {
-        throw e;
-      }
-    }
-
-    close(cb) {
-      if (typeof cb === "function") Stream.eos(this, cb);
-      this.destroy();
-    }
-
-    push(chunk) {
-      // Is it even possible for this to be less than 1?
-      var bytesRead = chunk?.length ?? 0;
-      if (bytesRead > 0) {
-        this.bytesRead += bytesRead;
-        var currPos = this.pos;
-        // Handle case of going through bytes before pos if bytesRead is less than pos
-        // If pos is undefined, we are reading through the whole file
-        // Otherwise we started from somewhere in the middle of the file
-        if (currPos !== undefined) {
-          // At this point we still haven't hit our `start` point
-          // We should discard this chunk and exit
-          if (this.bytesRead < currPos) {
-            return true;
-          }
-          // At this point, bytes read is greater than our starting position
-          // If the current position is still the starting position, that means
-          // this is the first chunk where we care about the bytes read
-          // and we need to subtract the bytes read from the start position (n) and slice the last n bytes
-          if (currPos === this.start) {
-            var n = this.bytesRead - currPos;
-            chunk = chunk.slice(-n);
-            var [_, ...rest] = arguments;
-            this.pos = this.bytesRead;
-            if (this.end !== undefined && this.bytesRead > this.end) {
-              chunk = chunk.slice(0, this.end - this.start + 1);
-            }
-            return super.push(chunk, ...rest);
-          }
-          var end = this.end;
-          // This is multi-chunk read case where we go passed the end of the what we want to read in the last chunk
-          if (end !== undefined && this.bytesRead > end) {
-            chunk = chunk.slice(0, end - currPos + 1);
-            var [_, ...rest] = arguments;
-            this.pos = this.bytesRead;
-            return super.push(chunk, ...rest);
-          }
-          this.pos = this.bytesRead;
-        }
-      }
-
-      return super.push(...arguments);
-    }
-
-    // #
-
-    // n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
-    #internalRead(n) {
-      // pos is the current position in the file
-      // by default, if a start value is provided, pos starts at this.start
-      var { pos, end, bytesRead, fd } = this;
-
-      n =
-        pos !== undefined // if there is a pos, then we are reading from that specific position in the file
-          ? Math.min(end - pos + 1, n) // takes smaller of length of the rest of the file to read minus the cursor position, or the highwatermark
-          : Math.min(end - bytesRead + 1, n); // takes the smaller of the length of the rest of the file from the bytes that we have marked read, or the highwatermark
-
-      $debug("n @ fs.ReadStream.#internalRead, after clamp", n);
-
-      // If n is 0 or less, then we read all the file, push null to stream, ending it
-      if (n <= 0) {
-        this.push(null);
-        return;
-      }
-
-      // At this point, n is the lesser of the length of the rest of the file to read or the highwatermark
-      // Which means n is the maximum number of bytes to read
-
-      // Basically if we don't know the file size yet, then check it
-      // Then if n is bigger than fileSize, set n to be fileSize
-      // This is a fast path to avoid allocating more than the file size for a small file (is this respected by native stream though)
-      if (this.#fileSize === -1 && bytesRead === 0 && pos === undefined) {
-        var stat = fstatSync(fd);
-        this.#fileSize = stat.size;
-        if (this.#fileSize > 0 && n > this.#fileSize) {
-          n = this.#fileSize + 1;
-        }
-        $debug("fileSize", this.#fileSize);
-      }
-
-      // At this point, we know the file size and how much we want to read of the file
-      this[kIoDone] = false;
-      var res = super._read(n);
-      $debug("res -- undefined? why?", res);
-      if ($isPromise(res)) {
-        var then = res?.then;
-        if (then && $isCallable(then)) {
-          res.then(
-            () => {
-              this[kIoDone] = true;
-              // Tell ._destroy() that it's safe to close the fd now.
-              if (this.destroyed) {
-                this.emit(kIoDone);
-              }
-            },
-            er => {
-              this[kIoDone] = true;
-              this.#errorOrDestroy(er);
-            },
-          );
-        }
-      } else {
-        this[kIoDone] = true;
-        if (this.destroyed) {
-          this.emit(kIoDone);
-          this.#errorOrDestroy(new Error("ERR_STREAM_PREMATURE_CLOSE"));
-        }
-      }
-    }
-
-    #errorOrDestroy(err, sync = null) {
-      var {
-        _readableState: r = { destroyed: false, autoDestroy: false },
-        _writableState: w = { destroyed: false, autoDestroy: false },
-      } = this;
-
-      if (w?.destroyed || r?.destroyed) {
-        return this;
-      }
-      if (r?.autoDestroy || w?.autoDestroy) this.destroy(err);
-      else if (err) {
-        this.emit("error", err);
-      }
-    }
-
-    pause() {
-      this[readStreamPathFastPathSymbol] = false;
-      return super.pause();
-    }
-
-    resume() {
-      this[readStreamPathFastPathSymbol] = false;
-      return super.resume();
-    }
-
-    unshift(...args) {
-      this[readStreamPathFastPathSymbol] = false;
-      return super.unshift(...args);
-    }
-
-    pipe(dest, pipeOpts) {
-      if (this[readStreamPathFastPathSymbol] && (pipeOpts?.end ?? true) && this._readableState?.pipes?.length === 0) {
-        if (writeStreamPathFastPathSymbol in dest && dest[writeStreamPathFastPathSymbol]) {
-          if (dest[writeStreamPathFastPathCallSymbol](this, pipeOpts)) {
-            return this;
-          }
-        }
-      }
-
-      this[readStreamPathFastPathSymbol] = false;
-      return super.pipe(dest, pipeOpts);
-    }
-  },
-);
+const blobToStreamWithOffset = $newZigFunction("blob.zig", "Blob.toStreamWithOffset", 1);
 
 function createReadStream(path, options) {
   return new ReadStream(path, options);
 }
+
+const NativeReadable = Stream._getNativeReadableStreamPrototype(2, Stream.Readable);
+const NativeReadablePrototype = NativeReadable.prototype;
+const kFs = Symbol("kFs");
+const kHandle = Symbol("kHandle");
+
+const kinternalRead = Symbol("kinternalRead");
+const kerrorOrDestroy = Symbol("kerrorOrDestroy");
+const mfileSize = Symbol("mfileSize");
+
+function ReadStream(this: typeof ReadStream, pathOrFd, options) {
+  if (!(this instanceof ReadStream)) {
+    return new ReadStream(pathOrFd, options);
+  }
+
+  options ??= defaultReadStreamOptions;
+
+  this.fd = null;
+  this.bytesRead = 0;
+  this[mfileSize] = -1;
+  this[readStreamSymbol] = true;
+
+  if (typeof options === "string") {
+    options = { encoding: options };
+  }
+
+  if (!$isObject(options) && !$isCallable(options)) {
+    throw new TypeError("Expected options to be an object or a string");
+  }
+
+  let {
+    flags = defaultReadStreamOptions.flags,
+    encoding = defaultReadStreamOptions.encoding,
+    mode = defaultReadStreamOptions.mode,
+    autoClose = defaultReadStreamOptions.autoClose,
+    emitClose = defaultReadStreamOptions.emitClose,
+    start = defaultReadStreamOptions.start,
+    end = defaultReadStreamOptions.end,
+    autoDestroy = defaultReadStreamOptions.autoClose,
+    fs: overridden_fs = defaultReadStreamOptions.fs,
+    highWaterMark = defaultReadStreamOptions.highWaterMark,
+    fd = defaultReadStreamOptions.fd,
+  }: Partial<typeof defaultReadStreamOptions> = options;
+
+  if (pathOrFd?.constructor?.name === "URL") {
+    pathOrFd = Bun.fileURLToPath(pathOrFd);
+  }
+
+  let handle = null;
+  if (fd != null) {
+    if (typeof fd !== "number") {
+      if (fd instanceof FileHandle) {
+        this.fd = fd[kFd];
+        if (this.fd < 0) {
+          throw new Error("Expected a valid file descriptor");
+        }
+        fd[kRef]();
+        handle = fd;
+      } else {
+        throw new TypeError("Expected options.fd to be a number or FileHandle");
+      }
+    } else {
+      this.fd = this[readStreamPathOrFdSymbol] = fd;
+    }
+    this.autoClose = false;
+  } else if (typeof pathOrFd === "string") {
+    if (pathOrFd.startsWith("file://")) {
+      pathOrFd = Bun.fileURLToPath(pathOrFd);
+    }
+    if (pathOrFd.length === 0) {
+      throw new TypeError("Expected path to be a non-empty string");
+    }
+    this.path = this.file = this[readStreamPathOrFdSymbol] = pathOrFd;
+  } else if (typeof pathOrFd === "number") {
+    pathOrFd |= 0;
+    if (pathOrFd < 0) {
+      throw new TypeError("Expected fd to be a positive integer");
+    }
+    this.fd = this[readStreamPathOrFdSymbol] = pathOrFd;
+
+    this.autoClose = false;
+  } else {
+    throw new TypeError("Expected a path or file descriptor");
+  }
+
+  // If fd not open for this file, open it
+  if (this.fd == null) {
+    // NOTE: this fs is local to constructor, from options
+    this.fd = overridden_fs.openSync(pathOrFd, flags, mode);
+  }
+
+  // Get FileRef from fd
+  var fileRef = Bun.file(this.fd);
+
+  // Get the stream controller
+  // We need the pointer to the underlying stream controller for the NativeReadable
+  const stream = blobToStreamWithOffset.$apply(fileRef, [start]);
+  var ptr = stream.$bunNativePtr;
+  if (!ptr) {
+    throw new Error("Failed to get internal stream controller. This is a bug in Bun");
+  }
+
+  NativeReadable.$apply(this, [ptr, options]);
+
+  this[kHandle] = handle;
+  this.end = end;
+  this._read = this[kinternalRead];
+  this.start = start;
+  this.flags = flags;
+  this.mode = mode;
+  this.emitClose = emitClose;
+
+  this[readStreamPathFastPathSymbol] =
+    start === 0 &&
+    end === Infinity &&
+    autoClose &&
+    fs === defaultReadStreamOptions.fs &&
+    // is it an encoding which we don't need to decode?
+    (encoding === "buffer" || encoding === "binary" || encoding == null || encoding === "utf-8" || encoding === "utf8");
+  this._readableState.autoClose = autoDestroy = autoClose;
+  this._readableState.highWaterMark = highWaterMark;
+
+  this.pos = start || 0;
+  this.bytesRead = start || 0;
+
+  $assert(overridden_fs);
+  this[kFs] = overridden_fs;
+}
+ReadStream.prototype = {};
+ObjectSetPrototypeOf(ReadStream.prototype, NativeReadable.prototype);
+
+ReadStream.prototype._construct = function (callback) {
+  if (NativeReadablePrototype._construct) {
+    NativeReadablePrototype._construct.$apply(this, [callback]);
+  } else {
+    callback();
+  }
+  this.emit("open", this.fd);
+  this.emit("ready");
+};
+
+ReadStream.prototype._destroy = function (err, cb) {
+  try {
+    this[readStreamPathFastPathSymbol] = false;
+    var handle = this[kHandle];
+    if (handle) {
+      handle[kUnref]();
+      this.fd = null;
+      this[kHandle] = null;
+      NativeReadablePrototype._destroy.$apply(this, [err, cb]);
+      return;
+    }
+
+    var fd = this.fd;
+    if (!fd) {
+      NativeReadablePrototype._destroy.$apply(this, [err, cb]);
+    } else {
+      $assert(this[kFs]);
+      this[kFs].close(fd, er => {
+        NativeReadablePrototype._destroy.$apply(this, [er || err, cb]);
+      });
+      this.fd = null;
+    }
+  } catch (e) {
+    throw e;
+  }
+};
+
+ReadStream.prototype.close = function (cb) {
+  if (typeof cb === "function") Stream.eos(this, cb);
+  this.destroy();
+};
+
+ReadStream.prototype.push = function (chunk) {
+  let bytesRead = chunk?.length ?? 0;
+  if (bytesRead > 0) {
+    this.bytesRead += bytesRead;
+    let end = this.end;
+    // truncate the chunk if we go past the end
+    if (end !== undefined && this.bytesRead > end) {
+      chunk = chunk.slice(0, end - this.pos + 1);
+      var [_, ...rest] = arguments;
+      this.pos = this.bytesRead;
+      return NativeReadablePrototype.push.$apply(this, [chunk, ...rest]);
+    }
+    this.pos = this.bytesRead;
+  }
+
+  return NativeReadablePrototype.push.$apply(this, arguments);
+};
+
+// n should be the highwatermark passed from Readable.read when calling internal _read (_read is set to this private fn in this class)
+ReadStream.prototype[kinternalRead] = function (n) {
+  // pos is the current position in the file
+  // by default, if a start value is provided, pos starts at this.start
+  var { pos, end, bytesRead, fd } = this;
+
+  n =
+    pos !== undefined // if there is a pos, then we are reading from that specific position in the file
+      ? Math.min(end - pos + 1, n) // takes smaller of length of the rest of the file to read minus the cursor position, or the highwatermark
+      : Math.min(end - bytesRead + 1, n); // takes the smaller of the length of the rest of the file from the bytes that we have marked read, or the highwatermark
+
+  $debug("n @ fs.ReadStream.#internalRead, after clamp", n);
+
+  // If n is 0 or less, then we read all the file, push null to stream, ending it
+  if (n <= 0) {
+    this.push(null);
+    return;
+  }
+
+  // At this point, n is the lesser of the length of the rest of the file to read or the highwatermark
+  // Which means n is the maximum number of bytes to read
+
+  // Basically if we don't know the file size yet, then check it
+  // Then if n is bigger than fileSize, set n to be fileSize
+  // This is a fast path to avoid allocating more than the file size for a small file (is this respected by native stream though)
+  if (this[mfileSize] === -1 && bytesRead === 0 && pos === undefined) {
+    var stat = fstatSync(fd);
+    this[mfileSize] = stat.size;
+    if (this[mfileSize] > 0 && n > this[mfileSize]) {
+      n = this[mfileSize] + 1;
+    }
+    $debug("fileSize", this[mfileSize]);
+  }
+
+  // At this point, we know the file size and how much we want to read of the file
+  this[kIoDone] = false;
+  var res = NativeReadablePrototype._read.$apply(this, [n]);
+  $debug("res -- undefined? why?", res);
+  if ($isPromise(res)) {
+    var then = res?.then;
+    if (then && $isCallable(then)) {
+      res.then(
+        () => {
+          this[kIoDone] = true;
+          // Tell ._destroy() that it's safe to close the fd now.
+          if (this.destroyed) {
+            this.emit(kIoDone);
+          }
+        },
+        er => {
+          this[kIoDone] = true;
+          this[kerrorOrDestroy](er);
+        },
+      );
+    }
+  } else {
+    this[kIoDone] = true;
+    if (this.destroyed) {
+      this.emit(kIoDone);
+      this[kerrorOrDestroy](new Error("ERR_STREAM_PREMATURE_CLOSE"));
+    }
+  }
+};
+
+ReadStream.prototype[kerrorOrDestroy] = function (err, sync = null) {
+  var {
+    _readableState: r = { destroyed: false, autoDestroy: false },
+    _writableState: w = { destroyed: false, autoDestroy: false },
+  } = this;
+
+  if (w?.destroyed || r?.destroyed) {
+    return this;
+  }
+  if (r?.autoDestroy || w?.autoDestroy) this.destroy(err);
+  else if (err) {
+    this.emit("error", err);
+  }
+};
+
+ReadStream.prototype.pause = function () {
+  this[readStreamPathFastPathSymbol] = false;
+  return NativeReadablePrototype.pause.$apply(this);
+};
+
+ReadStream.prototype.resume = function () {
+  this[readStreamPathFastPathSymbol] = false;
+  return NativeReadablePrototype.resume.$apply(this);
+};
+
+ReadStream.prototype.unshift = function (...args) {
+  this[readStreamPathFastPathSymbol] = false;
+  return NativeReadablePrototype.unshift.$apply(this, arguments);
+};
+
+ReadStream.prototype.pipe = function (dest, pipeOpts) {
+  if (this[readStreamPathFastPathSymbol] && (pipeOpts?.end ?? true) && this._readableState?.pipes?.length === 0) {
+    if (writeStreamPathFastPathSymbol in dest && dest[writeStreamPathFastPathSymbol]) {
+      if (dest[writeStreamPathFastPathCallSymbol](this, pipeOpts)) {
+        return this;
+      }
+    }
+  }
+
+  this[readStreamPathFastPathSymbol] = false;
+  return NativeReadablePrototype.pipe.$apply(this, [dest, pipeOpts]);
+};
 
 var defaultWriteStreamOptions = {
   fd: null,
@@ -1376,7 +1515,6 @@ export default {
   openAsBlob,
   opendir,
   [Symbol.for("::bunternal::")]: {
-    ReadStreamClass,
     WriteStreamClass,
   },
   // get WriteStream() {
@@ -1386,3 +1524,103 @@ export default {
   //   return getLazyReadStream();
   // },
 };
+
+// Preserve the names
+function setName(fn, value) {
+  Object.$defineProperty(fn, "name", { value, enumerable: false, configurable: true });
+}
+setName(Dirent, "Dirent");
+setName(FSWatcher, "FSWatcher");
+setName(ReadStream, "ReadStream");
+setName(Stats, "Stats");
+setName(WriteStream, "WriteStream");
+setName(_toUnixTimestamp, "_toUnixTimestamp");
+setName(access, "access");
+setName(accessSync, "accessSync");
+setName(appendFile, "appendFile");
+setName(appendFileSync, "appendFileSync");
+setName(chmod, "chmod");
+setName(chmodSync, "chmodSync");
+setName(chown, "chown");
+setName(chownSync, "chownSync");
+setName(close, "close");
+setName(closeSync, "closeSync");
+setName(constants, "constants");
+setName(copyFile, "copyFile");
+setName(copyFileSync, "copyFileSync");
+setName(cp, "cp");
+setName(cpSync, "cpSync");
+setName(createReadStream, "createReadStream");
+setName(createWriteStream, "createWriteStream");
+setName(exists, "exists");
+setName(existsSync, "existsSync");
+setName(fchmod, "fchmod");
+setName(fchmodSync, "fchmodSync");
+setName(fchown, "fchown");
+setName(fchownSync, "fchownSync");
+setName(fstat, "fstat");
+setName(fstatSync, "fstatSync");
+setName(fsync, "fsync");
+setName(fsyncSync, "fsyncSync");
+setName(ftruncate, "ftruncate");
+setName(ftruncateSync, "ftruncateSync");
+setName(futimes, "futimes");
+setName(futimesSync, "futimesSync");
+setName(lchmod, "lchmod");
+setName(lchmodSync, "lchmodSync");
+setName(lchown, "lchown");
+setName(lchownSync, "lchownSync");
+setName(link, "link");
+setName(linkSync, "linkSync");
+setName(lstat, "lstat");
+setName(lstatSync, "lstatSync");
+setName(lutimes, "lutimes");
+setName(lutimesSync, "lutimesSync");
+setName(mkdir, "mkdir");
+setName(mkdirSync, "mkdirSync");
+setName(mkdtemp, "mkdtemp");
+setName(mkdtempSync, "mkdtempSync");
+setName(open, "open");
+setName(openSync, "openSync");
+setName(promises, "promises");
+setName(read, "read");
+setName(readFile, "readFile");
+setName(readFileSync, "readFileSync");
+setName(readSync, "readSync");
+setName(readdir, "readdir");
+setName(readdirSync, "readdirSync");
+setName(readlink, "readlink");
+setName(readlinkSync, "readlinkSync");
+setName(readv, "readv");
+setName(readvSync, "readvSync");
+setName(realpath, "realpath");
+setName(realpathSync, "realpathSync");
+setName(rename, "rename");
+setName(renameSync, "renameSync");
+setName(rm, "rm");
+setName(rmSync, "rmSync");
+setName(rmdir, "rmdir");
+setName(rmdirSync, "rmdirSync");
+setName(stat, "stat");
+setName(statSync, "statSync");
+setName(symlink, "symlink");
+setName(symlinkSync, "symlinkSync");
+setName(truncate, "truncate");
+setName(truncateSync, "truncateSync");
+setName(unlink, "unlink");
+setName(unlinkSync, "unlinkSync");
+setName(unwatchFile, "unwatchFile");
+setName(utimes, "utimes");
+setName(utimesSync, "utimesSync");
+setName(watch, "watch");
+setName(watchFile, "watchFile");
+setName(write, "write");
+setName(writeFile, "writeFile");
+setName(writeFileSync, "writeFileSync");
+setName(writeSync, "writeSync");
+setName(writev, "writev");
+setName(writevSync, "writevSync");
+setName(fdatasync, "fdatasync");
+setName(fdatasyncSync, "fdatasyncSync");
+setName(openAsBlob, "openAsBlob");
+setName(opendir, "opendir");

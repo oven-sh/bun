@@ -8,6 +8,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
+#include "wtf/Assertions.h"
 #include "wtf/FastMalloc.h"
 #include "headers-handwritten.h"
 
@@ -37,6 +38,7 @@ extern "C" JSPropertyIterator* Bun__JSPropertyIterator__create(JSC::JSGlobalObje
     JSC::VM& vm = globalObject->vm();
     JSC::JSValue value = JSValue::decode(encodedValue);
     JSC::JSObject* object = value.getObject();
+    ASSERT(object != NULL);
 
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::PropertyNameArray array(vm, PropertyNameMode::StringsAndSymbols, PrivateSymbolMode::Exclude);

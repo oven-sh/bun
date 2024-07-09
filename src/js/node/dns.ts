@@ -3,6 +3,22 @@
 const dns = Bun.dns;
 const utilPromisifyCustomSymbol = Symbol.for("nodejs.util.promisify.custom");
 
+function translateErrorCode(promise: Promise<any>) {
+  return promise.catch(error => {
+    return Promise.reject(withTranslatedError(error));
+  });
+}
+
+// We prefix the error codes with "DNS_" to make it clear it's a DNS error code.
+// Node does not do this, so we have to translate.
+function withTranslatedError(error: any) {
+  const code = error?.code;
+  if (code?.startsWith?.("DNS_")) {
+    error.code = code.slice(4);
+  }
+  return error;
+}
+
 function getServers() {
   return dns.getServers();
 }
@@ -31,6 +47,7 @@ function lookup(domain, options, callback) {
   }
 
   dns.lookup(domain, options).then(res => {
+    throwIfEmpty(res);
     res.sort((a, b) => a.family - b.family);
 
     if (options?.all) {
@@ -52,7 +69,7 @@ function lookupService(address, port, callback) {
       callback(null, ...results);
     },
     error => {
-      callback(error);
+      callback(withTranslatedError(error));
     },
   );
 }
@@ -89,7 +106,7 @@ var InternalResolver = class Resolver {
         }
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -109,7 +126,7 @@ var InternalResolver = class Resolver {
         callback(null, options?.ttl ? addresses : addresses.map(mapResolveX));
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -129,7 +146,7 @@ var InternalResolver = class Resolver {
         callback(null, options?.ttl ? addresses : addresses.map(({ address }) => address));
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -148,7 +165,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -163,7 +180,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -178,7 +195,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -193,7 +210,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -208,7 +225,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -223,7 +240,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -238,7 +255,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -253,7 +270,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -267,7 +284,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -282,7 +299,7 @@ var InternalResolver = class Resolver {
         callback(null, results);
       },
       error => {
-        callback(error);
+        callback(withTranslatedError(error));
       },
     );
   }
@@ -317,18 +334,33 @@ var {
 function setDefaultResultOrder() {}
 function setServers() {}
 
-const promisifyLookup = res => {
-  res.sort((a, b) => a.family - b.family);
-  const [{ address, family }] = res;
-  return { address, family };
-};
-
 const mapLookupAll = res => {
   const { address, family } = res;
   return { address, family };
 };
 
+function throwIfEmpty(res) {
+  if (res.length === 0) {
+    const err = new Error("No records found");
+    err.name = "DNSException";
+    err.code = "ENODATA";
+    // Hardcoded errno
+    err.errno = 1;
+    err.syscall = "getaddrinfo";
+    throw err;
+  }
+}
+Object.defineProperty(throwIfEmpty, "name", { value: "::bunternal::" });
+
+const promisifyLookup = res => {
+  throwIfEmpty(res);
+  res.sort((a, b) => a.family - b.family);
+  const [{ address, family }] = res;
+  return { address, family };
+};
+
 const promisifyLookupAll = res => {
+  throwIfEmpty(res);
   res.sort((a, b) => a.family - b.family);
   return res.map(mapLookupAll);
 };
@@ -343,13 +375,13 @@ const promisifyResolveX = res => {
 const promises = {
   lookup(domain, options) {
     if (options?.all) {
-      return dns.lookup(domain, options).then(promisifyLookupAll);
+      return translateErrorCode(dns.lookup(domain, options).then(promisifyLookupAll));
     }
-    return dns.lookup(domain, options).then(promisifyLookup);
+    return translateErrorCode(dns.lookup(domain, options).then(promisifyLookup));
   },
 
   lookupService(address, port) {
-    return dns.lookupService(address, port);
+    return translateErrorCode(dns.lookupService(address, port));
   },
 
   resolve(hostname, rrtype) {
@@ -359,56 +391,56 @@ const promises = {
     switch (rrtype?.toLowerCase()) {
       case "a":
       case "aaaa":
-        return dns.resolve(hostname, rrtype).then(promisifyLookup);
+        return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup));
       default:
-        return dns.resolve(hostname, rrtype);
+        return translateErrorCode(dns.resolve(hostname, rrtype));
     }
   },
 
   resolve4(hostname, options) {
     if (options?.ttl) {
-      return dns.lookup(hostname, { family: 4 });
+      return translateErrorCode(dns.lookup(hostname, { family: 4 }));
     }
-    return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX);
+    return translateErrorCode(dns.lookup(hostname, { family: 4 }).then(promisifyResolveX));
   },
 
   resolve6(hostname, options) {
     if (options?.ttl) {
-      return dns.lookup(hostname, { family: 6 });
+      return translateErrorCode(dns.lookup(hostname, { family: 6 }));
     }
-    return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX);
+    return translateErrorCode(dns.lookup(hostname, { family: 6 }).then(promisifyResolveX));
   },
 
   resolveSrv(hostname) {
-    return dns.resolveSrv(hostname);
+    return translateErrorCode(dns.resolveSrv(hostname));
   },
   resolveTxt(hostname) {
-    return dns.resolveTxt(hostname);
+    return translateErrorCode(dns.resolveTxt(hostname));
   },
   resolveSoa(hostname) {
-    return dns.resolveSoa(hostname);
+    return translateErrorCode(dns.resolveSoa(hostname));
   },
   resolveNaptr(hostname) {
-    return dns.resolveNaptr(hostname);
+    return translateErrorCode(dns.resolveNaptr(hostname));
   },
 
   resolveMx(hostname) {
-    return dns.resolveMx(hostname);
+    return translateErrorCode(dns.resolveMx(hostname));
   },
   resolveCaa(hostname) {
-    return dns.resolveCaa(hostname);
+    return translateErrorCode(dns.resolveCaa(hostname));
   },
   resolveNs(hostname) {
-    return dns.resolveNs(hostname);
+    return translateErrorCode(dns.resolveNs(hostname));
   },
   resolvePtr(hostname) {
-    return dns.resolvePtr(hostname);
+    return translateErrorCode(dns.resolvePtr(hostname));
   },
   resolveCname(hostname) {
-    return dns.resolveCname(hostname);
+    return translateErrorCode(dns.resolveCname(hostname));
   },
   reverse(ip) {
-    return dns.reverse(ip);
+    return translateErrorCode(dns.reverse(ip));
   },
 
   Resolver: class Resolver {
@@ -427,24 +459,24 @@ const promises = {
       switch (rrtype?.toLowerCase()) {
         case "a":
         case "aaaa":
-          return dns.resolve(hostname, rrtype).then(promisifyLookup);
+          return translateErrorCode(dns.resolve(hostname, rrtype).then(promisifyLookup));
         default:
-          return dns.resolve(hostname, rrtype);
+          return translateErrorCode(dns.resolve(hostname, rrtype));
       }
     }
 
     resolve4(hostname, options) {
       if (options?.ttl) {
-        return dns.lookup(hostname, { family: 4 });
+        return translateErrorCode(dns.lookup(hostname, { family: 4 }));
       }
-      return dns.lookup(hostname, { family: 4 }).then(promisifyResolveX);
+      return translateErrorCode(dns.lookup(hostname, { family: 4 }).then(promisifyResolveX));
     }
 
     resolve6(hostname, options) {
       if (options?.ttl) {
-        return dns.lookup(hostname, { family: 6 });
+        return translateErrorCode(dns.lookup(hostname, { family: 6 }));
       }
-      return dns.lookup(hostname, { family: 6 }).then(promisifyResolveX);
+      return translateErrorCode(dns.lookup(hostname, { family: 6 }).then(promisifyResolveX));
     }
 
     resolveAny(hostname) {
@@ -452,43 +484,43 @@ const promises = {
     }
 
     resolveCname(hostname) {
-      return dns.resolveCname(hostname);
+      return translateErrorCode(dns.resolveCname(hostname));
     }
 
     resolveMx(hostname) {
-      return dns.resolveMx(hostname);
+      return translateErrorCode(dns.resolveMx(hostname));
     }
 
     resolveNaptr(hostname) {
-      return dns.resolveNaptr(hostname);
+      return translateErrorCode(dns.resolveNaptr(hostname));
     }
 
     resolveNs(hostname) {
-      return dns.resolveNs(hostname);
+      return translateErrorCode(dns.resolveNs(hostname));
     }
 
     resolvePtr(hostname) {
-      return dns.resolvePtr(hostname);
+      return translateErrorCode(dns.resolvePtr(hostname));
     }
 
     resolveSoa(hostname) {
-      return dns.resolveSoa(hostname);
+      return translateErrorCode(dns.resolveSoa(hostname));
     }
 
     resolveSrv(hostname) {
-      return dns.resolveSrv(hostname);
+      return translateErrorCode(dns.resolveSrv(hostname));
     }
 
     resolveCaa(hostname) {
-      return dns.resolveCaa(hostname);
+      return translateErrorCode(dns.resolveCaa(hostname));
     }
 
     resolveTxt(hostname) {
-      return dns.resolveTxt(hostname);
+      return translateErrorCode(dns.resolveTxt(hostname));
     }
 
     reverse(ip) {
-      return dns.reverse(ip);
+      return translateErrorCode(dns.reverse(ip));
     }
 
     setServers(servers) {}
@@ -539,7 +571,7 @@ export default {
   BADRESP: "DNS_EBADRESP",
   CONNREFUSED: "DNS_ECONNREFUSED",
   TIMEOUT: "DNS_ETIMEOUT",
-  EOF: "DNS_EEOF",
+  EOF: "DNS_EOF",
   FILE: "DNS_EFILE",
   NOMEM: "DNS_ENOMEM",
   DESTRUCTION: "DNS_EDESTRUCTION",

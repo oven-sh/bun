@@ -100,6 +100,8 @@ pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -124,7 +126,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try bun.openFileZ(&try std.os.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
+        var file = try bun.openFileZ(&try std.posix.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const size = try file.getEndPos();
         return try file.readToEndAlloc(allocator, size);
@@ -170,6 +172,7 @@ pub const Arguments = struct {
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
         clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
+        clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
         clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
         clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
@@ -200,7 +203,7 @@ pub const Arguments = struct {
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
-    const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
+    pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
@@ -208,16 +211,16 @@ pub const Arguments = struct {
     pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const bunx_commands = [_]ParamType{
-        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
-    };
+    } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
         clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
         clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
@@ -232,7 +235,7 @@ pub const Arguments = struct {
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
-        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -246,25 +249,15 @@ pub const Arguments = struct {
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    fn printVersionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    fn printRevisionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
-        Global.exit(0);
-    }
-
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
+        var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;
@@ -300,7 +293,7 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
+    fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
         if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
@@ -309,7 +302,7 @@ pub const Arguments = struct {
         return null;
     }
     pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
@@ -346,7 +339,7 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         } else {
             if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var secondbuf: bun.PathBuffer = undefined;
                 const cwd = bun.getcwd(&secondbuf) catch return;
 
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
@@ -418,12 +411,12 @@ pub const Arguments = struct {
         }
 
         var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
+        if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_);
+                var outbuf: bun.PathBuffer = undefined;
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
                 bun.sys.chdir(out).unwrap() catch |err| {
-                    Output.prettyErrorln("{}\n", .{err});
+                    Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
                 break :brk try allocator.dupe(u8, out);
@@ -448,6 +441,24 @@ pub const Arguments = struct {
 
             if (!ctx.test_options.coverage.enabled) {
                 ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
+            if (args.options("--coverage-reporter").len > 0) {
+                ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                for (args.options("--coverage-reporter")) |reporter| {
+                    if (bun.strings.eqlComptime(reporter, "text")) {
+                        ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(reporter, "lcov")) {
+                        ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                        Global.exit(1);
+                    }
+                }
+            }
+
+            if (args.option("--coverage-dir")) |dir| {
+                ctx.test_options.coverage.reports_directory = dir;
             }
 
             if (args.option("--bail")) |bail| {
@@ -545,9 +556,20 @@ pub const Arguments = struct {
 
             if (args.flag("--hot")) {
                 ctx.debug.hot_reload = .hot;
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             } else if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
-                bun.auto_reload_on_crash = true;
+
+                // Windows applies this to the watcher child process.
+                // The parent process is unable to re-launch itself
+                if (!bun.Environment.isWindows)
+                    bun.auto_reload_on_crash = true;
+
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             }
 
             if (args.option("--origin")) |origin| {
@@ -705,6 +727,10 @@ pub const Arguments = struct {
             if (args.flag("--watch")) {
                 ctx.debug.hot_reload = .watch;
                 bun.auto_reload_on_crash = true;
+
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
             }
 
             if (args.flag("--compile")) {
@@ -746,15 +772,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-naming")) |entry_naming| {
-                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(entry_naming) });
             }
 
             if (args.option("--chunk-naming")) |chunk_naming| {
-                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(chunk_naming) });
             }
 
             if (args.option("--asset-naming")) |asset_naming| {
-                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -764,12 +790,20 @@ pub const Arguments = struct {
             }
 
             if (args.option("--sourcemap")) |setting| {
-                if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
-                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                if (setting.len == 0) {
+                    // In the future, Bun is going to make this default to .linked
+                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
+                        .linked
+                    else
+                        .@"inline";
+                } else if (strings.eqlComptime(setting, "inline")) {
+                    opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
-                    opts.source_map = Api.SourceMapMode._none;
+                    opts.source_map = .none;
                 } else if (strings.eqlComptime(setting, "external")) {
-                    opts.source_map = Api.SourceMapMode.external;
+                    opts.source_map = .external;
+                } else if (strings.eqlComptime(setting, "linked")) {
+                    opts.source_map = .linked;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
@@ -999,6 +1033,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>patch <d>\<pkg\><r>                     Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -1027,10 +1062,10 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_x_filler[package_x_i],
-            packages_to_create_filler[package_create_i],
             packages_to_add_filler[package_add_i],
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
+            packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {
@@ -1100,7 +1135,7 @@ pub var pretend_to_be_node = false;
 pub var is_bunx_exe = false;
 
 pub const Command = struct {
-    var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var script_name_buf: bun.PathBuffer = undefined;
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -1223,9 +1258,13 @@ pub const Command = struct {
             }
 
             if (comptime Environment.isWindows) {
-                if (global_cli_ctx.debug.hot_reload == .watch and !bun.isWatcherChild()) {
-                    // this is noreturn
-                    bun.becomeWatcherManager(allocator);
+                if (global_cli_ctx.debug.hot_reload == .watch) {
+                    if (!bun.isWatcherChild()) {
+                        // this is noreturn
+                        bun.becomeWatcherManager(allocator);
+                    } else {
+                        bun.auto_reload_on_crash = true;
+                    }
                 }
             }
 
@@ -1333,6 +1372,8 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
 
             RootCommandMatcher.case("update") => .UpdateCommand,
+            RootCommandMatcher.case("patch") => .PatchCommand,
+            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
 
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
@@ -1465,6 +1506,20 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
+                return;
+            },
+            .PatchCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommand);
+
+                try PatchCommand.exec(ctx);
+                return;
+            },
+            .PatchCommitCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommitCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommitCommand);
+
+                try PatchCommitCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -1787,7 +1842,7 @@ pub const Command = struct {
                 if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-                    const cwd = try std.os.getcwd(&entry_point_buf);
+                    const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
                     return;
@@ -1932,7 +1987,7 @@ pub const Command = struct {
                     var win_resolver = resolve_path.PosixToWinNormalizer{};
                     var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
                     if (comptime Environment.isWindows) {
-                        resolved = resolve_path.normalizeString(resolved, true, .windows);
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
                     }
                     break :brk bun.openFile(
                         resolved,
@@ -1947,7 +2002,7 @@ pub const Command = struct {
 
                     break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
                 } else {
-                    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                    var path_buf: bun.PathBuffer = undefined;
                     const cwd = bun.getcwd(&path_buf) catch return false;
                     path_buf[cwd.len] = std.fs.path.sep;
                     var parts = [_]string{script_name_to_search};
@@ -1979,12 +2034,7 @@ pub const Command = struct {
                 if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
                 var fd_path_buf: bun.PathBuffer = undefined;
-                const path = bun.getFdPath(file, &fd_path_buf) catch return false;
-                break :brk resolve_path.normalizeString(
-                    resolve_path.PosixToWinNormalizer.resolveCWDWithExternalBufZ(&script_name_buf, path) catch @panic("Could not resolve path"),
-                    true,
-                    .windows,
-                );
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
             };
         }
 
@@ -2037,10 +2087,12 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
+        PatchCommand,
+        PatchCommitCommand,
 
         /// Used by crash reports.
         ///
-        /// This must be kept in sync with
+        /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
         pub fn char(this: Tag) u8 {
             return switch (this) {
                 .AddCommand => 'I',
@@ -2066,6 +2118,8 @@ pub const Command = struct {
                 .ReplCommand => 'G',
                 .ReservedCommand => 'w',
                 .ExecCommand => 'e',
+                .PatchCommand => 'x',
+                .PatchCommitCommand => 'z',
             };
         }
 
@@ -2206,7 +2260,7 @@ pub const Command = struct {
                         \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
                         \\
                         \\<b>Environment variables:<r>
-                        \\  <cyan>GITHUB_ACCESS_TOKEN<r>      <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
                         \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
                         \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
                     ;
@@ -2268,6 +2322,12 @@ pub const Command = struct {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
                     Output.flush();
                 },
+                Command.Tag.PatchCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.patch);
+                },
+                Command.Tag.PatchCommitCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
+                },
                 Command.Tag.ExecCommand => {
                     Output.pretty(
                         \\<b>Usage: bun exec <r><cyan>\<script\><r>
@@ -2291,14 +2351,24 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand,
+                .LinkCommand,
+                .UnlinkCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                => true,
                 else => false,
             };
         }
@@ -2310,6 +2380,8 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -2324,6 +2396,8 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -2334,6 +2408,8 @@ pub const Command = struct {
             .AddCommand = false,
             .RemoveCommand = false,
             .UpdateCommand = false,
+            .PatchCommand = false,
+            .PatchCommitCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,
@@ -2341,3 +2417,15 @@ pub const Command = struct {
         });
     };
 };
+
+pub fn printVersionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+    Global.exit(0);
+}
+
+pub fn printRevisionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
+    Global.exit(0);
+}

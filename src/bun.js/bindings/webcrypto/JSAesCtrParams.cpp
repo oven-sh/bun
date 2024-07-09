@@ -31,7 +31,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <variant>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -45,7 +44,7 @@ template<> CryptoAlgorithmAesCtrParams convertDictionary<CryptoAlgorithmAesCtrPa
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAlgorithmAesCtrParams result;
     JSValue nameValue;
@@ -53,42 +52,42 @@ template<> CryptoAlgorithmAesCtrParams convertDictionary<CryptoAlgorithmAesCtrPa
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "AesCtrParams", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "AesCtrParams"_s, "DOMString"_s);
+        return {};
     }
     JSValue counterValue;
     if (isNullOrUndefined)
         counterValue = jsUndefined();
     else {
         counterValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "counter"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!counterValue.isUndefined()) {
         result.counter = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(lexicalGlobalObject, counterValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "counter", "AesCtrParams", "(ArrayBufferView or ArrayBuffer)");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "counter"_s, "AesCtrParams"_s, "(ArrayBufferView or ArrayBuffer)"_s);
+        return {};
     }
     JSValue lengthValue;
     if (isNullOrUndefined)
         lengthValue = jsUndefined();
     else {
         lengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "length"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!lengthValue.isUndefined()) {
         result.length = convert<IDLEnforceRangeAdaptor<IDLOctet>>(lexicalGlobalObject, lengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length", "AesCtrParams", "octet");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length"_s, "AesCtrParams"_s, "octet"_s);
+        return {};
     }
     return result;
 }

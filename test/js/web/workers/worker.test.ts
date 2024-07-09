@@ -263,8 +263,8 @@ describe("worker_threads", () => {
     worker.postMessage("hello");
     const result = await promise;
 
-    expect(result.argv).toHaveLength(2);
-    expect(result.execArgv).toHaveLength(0);
+    expect(result.argv).toHaveLength(process.argv.length);
+    expect(result.execArgv).toHaveLength(process.execArgv.length);
   });
 
   test("worker with argv/execArgv", async () => {

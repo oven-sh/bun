@@ -395,7 +395,7 @@ pub const Bundler = struct {
 
     pub fn resolveEntryPoint(bundler: *Bundler, entry_point: string) !_resolver.Result {
         return _resolveEntryPoint(bundler, entry_point) catch |err| {
-            var cache_bust_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cache_bust_buf: bun.PathBuffer = undefined;
 
             // Bust directory cache and try again
             const buster_name = name: {
@@ -1272,6 +1272,8 @@ pub const Bundler = struct {
         allow_commonjs: bool = false,
 
         runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
+
+        keep_json_and_toml_as_one_statement: bool = false,
     };
 
     pub fn parse(
@@ -1387,7 +1389,6 @@ pub const Bundler = struct {
                 opts.features.allow_runtime = bundler.options.allow_runtime;
                 opts.features.set_breakpoint_on_first_line = this_parse.set_breakpoint_on_first_line;
                 opts.features.trim_unused_imports = bundler.options.trim_unused_imports orelse loader.isTypeScript();
-                opts.features.should_fold_typescript_constant_expressions = loader.isTypeScript() or target.isBun() or bundler.options.minify_syntax;
                 opts.features.use_import_meta_require = target.isBun();
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
@@ -1485,6 +1486,14 @@ pub const Bundler = struct {
                 var symbols: []js_ast.Symbol = &.{};
 
                 const parts = brk: {
+                    if (this_parse.keep_json_and_toml_as_one_statement) {
+                        var stmts = allocator.alloc(js_ast.Stmt, 1) catch unreachable;
+                        stmts[0] = js_ast.Stmt.allocate(allocator, js_ast.S.SExpr, js_ast.S.SExpr{ .value = expr }, logger.Loc{ .start = 0 });
+                        var parts_ = allocator.alloc(js_ast.Part, 1) catch unreachable;
+                        parts_[0] = js_ast.Part{ .stmts = stmts };
+                        break :brk parts_;
+                    }
+
                     if (expr.data == .e_object) {
                         const properties: []js_ast.G.Property = expr.data.e_object.properties.slice();
                         if (properties.len > 0) {
@@ -1648,9 +1657,9 @@ pub const Bundler = struct {
     }
 
     // This is public so it can be used by the HTTP handler when matching against public dir.
-    pub threadlocal var tmp_buildfile_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
-    threadlocal var tmp_buildfile_buf3: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub threadlocal var tmp_buildfile_buf: bun.PathBuffer = undefined;
+    threadlocal var tmp_buildfile_buf2: bun.PathBuffer = undefined;
+    threadlocal var tmp_buildfile_buf3: bun.PathBuffer = undefined;
 
     // We try to be mostly stateless when serving
     // This means we need a slightly different resolver setup

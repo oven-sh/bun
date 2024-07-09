@@ -19,7 +19,9 @@ If you are seeing one of the following errors, you are probably trying to use a 
 
 To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
 
+{% callout %}
 Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the dependencies of that dependency!
+{% /callout %}
 
 <!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
 
@@ -40,10 +42,6 @@ $ rm -rf node_modules
 $ rm bun.lockb
 $ bun install
 ```
-
----
-
-Note that this only allows lifecycle scripts for the specific package listed in `trustedDependencies`, _not_ the dependencies of that dependency!
 
 ---
 

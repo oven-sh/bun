@@ -36,8 +36,14 @@ const MimeType = bun.http.MimeType;
 /// although it may contain no statements if there is nothing to export.
 pub const namespace_export_part_index = 0;
 
-/// Store is a specialized memory allocation strategy for the Parser.
-/// [TODO: EXPLAIN]
+/// This "Store" is a specialized memory allocation strategy very similar to an
+/// arena, used for allocating expression and statement nodes during JavaScript
+/// parsing and visiting. Allocations are grouped into large blocks, where each
+/// block is treated as a fixed-buffer allocator. When a block runs out of
+/// space, a new one is created; all blocks are joined as a linked list.
+///
+/// Similarly to an arena, you can call .reset() to reset state, reusing memory
+/// across operations.
 pub fn NewStore(comptime types: []const type, comptime count: usize) type {
     const largest_size, const largest_align = brk: {
         var largest_size = 0;
@@ -153,6 +159,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
                     bun.outOfMemory();
                 new_block.next = null;
                 new_block.bytes_used = 0;
+                store.current.next = new_block;
                 break :brk new_block;
             };
 
@@ -5923,7 +5930,7 @@ pub const Expr = struct {
                 E.Unary,
                 E.UTF8String,
                 E.Yield,
-            }, 128);
+            }, 512);
 
             pub threadlocal var instance: ?*StoreType = null;
             pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;

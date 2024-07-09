@@ -186,38 +186,6 @@ it("should display a welcome message when the response value type is incorrect",
   );
 });
 
-it("should be able to stop in the middle of a file response", async () => {
-  async function doRequest(url) {
-    try {
-      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
-      const read = response.body.getReader();
-      while (true) {
-        const { value, done } = await read.read();
-        if (done) break;
-      }
-      expect(response.status).toBe(200);
-    } catch {}
-  }
-  const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
-  for (let i = 0; i < 3; i++) {
-    const process = Bun.spawn([bunExe(), fixture], {
-      env: bunEnv,
-      stderr: "inherit",
-      stdout: "pipe",
-      stdin: "ignore",
-    });
-    const { value } = await process.stdout.getReader().read();
-    const url = new TextDecoder().decode(value).trim();
-    const requests = [];
-    for (let j = 0; j < 1_000; j++) {
-      requests.push(doRequest(url));
-    }
-    await Promise.all(requests);
-    expect(process.exitCode || 0).toBe(0);
-    process.kill();
-  }
-}, 30_000);
-
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
   var signaler = Promise.withResolvers();
@@ -1541,3 +1509,36 @@ it("should work with dispose keyword", async () => {
   }
   expect(fetch(url)).rejects.toThrow();
 });
+
+it("should be able to stop in the middle of a file response", async () => {
+  async function doRequest(url: string) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
+      const read = (response.body as ReadableStream<any>).getReader();
+      while (true) {
+        const { value, done } = await read.read();
+        if (done) break;
+      }
+      expect(response.status).toBe(200);
+    } catch {}
+  }
+  const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
+  for (let i = 0; i < 3; i++) {
+    const process = Bun.spawn([bunExe(), fixture], {
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+    });
+    const { value } = await process.stdout.getReader().read();
+    const url = new TextDecoder().decode(value).trim();
+    const requests = [];
+    for (let j = 0; j < 5_000; j++) {
+      requests.push(doRequest(url));
+    }
+    // only await for 1k requests (and kill the process)
+    await Promise.all(requests.slice(0, 1_000));
+    expect(process.exitCode || 0).toBe(0);
+    process.kill();
+  }
+}, 60_000);

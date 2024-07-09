@@ -462,6 +462,8 @@ JSValue fetchCommonJSModule(
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
+    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
+
     ErrorableResolvedSource* res = &resValue;
     WTF::String sourceCodeStringForDeref;
     const auto getSourceCodeStringForDeref = [&]() {
@@ -630,6 +632,19 @@ JSValue fetchCommonJSModule(
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
+
+    }
+    // TOML and JSONC may go through here
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
+
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
+        target->hasEvaluated = true;
+        RELEASE_AND_RETURN(scope, target);
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -721,7 +736,7 @@ static JSValue fetchESMSourceCode(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
-                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://", moduleKey))), moduleKey));
+                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
@@ -807,12 +822,54 @@ static JSValue fetchESMSourceCode(
         JSC::ensureStillAliveHere(value);
         return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
+    // TOML and JSONC may go through here
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
+
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+        JSC::ensureStillAliveHere(value);
+        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+    }
 
     return rejectOrResolve(JSC::JSSourceCode::create(vm,
         JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value))));
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSValue fetchESMSourceCodeSync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+
+JSValue fetchESMSourceCodeAsync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+}
+
+using namespace Bun;
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res = {};
@@ -850,7 +907,7 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobal
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     JSC::JSValue reason = callFrame->argument(0);
@@ -863,27 +920,4 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalO
     promise->reject(globalObject, reason);
 
     return JSValue::encode(reason);
-}
-
-JSValue fetchESMSourceCodeSync(
-    Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer,
-    BunString* typeAttribute)
-{
-    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
-}
-
-JSValue fetchESMSourceCodeAsync(
-    Zig::GlobalObject* globalObject,
-    JSC::JSValue specifierJS,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer,
-    BunString* typeAttribute)
-{
-    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
-}
 }

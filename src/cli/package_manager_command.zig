@@ -57,13 +57,13 @@ pub const PackageManagerCommand = struct {
 
     pub fn printHash(ctx: Command.Context, lockfile_: []const u8) !void {
         @setCold(true);
-        var lockfile_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var lockfile_buffer: bun.PathBuffer = undefined;
         @memcpy(lockfile_buffer[0..lockfile_.len], lockfile_);
         lockfile_buffer[lockfile_.len] = 0;
         const lockfile = lockfile_buffer[0..lockfile_.len :0];
         var pm = try PackageManager.init(ctx, PackageManager.Subcommand.pm);
 
-        const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, lockfile);
+        const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, lockfile, true);
         handleLoadLockfileErrors(load_lockfile, pm);
 
         Output.flush();
@@ -123,7 +123,7 @@ pub const PackageManagerCommand = struct {
 
         var pm = PackageManager.init(ctx, PackageManager.Subcommand.pm) catch |err| {
             if (err == error.MissingPackageJSON) {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 if (bun.getcwd(&cwd_buf)) |cwd| {
                     Output.errGeneric("No package.json was found for directory \"{s}\"", .{cwd});
                 } else |_| {
@@ -137,7 +137,7 @@ pub const PackageManagerCommand = struct {
 
         const subcommand = getSubcommand(&pm.options.positionals);
         if (pm.options.global) {
-            try pm.setupGlobalDir(&ctx);
+            try pm.setupGlobalDir(ctx);
         }
 
         if (strings.eqlComptime(subcommand, "bin")) {
@@ -167,7 +167,7 @@ pub const PackageManagerCommand = struct {
             Output.flush();
             return;
         } else if (strings.eqlComptime(subcommand, "hash")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(false, pm.lockfile.packages.len);
@@ -178,7 +178,7 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-print")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();
@@ -187,13 +187,13 @@ pub const PackageManagerCommand = struct {
             Output.enableBuffering();
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "hash-string")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             _ = try pm.lockfile.hasMetaHashChanged(true, pm.lockfile.packages.len);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "cache")) {
-            var dir: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var dir: bun.PathBuffer = undefined;
             var fd = pm.getCacheDirectory();
             const outpath = bun.getFdPath(fd.fd, &dir) catch |err| {
                 Output.prettyErrorln("{s} getting cache directory", .{@errorName(err)});
@@ -260,7 +260,7 @@ pub const PackageManagerCommand = struct {
             try TrustCommand.exec(ctx, pm, args);
             Global.exit(0);
         } else if (strings.eqlComptime(subcommand, "ls")) {
-            const load_lockfile = pm.lockfile.loadFromDisk(ctx.allocator, ctx.log, "bun.lockb");
+            const load_lockfile = pm.lockfile.loadFromDisk(pm, ctx.allocator, ctx.log, "bun.lockb", true);
             handleLoadLockfileErrors(load_lockfile, pm);
 
             Output.flush();
@@ -300,7 +300,7 @@ pub const PackageManagerCommand = struct {
             if (strings.leftHasAnyInRight(args, &.{ "-A", "-a", "--all" })) {
                 try printNodeModulesFolderStructure(&first_directory, null, 0, &directories, lockfile, more_packages);
             } else {
-                var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var cwd_buf: bun.PathBuffer = undefined;
                 const path = bun.getcwd(&cwd_buf) catch {
                     Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                     Global.exit(1);
@@ -349,6 +349,7 @@ pub const PackageManagerCommand = struct {
             }
             const load_lockfile = @import("../install/migration.zig").detectAndLoadOtherLockfile(
                 pm.lockfile,
+                pm,
                 ctx.allocator,
                 pm.log,
                 pm.options.lockfile_path,
@@ -428,7 +429,7 @@ fn printNodeModulesFolderStructure(
                 Output.prettyln("{s}<d>@{s}<r>", .{ path, directory_version });
             }
         } else {
-            var cwd_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var cwd_buf: bun.PathBuffer = undefined;
             const path = bun.getcwd(&cwd_buf) catch {
                 Output.prettyErrorln("<r><red>error<r>: Could not get current working directory", .{});
                 Global.exit(1);

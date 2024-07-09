@@ -64,7 +64,7 @@ const ScanOpts = struct {
             }
 
             // Convert to an absolute path
-            var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var path_buf: bun.PathBuffer = undefined;
             const cwd = switch (bun.sys.getcwd((&path_buf))) {
                 .result => |cwd| cwd,
                 .err => |err| {
@@ -174,7 +174,7 @@ pub const WalkTask = struct {
         pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJSC(globalThis),
-                .unknown => |err| ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                .unknown => |err| ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -231,11 +231,11 @@ pub const WalkTask = struct {
 };
 
 fn globWalkResultToJS(globWalk: *GlobWalker, globalThis: *JSGlobalObject) JSValue {
-    if (globWalk.matchedPaths.items.len == 0) {
+    if (globWalk.matchedPaths.keys().len == 0) {
         return JSC.JSValue.createEmptyArray(globalThis, 0);
     }
 
-    return BunString.toJSArray(globalThis, globWalk.matchedPaths.items[0..]);
+    return BunString.toJSArray(globalThis, globWalk.matchedPaths.keys());
 }
 
 /// The reference to the arena is not used after the scope because it is copied
@@ -317,7 +317,7 @@ fn makeGlobWalker(
 pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) ?*Glob {
+) ?*Glob {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -337,7 +337,7 @@ pub fn constructor(
 
     const all_ascii = isAllAscii(pat_str);
 
-    var glob = alloc.create(Glob) catch @panic("OOM");
+    var glob = alloc.create(Glob) catch bun.outOfMemory();
     glob.* = .{ .pattern = pat_str, .is_ascii = all_ascii };
 
     if (!all_ascii) {
@@ -370,21 +370,21 @@ pub fn finalize(
 }
 
 pub fn hasPendingActivity(this: *Glob) callconv(.C) bool {
-    @fence(.SeqCst);
-    return this.has_pending_activity.load(.SeqCst) > 0;
+    @fence(.seq_cst);
+    return this.has_pending_activity.load(.seq_cst) > 0;
 }
 
 fn incrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    @fence(.SeqCst);
-    _ = has_pending_activity.fetchAdd(1, .SeqCst);
+    @fence(.seq_cst);
+    _ = has_pending_activity.fetchAdd(1, .seq_cst);
 }
 
 fn decrPendingActivityFlag(has_pending_activity: *std.atomic.Value(usize)) void {
-    @fence(.SeqCst);
-    _ = has_pending_activity.fetchSub(1, .SeqCst);
+    @fence(.seq_cst);
+    _ = has_pending_activity.fetchSub(1, .seq_cst);
 }
 
-pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -408,7 +408,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     return task.promise.value();
 }
 
-pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
 
     const arguments_ = callframe.arguments(1);
@@ -438,7 +438,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     return matchedPaths;
 }
 
-pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const alloc = getAllocator(globalThis);
     var arena = Arena.init(alloc);
     defer arena.deinit();

@@ -170,7 +170,7 @@ pub const Fs = struct {
 
         if (_file_handle == null) {
             if (FeatureFlags.store_file_descriptors and dirname_fd != bun.invalid_fd and dirname_fd != .zero) {
-                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), std.os.O.RDONLY, 0).unwrap() catch |err| brk: {
+                file_handle = (bun.sys.openatA(dirname_fd, std.fs.path.basename(path), bun.O.RDONLY, 0).unwrap() catch |err| brk: {
                     switch (err) {
                         error.ENOENT => {
                             const handle = try bun.openFile(path, .{ .mode = .read_only });
@@ -312,6 +312,10 @@ pub const Json = struct {
         }
 
         return try parse(cache, log, source, allocator, json_parser.ParseJSON);
+    }
+
+    pub fn parsePackageJSON(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {
+        return try parse(cache, log, source, allocator, json_parser.ParseTSConfig);
     }
 
     pub fn parseTSConfig(cache: *@This(), log: *logger.Log, source: logger.Source, allocator: std.mem.Allocator) anyerror!?js_ast.Expr {

@@ -1,6 +1,7 @@
-import { TestBuilder, redirect } from "./util";
+import { createTestBuilder, redirect } from "./util";
 import { shellInternals } from "bun:internal-for-testing";
 const { parse } = shellInternals;
+const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("parse shell", () => {
   test("basic", () => {

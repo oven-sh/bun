@@ -1,5 +1,5 @@
-import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "../expectBundled";
+import { describe } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_packagejson_test.go
@@ -16,6 +16,30 @@ describe("bundler", () => {
       "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
         {
           "main": "./custom-main.js"
+        }
+      `,
+      "/Users/user/project/node_modules/demo-pkg/custom-main.js": /* js */ `
+        module.exports = function() {
+          return 123
+        }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("packagejson/trailing-comma", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import fn from 'demo-pkg'
+        console.log(fn())
+      `,
+      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+        {
+          // very comment!!
+          /** even multi-line comment!! */
+          /** such feature much compatible very ecosystem */
+          "main": "./custom-main.js",
         }
       `,
       "/Users/user/project/node_modules/demo-pkg/custom-main.js": /* js */ `
@@ -49,51 +73,51 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
-  itBundled("packagejson/SyntaxErrorComment", {
-    todo: true,
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          // Single-line comment
-          "a": 1
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-    },
-    bundleErrors: {
-      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
-    },
-  });
-  itBundled("packagejson/SyntaxErrorTrailingComma", {
-    files: {
-      "/Users/user/project/src/entry.js": /* js */ `
-        import fn from 'demo-pkg'
-        console.log(fn())
-      `,
-      "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
-        {
-          "a": 1,
-          "b": 2,
-        }
-      `,
-      "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
-        module.exports = function() {
-          return 123
-        }
-      `,
-    },
-    bundleErrors: {
-      "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
-    },
-  });
+  // itBundled("packagejson/SyntaxErrorComment", {
+  //   todo: true,
+  //   files: {
+  //     "/Users/user/project/src/entry.js": /* js */ `
+  //       import fn from 'demo-pkg'
+  //       console.log(fn())
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+  //       {
+  //         // Single-line comment
+  //         "a": 1
+  //       }
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
+  //       module.exports = function() {
+  //         return 123
+  //       }
+  //     `,
+  //   },
+  //   bundleErrors: {
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support comments"],
+  //   },
+  // });
+  // itBundled("packagejson/SyntaxErrorTrailingComma", {
+  //   files: {
+  //     "/Users/user/project/src/entry.js": /* js */ `
+  //       import fn from 'demo-pkg'
+  //       console.log(fn())
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": /* json */ `
+  //       {
+  //         "a": 1,
+  //         "b": 2,
+  //       }
+  //     `,
+  //     "/Users/user/project/node_modules/demo-pkg/index.js": /* js */ `
+  //       module.exports = function() {
+  //         return 123
+  //       }
+  //     `,
+  //   },
+  //   bundleErrors: {
+  //     "/Users/user/project/node_modules/demo-pkg/package.json": ["JSON does not support trailing commas"],
+  //   },
+  // });
   itBundled("packagejson/Module", {
     // GENERATED
     files: {

@@ -36,7 +36,7 @@ test("module.Module works", () => {
 });
 
 test("_nodeModulePaths() works", () => {
-  const root = isWindows ? "C:\\" : "/";
+  const root = path.resolve("/");
   expect(() => {
     _nodeModulePaths();
   }).toThrow();
@@ -87,21 +87,25 @@ test("Overwriting Module.prototype.require", () => {
   expect(exitCode).toBe(0);
 });
 
-test("Module.prototype._compile", () => {
+test.each([
+  "/file/name/goes/here.js",
+  "file/here.js",
+  "file\\here.js",
+  "/file\\here.js",
+  "\\file\\here.js",
+  "\\file/here.js",
+])("Module.prototype._compile", filename => {
   const module = new Module("module id goes here");
   const starting_exports = module.exports;
-  const r = module._compile(
-    "module.exports = { module, exports, require, __filename, __dirname }",
-    "/file/path/goes/here.js",
-  );
+  const r = module._compile("module.exports = { module, exports, require, __filename, __dirname }", filename);
   expect(r).toBe(undefined);
   expect(module.exports).not.toBe(starting_exports);
   const { module: m, exports: e, require: req, __filename: fn, __dirname: dn } = module.exports;
   expect(m).toBe(module);
   expect(e).toBe(starting_exports);
   expect(req).toBe(module.require);
-  expect(fn).toBe("/file/path/goes/here.js");
-  expect(dn).toBe("/file/path/goes");
+  expect(fn).toBe(filename);
+  expect(dn).toBe(path.dirname(filename));
 });
 
 test("Module._extensions", () => {
@@ -109,4 +113,12 @@ test("Module._extensions", () => {
   expect(".json" in Module._extensions).toBeTrue();
   expect(".node" in Module._extensions).toBeTrue();
   expect(require.extensions).toBe(Module._extensions);
+});
+
+test("Module._resolveLookupPaths", () => {
+  expect(Module._resolveLookupPaths("foo")).toEqual([]);
+  expect(Module._resolveLookupPaths("./bar", { id: "1", filename: "/baz/abc" })).toEqual(["/baz"]);
+  expect(Module._resolveLookupPaths("./bar", {})).toEqual(["."]);
+  expect(Module._resolveLookupPaths("./bar", { paths: ["a"] })).toEqual(["."]);
+  expect(Module._resolveLookupPaths("bar", { paths: ["a"] })).toEqual(["a"]);
 });

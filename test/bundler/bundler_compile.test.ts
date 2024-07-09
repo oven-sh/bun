@@ -1,8 +1,6 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "./expectBundled";
+import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -12,6 +10,22 @@ describe("bundler", () => {
         console.log("Hello, world!");
       `,
     },
+    run: { stdout: "Hello, world!" },
+  });
+  // https://github.com/oven-sh/bun/issues/8697
+  itBundled("compile/EmbeddedFileOutfile", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        import bar from './foo.file' with {type: "file"};
+        if ((await Bun.file(bar).text()).trim() !== "abcd") throw "fail";
+        console.log("Hello, world!");
+      `,
+      "/foo.file": /* js */ `
+      abcd
+    `.trim(),
+    },
+    outfile: "dist/out",
     run: { stdout: "Hello, world!" },
   });
   itBundled("compile/pathToFileURLWorks", {
@@ -89,7 +103,7 @@ describe("bundler", () => {
         );
 
         const port = 0;
-        const server = Bun.serve({
+        using server = Bun.serve({
           port,
           async fetch(req) {
             return new Response(await renderToReadableStream(<App />), headers);
@@ -98,7 +112,6 @@ describe("bundler", () => {
         const res = await fetch(server.url);
         if (res.status !== 200) throw "status error";
         console.log(await res.text());
-        server.stop(true);
       `,
     },
     run: {
@@ -186,6 +199,60 @@ describe("bundler", () => {
     },
     compile: true,
   });
+  for (const minify of [true, false] as const) {
+    itBundled("compile/platform-specific-binary" + (minify ? "-minify" : ""), {
+      minifySyntax: minify,
+      target: "bun",
+      compile: true,
+      files: {
+        "/entry.ts": /* js */ `
+        await import(\`./platform.\${process.platform}.\${process.arch}.js\`);
+    `,
+        [`/platform.${process.platform}.${process.arch}.js`]: `console.log("${process.platform}", "${process.arch}");`,
+      },
+      run: { stdout: `${process.platform} ${process.arch}` },
+    });
+    for (const sourceMap of ["external", "inline", "none"] as const) {
+      // https://github.com/oven-sh/bun/issues/10344
+      itBundled("compile/10344+sourcemap=" + sourceMap + (minify ? "+minify" : ""), {
+        minifyIdentifiers: minify,
+        minifySyntax: minify,
+        minifyWhitespace: minify,
+        target: "bun",
+        sourceMap,
+        compile: true,
+        files: {
+          "/entry.ts": /* js */ `
+        import big from './generated.big.binary' with {type: "file"};
+        import small from './generated.small.binary' with {type: "file"};
+        import fs from 'fs';
+        fs.readFileSync(big).toString("hex");
+        await Bun.file(big).arrayBuffer();
+        fs.readFileSync(small).toString("hex");
+        await Bun.file(small).arrayBuffer();
+        console.log("PASS");
+      `,
+          "/generated.big.binary": (() => {
+            // make sure the size is not divisible by 32
+            const buffer = new Uint8ClampedArray(4096 + (32 - 2));
+            for (let i = 0; i < buffer.length; i++) {
+              buffer[i] = i;
+            }
+            return buffer;
+          })(),
+          "/generated.small.binary": (() => {
+            // make sure the size is less than 32
+            const buffer = new Uint8ClampedArray(31);
+            for (let i = 0; i < buffer.length; i++) {
+              buffer[i] = i;
+            }
+            return buffer;
+          })(),
+        },
+        run: { stdout: "PASS" },
+      });
+    }
+  }
   itBundled("compile/EmbeddedSqlite", {
     compile: true,
     files: {

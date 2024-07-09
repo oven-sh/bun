@@ -14,6 +14,9 @@ test("reportError", () => {
       BUN_JSC_showPrivateScriptsInStackTraces: "0",
     },
   });
-  const output = stderr.toString().replaceAll(cwd, "").replaceAll("\\", "/");
+  let output = stderr.toString().replaceAll(cwd, "").replaceAll("\\", "/");
+  // remove bun version from output
+  output = output.split("\n").slice(0, -2).join("\n");
+
   expect(output).toMatchSnapshot();
 });

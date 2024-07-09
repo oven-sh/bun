@@ -211,11 +211,11 @@ void JSWritableStreamSink::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSWritableStreamSink*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSWritableStreamSinkOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSWritableStreamSinkOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);

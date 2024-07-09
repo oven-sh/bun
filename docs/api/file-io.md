@@ -28,6 +28,7 @@ const foo = Bun.file("foo.txt");
 await foo.text(); // contents as a string
 await foo.stream(); // contents as ReadableStream
 await foo.arrayBuffer(); // contents as ArrayBuffer
+await foo.bytes(); // contents as Uint8Array
 ```
 
 File references can also be created using numerical [file descriptors](https://en.wikipedia.org/wiki/File_descriptor) or `file://` URLs.
@@ -43,6 +44,7 @@ A `BunFile` can point to a location on disk where a file does not exist.
 const notreal = Bun.file("notreal.txt");
 notreal.size; // 0
 notreal.type; // "text/plain;charset=utf-8"
+const exists = await notreal.exists(); // false
 ```
 
 The default MIME type is `text/plain;charset=utf-8`, but it can be overridden by passing a second argument to `Bun.file`.
@@ -340,6 +342,7 @@ interface BunFile {
   arrayBuffer(): Promise<ArrayBuffer>;
   json(): Promise<any>;
   writer(params: { highWaterMark?: number }): FileSink;
+  exists(): Promise<boolean>;
 }
 
 export interface FileSink {

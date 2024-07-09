@@ -48,6 +48,7 @@ pub const JumpTable = struct {
             // explicitly tell LLVM's optimizer about values we know will not be in the range of this switch statement
             0xaa...0xffd7 => isIdentifierPartSlow16(@as(u16, @intCast(codepoint))),
             (0xffd7 + 1)...0xe01ef => isIdentifierPartSlow32(codepoint),
+
             else => false,
         };
     }
@@ -108,6 +109,8 @@ pub const JumpTable = struct {
             'A'...'Z', 'a'...'z', '0'...'9', '$', '_' => true,
             else => if (codepoint < 128)
                 return false
+            else if (codepoint == 0x200C or codepoint == 0x200D)
+                return true
             else
                 return isIdentifierPartSlow(codepoint),
         };
@@ -136,28 +139,6 @@ pub const JumpTableInline = struct {
         };
     }
 };
-
-// test "isIdentifier" {
-//     Bitset.init();
-
-//     const expect = std.testing.expect;
-//     try expect(!Bitset.isIdentifierStart(0x2029));
-//     try expect(!Bitset.isIdentifierStart(0x2028));
-//     try expect(!Bitset.isIdentifier("\\u2028"));
-//     try expect(!Bitset.isIdentifier("\\u2029"));
-
-//     try expect(!Bitset.isIdentifierPart(':'));
-//     try expect(!Bitset.isIdentifier("javascript:"));
-
-//     try expect(Bitset.isIdentifier("javascript"));
-
-//     try expect(!Bitset.isIdentifier(":2"));
-//     try expect(!Bitset.isIdentifier("2:"));
-//     try expect(Bitset.isIdentifier("$"));
-//     try expect(!Bitset.isIdentifier("$:"));
-
-//     try expect(Bitset.isIdentifier("ಠ_ಠ"));
-// }
 
 // // ----- The benchmark ------
 
@@ -1870,7 +1851,7 @@ pub const JumpTableInline = struct {
 //             }
 //         }
 
-//         std.debug.print(
+//         .print(
 //             \\---- Unicode text -----
 //             \\
 //             \\Timings (sum of running {d} times each, lower is better):
@@ -2007,7 +1988,7 @@ pub const JumpTableInline = struct {
 //             }
 //         }
 
-//         std.debug.print(
+//         (
 //             \\---- ASCII text -----
 //             \\
 //             \\Timings (sum of running {d} times each, lower is better):
@@ -2040,12 +2021,4 @@ pub const JumpTableInline = struct {
 //             },
 //         );
 //     }
-// }
-
-// test "Print size of bitset" {
-//     var err = std.io.getStdErr();
-//     try err.writer().print(
-//         "Size is: {d} + {d}\n",
-//         .{ @sizeOf(@TypeOf(Bitset.id_start)), @sizeOf(@TypeOf(Bitset.id_continue)) },
-//     );
 // }

@@ -94,6 +94,7 @@ declare module "bun:test" {
     clearAllMocks(): void;
     fn<T extends (...args: any[]) => any>(func?: T): Mock<T>;
     setSystemTime(now?: number | Date): void;
+    setTimeout(milliseconds: number): void;
   }
   export const jest: Jest;
   export namespace jest {
@@ -293,6 +294,13 @@ declare module "bun:test" {
    * @param fn the function to run
    */
   export function afterEach(fn: (() => void | Promise<unknown>) | ((done: (err?: unknown) => void) => void)): void;
+  /**
+   * Sets the default timeout for all tests in the current file. If a test specifies a timeout, it will
+   * override this value. The default timeout is 5000ms (5 seconds).
+   *
+   * @param milliseconds the number of milliseconds for the default timeout
+   */
+  export function setDefaultTimeout(milliseconds: number): void;
   export interface TestOptions {
     /**
      * Sets the timeout for the test in milliseconds.
@@ -482,7 +490,12 @@ declare module "bun:test" {
 
   export interface Expect extends AsymmetricMatchers {
     // the `expect()` callable signature
-    <T = unknown>(actual?: T): Matchers<T>;
+    /**
+     * @param actual the actual value
+     * @param customFailMessage an optional custom message to display if the test fails.
+     * */
+
+    <T = unknown>(actual?: T, customFailMessage?: string): Matchers<T>;
 
     /**
      * Access to negated asymmetric matchers.
@@ -943,6 +956,21 @@ declare module "bun:test" {
      */
     toContainKey(expected: unknown): void;
     /**
+     * Asserts that an `object` contains all the provided keys.
+     *
+     * The value must be an object
+     *
+     * @example
+     * expect({ a: 'hello', b: 'world' }).toContainAllKeys(['a','b']);
+     * expect({ a: 'hello', b: 'world' }).toContainAllKeys(['b','a']);
+     * expect({ 1: 'hello', b: 'world' }).toContainAllKeys([1,'b']);
+     * expect({ a: 'hello', b: 'world' }).not.toContainAllKeys(['c']);
+     * expect({ a: 'hello', b: 'world' }).not.toContainAllKeys(['a']);
+     *
+     * @param expected the expected value
+     */
+    toContainAllKeys(expected: unknown): void;
+    /**
      * Asserts that an `object` contains at least one of the provided keys.
      * Asserts that an `object` contains all the provided keys.
      *
@@ -957,6 +985,78 @@ declare module "bun:test" {
      * @param expected the expected value
      */
     toContainAnyKeys(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain the provided value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const shallow = { hello: "world" };
+     * const deep = { message: shallow };
+     * const deepArray = { message: [shallow] };
+     * const o = { a: "foo", b: [1, "hello", true], c: "baz" };
+
+     * expect(shallow).toContainValue("world");
+     * expect({ foo: false }).toContainValue(false);
+     * expect(deep).toContainValue({ hello: "world" });
+     * expect(deepArray).toContainValue([{ hello: "world" }]);
+
+     * expect(o).toContainValue("foo", "barr");
+     * expect(o).toContainValue([1, "hello", true]);
+     * expect(o).not.toContainValue("qux");
+
+     // NOT
+     * expect(shallow).not.toContainValue("foo");
+     * expect(deep).not.toContainValue({ foo: "bar" });
+     * expect(deepArray).not.toContainValue([{ foo: "bar" }]);
+     *
+     * @param expected the expected value
+     */
+    toContainValue(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain the provided value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainValues(['foo']);
+     * expect(o).toContainValues(['baz', 'bar']);
+     * expect(o).not.toContainValues(['qux', 'foo']);
+     * @param expected the expected value
+     */
+    toContainValues(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain all the provided values.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+     * expect(o).toContainAllValues(['foo', 'bar', 'baz']);
+     * expect(o).toContainAllValues(['baz', 'bar', 'foo']);
+     * expect(o).not.toContainAllValues(['bar', 'foo']);
+     * @param expected the expected value
+     */
+    toContainAllValues(expected: unknown): void;
+
+    /**
+     * Asserts that an `object` contain any provided value.
+     *
+     * The value must be an object
+     *
+     * @example
+     * const o = { a: 'foo', b: 'bar', c: 'baz' };
+  `  * expect(o).toContainAnyValues(['qux', 'foo']);
+     * expect(o).toContainAnyValues(['qux', 'bar']);
+     * expect(o).toContainAnyValues(['qux', 'baz']);
+     * expect(o).not.toContainAnyValues(['qux']);
+     * @param expected the expected value
+     */
+    toContainAnyValues(expected: unknown): void;
 
     /**
      * Asserts that an `object` contains all the provided keys.
@@ -1130,7 +1230,7 @@ declare module "bun:test" {
      * - If expected is a `string` or `RegExp`, it will check the `message` property.
      * - If expected is an `Error` object, it will check the `name` and `message` properties.
      * - If expected is an `Error` constructor, it will check the class of the `Error`.
-     * - If expected is not provided, it will check if anything as thrown.
+     * - If expected is not provided, it will check if anything has thrown.
      *
      * @example
      * function fail() {
@@ -1444,6 +1544,22 @@ declare module "bun:test" {
      * @param expected the string to end with
      */
     toEndWith(expected: string): void;
+    /**
+     * Ensures that a mock function has returned successfully at least once.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturned(): void;
+
+    /**
+     * Ensures that a mock function has returned successfully at `times` times.
+     *
+     * A promise that is unfulfilled will be considered a failure. If the
+     * function threw an error, it will be considered a failure.
+     */
+    toHaveReturnedTimes(times: number): void;
+
     /**
      * Ensures that a mock function is called.
      */

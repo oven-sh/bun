@@ -36,7 +36,8 @@ namespace WebCore {
 
 JSC::JSValue JSCustomEvent::detail(JSC::JSGlobalObject& lexicalGlobalObject) const
 {
-    return cachedPropertyValue(lexicalGlobalObject, *this, wrapped().cachedDetail(), [this] {
+    auto throwScope = DECLARE_THROW_SCOPE(lexicalGlobalObject.vm());
+    return cachedPropertyValue(throwScope, lexicalGlobalObject, *this, wrapped().cachedDetail(), [this](JSC::ThrowScope&) {
         return wrapped().detail().getValue(JSC::jsNull());
     });
 }

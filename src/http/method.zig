@@ -48,6 +48,8 @@ pub const Method = enum {
     UNLOCK,
     UNSUBSCRIBE,
 
+    pub const fromJS = Map.fromJS;
+
     const with_body: std.enums.EnumSet(Method) = brk: {
         var values = std.enums.EnumSet(Method).initFull();
         values.remove(.HEAD);

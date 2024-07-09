@@ -41,6 +41,13 @@ export default [
         getter: "getPosition",
         cache: true,
       },
+      line: {
+        getter: "getLine",
+      },
+
+      column: {
+        getter: "getColumn",
+      },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
@@ -84,6 +91,14 @@ export default [
       notes: {
         getter: "getNotes",
         cache: true,
+      },
+
+      line: {
+        getter: "getLine",
+      },
+
+      column: {
+        getter: "getColumn",
       },
 
       ["@@toPrimitive"]: {

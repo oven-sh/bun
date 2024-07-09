@@ -578,3 +578,528 @@ exports[`fast-glob e2e tests only files (cwd) **/*: **/* 1`] = `
   "third/library/b/book.md",
 ]
 `;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*: absolute: fixtures/* 1`] = `
+[
+  "/fixtures/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**: absolute: fixtures/** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/*: absolute: fixtures/**/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/nested: absolute: fixtures/*/nested 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/nested/*: absolute: fixtures/*/nested/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/nested/**: absolute: fixtures/*/nested/** 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/nested/**/*: absolute: fixtures/*/nested/**/* 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/nested/*: absolute: fixtures/**/nested/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/nested/**: absolute: fixtures/**/nested/** 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/nested/**/*: absolute: fixtures/**/nested/**/* 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}: absolute: fixtures/{first,second} 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/*: absolute: fixtures/{first,second}/* 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/second/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/**: absolute: fixtures/{first,second}/** 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/**/*: absolute: fixtures/{first,second}/**/* 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/{first,second}/*: absolute: fixtures/*/{first,second}/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/{first,second}/*/{nested,file.md}: absolute: fixtures/*/{first,second}/*/{nested,file.md} 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/{first,second}/**: absolute: fixtures/**/{first,second}/** 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/{first,second}/{nested,file.md}: absolute: fixtures/**/{first,second}/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/second/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/{first,second}/**/{nested,file.md}: absolute: fixtures/**/{first,second}/**/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/{nested,file.md}: absolute: fixtures/{first,second}/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/second/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/*/nested/*: absolute: fixtures/{first,second}/*/nested/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/{first,second}/**/nested/**: absolute: fixtures/{first,second}/**/nested/** 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/*/{nested,file.md}/*: absolute: fixtures/*/{nested,file.md}/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular fixtures/**/{nested,file.md}/*: absolute: fixtures/**/{nested,file.md}/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular ./fixtures/*: absolute: ./fixtures/* 1`] = `
+[
+  "/fixtures/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd *: absolute: * 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **: absolute: ** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/*: absolute: **/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */nested: absolute: */nested 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */nested/*: absolute: */nested/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */nested/**: absolute: */nested/** 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */nested/**/*: absolute: */nested/**/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/nested/*: absolute: **/nested/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/nested/**: absolute: **/nested/** 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/nested/**/*: absolute: **/nested/**/* 1`] = `
+[
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}: absolute: {first,second} 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/*: absolute: {first,second}/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/**: absolute: {first,second}/** 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/**/*: absolute: {first,second}/**/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */{first,second}/*: absolute: */{first,second}/* 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/second/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */{first,second}/*/{nested,file.md}: absolute: */{first,second}/*/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/{first,second}/**: absolute: **/{first,second}/** 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/{first,second}/{nested,file.md}: absolute: **/{first,second}/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/second/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/{first,second}/**/{nested,file.md}: absolute: **/{first,second}/**/{nested,file.md} 1`] = `
+[
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/{nested,file.md}: absolute: {first,second}/{nested,file.md} 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/*/nested/*: absolute: {first,second}/*/nested/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd {first,second}/**/nested/**: absolute: {first,second}/**/nested/** 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd */{nested,file.md}/*: absolute: */{nested,file.md}/* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular cwd **/{nested,file.md}/*: absolute: **/{nested,file.md}/* 1`] = `
+[
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/nested/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ./*: absolute: ./* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ./*: absolute: ./* 2`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ./**: absolute: ./** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ./**/*: absolute: ./**/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ../*: absolute: ../* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ../**: absolute: ../** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ../../*: absolute: ../../* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ../{first,second}: absolute: ../{first,second} 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns regular relative cwd ./../*: absolute: ./../* 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) patterns absolute cwd *: absolute: * 1`] = `[]`;
+
+exports[`fast-glob e2e tests patterns absolute cwd *: absolute: * 1`] = `
+[
+  "file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns absolute cwd **: absolute: ** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **: absolute: ** 1`] = `
+[
+  "file.md",
+  "first/file.md",
+  "first/nested/directory/file.json",
+  "first/nested/directory/file.md",
+  "first/nested/file.md",
+  "second/file.md",
+  "second/nested/directory/file.md",
+  "second/nested/file.md",
+  "third/library/a/book.md",
+  "third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) patterns absolute cwd **/*: absolute: **/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests patterns absolute cwd **/*: absolute: **/* 1`] = `
+[
+  "file.md",
+  "first/file.md",
+  "first/nested/directory/file.json",
+  "first/nested/directory/file.md",
+  "first/nested/file.md",
+  "second/file.md",
+  "second/nested/directory/file.md",
+  "second/nested/file.md",
+  "third/library/a/book.md",
+  "third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) only files fixtures/*: absolute: fixtures/* 1`] = `
+[
+  "/fixtures/file.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) only files fixtures/**: absolute: fixtures/** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) only files fixtures/**/*: absolute: fixtures/**/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) only files (cwd) *: absolute: * 1`] = `[]`;
+
+exports[`fast-glob e2e tests (absolute) only files (cwd) **: absolute: ** 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;
+
+exports[`fast-glob e2e tests (absolute) only files (cwd) **/*: absolute: **/* 1`] = `
+[
+  "/fixtures/file.md",
+  "/fixtures/first/file.md",
+  "/fixtures/first/nested/directory/file.json",
+  "/fixtures/first/nested/directory/file.md",
+  "/fixtures/first/nested/file.md",
+  "/fixtures/second/file.md",
+  "/fixtures/second/nested/directory/file.md",
+  "/fixtures/second/nested/file.md",
+  "/fixtures/third/library/a/book.md",
+  "/fixtures/third/library/b/book.md",
+]
+`;

@@ -62,6 +62,7 @@ public:
     JSC::JSValue abort(JSC::JSGlobalObject&, JSC::CallFrame&);
     JSC::JSValue close(JSC::JSGlobalObject&, JSC::CallFrame&);
     JSC::JSValue getWriter(JSC::JSGlobalObject&, JSC::CallFrame&);
+
 protected:
     JSWritableStream(JSC::Structure*, JSDOMGlobalObject&, Ref<WritableStream>&&);
 
@@ -70,7 +71,7 @@ protected:
 
 class JSWritableStreamOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 

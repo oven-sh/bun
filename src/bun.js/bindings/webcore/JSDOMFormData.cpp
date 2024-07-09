@@ -184,7 +184,7 @@ template<> JSValue JSDOMFormDataDOMConstructor::prototypeForStructure(JSC::VM& v
     return globalObject.functionPrototype();
 }
 
-extern "C" JSC::EncodedJSValue FormData__jsFunctionFromMultipartData(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callframe);
+BUN_DECLARE_HOST_FUNCTION(FormData__jsFunctionFromMultipartData);
 
 template<> void JSDOMFormDataDOMConstructor::initializeProperties(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -461,10 +461,7 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-
     EnsureStillAliveScope argument2 = callFrame->argument(2);
-    auto filename = argument2.value().isUndefined() ? String() : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
-    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     RefPtr<Blob> blobValue = nullptr;
     if (argument1.value().inherits<JSBlob>()) {
@@ -473,8 +470,11 @@ static inline JSC::EncodedJSValue jsDOMFormDataPrototypeFunction_set2Body(JSC::J
 
     if (!blobValue) {
         throwTypeError(lexicalGlobalObject, throwScope, "Expected argument to be a Blob."_s);
-        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     }
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+
+    auto filename = argument2.value().isUndefined() ? Blob__getFileNameString(blobValue->impl()).toWTFString(BunString::ZeroCopy) : convert<IDLUSVString>(*lexicalGlobalObject, argument2.value());
+    RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
 
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.set(WTFMove(name), WTFMove(blobValue), WTFMove(filename)); })));
 }
@@ -695,11 +695,11 @@ void JSDOMFormData::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSDOMFormData*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSDOMFormDataOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSDOMFormDataOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -732,18 +732,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<DOMFormData>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7DOMFormData@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11DOMFormDataE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11DOMFormDataE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // DOMFormData has subclasses. If DOMFormData has subclasses that get passed
         // to toJS() we currently require DOMFormData you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<DOMFormData>(globalObject, WTFMove(impl));

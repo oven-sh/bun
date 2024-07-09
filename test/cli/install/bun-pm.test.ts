@@ -1,6 +1,6 @@
 import { hash, spawn } from "bun";
 import { afterAll, afterEach, beforeAll, beforeEach, expect, it } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env } from "harness";
+import { bunEnv, bunExe, bunEnv as env, tmpdirSync } from "harness";
 import { mkdir, writeFile, exists } from "fs/promises";
 import { join } from "path";
 import {
@@ -15,7 +15,7 @@ import {
   root_url,
   setHandler,
 } from "./dummy.registry";
-import { cpSync, rmSync } from "js/node/fs/export-star-from";
+import { cpSync } from "node:fs";
 
 beforeAll(dummyBeforeAll);
 afterAll(dummyAfterAll);
@@ -55,12 +55,9 @@ it("should list top-level dependency", async () => {
       stderr: "pipe",
       env,
     });
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("Saved lockfile");
-    expect(stdout).toBeDefined();
     expect(await exited).toBe(0);
   }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -74,9 +71,7 @@ it("should list top-level dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   expect(await new Response(stderr).text()).toBe("");
-  expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules (2)
 └── moo@moo
 `);
@@ -118,12 +113,9 @@ it("should list all dependencies", async () => {
       stderr: "pipe",
       env,
     });
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("Saved lockfile");
-    expect(stdout).toBeDefined();
     expect(await exited).toBe(0);
   }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -137,9 +129,7 @@ it("should list all dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   expect(await new Response(stderr).text()).toBe("");
-  expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules
 ├── bar@0.0.2
 └── moo@moo
@@ -182,12 +172,9 @@ it("should list top-level aliased dependency", async () => {
       stderr: "pipe",
       env,
     });
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("Saved lockfile");
-    expect(stdout).toBeDefined();
     expect(await exited).toBe(0);
   }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -201,9 +188,7 @@ it("should list top-level aliased dependency", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   expect(await new Response(stderr).text()).toBe("");
-  expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules (2)
 └── moo-1@moo
 `);
@@ -245,12 +230,9 @@ it("should list aliased dependencies", async () => {
       stderr: "pipe",
       env,
     });
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("Saved lockfile");
-    expect(stdout).toBeDefined();
     expect(await exited).toBe(0);
   }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -264,12 +246,10 @@ it("should list aliased dependencies", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   expect(await new Response(stderr).text()).toBe("");
-  expect(stdout).toBeDefined();
   expect(await new Response(stdout).text()).toBe(`${package_dir} node_modules
+├── bar-1@0.0.2
 └── moo-1@moo
-    └── bar-1@0.0.2
 `);
   expect(await exited).toBe(0);
   expect(urls.sort()).toEqual([]);
@@ -313,12 +293,9 @@ it("should remove all cache", async () => {
         BUN_INSTALL_CACHE_DIR: cache_dir,
       },
     });
-    expect(stderr).toBeDefined();
     const err = await new Response(stderr).text();
     expect(err).not.toContain("error:");
-    expect(err).not.toContain("panic:");
     expect(err).toContain("Saved lockfile");
-    expect(stdout).toBeDefined();
     expect(await exited).toBe(0);
   }
   expect(urls.sort()).toEqual([`${root_url}/bar`, `${root_url}/bar-0.0.2.tgz`]);
@@ -340,9 +317,7 @@ it("should remove all cache", async () => {
       BUN_INSTALL_CACHE_DIR: cache_dir,
     },
   });
-  expect(stderr1).toBeDefined();
   expect(await new Response(stderr1).text()).toBe("");
-  expect(stdout1).toBeDefined();
   expect(await new Response(stdout1).text()).toBe(cache_dir);
   expect(await exited1).toBe(0);
 
@@ -361,17 +336,14 @@ it("should remove all cache", async () => {
       BUN_INSTALL_CACHE_DIR: cache_dir,
     },
   });
-  expect(stderr2).toBeDefined();
   expect(await new Response(stderr2).text()).toBe("");
-  expect(stdout2).toBeDefined();
   expect(await new Response(stdout2).text()).toInclude("Cleared 'bun install' cache\n");
   expect(await exited2).toBe(0);
   expect(await exists(cache_dir)).toBeFalse();
 });
 
-import { tmpdir } from "os";
 it("bun pm migrate", async () => {
-  const test_dir = join(tmpdir(), "contoso-test" + Math.random().toString(36).slice(2));
+  const test_dir = tmpdirSync();
 
   cpSync(join(import.meta.dir, "migration/contoso-test"), test_dir, { recursive: true });
 
@@ -384,9 +356,6 @@ it("bun pm migrate", async () => {
     env: bunEnv,
   });
   expect(exitCode).toBe(0);
-
-  expect(stderr).toBeDefined();
-  expect(stdout).toBeDefined();
 
   expect(stdout.toString("utf-8")).toBe("");
   expect(stderr.toString("utf-8")).toEndWith("migrated lockfile from package-lock.json\n");

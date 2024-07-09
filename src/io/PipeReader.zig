@@ -89,23 +89,41 @@ pub fn PosixPipeReader(
             return false;
         }
 
+        fn wrapReadFn(comptime func: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize) {
+            return struct {
+                pub fn call(fd: bun.FileDescriptor, buffer: []u8, offset: usize) JSC.Maybe(usize) {
+                    _ = offset;
+                    return func(fd, buffer);
+                }
+            }.call;
+        }
+
         fn readFile(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, bun.sys.read);
+            const preadFn = struct {
+                pub fn call(fd1: bun.FileDescriptor, buffer: []u8, offset: usize) JSC.Maybe(usize) {
+                    return bun.sys.pread(fd1, buffer, @intCast(offset));
+                }
+            }.call;
+            if (parent.flags.use_pread) {
+                return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, preadFn);
+            } else {
+                return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .file, wrapReadFn(bun.sys.read));
+            }
         }
 
         fn readSocket(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, bun.sys.recvNonBlock);
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .socket, wrapReadFn(bun.sys.recvNonBlock));
         }
 
         fn readPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, bun.sys.readNonblocking);
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .nonblocking_pipe, wrapReadFn(bun.sys.readNonblocking));
         }
 
         fn readBlockingPipe(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup: bool) void {
-            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, bun.sys.readNonblocking);
+            return readWithFn(parent, resizable_buffer, fd, size_hint, received_hup, .pipe, wrapReadFn(bun.sys.readNonblocking));
         }
 
-        fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8) JSC.Maybe(usize)) void {
+        fn readWithFn(parent: *This, resizable_buffer: *std.ArrayList(u8), fd: bun.FileDescriptor, size_hint: isize, received_hup_: bool, comptime file_type: FileType, comptime sys_fn: *const fn (bun.FileDescriptor, []u8, usize) JSC.Maybe(usize)) void {
             _ = size_hint; // autofix
             const streaming = parent.vtable.isStreamingEnabled();
 
@@ -122,8 +140,10 @@ pub fn PosixPipeReader(
                         switch (sys_fn(
                             fd,
                             buffer,
+                            parent._offset,
                         )) {
                             .result => |bytes_read| {
+                                parent._offset += bytes_read;
                                 buffer = stack_buffer_head[0..bytes_read];
                                 stack_buffer_head = stack_buffer_head[bytes_read..];
 
@@ -217,8 +237,9 @@ pub fn PosixPipeReader(
                 resizable_buffer.ensureUnusedCapacity(16 * 1024) catch bun.outOfMemory();
                 var buffer: []u8 = resizable_buffer.unusedCapacitySlice();
 
-                switch (sys_fn(fd, buffer)) {
+                switch (sys_fn(fd, buffer, parent._offset)) {
                     .result => |bytes_read| {
+                        parent._offset += bytes_read;
                         buffer = buffer[0..bytes_read];
                         resizable_buffer.items.len += bytes_read;
 
@@ -378,6 +399,7 @@ pub fn WindowsPipeReader(
             }
             var this: *This = bun.cast(*This, fs.data);
             fs.deinit();
+            if (this.flags.is_done) return;
 
             switch (nread_int) {
                 // 0 actually means EOF too
@@ -402,7 +424,7 @@ pub fn WindowsPipeReader(
                                     source.setData(this);
                                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                                     file.iov = uv.uv_buf_t.init(buf);
-                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
+                                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                                         this.flags.is_paused = true;
                                         // we should inform the error if we are unable to keep reading
                                         this.onRead(.{ .err = err }, "", .progress);
@@ -413,6 +435,7 @@ pub fn WindowsPipeReader(
                     }
 
                     const len: usize = @intCast(nread_int);
+                    this._offset += len;
                     // we got some data lets get the current iov
                     if (this.source) |source| {
                         if (source == .file) {
@@ -421,7 +444,7 @@ pub fn WindowsPipeReader(
                         }
                     }
                     // ops we should not hit this lets fail with EPIPE
-                    std.debug.assert(false);
+                    bun.assert(false);
                     return this.onRead(.{ .err = bun.sys.Error.fromCode(bun.C.E.PIPE, .read) }, "", .progress);
                 },
             }
@@ -431,7 +454,7 @@ pub fn WindowsPipeReader(
             if (this.flags.is_done or !this.flags.is_paused) return .{ .result = {} };
             this.flags.is_paused = false;
             const source: Source = this.source orelse return .{ .err = bun.sys.Error.fromCode(bun.C.E.BADF, .read) };
-            std.debug.assert(!source.isClosed());
+            bun.assert(!source.isClosed());
 
             switch (source) {
                 .file => |file| {
@@ -439,7 +462,7 @@ pub fn WindowsPipeReader(
                     source.setData(this);
                     const buf = this.getReadBufferWithStableMemoryAddress(64 * 1024);
                     file.iov = uv.uv_buf_t.init(buf);
-                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, -1, onFileRead).toError(.write)) |err| {
+                    if (uv.uv_fs_read(uv.Loop.get(), &file.fs, file.file, @ptrCast(&file.iov), 1, if (this.flags.use_pread) @intCast(this._offset) else -1, onFileRead).toError(.write)) |err| {
                         return .{ .err = err };
                     }
                 },
@@ -487,6 +510,11 @@ pub fn WindowsPipeReader(
                         pipe.close(onPipeClose);
                     },
                     .tty => |tty| {
+                        if (tty == &Source.stdin_tty) {
+                            Source.stdin_tty = undefined;
+                            Source.stdin_tty_init = false;
+                        }
+
                         tty.data = tty;
                         tty.close(onTTYClose);
                     },
@@ -645,6 +673,7 @@ const BufferedReaderVTable = struct {
 const PosixBufferedReader = struct {
     handle: PollOrFd = .{ .closed = {} },
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
+    _offset: usize = 0,
     vtable: BufferedReaderVTable,
     flags: Flags = .{},
 
@@ -657,6 +686,7 @@ const PosixBufferedReader = struct {
         closed_without_reporting: bool = false,
         close_handle: bool = true,
         memfd: bool = false,
+        use_pread: bool = false,
     };
 
     pub fn init(comptime Type: type) PosixBufferedReader {
@@ -678,6 +708,7 @@ const PosixBufferedReader = struct {
         to.* = .{
             .handle = other.handle,
             ._buffer = other.buffer().*,
+            ._offset = other._offset,
             .flags = other.flags,
             .vtable = .{
                 .fns = to.vtable.fns,
@@ -687,6 +718,7 @@ const PosixBufferedReader = struct {
         other.buffer().* = std.ArrayList(u8).init(bun.default_allocator);
         other.flags.is_done = true;
         other.handle = .{ .closed = {} };
+        other._offset = 0;
         to.handle.setOwner(to);
 
         // note: the caller is supposed to drain the buffer themselves
@@ -737,7 +769,7 @@ const PosixBufferedReader = struct {
 
     fn closeWithoutReporting(this: *PosixBufferedReader) void {
         if (this.getFd() != bun.invalid_fd) {
-            std.debug.assert(!this.flags.closed_without_reporting);
+            bun.assert(!this.flags.closed_without_reporting);
             this.flags.closed_without_reporting = true;
             if (this.flags.close_handle) this.handle.close(this, {});
         }
@@ -799,7 +831,7 @@ const PosixBufferedReader = struct {
             return;
         }
 
-        std.debug.assert(!this.flags.is_done);
+        bun.assert(!this.flags.is_done);
         this.flags.is_done = true;
     }
 
@@ -874,6 +906,12 @@ const PosixBufferedReader = struct {
         };
     }
 
+    pub fn startFileOffset(this: *PosixBufferedReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
+        this._offset = offset;
+        this.flags.use_pread = true;
+        return this.start(fd, poll);
+    }
+
     // Exists for consistentcy with Windows.
     pub fn hasPendingRead(this: *const PosixBufferedReader) bool {
         return this.handle == .poll and this.handle.poll.isRegistered();
@@ -922,6 +960,7 @@ pub const WindowsBufferedReader = struct {
     /// The pointer to this pipe must be stable.
     /// It cannot change because we don't know what libuv will do with it.
     source: ?Source = null,
+    _offset: usize = 0,
     _buffer: std.ArrayList(u8) = std.ArrayList(u8).init(bun.default_allocator),
     // for compatibility with Linux
     flags: Flags = .{},
@@ -943,6 +982,7 @@ pub const WindowsBufferedReader = struct {
 
         is_paused: bool = true,
         has_inflight_read: bool = false,
+        use_pread: bool = false,
     };
 
     pub fn init(comptime Type: type) WindowsOutputReader {
@@ -960,11 +1000,12 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn from(to: *WindowsOutputReader, other: anytype, parent: anytype) void {
-        std.debug.assert(other.source != null and to.source == null);
+        bun.assert(other.source != null and to.source == null);
         to.* = .{
             .vtable = to.vtable,
             .flags = other.flags,
             ._buffer = other.buffer().*,
+            ._offset = other._offset,
             .source = other.source,
         };
         other.flags.is_done = true;
@@ -1055,7 +1096,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn done(this: *WindowsOutputReader) void {
-        if (this.source) |source| std.debug.assert(source.isClosed());
+        if (this.source) |source| bun.assert(source.isClosed());
 
         this.finish();
 
@@ -1075,7 +1116,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn startWithCurrentPipe(this: *WindowsOutputReader) bun.JSC.Maybe(void) {
-        std.debug.assert(!this.source.?.isClosed());
+        bun.assert(!this.source.?.isClosed());
         this.source.?.setData(this);
         this.buffer().clearRetainingCapacity();
         this.flags.is_done = false;
@@ -1088,7 +1129,7 @@ pub const WindowsBufferedReader = struct {
     }
 
     pub fn start(this: *WindowsOutputReader, fd: bun.FileDescriptor, _: bool) bun.JSC.Maybe(void) {
-        std.debug.assert(this.source == null);
+        bun.assert(this.source == null);
         const source = switch (Source.open(uv.Loop.get(), fd)) {
             .err => |err| return .{ .err = err },
             .result => |source| source,
@@ -1096,6 +1137,12 @@ pub const WindowsBufferedReader = struct {
         source.setData(this);
         this.source = source;
         return this.startWithCurrentPipe();
+    }
+
+    pub fn startFileOffset(this: *WindowsOutputReader, fd: bun.FileDescriptor, poll: bool, offset: usize) bun.JSC.Maybe(void) {
+        this._offset = offset;
+        this.flags.use_pread = true;
+        return this.start(fd, poll);
     }
 
     pub fn deinit(this: *WindowsOutputReader) void {

@@ -99,7 +99,6 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    escape_backslashes: bool = false,
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
@@ -947,7 +946,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     }
 
     /// Function for testing in highlighter.test.ts
-    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);
@@ -1079,6 +1078,7 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
@@ -1098,12 +1098,12 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
-            return writer.writeAll(" KB");
-        } else {
-            try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
+            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            return;
         }
-        return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
+        const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
+        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.writeAll(&.{ ' ', suffix, 'B' });
     }
 };
 
@@ -1112,7 +1112,7 @@ pub fn size(value: anytype) SizeFormatter {
         f64, f32, f128 => SizeFormatter{
             .value = @as(u64, @intFromFloat(value)),
         },
-        else => SizeFormatter{ .value = @as(u64, @intCast(value)) },
+        else => SizeFormatter{ .value = value },
     };
 }
 
@@ -1282,7 +1282,7 @@ pub fn fmtDouble(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
 
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
         WTF__dtoa(buf, number);
@@ -1304,3 +1304,22 @@ pub const FormatDouble = struct {
         try writer.writeAll(slice);
     }
 };
+
+pub fn nullableFallback(value: anytype, null_fallback: []const u8) NullableFallback(@TypeOf(value)) {
+    return .{ .value = value, .null_fallback = null_fallback };
+}
+
+pub fn NullableFallback(comptime T: type) type {
+    return struct {
+        value: T,
+        null_fallback: []const u8,
+
+        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            if (self.value) |value| {
+                try std.fmt.formatType(value, template, opts, writer, 4);
+            } else {
+                try writer.writeAll(self.null_fallback);
+            }
+        }
+    };
+}

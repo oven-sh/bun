@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "../test_builder";
+import { createTestBuilder } from "../test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("basename", async () => {
   TestBuilder.command`basename`.exitCode(1).stdout("").stderr("usage: basename string\n").runAsTest("shows usage");
@@ -34,4 +35,18 @@ describe("basename", async () => {
   TestBuilder.command`basename /catalog`.exitCode(0).stdout("catalog\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`basename /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+});
+
+describe("basename without stdout", async () => {
+  TestBuilder.command`echo $(basename js/bun/shell/commands/basename.test.ts)`
+    .exitCode(0)
+    .stdout("basename.test.ts\n")
+    .stderr("")
+    .runAsTest("works relative without stdout");
+
+  TestBuilder.command`echo $(basename /home/tux/example.txt)`
+    .exitCode(0)
+    .stdout("example.txt\n")
+    .stderr("")
+    .runAsTest("works absolute without stdout");
 });

@@ -34,9 +34,9 @@ pub const Integrity = extern struct {
         var i: usize = 0;
 
         // initializer should zero it out
-        if (comptime bun.Environment.allow_assert) {
+        if (comptime bun.Environment.isDebug) {
             for (integrity.value) |c| {
-                std.debug.assert(c == 0);
+                bun.assert(c == 0);
             }
         }
 

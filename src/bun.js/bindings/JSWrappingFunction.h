@@ -18,7 +18,7 @@ class JSGlobalObject;
 
 namespace Zig {
 
-using NativeFunctionPtr = JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+using NativeFunctionPtr = SYSV_ABI JSC::EncodedJSValue (*)(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
 /**
  * Subclass of JSC::JSFunction that holds an additional single native JSFunction as property.
@@ -50,8 +50,7 @@ public:
     }
 
     DECLARE_EXPORT_INFO;
-
-    JS_EXPORT_PRIVATE static JSWrappingFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, const ZigString* symbolName, NativeFunctionPtr functionPointer, JSC::JSValue wrappedFn);
+    static JSWrappingFunction* create(JSC::VM& vm, Zig::GlobalObject* globalObject, const BunString* symbolName, NativeFunctionPtr functionPointer, JSC::JSValue wrappedFn);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {

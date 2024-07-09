@@ -8,20 +8,15 @@ const {
 const NumberIsInteger = Number.isInteger;
 
 function ReadStream(fd) {
-  if (!(this instanceof ReadStream)) return new ReadStream(fd);
+  if (!(this instanceof ReadStream)) {
+    return new ReadStream(fd);
+  }
   if (fd >> 0 !== fd || fd < 0) throw new RangeError("fd must be a positive integer");
 
-  const stream = require("node:fs").ReadStream.$call(this, "", {
-    fd,
-  });
-  Object.setPrototypeOf(stream, ReadStream.prototype);
+  require("node:fs").ReadStream.$apply(this, ["", { fd }]);
 
-  stream.isRaw = false;
-  stream.isTTY = true;
-
-  $assert(stream instanceof ReadStream);
-
-  return stream;
+  this.isRaw = false;
+  this.isTTY = true;
 }
 
 Object.defineProperty(ReadStream, "prototype", {
@@ -37,6 +32,16 @@ Object.defineProperty(ReadStream, "prototype", {
       // On POSIX, I tried to use the same approach, but it didn't work reliably,
       // so we just use the file descriptor and use termios APIs directly.
       if (process.platform === "win32") {
+        // Special case for stdin, as it has a shared uv_tty handle
+        // and it's stream is constructed differently
+        if (this.fd === 0) {
+          const err = ttySetMode(flag);
+          if (err) {
+            this.emit("error", new Error("setRawMode failed with errno: " + err));
+          }
+          return this;
+        }
+
         const handle = this.$bunNativePtr;
         if (!handle) {
           this.emit("error", new Error("setRawMode failed because it was called on something that is not a TTY"));
@@ -317,9 +322,21 @@ Object.defineProperty(WriteStream, "prototype", {
 });
 
 var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.MAX_SAFE_INTEGER) => {
-  if (typeof value !== "number") throw new ERR_INVALID_ARG_TYPE(name, "number", value);
-  if (!NumberIsInteger(value)) throw new ERR_OUT_OF_RANGE(name, "an integer", value);
-  if (value < min || value > max) throw new ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
+  if (typeof value !== "number") throw ERR_INVALID_ARG_TYPE(name, "number", value);
+  if (!NumberIsInteger(value)) throw ERR_OUT_OF_RANGE(name, "an integer", value);
+  if (value < min || value > max) throw ERR_OUT_OF_RANGE(name, `>= ${min} && <= ${max}`, value);
 };
 
 export default { ReadStream, WriteStream, isatty };
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
+
+function ERR_OUT_OF_RANGE(name, range, value) {
+  const err = new RangeError(`The "${name}" argument is out of range. It must be ${range}. Received ${value}`);
+  err.code = "ERR_OUT_OF_RANGE";
+  return err;
+}

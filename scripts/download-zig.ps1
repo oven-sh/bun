@@ -1,6 +1,6 @@
 $ErrorActionPreference = "Stop"
 
-$ZigVersion="0.12.0-dev.1828+225fe6ddb"
+$ZigVersion="0.13.0"
 $Target="windows"
 $Arch="x86_64"
 
@@ -23,7 +23,7 @@ try {
   if (!(Test-Path $TarPath)) {
     try {
       Write-Host "-- Downloading Zig"
-      Invoke-WebRequest $Url -OutFile $TarPath
+      Invoke-RestMethod $Url -OutFile $TarPath
     } catch {
       Write-Error "Failed to fetch Zig from: $Url"
       throw $_

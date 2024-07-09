@@ -68,9 +68,7 @@ pub const KeepAlive = struct {
         if (this.status != .active)
             return;
         this.status = .inactive;
-
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.event_loop_handle.?.dec();
+        vm.event_loop.unrefConcurrently();
     }
 
     /// Prevent a poll from keeping the process alive on the next tick.
@@ -109,8 +107,7 @@ pub const KeepAlive = struct {
         if (this.status != .inactive)
             return;
         this.status = .active;
-        // TODO: https://github.com/oven-sh/bun/pull/4410#discussion_r1317326194
-        vm.event_loop_handle.?.inc();
+        vm.event_loop.refConcurrently();
     }
 
     pub fn refConcurrentlyFromEventLoop(this: *KeepAlive, loop: *JSC.EventLoop) void {
@@ -257,7 +254,7 @@ pub const FilePoll = struct {
 
     /// Only intended to be used from EventLoop.Pollable
     pub fn deactivate(this: *FilePoll, loop: *Loop) void {
-        std.debug.assert(this.flags.contains(.has_incremented_poll_count));
+        bun.assert(this.flags.contains(.has_incremented_poll_count));
         loop.active_handles -= @as(u32, @intFromBool(this.flags.contains(.has_incremented_poll_count)));
         log("deactivate - {d}", .{loop.active_handles});
         this.flags.remove(.has_incremented_poll_count);
@@ -346,22 +343,22 @@ pub const FilePoll = struct {
                 return;
             }
 
-            std.debug.assert(poll.next_to_free == null);
+            bun.assert(poll.next_to_free == null);
 
             if (this.pending_free_tail) |tail| {
-                std.debug.assert(this.pending_free_head != null);
-                std.debug.assert(tail.next_to_free == null);
+                bun.assert(this.pending_free_head != null);
+                bun.assert(tail.next_to_free == null);
                 tail.next_to_free = poll;
             }
 
             if (this.pending_free_head == null) {
                 this.pending_free_head = poll;
-                std.debug.assert(this.pending_free_tail == null);
+                bun.assert(this.pending_free_tail == null);
             }
 
             poll.flags.insert(.ignore_updates);
             this.pending_free_tail = poll;
-            std.debug.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
+            bun.assert(vm.after_event_loop_callback == null or vm.after_event_loop_callback == @as(?JSC.OpaqueCallback, @ptrCast(&processDeferredFrees)));
             vm.after_event_loop_callback = @ptrCast(&processDeferredFrees);
             vm.after_event_loop_callback_ctx = this;
         }
@@ -408,8 +405,8 @@ pub const Closer = struct {
     }
 
     fn onClose(req: *uv.fs_t) callconv(.C) void {
-        var closer = @fieldParentPtr(Closer, "io_request", req);
-        std.debug.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
+        var closer: *Closer = @fieldParentPtr("io_request", req);
+        bun.assert(closer == @as(*Closer, @alignCast(@ptrCast(req.data.?))));
         bun.sys.syslog("uv_fs_close({}) = {}", .{ bun.toFD(req.file.fd), req.result });
 
         if (comptime Environment.allow_assert) {

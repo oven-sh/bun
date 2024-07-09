@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 const mem = std.mem;
 const testing = std.testing;
 

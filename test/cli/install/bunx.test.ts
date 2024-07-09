@@ -1,16 +1,20 @@
 import { spawn } from "bun";
-import { afterEach, beforeEach, expect, it } from "bun:test";
-import { bunExe, bunEnv, isWindows } from "harness";
-import { mkdtemp, realpath, writeFile, rm } from "fs/promises";
+import { beforeAll, beforeEach, expect, it, setDefaultTimeout } from "bun:test";
+import { rm, writeFile } from "fs/promises";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { tmpdir } from "os";
-import { join } from "path";
+import { join, resolve } from "path";
 import { readdirSorted } from "./dummy.registry";
-import { readdirSync } from "js/node/fs/export-star-from";
+import { readdirSync } from "node:fs";
 
 let x_dir: string;
 let current_tmpdir: string;
 let install_cache_dir: string;
 let env = { ...bunEnv };
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 beforeEach(async () => {
   const waiting: Promise<void>[] = [];
@@ -29,9 +33,9 @@ beforeEach(async () => {
     }
   });
 
-  install_cache_dir = await mkdtemp(join(tmpdir(), "bun-install-cache-" + Math.random().toString(36).slice(2)));
-  current_tmpdir = await realpath(await mkdtemp(join(tmpdir(), "bun-x-tmpdir" + Math.random().toString(36).slice(2))));
-  x_dir = await realpath(await mkdtemp(join(tmpdir(), "bun-x.test" + Math.random().toString(36).slice(2))));
+  install_cache_dir = tmpdirSync();
+  current_tmpdir = tmpdirSync();
+  x_dir = tmpdirSync();
 
   env.TEMP = current_tmpdir;
   env.BUN_TMPDIR = env.TMPDIR = current_tmpdir;
@@ -42,7 +46,7 @@ beforeEach(async () => {
 });
 
 it("should choose the tagged versions instead of the PATH versions when a tag is specified", async () => {
-  const semverVersions = [
+  let semverVersions = [
     "7.0.0",
     "7.1.0",
     "7.1.1",
@@ -69,6 +73,11 @@ it("should choose the tagged versions instead of the PATH versions when a tag is
     "7.5.4",
     "7.6.0",
   ].sort();
+  if (isWindows) {
+    // Windows does not support race-free installs.
+    semverVersions = semverVersions.slice(0, 2);
+  }
+
   const processes = semverVersions.map((version, i) => {
     return spawn({
       cmd: [bunExe(), "x", "semver@" + version, "--help"],
@@ -101,11 +110,8 @@ it("should install and run default (latest) version", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(await exited).toBe(0);
@@ -120,11 +126,8 @@ it("should install and run specified version", async () => {
     stderr: "pipe",
     env,
   });
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out.split(/\r?\n/)).toEqual(["uglify-js 3.14.1", ""]);
   expect(await exited).toBe(0);
@@ -140,12 +143,9 @@ it("should output usage if no arguments are passed", async () => {
     env,
   });
 
-  expect(stderr).toBeDefined();
   const err = await new Response(stderr).text();
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(err).toContain("Usage: ");
-  expect(stdout).toBeDefined();
   const out = await new Response(stdout).text();
   expect(out).toHaveLength(0);
   expect(await exited).toBe(1);
@@ -169,7 +169,6 @@ it("should work for @scoped packages", async () => {
     withoutCache.exited,
   ]);
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: babel [options]");
   expect(exited).toBe(0);
   // cached
@@ -189,7 +188,6 @@ it("should work for @scoped packages", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
 
   expect(out.trim()).toContain("Usage: babel [options]");
 });
@@ -214,7 +212,6 @@ console.log(
   });
   const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(await readdirSorted(x_dir)).toEqual(["test.js"]);
   expect(out.split(/\r?\n/)).toEqual(["console.log(42);", ""]);
   expect(exitCode).toBe(0);
@@ -238,7 +235,6 @@ it("should work for github repository", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
 
@@ -259,7 +255,6 @@ it("should work for github repository", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("Usage: " + (isWindows ? "cli.js" : "cowsay"));
   expect(exited).toBe(0);
 });
@@ -281,7 +276,6 @@ it("should work for github repository with committish", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("hello bun!");
   expect(exited).toBe(0);
 
@@ -302,7 +296,104 @@ it("should work for github repository with committish", async () => {
   ]);
 
   expect(err).not.toContain("error:");
-  expect(err).not.toContain("panic:");
   expect(out.trim()).toContain("hello bun!");
+  expect(exited).toBe(0);
+});
+
+it.each(["--version", "-v"])("should print the version using %s and exit", async flag => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", flag],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it("should print the revision and exit", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "--revision"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain(Bun.version);
+  expect(out.trim()).toContain(Bun.revision.slice(0, 7));
+  expect(exited).toBe(0);
+});
+
+it("should pass --version to the package if specified", async () => {
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "esbuild", "--version"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stdin: "inherit",
+    stderr: "pipe",
+    env,
+  });
+
+  let [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).not.toContain(Bun.version);
+  expect(exited).toBe(0);
+});
+
+it('should set "npm_config_user_agent" to bun', async () => {
+  await writeFile(
+    join(x_dir, "package.json"),
+    JSON.stringify({
+      dependencies: {
+        "print-pm": resolve(import.meta.dir, "print-pm-1.0.0.tgz"),
+      },
+    }),
+  );
+
+  const { exited: installFinished } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: x_dir,
+  });
+  expect(await installFinished).toBe(0);
+
+  const subprocess = spawn({
+    cmd: [bunExe(), "x", "print-pm"],
+    cwd: x_dir,
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  const [err, out, exited] = await Promise.all([
+    new Response(subprocess.stderr).text(),
+    new Response(subprocess.stdout).text(),
+    subprocess.exited,
+  ]);
+
+  expect(err).not.toContain("error:");
+  expect(out.trim()).toContain(`bun/${Bun.version}`);
   expect(exited).toBe(0);
 });

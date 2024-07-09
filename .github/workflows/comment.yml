@@ -1,0 +1,55 @@
+name: Comment
+
+permissions:
+  actions: read
+  pull-requests: write
+
+on:
+  workflow_run:
+    workflows:
+      - CI
+    types:
+      - completed
+
+jobs:
+  comment:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Comment
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Tests
+        uses: actions/download-artifact@v4
+        with:
+          path: bun
+          pattern: bun-*-tests
+          github-token: ${{ github.token }}
+          run-id: ${{ github.event.workflow_run.id }}
+      - name: Setup Environment
+        id: env
+        shell: bash
+        run: |
+          echo "pr-number=$(<bun/bun-linux-x64-tests/pr-number.txt)" >> $GITHUB_OUTPUT
+      - name: Generate Comment
+        run: |
+          cat bun/bun-*-tests/comment.md > comment.md
+          if [ -s comment.md ]; then
+            echo -e "❌ @${{ github.actor }}, your commit has failing tests :(\n\n$(cat comment.md)" > comment.md
+          else
+            echo -e "✅ @${{ github.actor }}, all tests passed!" > comment.md
+          fi
+          echo -e "\n**[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.event.workflow_run.id }})**" >> comment.md
+          echo -e "<!-- generated-comment workflow=${{ github.workflow }} -->" >> comment.md
+      - name: Find Comment
+        id: comment
+        uses: peter-evans/find-comment@v3
+        with:
+          issue-number: ${{ steps.env.outputs.pr-number }}
+          comment-author: github-actions[bot]
+          body-includes: <!-- generated-comment workflow=${{ github.workflow }} -->
+      - name: Write Comment
+        uses: peter-evans/create-or-update-comment@v4
+        with:
+          comment-id: ${{ steps.comment.outputs.comment-id }}
+          issue-number: ${{ steps.env.outputs.pr-number }}
+          body-path: comment.md
+          edit-mode: replace

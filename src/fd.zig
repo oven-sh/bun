@@ -1,6 +1,5 @@
 const std = @import("std");
-const os = std.os;
-const linux = os.linux;
+const posix = std.posix;
 
 const bun = @import("root").bun;
 const env = bun.Environment;
@@ -24,7 +23,7 @@ fn handleToNumber(handle: FDImpl.System) FDImpl.SystemAsInt {
 fn numberToHandle(handle: FDImpl.SystemAsInt) FDImpl.System {
     if (env.os == .windows) {
         if (!@inComptime()) {
-            std.debug.assert(handle != FDImpl.invalid_value);
+            bun.assert(handle != FDImpl.invalid_value);
         }
         return @ptrFromInt(handle);
     } else {
@@ -39,7 +38,7 @@ pub fn uv_get_osfhandle(in: c_int) libuv.uv_os_fd_t {
 
 pub fn uv_open_osfhandle(in: libuv.uv_os_fd_t) error{SystemFdQuotaExceeded}!c_int {
     const out = libuv.uv_open_osfhandle(in);
-    std.debug.assert(out >= -1);
+    bun.assert(out >= -1);
     if (out == -1) return error.SystemFdQuotaExceeded;
     return out;
 }
@@ -68,7 +67,7 @@ pub const FDImpl = packed struct {
         .value = .{ .as_system = invalid_value },
     };
 
-    pub const System = std.os.fd_t;
+    pub const System = posix.fd_t;
 
     pub const SystemAsInt = switch (env.os) {
         .windows => u63,
@@ -91,11 +90,11 @@ pub const FDImpl = packed struct {
         enum(u0) { system };
 
     comptime {
-        std.debug.assert(@sizeOf(FDImpl) == @sizeOf(System));
+        bun.assert(@sizeOf(FDImpl) == @sizeOf(System));
 
         if (env.os == .windows) {
             // we want the conversion from FD to fd_t to be a integer truncate
-            std.debug.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
+            bun.assert(@as(FDImpl, @bitCast(@as(u64, 512))).value.as_system == 512);
         }
     }
 
@@ -110,7 +109,7 @@ pub const FDImpl = packed struct {
         if (env.os == .windows) {
             // the current process fd is max usize
             // https://learn.microsoft.com/en-us/windows/win32/api/processthreadsapi/nf-processthreadsapi-getcurrentprocess
-            std.debug.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
+            bun.assert(@intFromPtr(system_fd) <= std.math.maxInt(SystemAsInt));
         }
 
         return fromSystemWithoutAssertion(system_fd);
@@ -215,7 +214,7 @@ pub const FDImpl = packed struct {
 
     pub fn closeAllowingStdoutAndStderr(this: FDImpl) ?bun.sys.Error {
         if (allow_assert) {
-            std.debug.assert(this.value.as_system != invalid_value); // probably a UAF
+            bun.assert(this.value.as_system != invalid_value); // probably a UAF
         }
 
         // Format the file descriptor for logging BEFORE closing it.
@@ -226,19 +225,19 @@ pub const FDImpl = packed struct {
         const result: ?bun.sys.Error = switch (env.os) {
             .linux => result: {
                 const fd = this.encode();
-                std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd.cast() > -1);
-                break :result switch (linux.getErrno(linux.close(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
+                bun.assert(fd != bun.invalid_fd);
+                bun.assert(fd.cast() >= 0);
+                break :result switch (bun.C.getErrno(bun.sys.system.close(fd.cast()))) {
+                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
             .mac => result: {
                 const fd = this.encode();
-                std.debug.assert(fd != bun.invalid_fd);
-                std.debug.assert(fd.cast() > -1);
-                break :result switch (bun.sys.system.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
-                    .BADF => bun.sys.Error{ .errno = @intFromEnum(os.E.BADF), .syscall = .close, .fd = fd },
+                bun.assert(fd != bun.invalid_fd);
+                bun.assert(fd.cast() >= 0);
+                break :result switch (bun.C.getErrno(bun.sys.system.@"close$NOCANCEL"(fd.cast()))) {
+                    .BADF => bun.sys.Error{ .errno = @intFromEnum(posix.E.BADF), .syscall = .close, .fd = fd },
                     else => null,
                 };
             },
@@ -254,7 +253,7 @@ pub const FDImpl = packed struct {
                             null;
                     },
                     .system => {
-                        std.debug.assert(this.value.as_system != 0);
+                        bun.assert(this.value.as_system != 0);
                         const handle: System = @ptrFromInt(@as(u64, this.value.as_system));
                         break :result switch (bun.windows.NtClose(handle)) {
                             .SUCCESS => null,
@@ -272,7 +271,7 @@ pub const FDImpl = packed struct {
 
         if (env.isDebug) {
             if (result) |err| {
-                if (err.errno == @intFromEnum(os.E.BADF)) {
+                if (err.errno == @intFromEnum(posix.E.BADF)) {
                     // TODO(@paperdave): Zig Compiler Bug, if you remove `this` from the log. An error is correctly printed, but with the wrong reference trace
                     bun.Output.debugWarn("close({s}) = EBADF. This is an indication of a file descriptor UAF", .{this_fmt});
                 } else {
@@ -399,6 +398,6 @@ pub const FDImpl = packed struct {
     }
 
     pub fn assertValid(this: FDImpl) void {
-        std.debug.assert(this.isValid());
+        bun.assert(this.isValid());
     }
 };

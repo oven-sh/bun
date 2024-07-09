@@ -35,7 +35,8 @@ export function getStdioWriteStream(fd) {
     });
     stream._type = "tty";
   } else {
-    stream = new (require("node:fs").WriteStream)(fd, { autoClose: false, fd });
+    const fs = require("node:fs");
+    stream = new fs.WriteStream(fd, { autoClose: false, fd });
     stream._type = "fs";
   }
 
@@ -118,7 +119,6 @@ export function getStdinStream(fd) {
   }
 
   const tty = require("node:tty");
-
   const ReadStream = tty.isatty(fd) ? tty.ReadStream : require("node:fs").ReadStream;
   const stream = new ReadStream(fd);
 

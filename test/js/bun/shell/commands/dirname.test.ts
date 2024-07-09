@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "../test_builder";
+import { createTestBuilder } from "../test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("dirname", async () => {
   TestBuilder.command`dirname`.exitCode(1).stdout("").stderr("usage: dirname string\n").runAsTest("shows usage");
@@ -34,4 +35,18 @@ describe("dirname", async () => {
   TestBuilder.command`dirname /catalog`.exitCode(0).stdout("/\n").stderr("").runAsTest("at root");
 
   TestBuilder.command`dirname /`.exitCode(0).stdout("/\n").stderr("").runAsTest("root is idempotent");
+});
+
+describe("dirname without stdout", async () => {
+  TestBuilder.command`echo $(dirname js/bun/shell/commands/dirname.test.ts)`
+    .exitCode(0)
+    .stdout("js/bun/shell/commands\n")
+    .stderr("")
+    .runAsTest("works relative without stdout");
+
+  TestBuilder.command`echo $(dirname /home/tux/example.txt)`
+    .exitCode(0)
+    .stdout("/home/tux\n")
+    .stderr("")
+    .runAsTest("works absolute without stdout");
 });

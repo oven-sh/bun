@@ -96,6 +96,16 @@ describe("console.table", () => {
       },
     ],
     [
+      "properties - interesting character",
+      {
+        args: () => [
+          {
+            a: "_字",
+          },
+        ],
+      },
+    ],
+    [
       "values - array",
       {
         args: () => [
@@ -203,4 +213,22 @@ test.skip("console.table character widths", () => {
   const actualOutput = stdout.toString();
 
   console.log(actualOutput);
+});
+
+test("console.table repeat 50", () => {
+  const expected = `┌───┬───┐
+│   │ n │
+├───┼───┤
+│ 0 │ 8 │
+└───┴───┘
+`;
+  const { stdout, stderr } = spawnSync({
+    cmd: [bunExe(), `${import.meta.dir}/console-table-repeat-50.ts`],
+    stdout: "pipe",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toBe(expected.repeat(50));
+  expect(stderr.toString()).toBe("");
 });

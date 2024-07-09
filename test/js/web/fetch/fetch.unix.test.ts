@@ -1,11 +1,10 @@
 import { serve, ServeOptions, Server } from "bun";
 import { afterAll, afterEach, expect, it } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync } from "fs";
-import { tmpdir } from "os";
+import { rmSync } from "fs";
 import { join } from "path";
 import { request } from "http";
-import { isWindows } from "harness";
-const tmp_dir = join(realpathSync(tmpdir()));
+import { isWindows, tmpdirSync } from "harness";
+const tmp_dir = tmpdirSync();
 
 it("throws ENAMETOOLONG when socket path exceeds platform-specific limit", () => {
   // this must be the filename specifically, because we add a workaround for the length limit on linux
@@ -75,15 +74,7 @@ if (process.platform === "linux") {
   });
 
   it("can workaround socket path length limit via /proc/self/fd/NN/ trick", async () => {
-    const unix = join(
-      "/tmp",
-      "." +
-        Math.random()
-          .toString(36)
-          .slice(2)
-          .repeat(100)
-          .slice(0, 105 - 4),
-    );
+    const unix = join(tmpdirSync(), "fetch-unix.sock");
     const server = Bun.serve({
       unix,
       fetch(req) {

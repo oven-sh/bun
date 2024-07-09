@@ -3,7 +3,13 @@ $npm_client = "npm"
 # & ${npm_client} i
 
 $root = Join-Path (Split-Path -Path $MyInvocation.MyCommand.Definition -Parent) "..\"
+
+# search for .cmd or .exe 
 $esbuild = Join-Path $root "node_modules\.bin\esbuild.cmd"
+if (!(Test-Path $esbuild)) {
+    $esbuild = Join-Path $root "node_modules\.bin\esbuild.exe"
+}
+
 
 $env:NODE_ENV = "production"
 

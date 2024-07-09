@@ -73,10 +73,10 @@ bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
     return m_allowAtomicsWait;
 }
 
-bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, const char** reason)
+bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     if (UNLIKELY(reason))
-        *reason = "ArrayBuffer is opaque root";
+        *reason = "ArrayBuffer is opaque root"_s;
     auto& wrapper = *JSC::jsCast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
     return visitor.containsOpaqueRoot(wrapper.impl());
 }

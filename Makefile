@@ -129,7 +129,7 @@ SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
-BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
@@ -231,14 +231,17 @@ _MIMALLOC_LINK = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 DEFAULT_LINKER_FLAGS =
 
 JSC_BUILD_STEPS :=
+JSC_BUILD_STEPS_DEBUG :=
 ifeq ($(OS_NAME),linux)
 	JSC_BUILD_STEPS += jsc-build-linux
+	JSC_BUILD_STEPS_DEBUG += jsc-build-linux-debug
 	_MIMALLOC_LINK = $(BUN_DEPS_OUT_DIR)/$(MIMALLOC_FILE)
 DEFAULT_LINKER_FLAGS= -pthread -ldl
 endif
 ifeq ($(OS_NAME),darwin)
     _MIMALLOC_OBJECT_FILE = 0
 	JSC_BUILD_STEPS += jsc-build-mac jsc-copy-headers
+	JSC_BUILD_STEPS_DEBUG += jsc-build-mac-debug
 	_MIMALLOC_FILE = libmimalloc.a
 	_MIMALLOC_INPUT_PATH = libmimalloc.a
 	_MIMALLOC_LINK = -lmimalloc
@@ -446,8 +449,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-llolhtml \
-	-lbase64
+	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -917,8 +919,12 @@ bun-codesign-release-local-debug:
 
 .PHONY: jsc
 jsc: jsc-build jsc-copy-headers jsc-bindings
+.PHONY: jsc-debug
+jsc-debug: jsc-build-debug jsc-copy-headers-debug
 .PHONY: jsc-build
 jsc-build: $(JSC_BUILD_STEPS)
+.PHONY: jsc-build-debug
+jsc-build-debug: $(JSC_BUILD_STEPS_DEBUG)
 .PHONY: jsc-bindings
 jsc-bindings: headers bindings
 
@@ -1175,6 +1181,57 @@ jsc-copy-headers:
 	cp $(WEBKIT_DIR)/Source/JavaScriptCore/API/JSWeakValue.h  $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSWeakValue.h
 	find $(WEBKIT_RELEASE_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_RELEASE_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
 
+jsc-copy-headers-debug:
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/heap/WeakHandleOwner.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/WeakHandleOwner.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/LazyClassStructureInlines.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LazyClassStructureInlines.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/LazyPropertyInlines.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LazyPropertyInlines.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSTypedArrayViewPrototype.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSTypedArrayViewPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSTypedArrayPrototypes.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSTypedArrayPrototypes.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSModuleNamespaceObject.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSModuleNamespaceObject.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JIT.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JIT.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StructureStubInfo.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StructureStubInfo.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/AccessCase.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AccessCase.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/ObjectPropertyConditionSet.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ObjectPropertyConditionSet.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/PolyProtoAccessChain.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/PolyProtoAccessChain.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/InlineCacheCompiler.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/InlineCacheCompiler.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StructureStubClearingWatchpoint.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StructureStubClearingWatchpoint.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/AdaptiveInferredPropertyValueWatchpointBase.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AdaptiveInferredPropertyValueWatchpointBase.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/StubInfoSummary.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/StubInfoSummary.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/CommonSlowPaths.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/CommonSlowPaths.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/DirectArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DirectArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GenericArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GenericArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SamplingProfiler.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SamplingProfiler.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/ScopedArguments.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ScopedArguments.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSLexicalEnvironment.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSLexicalEnvironment.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITDisassembler.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITDisassembler.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITInlineCacheGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITInlineCacheGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITMathIC.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITMathIC.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITAddGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITAddGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITMathICInlineResult.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITMathICInlineResult.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/SnippetOperand.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SnippetOperand.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITMulGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITMulGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITNegGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITNegGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITSubGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITSubGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/Repatch.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/Repatch.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITRightShiftGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITRightShiftGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JITBitBinaryOpGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JITBitBinaryOpGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/jit/JSInterfaceJIT.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSInterfaceJIT.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/llint/LLIntData.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/LLIntData.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/FunctionCodeBlock.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/FunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/dfg/DFGAbstractHeap.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DFGAbstractHeap.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/OperandsInlines.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/OperandsInlines.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/Operands.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/Operands.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/domjit/DOMJITHeapRange.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/DOMJITHeapRange.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GeneratorPrototype.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GeneratorPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/GeneratorFunctionPrototype.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/GeneratorFunctionPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/AsyncFunctionPrototype.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AsyncFunctionPrototype.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/SymbolObject.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/SymbolObject.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/JSGenerator.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSGenerator.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/bytecode/UnlinkedFunctionCodeBlock.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/UnlinkedFunctionCodeBlock.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/runtime/AggregateError.h $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/AggregateError.h
+	cp $(WEBKIT_DIR)/Source/JavaScriptCore/API/JSWeakValue.h  $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/JSWeakValue.h
+	find $(WEBKIT_DEBUG_DIR)/JavaScriptCore/Headers/JavaScriptCore/ -name "*.h" -exec cp {} $(WEBKIT_DEBUG_DIR)/JavaScriptCore/PrivateHeaders/JavaScriptCore/ \;
+
 # This is a workaround for a JSC bug that impacts aarch64
 # on macOS, it never requests JIT permissions
 .PHONY: jsc-force-fastjit
@@ -1266,7 +1323,8 @@ jsc-build-linux-compile-config:
 		cmake \
 			-DPORT="JSCOnly" \
 			-DENABLE_STATIC_JSC=ON \
-			-DCMAKE_BUILD_TYPE=Release \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
 			-DUSE_THIN_ARCHIVES=OFF \
 			-DUSE_BUN_JSC_ADDITIONS=ON \
 			-DENABLE_FTL_JIT=ON \
@@ -1281,6 +1339,29 @@ jsc-build-linux-compile-config:
 			$(WEBKIT_DIR) \
 			$(WEBKIT_RELEASE_DIR)
 
+.PHONY: jsc-build-linux-compile-config-debug
+jsc-build-linux-compile-config-debug:
+	mkdir -p $(WEBKIT_DEBUG_DIR)
+	cd $(WEBKIT_DEBUG_DIR) && \
+		cmake \
+			-DPORT="JSCOnly" \
+			-DENABLE_STATIC_JSC=ON \
+			-DCMAKE_BUILD_TYPE=Debug \
+			-DENABLE_BUN_SKIP_FAILING_ASSERTIONS=ON \
+			-DUSE_THIN_ARCHIVES=OFF \
+			-DUSE_BUN_JSC_ADDITIONS=ON \
+			-DENABLE_FTL_JIT=ON \
+			-DENABLE_REMOTE_INSPECTOR=ON \
+			-DJSEXPORT_PRIVATE=WTF_EXPORT_DECLARATION \
+			-DALLOW_LINE_AND_COLUMN_NUMBER_IN_BUILTINS=ON \
+			-USE_VISIBILITY_ATTRIBUTE=1 \
+			-DCMAKE_EXPORT_COMPILE_COMMANDS=ON \
+			-G Ninja \
+			-DCMAKE_CXX_COMPILER=$(CXX) \
+			-DCMAKE_C_COMPILER=$(CC) \
+			$(WEBKIT_DIR) \
+			$(WEBKIT_DEBUG_DIR)
+
 # If you get "Error: could not load cache"
 # run  rm -rf src/bun.js/WebKit/CMakeCache.txt
 .PHONY: jsc-build-linux-compile-build
@@ -1290,16 +1371,31 @@ jsc-build-linux-compile-build:
 	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
 		cmake --build $(WEBKIT_RELEASE_DIR) --config relwithdebuginfo --target jsc
 
+.PHONY: jsc-build-linux-compile-build-debug
+jsc-build-linux-compile-build-debug:
+		mkdir -p $(WEBKIT_DEBUG_DIR)  && \
+		cd $(WEBKIT_DEBUG_DIR)  && \
+	CFLAGS="$(CFLAGS) -Wl,--whole-archive -ffat-lto-objects" CXXFLAGS="$(CXXFLAGS) -Wl,--whole-archive -ffat-lto-objects -DUSE_BUN_JSC_ADDITIONS=ON" \
+		cmake --build $(WEBKIT_DEBUG_DIR) --config Debug --target jsc
 
-jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-mac-copy
 
-jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-mac-copy
+jsc-build-mac: jsc-force-fastjit jsc-build-mac-compile jsc-build-copy
+jsc-build-mac-debug: jsc-force-fastjit jsc-build-mac-compile-debug jsc-build-copy-debug
 
-jsc-build-mac-copy:
+jsc-build-linux: jsc-build-linux-compile-config jsc-build-linux-compile-build jsc-build-copy
+jsc-build-linux-debug: jsc-build-linux-compile-config-debug jsc-build-linux-compile-build-debug jsc-build-copy-debug
+
+jsc-build-copy:
 	cp $(WEBKIT_RELEASE_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
 	#cp $(WEBKIT_RELEASE_DIR)/lib/libLowLevelInterpreterLib.a $(BUN_DEPS_OUT_DIR)/libLowLevelInterpreterLib.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
 	cp $(WEBKIT_RELEASE_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
+
+jsc-build-copy-debug:
+	cp $(WEBKIT_DEBUG_DIR)/lib/libJavaScriptCore.a $(BUN_DEPS_OUT_DIR)/libJavaScriptCore.a
+	#cp $(WEBKIT_DEBUG_DIR)/lib/libLowLevelInterpreterLib.a $(BUN_DEPS_OUT_DIR)/libLowLevelInterpreterLib.a
+	cp $(WEBKIT_DEBUG_DIR)/lib/libWTF.a $(BUN_DEPS_OUT_DIR)/libWTF.a
+	cp $(WEBKIT_DEBUG_DIR)/lib/libbmalloc.a $(BUN_DEPS_OUT_DIR)/libbmalloc.a
 
 clean-jsc:
 	cd src/bun.js/WebKit && rm -rf **/CMakeCache.txt **/CMakeFiles && rm -rf src/bun.js/WebKit/WebKitBuild
@@ -1874,11 +1970,6 @@ copy-to-bun-release-dir-bin:
 
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
-.PHONY: base64
-base64:
-	cd $(BUN_DEPS_DIR)/base64 && make clean && rm -rf CMakeCache.txt CMakeFiles && cmake $(CMAKE_FLAGS) . && make
-	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
-
 .PHONY: cold-jsc-start
 cold-jsc-start:
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
@@ -1896,7 +1987,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd
 
 
 .PHONY: vendor-without-check

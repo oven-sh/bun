@@ -1,7 +1,7 @@
 import { describe, expect, it, spyOn } from "bun:test";
 import { dirname, resolve, relative } from "node:path";
 import { promisify } from "node:util";
-import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles } from "harness";
+import { bunEnv, bunExe, gc, getMaxFD, isIntelMacOS, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { isAscii } from "node:buffer";
 import fs, {
   closeSync,
@@ -28,6 +28,7 @@ import fs, {
   mkdtempSync,
   mkdtemp,
   constants,
+  Dir,
   Dirent,
   Stats,
   realpathSync,
@@ -36,6 +37,7 @@ import fs, {
   writevSync,
   readvSync,
   fstatSync,
+  fdatasync,
   fdatasyncSync,
   openAsBlob,
 } from "node:fs";
@@ -46,7 +48,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { ReadStream as ReadStream_, WriteStream as WriteStream_ } from "./export-from.js";
-import { Dir, ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_, fdatasync } from "./export-star-from.js";
+import { ReadStream as ReadStreamStar_, WriteStream as WriteStreamStar_ } from "./export-star-from.js";
 import { spawnSync } from "bun";
 
 const Buffer = globalThis.Buffer || Uint8Array;
@@ -250,8 +252,19 @@ it("Dirent.name setter", () => {
   expect(dirent.name).toBe("hello");
 });
 
+it("writeFileSync should correctly resolve ../..", () => {
+  const base = tmpdirSync();
+  const path = join(base, "foo", "bar");
+  mkdirSync(path, { recursive: true });
+  const cwd = process.cwd();
+  process.chdir(path);
+  writeFileSync("../../test.txt", "hello");
+  expect(readFileSync(join(base, "test.txt"), "utf8")).toBe("hello");
+  process.chdir(cwd);
+});
+
 it("writeFileSync in append should not truncate the file", () => {
-  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  const path = join(tmpdirSync(), "should-not-append.txt");
   var str = "";
   writeFileSync(path, "---BEGIN---");
   str += "---BEGIN---";
@@ -273,7 +286,7 @@ it("await readdir #3931", async () => {
 });
 
 it("writeFileSync NOT in append SHOULD truncate the file", () => {
-  const path = join(tmpdir(), "writeFileSync-should-not-append-" + (Date.now() * 10000).toString(16));
+  const path = join(tmpdirSync(), "should-not-append.txt");
 
   for (let options of [{ flag: "w" }, { flag: undefined }, {}, undefined]) {
     writeFileSync(path, "---BEGIN---", options);
@@ -468,10 +481,18 @@ it("readdirSync on import.meta.dir", () => {
   expect(match).toBe(true);
 });
 
+it("Dirent has the expected fields", () => {
+  const dir = tmpdirSync();
+  writeFileSync(join(dir, "file.txt"), "");
+  const dirs = readdirSync(dir, { withFileTypes: true });
+  expect(dirs.length).toBe(1);
+  expect(dirs[0].name).toBe("file.txt");
+  expect(dirs[0].path).toBe(dir);
+  expect(dirs[0].parentPath).toBe(dir);
+});
+
 it("promises.readdir on a large folder", async () => {
-  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
-  rmSync(huge, { force: true, recursive: true });
-  mkdirSync(huge, { recursive: true });
+  const huge = tmpdirSync();
   for (let i = 0; i < 128; i++) {
     writeFileSync(join(huge, "file-" + i), "");
   }
@@ -806,9 +827,7 @@ it("promises.readFile with buffer as file path", async () => {
 });
 
 it("promises.readdir on a large folder withFileTypes", async () => {
-  const huge = join(tmpdir(), "huge-folder-" + Math.random().toString(32));
-  rmSync(huge, { force: true, recursive: true });
-  mkdirSync(huge, { recursive: true });
+  const huge = tmpdirSync();
   let withFileTypes = { withFileTypes: true } as const;
   for (let i = 0; i < 128; i++) {
     writeFileSync(join(huge, "file-" + i), "");
@@ -844,15 +863,17 @@ it("promises.readdir on a large folder withFileTypes", async () => {
 });
 
 it("statSync throwIfNoEntry", () => {
-  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
-  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(statSync(path, { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync(path, { throwIfNoEntry: false })).toBeUndefined();
 });
 
 it("statSync throwIfNoEntry: true", () => {
-  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync(path)).toThrow("No such file or directory");
 });
 
 it("stat == statSync", async () => {
@@ -908,15 +929,17 @@ it("mkdtempSync() empty name", () => {
 });
 
 it("mkdtempSync() non-exist dir #2568", () => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
   try {
-    expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
+    expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
     expect(err?.errno).toBe(-2);
   }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
-  mkdtemp("/tmp/hello/world", (err, folder) => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  mkdtemp(path, (err, folder) => {
     try {
       expect(err?.errno).toBe(-2);
       expect(folder).toBeUndefined();
@@ -941,14 +964,12 @@ it("readdirSync on import.meta.dir with trailing slash", () => {
 });
 
 it("readdirSync works on empty directories", () => {
-  const path = `${tmpdir()}/fs-test-empty-dir-${(Math.random() * 100000 + 100).toString(32)}`;
-  mkdirSync(path, { recursive: true });
+  const path = tmpdirSync();
   expect(readdirSync(path).length).toBe(0);
 });
 
 it("readdirSync works on directories with under 32 files", () => {
-  const path = `${tmpdir()}/fs-test-one-dir-${(Math.random() * 100000 + 100).toString(32)}`;
-  mkdirSync(path, { recursive: true });
+  const path = tmpdirSync();
   writeFileSync(`${path}/a`, "a");
   const results = readdirSync(path);
   expect(results.length).toBe(1);
@@ -1033,6 +1054,19 @@ describe("readSync", () => {
     }
     closeSync(fd);
   });
+
+  it("works with offset + length passed but not position", () => {
+    const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
+    const four = new Uint8Array(4);
+    {
+      const count = readSync(fd, four, 0, 4);
+      const u32 = new Uint32Array(four.buffer)[0];
+      expect(u32).toBe(firstFourBytes);
+      expect(count).toBe(4);
+    }
+    closeSync(fd);
+  });
+
   it("works without position set", () => {
     const fd = openSync(import.meta.dir + "/readFileSync.txt", "r");
     const four = new Uint8Array(4);
@@ -1237,13 +1271,13 @@ describe("readFile", () => {
 
 describe("writeFileSync", () => {
   it("works", () => {
-    const path = `${tmpdir()}/${Date.now()}.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/writeFileSync.txt`;
     writeFileSync(path, "File written successfully", "utf8");
 
     expect(readFileSync(path, "utf8")).toBe("File written successfully");
   });
   it("write file with mode, issue #3740", () => {
-    const path = `${tmpdir()}/${Date.now()}.writeFileSyncWithMode.txt`;
+    const path = `${tmpdirSync()}/writeFileSyncWithMode.txt`;
     writeFileSync(path, "bun", { mode: 33188 });
     const stat = fs.statSync(path);
     expect(stat.mode).toBe(isWindows ? 33206 : 33188);
@@ -1253,7 +1287,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `${tmpdir()}/${Date.now()}.blob.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/blob.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -1266,7 +1300,7 @@ describe("writeFileSync", () => {
       70, 105, 108, 101, 32, 119, 114, 105, 116, 116, 101, 110, 32, 115, 117, 99, 99, 101, 115, 115, 102, 117, 108, 108,
       121,
     ]);
-    const path = `${tmpdir()}/${Date.now()}.blob2.writeFileSync.txt`;
+    const path = `${tmpdirSync()}/blob2.writeFileSync.txt`;
     writeFileSync(path, buffer);
     const out = readFileSync(path);
 
@@ -1309,7 +1343,7 @@ describe("lstat", () => {
   });
 
   it("symlink metadata is correct", () => {
-    const link = join(tmpdir(), `fs-stream.link${Math.random().toString(32)}.js`);
+    const link = join(tmpdirSync(), `fs-stream.link.js`);
     symlinkSync(join(import.meta.dir, "fs-stream.js"), link);
     const linkStats = lstatSync(link);
     expect(linkStats.isSymbolicLink()).toBe(true);
@@ -1323,7 +1357,7 @@ describe("lstat", () => {
 });
 
 it("symlink", () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-symlink.txt");
+  const actual = join(tmpdirSync(), "fs-symlink.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1334,7 +1368,7 @@ it("symlink", () => {
 });
 
 it("readlink", () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-readlink.txt");
+  const actual = join(tmpdirSync(), "fs-readlink.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1345,7 +1379,7 @@ it("readlink", () => {
 });
 
 it.if(isWindows)("symlink on windows with forward slashes", async () => {
-  const r = join(tmpdir(), Math.random().toString(32));
+  const r = tmpdirSync();
   await fs.promises.rm(join(r, "files/2024"), { recursive: true, force: true });
   await fs.promises.mkdir(join(r, "files/2024"), { recursive: true });
   await fs.promises.writeFile(join(r, "files/2024/123.txt"), "text");
@@ -1354,7 +1388,7 @@ it.if(isWindows)("symlink on windows with forward slashes", async () => {
 });
 
 it("realpath async", async () => {
-  const actual = join(tmpdir(), Math.random().toString(32) + "-fs-realpath.txt");
+  const actual = join(tmpdirSync(), "fs-realpath.txt");
   try {
     unlinkSync(actual);
   } catch (e) {}
@@ -1427,7 +1461,7 @@ describe("stat", () => {
 
   it("stat returns ENOENT", () => {
     try {
-      statSync("${tmpdir()}/doesntexist");
+      statSync(`${tmpdir()}/doesntexist`);
       throw "statSync should throw";
     } catch (e: any) {
       expect(e.code).toBe("ENOENT");
@@ -1791,6 +1825,24 @@ describe("createReadStream", () => {
       done();
     });
   });
+
+  it(
+    "correctly handles file descriptors with an offset",
+    done => {
+      const path = `${tmpdir()}/bun-fs-createReadStream-${Date.now()}.txt`;
+      const fd = fs.openSync(path, "w+");
+
+      const stream = fs.createReadStream("", { fd: fd, start: 2 });
+      stream.on("data", chunk => {
+        expect(chunk.toString()).toBe("llo, world!");
+        done();
+      });
+      stream.on("error", done);
+
+      fs.writeSync(fd, "Hello, world!");
+    },
+    { timeout: 100 },
+  );
 });
 
 describe("fs.WriteStream", () => {
@@ -2176,10 +2228,8 @@ describe("fs/promises", () => {
     const full = resolve(import.meta.dir, "../");
     const [bun, subprocess] = await Promise.all([
       (async function () {
-        console.time("readdir(path, {recursive: true})");
         const files = await promises.readdir(full, { recursive: true });
         files.sort();
-        console.timeEnd("readdir(path, {recursive: true})");
         return files;
       })(),
       (async function () {
@@ -2207,6 +2257,112 @@ describe("fs/promises", () => {
     expect(bun).toEqual(node as string[]);
   }, 100000);
 
+  it("readdir(path, {withFileTypes: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = await promises.readdir(full, { withFileTypes: true });
+        files.sort();
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true }).sort()), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect([...new Set(node.map(v => v.path))]).toEqual([full]);
+    expect([...new Set(bun.map(v => v.path))]).toEqual([full]);
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+  }, 100000);
+
+  it("readdir(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = await promises.readdir(full, { withFileTypes: true, recursive: true });
+        files.sort((a, b) => a.path.localeCompare(b.path));
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+  }, 100000);
+
+  it("readdirSync(path, {withFileTypes: true, recursive: true}) produces the same result as Node.js", async () => {
+    const full = resolve(import.meta.dir, "../");
+    const [bun, subprocess] = await Promise.all([
+      (async function () {
+        const files = readdirSync(full, { withFileTypes: true, recursive: true });
+        files.sort((a, b) => a.path.localeCompare(b.path));
+        return files;
+      })(),
+      (async function () {
+        const subprocess = Bun.spawn({
+          cmd: [
+            "node",
+            "-e",
+            `process.stdout.write(JSON.stringify(require("fs").readdirSync(${JSON.stringify(
+              full,
+            )}, { withFileTypes: true, recursive: true }).sort((a, b) => a.path.localeCompare(b.path))), null, 2)`,
+          ],
+          cwd: process.cwd(),
+          stdout: "pipe",
+          stderr: "inherit",
+          stdin: "inherit",
+        });
+        await subprocess.exited;
+        return subprocess;
+      })(),
+    ]);
+
+    expect(subprocess.exitCode).toBe(0);
+    const text = await new Response(subprocess.stdout).text();
+    const node = JSON.parse(text);
+    expect(bun.length).toEqual(node.length);
+    expect(new Set(bun.map(v => v.path))).toEqual(new Set(node.map(v => v.path)));
+    expect(bun.map(v => join(v.path, v.name)).sort()).toEqual(node.map(v => join(v.path, v.name)).sort());
+  }, 100000);
+
   for (let withFileTypes of [false, true] as const) {
     const warmup = 1;
     const iterCount = 200;
@@ -2218,7 +2374,6 @@ describe("fs/promises", () => {
       }
 
       const maxFD = getMaxFD();
-
       const pending = new Array(iterCount);
       for (let i = 0; i < iterCount; i++) {
         pending[i] = promises.readdir(full, { recursive: true, withFileTypes });
@@ -2235,6 +2390,8 @@ describe("fs/promises", () => {
 
       if (!withFileTypes) {
         expect(results[0]).toContain(relative(full, import.meta.path));
+      } else {
+        expect(results[0][0].path).toEqual(full);
       }
 
       const newMaxFD = getMaxFD();
@@ -2270,6 +2427,48 @@ describe("fs/promises", () => {
     } else {
       it("readdir(path, {recursive: true} should work x 100", doIt, 10_000);
       it("readdir(path, {recursive: true} should fail x 100", fail, 10_000);
+    }
+  }
+
+  for (let withFileTypes of [false, true] as const) {
+    const warmup = 1;
+    const iterCount = 200;
+    const full = resolve(import.meta.dir, "../");
+
+    const doIt = async () => {
+      for (let i = 0; i < warmup; i++) {
+        readdirSync(full, { withFileTypes });
+      }
+
+      const maxFD = getMaxFD();
+
+      const results = new Array(iterCount);
+      for (let i = 0; i < iterCount; i++) {
+        results[i] = readdirSync(full, { recursive: true, withFileTypes });
+      }
+
+      for (let i = 0; i < iterCount; i++) {
+        results[i].sort();
+      }
+      expect(results[0].length).toBeGreaterThan(0);
+      for (let i = 1; i < iterCount; i++) {
+        expect(results[i]).toEqual(results[0]);
+      }
+
+      if (!withFileTypes) {
+        expect(results[0]).toContain(relative(full, import.meta.path));
+      } else {
+        expect(results[0][0].path).toEqual(full);
+      }
+
+      const newMaxFD = getMaxFD();
+      expect(maxFD).toBe(newMaxFD); // assert we do not leak file descriptors
+    };
+
+    if (withFileTypes) {
+      it("readdirSync(path, {recursive: true, withFileTypes: true} should work x 100", doIt, 10_000);
+    } else {
+      it("readdirSync(path, {recursive: true} should work x 100", doIt, 10_000);
     }
   }
 
@@ -2354,11 +2553,19 @@ it("fstat on a large file", () => {
     }
     fdatasyncSync(fd);
     expect(fstatSync(fd).size).toEqual(offset);
+  } catch (error) {
+    // TODO: Once `fs.statfsSync` is implemented, make sure that the buffer size
+    // is small enough not to cause: ENOSPC: No space left on device.
+    if (error.code === "ENOSPC") {
+      console.warn("Skipping test 'fstat on a large file' because not enough disk space");
+      return;
+    }
+    throw error;
   } finally {
     if (fd) closeSync(fd);
     unlinkSync(dest);
   }
-}, 20_000);
+}, 30_000);
 
 it("fs.constants", () => {
   if (isWindows) {
@@ -2574,6 +2781,21 @@ describe("utimesSync", () => {
 
     expect(finalStats.mtime).toEqual(prevModifiedTime);
     expect(finalStats.atime).toEqual(prevAccessTime);
+  });
+
+  it("works with whole numbers", () => {
+    const atime = Math.floor(Date.now() / 1000);
+    const mtime = Math.floor(Date.now() / 1000);
+
+    const tmp = join(tmpdir(), "utimesSync-test-file-" + Math.random().toString(36).slice(2));
+    writeFileSync(tmp, "test");
+
+    fs.utimesSync(tmp, atime, mtime);
+
+    const newStats = fs.statSync(tmp);
+
+    expect(newStats.mtime.getTime() / 1000).toEqual(mtime);
+    expect(newStats.atime.getTime() / 1000).toEqual(atime);
   });
 });
 
@@ -2970,4 +3192,84 @@ describe.if(isWindows)("windows path handling", () => {
       expect(stats.length).toBeGreaterThan(0);
     });
   }
+});
+
+it("using writeFile on an fd does not truncate it", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.writeFileSync(fd, "x");
+  fs.writeFileSync(fd, "x");
+  fs.closeSync(fd);
+  const content = fs.readFileSync(filepath, "utf8");
+  expect(content).toBe("xx");
+});
+
+it("fs.close with one arg works", () => {
+  const filepath = join(tmpdir(), `file-${Math.random().toString(32).slice(2)}.txt`);
+  const fd = fs.openSync(filepath, "w+");
+  fs.close(fd);
+});
+
+it("existsSync should never throw ENAMETOOLONG", () => {
+  expect(existsSync(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises exists should never throw ENAMETOOLONG", async () => {
+  expect(await _promises.exists(new Array(16).fill(new Array(64).fill("a")).join("/"))).toBeFalse();
+});
+
+it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
+  try {
+    await _promises.fdatasync(50000);
+  } catch (e) {
+    expect(typeof e.fd).toBe("number");
+    expect(e.fd).toBe(50000);
+    return;
+  }
+  expect.unreachable();
+});
+
+it("promises.cp should work even if dest does not exist", async () => {
+  const x_dir = tmpdirSync();
+  const text_expected = "A".repeat(131073);
+  let src = "package-lock.json";
+  let folder = "folder-not-exist";
+  let dst = join(folder, src);
+
+  src = join(x_dir, src);
+  folder = join(x_dir, folder);
+  dst = join(x_dir, dst);
+
+  await promises.writeFile(src, text_expected);
+  await promises.rm(folder, { recursive: true, force: true });
+  await promises.cp(src, dst);
+
+  const text_actual = await Bun.file(dst).text();
+  expect(text_actual).toBe(text_expected);
+});
+
+it("promises.writeFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.writeFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+});
+
+it("promises.readFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await Bun.write(Bun.file(x_path), "data");
+  await using file = await fs.promises.open(x_path, "r");
+  expect((await fs.promises.readFile(file)).toString()).toBe("data");
+});
+
+it("promises.appendFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("datadata");
 });

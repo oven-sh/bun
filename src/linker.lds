@@ -1,9 +1,7 @@
-BUN_1.0 {
+BUN_1.1 {
     global:
 	napi*;
 	node_api_*;
-	__cxa_atexit;
-	__cxa_thread_atexit_impl;
 	extern "C++" {
 		v8::*;
 		node::*;

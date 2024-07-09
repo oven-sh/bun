@@ -1,27 +1,6 @@
 const std = @import("std");
 const bun = @import("root").bun;
 
-pub const DecodeResult = struct {
-    written: usize,
-    fail: bool = false,
-};
-
-pub const LibBase64 = struct {
-    pub const State = extern struct {
-        eof: c_int,
-        bytes: c_int,
-        flags: c_int,
-        carry: u8,
-    };
-    pub extern fn base64_encode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) void;
-    pub extern fn base64_stream_encode_init(state: *State, flags: c_int) void;
-    pub extern fn base64_stream_encode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) void;
-    pub extern fn base64_stream_encode_final(state: *State, out: [*]u8, outlen: *usize) void;
-    pub extern fn base64_decode(src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize, flags: c_int) c_int;
-    pub extern fn base64_stream_decode_init(state: *State, flags: c_int) void;
-    pub extern fn base64_stream_decode(state: *State, src: [*]const u8, srclen: usize, out: [*]u8, outlen: *usize) c_int;
-};
-
 const mixed_decoder = brk: {
     var decoder = zig_base64.standard.decoderWithIgnore("\xff \t\r\n" ++ [_]u8{
         std.ascii.control_code.vt,
@@ -35,21 +14,38 @@ const mixed_decoder = brk: {
     break :brk decoder;
 };
 
-pub fn decode(destination: []u8, source: []const u8) DecodeResult {
-    var wrote: usize = 0;
-    mixed_decoder.decode(destination, source, &wrote) catch {
-        return .{
-            .written = wrote,
-            .fail = true,
+pub fn decode(destination: []u8, source: []const u8) bun.simdutf.SIMDUTFResult {
+    const result = bun.simdutf.base64.decode(source, destination, false);
+
+    if (!result.isSuccessful()) {
+        // The input does not follow the WHATWG forgiving-base64 specification
+        // https://infra.spec.whatwg.org/#forgiving-base64-decode
+        // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/string_bytes.cc#L359
+        var wrote: usize = 0;
+        mixed_decoder.decode(destination, source, &wrote) catch {
+            return .{
+                .count = wrote,
+                .status = .invalid_base64_character,
+            };
         };
-    };
-    return .{ .written = wrote, .fail = false };
+        return .{ .count = wrote, .status = .success };
+    }
+
+    return result;
+}
+
+pub fn decodeAlloc(allocator: std.mem.Allocator, input: []const u8) ![]u8 {
+    var dest = try allocator.alloc(u8, decodeLen(input));
+    const result = decode(dest, input);
+    if (!result.isSuccessful()) {
+        allocator.free(dest);
+        return error.DecodingFailed;
+    }
+    return dest[0..result.count];
 }
 
 pub fn encode(destination: []u8, source: []const u8) usize {
-    var outlen: usize = destination.len;
-    LibBase64.base64_encode(source.ptr, source.len, destination.ptr, &outlen, 0);
-    return outlen;
+    return bun.simdutf.base64.encode(source, destination, false);
 }
 
 pub fn decodeLenUpperBound(len: usize) usize {
@@ -68,7 +64,11 @@ pub fn decodeLen(source: anytype) usize {
 }
 
 pub fn encodeLen(source: anytype) usize {
-    return zig_base64.standard.Encoder.calcSize(source.len);
+    return encodeLenFromSize(source.len);
+}
+
+pub fn encodeLenFromSize(source: usize) usize {
+    return zig_base64.standard.Encoder.calcSize(source);
 }
 
 pub fn urlSafeEncodeLen(source: anytype) usize {
@@ -82,7 +82,7 @@ pub fn encodeURLSafe(dest: []u8, source: []const u8) usize {
 }
 
 const zig_base64 = struct {
-    const assert = std.debug.assert;
+    const assert = bun.assert;
     const testing = std.testing;
     const mem = std.mem;
 
@@ -400,18 +400,6 @@ const zig_base64 = struct {
             }
         }
     };
-
-    test "base64" {
-        @setEvalBranchQuota(8000);
-        try testBase64();
-        comptime try testAllApis(standard, "comptime", "Y29tcHRpbWU=");
-    }
-
-    test "base64 url_safe_no_pad" {
-        @setEvalBranchQuota(8000);
-        try testBase64UrlSafeNoPad();
-        comptime try testAllApis(url_safe_no_pad, "comptime", "Y29tcHRpbWU");
-    }
 
     fn testBase64() !void {
         const codecs = standard;

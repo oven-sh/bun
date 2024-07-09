@@ -1,7 +1,10 @@
 const mem = @import("std").mem;
 const builtin = @import("std").builtin;
 const std = @import("std");
-
+const bun = @import("root").bun;
+const log = bun.Output.scoped(.mimalloc, true);
+const assert = bun.assert;
+const Allocator = mem.Allocator;
 const mimalloc = @import("./allocators/mimalloc.zig");
 const FeatureFlags = @import("./feature_flags.zig");
 const Environment = @import("./env.zig");
@@ -15,7 +18,8 @@ fn mimalloc_free(
     // mi_free_size internally just asserts the size
     // so it's faster if we don't pass that value through
     // but its good to have that assertion
-    if (comptime Environment.allow_assert) {
+    // let's only enable it in debug mode
+    if (comptime Environment.isDebug) {
         assert(mimalloc.mi_is_in_heap_region(buf.ptr));
         if (mimalloc.canUseAlignedAlloc(buf.len, buf_align))
             mimalloc.mi_free_size_aligned(buf.ptr, buf.len, buf_align)
@@ -26,48 +30,21 @@ fn mimalloc_free(
     }
 }
 
-const c = struct {
-    pub const malloc_size = mimalloc.mi_malloc_size;
-    pub const malloc_usable_size = mimalloc.mi_malloc_usable_size;
-    pub const malloc = struct {
-        pub inline fn malloc_wrapped(size: usize) ?*anyopaque {
-            if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{size});
-
-            return mimalloc.mi_malloc(size);
-        }
-    }.malloc_wrapped;
-    pub inline fn free(ptr: anytype) void {
-        if (comptime Environment.allow_assert) {
-            assert(mimalloc.mi_is_in_heap_region(ptr));
-        }
-
-        mimalloc.mi_free(ptr);
-    }
-    pub const posix_memalign = struct {
-        pub inline fn mi_posix_memalign(p: [*c]?*anyopaque, alignment: usize, size: usize) c_int {
-            if (comptime FeatureFlags.log_allocations) std.debug.print("Posix_memalign: {d}\n", .{std.mem.alignForward(size, alignment)});
-            return mimalloc.mi_posix_memalign(p, alignment, size);
-        }
-    }.mi_posix_memalign;
-};
-const Allocator = mem.Allocator;
-const assert = std.debug.assert;
 const CAllocator = struct {
-    const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
-        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
-
         const ptr: ?*anyopaque = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_malloc_aligned(len, alignment)
         else
             mimalloc.mi_malloc(len);
 
-        if (comptime Environment.allow_assert) {
-            const usable = mimalloc.mi_malloc_usable_size(ptr);
-            if (usable < len) {
-                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+        if (comptime Environment.isDebug) {
+            if (ptr != null) {
+                const usable = mimalloc.mi_malloc_usable_size(ptr);
+                if (usable < len and ptr != null) {
+                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+                }
             }
         }
 
@@ -75,7 +52,7 @@ const CAllocator = struct {
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return CAllocator.malloc_size(ptr);
+        return mimalloc.mi_malloc_size(ptr);
     }
 
     fn alloc(_: *anyopaque, len: usize, log2_align: u8, _: usize) ?[*]u8 {
@@ -114,21 +91,22 @@ const c_allocator_vtable = Allocator.VTable{
 };
 
 const ZAllocator = struct {
-    const malloc_size = c.malloc_size;
     pub const supports_posix_memalign = true;
 
     fn alignedAlloc(len: usize, alignment: usize) ?[*]u8 {
-        if (comptime FeatureFlags.log_allocations) std.debug.print("Malloc: {d}\n", .{len});
+        log("ZAllocator.alignedAlloc: {d}\n", .{len});
 
         const ptr = if (mimalloc.canUseAlignedAlloc(len, alignment))
             mimalloc.mi_zalloc_aligned(len, alignment)
         else
             mimalloc.mi_zalloc(len);
 
-        if (comptime Environment.allow_assert) {
-            const usable = mimalloc.mi_malloc_usable_size(ptr);
-            if (usable < len) {
-                std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+        if (comptime Environment.isDebug) {
+            if (ptr != null) {
+                const usable = mimalloc.mi_malloc_usable_size(ptr);
+                if (usable < len) {
+                    std.debug.panic("mimalloc: allocated size is too small: {d} < {d}", .{ usable, len });
+                }
             }
         }
 
@@ -136,7 +114,7 @@ const ZAllocator = struct {
     }
 
     fn alignedAllocSize(ptr: [*]u8) usize {
-        return CAllocator.malloc_size(ptr);
+        return mimalloc.mi_malloc_size(ptr);
     }
 
     fn alloc(_: *anyopaque, len: usize, ptr_align: u8, _: usize) ?[*]u8 {
@@ -180,11 +158,11 @@ const HugeAllocator = struct {
         assert(len > 0);
         assert(std.math.isPowerOfTwo(alignment));
 
-        const slice = std.os.mmap(
+        const slice = std.posix.mmap(
             null,
             len,
-            std.os.PROT.READ | std.os.PROT.WRITE,
-            std.os.MAP.ANONYMOUS | std.os.MAP.PRIVATE,
+            std.posix.PROT.READ | std.posix.PROT.WRITE,
+            std.posix.MAP.ANONYMOUS | std.posix.MAP.PRIVATE,
             -1,
             0,
         ) catch
@@ -211,7 +189,7 @@ const HugeAllocator = struct {
         _: u29,
         _: usize,
     ) void {
-        std.os.munmap(@alignCast(buf));
+        std.posix.munmap(@alignCast(buf));
     }
 };
 

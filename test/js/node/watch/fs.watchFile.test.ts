@@ -2,7 +2,7 @@ import fs from "node:fs";
 import path from "path";
 import { tempDirWithFiles } from "harness";
 
-import { describe, expect, test } from "bun:test";
+import { beforeEach, describe, expect, test } from "bun:test";
 // Because macOS (and possibly other operating systems) can return a watcher
 // before it is actually watching, we need to repeat the operation to avoid
 // a race condition.
@@ -11,19 +11,25 @@ function repeat(fn: any) {
   return interval;
 }
 const encodingFileName = `新建文夹件.txt`;
-const testDir = tempDirWithFiles("watch", {
-  "watch.txt": "hello",
-  [encodingFileName]: "hello",
+let testDir = "";
+beforeEach(() => {
+  testDir = tempDirWithFiles("watch", {
+    "watch.txt": "hello",
+    [encodingFileName]: "hello",
+  });
 });
 
 describe("fs.watchFile", () => {
   test("zeroed stats if does not exist", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, "does-not-exist"), (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
-    await Bun.sleep(35);
+    await promise;
 
     fs.unwatchFile(path.join(testDir, "does-not-exist"));
 
@@ -34,30 +40,36 @@ describe("fs.watchFile", () => {
     expect(entries[0][1].mtimeMs).toBe(0);
   });
   test("it watches a file", async () => {
+    let { promise, resolve } = Promise.withResolvers<void>();
     let entries: any = [];
     fs.watchFile(path.join(testDir, "watch.txt"), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
     let increment = 0;
     const interval = repeat(() => {
       increment++;
       fs.writeFileSync(path.join(testDir, "watch.txt"), "hello" + increment);
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, "watch.txt"));
 
     expect(entries.length).toBeGreaterThan(0);
-
-    expect(entries[0][0].size).toBe(6);
+    console.log(entries);
+    expect(entries[0][0].size).toBeGreaterThan(5);
     expect(entries[0][1].size).toBe(5);
     expect(entries[0][0].mtimeMs).toBeGreaterThan(entries[0][1].mtimeMs);
   });
   test("unicode file name", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50 }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
     let increment = 0;
@@ -65,7 +77,7 @@ describe("fs.watchFile", () => {
       increment++;
       fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));
@@ -79,16 +91,19 @@ describe("fs.watchFile", () => {
 
   test("bigint stats", async () => {
     let entries: any = [];
+    let { promise, resolve } = Promise.withResolvers<void>();
     fs.watchFile(path.join(testDir, encodingFileName), { interval: 50, bigint: true }, (curr, prev) => {
       entries.push([curr, prev]);
+      resolve();
+      resolve = () => {};
     });
 
     let increment = 0;
     const interval = repeat(() => {
       increment++;
-      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + increment);
+      fs.writeFileSync(path.join(testDir, encodingFileName), "hello" + "a".repeat(increment));
     });
-    await Bun.sleep(300);
+    await promise;
     clearInterval(interval);
 
     fs.unwatchFile(path.join(testDir, encodingFileName));

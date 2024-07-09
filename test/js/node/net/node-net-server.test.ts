@@ -282,14 +282,9 @@ describe("net.createServer listen", () => {
           err = e as Error;
         }
 
-        if (process.platform !== "win32") {
-          expect(err).not.toBeNull();
-          expect(err!.message).toBe("Failed to connect");
-          expect(err!.name).toBe("ECONNREFUSED");
-        } else {
-          // Bun allows this to work on Windows
-          expect(err).toBeNull();
-        }
+        expect(err).not.toBeNull();
+        expect(err!.message).toBe("Failed to connect");
+        expect(err!.name).toBe("ECONNREFUSED");
 
         server.close();
         done();

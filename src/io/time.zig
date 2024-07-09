@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 const is_darwin = @import("builtin").target.isDarwin();
 
 pub const Time = struct {
@@ -22,8 +23,8 @@ pub const Time = struct {
             // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
             if (is_darwin) {
                 const darwin = struct {
-                    const mach_timebase_info_t = std.os.darwin.mach_timebase_info_data;
-                    extern "c" fn mach_timebase_info(info: *mach_timebase_info_t) std.os.darwin.kern_return_t;
+                    const mach_timebase_info_t = std.posix.darwin.mach_timebase_info_data;
+                    extern "c" fn mach_timebase_info(info: *mach_timebase_info_t) std.posix.darwin.kern_return_t;
                     extern "c" fn mach_continuous_time() u64;
                 };
 
@@ -38,8 +39,8 @@ pub const Time = struct {
             // CLOCK_BOOTTIME is the same as CLOCK_MONOTONIC but includes elapsed time during a suspend.
             // For more detail and why CLOCK_MONOTONIC_RAW is even worse than CLOCK_MONOTONIC,
             // see https://github.com/ziglang/zig/pull/933#discussion_r656021295.
-            var ts: std.os.timespec = undefined;
-            std.os.clock_gettime(std.os.CLOCK_BOOTTIME, &ts) catch @panic("CLOCK_BOOTTIME required");
+            var ts: std.posix.timespec = undefined;
+            std.posix.clock_gettime(std.posix.CLOCK_BOOTTIME, &ts) catch @panic("CLOCK_BOOTTIME required");
             break :blk @as(u64, @intCast(ts.tv_sec)) * std.time.ns_per_s + @as(u64, @intCast(ts.tv_nsec));
         };
 
@@ -55,8 +56,8 @@ pub const Time = struct {
         // macos has supported clock_gettime() since 10.12:
         // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.3.auto.html
 
-        var ts: std.os.timespec = undefined;
-        std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+        var ts: std.posix.timespec = undefined;
+        std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
         return @as(i64, ts.tv_sec) * std.time.ns_per_s + ts.tv_nsec;
     }
 

@@ -6,4 +6,4 @@ if (!process.env.WITHOUT_WAITER_THREAD) {
   }
 }
 
-spawn(process.argv0, ["-e", "'Bun.sleepSync(999999999)"]);
+spawn(process.argv0, ["-e", "Bun.sleepSync(999999999)"]);

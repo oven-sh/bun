@@ -309,7 +309,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
     var iter = JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
-    }).init(globalThis, options_obj.asObjectRef());
+    }).init(globalThis, options_obj);
     defer iter.deinit();
 
     while (iter.next()) |long_option| {
@@ -652,7 +652,7 @@ const ParseArgsState = struct {
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSValue {
+) JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(1).slice();
     const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
@@ -663,6 +663,11 @@ pub fn parseArgs(
         }
         return JSValue.undefined;
     };
+}
+
+comptime {
+    const parseArgsFn = JSC.toJSHostFunction(parseArgs);
+    @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
 pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {

@@ -19,6 +19,7 @@
 */
 
 #include "config.h"
+#include "wtf/Forward.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -106,9 +107,9 @@ template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto:
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<SubtleCrypto::KeyFormat>()
+template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>()
 {
-    return "\"raw\", \"spki\", \"pkcs8\", \"jwk\"";
+    return "\"raw\", \"spki\", \"pkcs8\", \"jwk\""_s;
 }
 
 // Functions
@@ -269,7 +270,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_encryptBody(JS
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "encrypt", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "encrypt"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
@@ -295,7 +296,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_decryptBody(JS
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "decrypt", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "decrypt"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
@@ -321,7 +322,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_signBody(JSC::
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "sign", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "sign"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto data = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
@@ -347,7 +348,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_verifyBody(JSC
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "verify", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "verify"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto signature = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument2.value());
@@ -425,7 +426,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveKeyBody(
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey", "SubtleCrypto", "deriveKey", "CryptoKey"); });
+    auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey"_s, "SubtleCrypto"_s, "deriveKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto derivedKeyType = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument2.value());
@@ -457,7 +458,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_deriveBitsBody
     auto algorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey", "SubtleCrypto", "deriveBits", "CryptoKey"); });
+    auto baseKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "baseKey"_s, "SubtleCrypto"_s, "deriveBits"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
     auto length = convert<IDLUnsignedLong>(*lexicalGlobalObject, argument2.value());
@@ -480,7 +481,7 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_importKeyBody(
     if (UNLIKELY(callFrame->argumentCount() < 5))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format", "SubtleCrypto", "importKey", expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
+    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format"_s, "SubtleCrypto"_s, "importKey"_s, expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto keyData = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer, IDLDictionary<JsonWebKey>>>(*lexicalGlobalObject, argument1.value());
@@ -512,10 +513,10 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_exportKeyBody(
     if (UNLIKELY(callFrame->argumentCount() < 2))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format", "SubtleCrypto", "exportKey", expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
+    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format"_s, "SubtleCrypto"_s, "exportKey"_s, expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "exportKey", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "exportKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLPromise<IDLAny>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, [&]() -> decltype(auto) {
         return impl.exportKey(WTFMove(format), *key, WTFMove(promise));
@@ -537,13 +538,13 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_wrapKeyBody(JS
     if (UNLIKELY(callFrame->argumentCount() < 4))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format", "SubtleCrypto", "wrapKey", expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
+    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format"_s, "SubtleCrypto"_s, "wrapKey"_s, expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
-    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key", "SubtleCrypto", "wrapKey", "CryptoKey"); });
+    auto key = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument1.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 1, "key"_s, "SubtleCrypto"_s, "wrapKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto wrappingKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "wrappingKey", "SubtleCrypto", "wrapKey", "CryptoKey"); });
+    auto wrappingKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "wrappingKey"_s, "SubtleCrypto"_s, "wrapKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
     auto wrapAlgorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument3.value());
@@ -566,13 +567,13 @@ static inline JSC::EncodedJSValue jsSubtleCryptoPrototypeFunction_unwrapKeyBody(
     if (UNLIKELY(callFrame->argumentCount() < 7))
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
-    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format", "SubtleCrypto", "unwrapKey", expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
+    auto format = convert<IDLEnumeration<SubtleCrypto::KeyFormat>>(*lexicalGlobalObject, argument0.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentMustBeEnumError(lexicalGlobalObject, scope, 0, "format"_s, "SubtleCrypto"_s, "unwrapKey"_s, expectedEnumerationValues<SubtleCrypto::KeyFormat>()); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument1 = callFrame->uncheckedArgument(1);
     auto wrappedKey = convert<IDLUnion<IDLArrayBufferView, IDLArrayBuffer>>(*lexicalGlobalObject, argument1.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument2 = callFrame->uncheckedArgument(2);
-    auto unwrappingKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "unwrappingKey", "SubtleCrypto", "unwrapKey", "CryptoKey"); });
+    auto unwrappingKey = convert<IDLInterface<CryptoKey>>(*lexicalGlobalObject, argument2.value(), [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { throwArgumentTypeError(lexicalGlobalObject, scope, 2, "unwrappingKey"_s, "SubtleCrypto"_s, "unwrapKey"_s, "CryptoKey"_s); });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     EnsureStillAliveScope argument3 = callFrame->uncheckedArgument(3);
     auto unwrapAlgorithm = convert<IDLUnion<IDLObject, IDLDOMString>>(*lexicalGlobalObject, argument3.value());
@@ -609,18 +610,18 @@ void JSSubtleCrypto::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSSubtleCrypto*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSSubtleCryptoOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, const char** reason)
+bool JSSubtleCryptoOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsSubtleCrypto = jsCast<JSSubtleCrypto*>(handle.slot()->asCell());
     ScriptExecutionContext* owner = WTF::getPtr(jsSubtleCrypto->wrapped().scriptExecutionContext());
     if (!owner)
         return false;
     if (UNLIKELY(reason))
-        *reason = "Reachable from ScriptExecutionContext";
+        *reason = "Reachable from ScriptExecutionContext"_s;
     return visitor.containsOpaqueRoot(context);
 }
 
@@ -649,18 +650,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<SubtleCrypto>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7SubtleCrypto@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore12SubtleCryptoE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore12SubtleCryptoE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // SubtleCrypto has subclasses. If SubtleCrypto has subclasses that get passed
         // to toJS() we currently require SubtleCrypto you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<SubtleCrypto>(globalObject, WTFMove(impl));

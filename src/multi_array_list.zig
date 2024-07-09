@@ -1,6 +1,7 @@
 const std = @import("std");
 const builtin = @import("builtin");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 const meta = std.meta;
 const mem = std.mem;
 const Allocator = mem.Allocator;
@@ -579,7 +580,7 @@ pub fn MultiArrayList(comptime T: type) type {
                 .alignment = fields[i].alignment,
             };
             break :entry @Type(.{ .Struct = .{
-                .layout = .Extern,
+                .layout = .@"extern",
                 .fields = &entry_fields,
                 .decls = &.{},
                 .is_tuple = false,

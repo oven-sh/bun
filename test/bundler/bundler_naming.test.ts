@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { ESBUILD, itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { ESBUILD, itBundled } from "./expectBundled";
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   itBundled("naming/EntryNamingCollission", {
@@ -16,7 +14,8 @@ describe("bundler", () => {
     entryNaming: "[name].[ext]",
     entryPointsRaw: ["./a/entry.js", "./b/entry.js"],
     bundleErrors: {
-      "<bun>": [`Multiple files share the same output path: ./entry.js`],
+      // expectBundled does not support newlines.
+      "<bun>": [`Multiple files share the same output path`],
     },
   });
   itBundled("naming/ImplicitOutbase1", {

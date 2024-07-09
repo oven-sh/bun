@@ -10,5 +10,5 @@ if ! [ "$1" == '--webkit' ]; then
   fi
 fi
 
-set -euxo pipefail
+set -exo pipefail
 git submodule update --init --recursive --progress --depth=1 --checkout $NAMES

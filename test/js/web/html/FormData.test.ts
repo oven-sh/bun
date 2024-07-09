@@ -300,7 +300,7 @@ describe("FormData", () => {
   });
 
   it("file upload on HTTP server (receive)", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       development: false,
       async fetch(req) {
@@ -320,11 +320,10 @@ describe("FormData", () => {
     const res = await fetch(reqBody);
     const body = await res.text();
     expect(body).toBe("baz");
-    server.stop(true);
   });
 
   it("file send on HTTP server (receive)", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       development: false,
       async fetch(req) {
@@ -344,7 +343,6 @@ describe("FormData", () => {
     const res = await fetch(reqBody);
     const body = await res.formData();
     expect(await (body.get("foo") as Blob).text()).toBe("baz");
-    server.stop(true);
   });
   type FetchReqArgs = [request: Request, init?: RequestInit];
   type FetchURLArgs = [url: string | URL | Request, init?: FetchRequestInit];
@@ -361,7 +359,7 @@ describe("FormData", () => {
         describe("headers: " + Bun.inspect(headers).replaceAll(/([\n ])/gim, ""), () => {
           it("send on HTTP server with FormData & Blob (roundtrip)", async () => {
             let contentType = "";
-            const server = Bun.serve({
+            using server = Bun.serve({
               port: 0,
               development: false,
               async fetch(req) {
@@ -388,12 +386,11 @@ describe("FormData", () => {
             const body = await res.formData();
             expect(await (body.get("foo") as Blob).text()).toBe("baz");
             expect(body.get("bar")).toBe("baz");
-            server.stop(true);
           });
 
           it("send on HTTP server with FormData & Bun.file (roundtrip)", async () => {
             let contentType = "";
-            const server = Bun.serve({
+            using server = Bun.serve({
               port: 0,
               development: false,
               async fetch(req) {
@@ -424,13 +421,11 @@ describe("FormData", () => {
             expect(contentType).toContain("multipart/form-data");
             expect(body.get("bar")).toBe("baz");
             expect(contentType).toContain("multipart/form-data");
-
-            server.stop(true);
           });
 
           it("send on HTTP server with FormData (roundtrip)", async () => {
             let contentType = "";
-            const server = Bun.serve({
+            using server = Bun.serve({
               port: 0,
               development: false,
               async fetch(req) {
@@ -459,7 +454,6 @@ describe("FormData", () => {
             expect(contentType).toContain("multipart/form-data");
             expect(body.get("foo")).toBe("boop");
             expect(body.get("bar")).toBe("baz");
-            server.stop(true);
           });
         });
       }

@@ -1,7 +1,8 @@
 import { $ } from "bun";
-import { TestBuilder, redirect } from "./util";
+import { createTestBuilder, redirect } from "./util";
 import { shellInternals } from "bun:internal-for-testing";
 const { lex } = shellInternals;
+const TestBuilder = createTestBuilder(import.meta.path);
 
 const BUN = process.argv0;
 
@@ -691,16 +692,10 @@ describe("lex shell", () => {
         Delimit: {},
       },
       {
-        CmdSubstBegin: {},
-      },
-      {
-        Text: "ls",
+        Text: "`ls`",
       },
       {
         Delimit: {},
-      },
-      {
-        CmdSubstEnd: {},
       },
       {
         Eof: {},

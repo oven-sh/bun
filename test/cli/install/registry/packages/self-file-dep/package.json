@@ -1,0 +1,41 @@
+{
+	"name": "self-file-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "self-file-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"self-file-dep": "file:."
+			},
+			"_id": "self-file-dep@1.0.0",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.7.0",
+			"dist": {
+				"integrity": "sha512-juKRccgLm/blTQruoFT/9XNV6QchxTEF10dT3stZ+TW9KMW9feiUK/j5rEWU0z4Klse7nXfPUKCQsFiK101Ifw==",
+				"shasum": "7d3101e27a19dc7c22aea5e2cff8684ab5786fff",
+				"tarball": "http://localhost:4873/self-file-dep/-/self-file-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-11T17:21:24.835Z",
+		"created": "2024-06-11T17:21:24.835Z",
+		"1.0.0": "2024-06-11T17:21:24.835Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"self-file-dep-1.0.0.tgz": {
+			"shasum": "7d3101e27a19dc7c22aea5e2cff8684ab5786fff",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "self-file-dep",
+	"readme": "ERROR: No README data found!"
+}

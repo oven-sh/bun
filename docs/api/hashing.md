@@ -112,6 +112,7 @@ Bun.hash.murmur64v2("data", 1234);
 `Bun.CryptoHasher` is a general-purpose utility class that lets you incrementally compute a hash of string or binary data using a range of cryptographic hash algorithms. The following algorithms are supported:
 
 - `"blake2b256"`
+- `"blake2b512"`
 - `"md4"`
 - `"md5"`
 - `"ripemd160"`
@@ -120,7 +121,14 @@ Bun.hash.murmur64v2("data", 1234);
 - `"sha256"`
 - `"sha384"`
 - `"sha512"`
+- `"sha512-224"`
 - `"sha512-256"`
+- `"sha3-224"`
+- `"sha3-256"`
+- `"sha3-384"`
+- `"sha3-512"`
+- `"shake128"`
+- `"shake256"`
 
 ```ts
 const hasher = new Bun.CryptoHasher("sha256");

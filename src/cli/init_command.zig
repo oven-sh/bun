@@ -12,7 +12,7 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
+const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
@@ -362,13 +362,14 @@ pub const InitCommand = struct {
                 package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
+                .{},
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;
                 break :write_package_json;
             };
 
-            std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
+            std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
             package_json_file.?.close();
         }
 
@@ -447,7 +448,7 @@ pub const InitCommand = struct {
         Output.flush();
 
         if (exists("package.json")) {
-            var process = std.ChildProcess.init(
+            var process = std.process.Child.init(
                 &.{
                     try bun.selfExePath(),
                     "install",

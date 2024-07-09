@@ -1,0 +1,62 @@
+{
+	"name": "duplicate-name-and-version",
+	"versions": {
+		"1.0.1": {
+			"name": "duplicate-name-and-version",
+			"version": "1.0.1",
+			"dependencies": {
+				"no-deps": "a-dep"
+			},
+			"_id": "duplicate-name-and-version@1.0.1",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-xqz3MYZ66zvSTOuf5eYYRxFgtdqd2f/KynXq0IuZ4nPkurttKhhtsnlUNcoi/gO8648BFiBSR5MnsMTcTrZkuA==",
+				"shasum": "a0fb63c06c4d3d83f9b61cba6970a436b158f1f6",
+				"tarball": "http://localhost:4873/duplicate-name-and-version/-/duplicate-name-and-version-1.0.1.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.2": {
+			"name": "duplicate-name-and-version",
+			"version": "1.0.2",
+			"dependencies": {
+				"a-dep": "1.0.1"
+			},
+			"_id": "duplicate-name-and-version@1.0.2",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.8.1",
+			"dist": {
+				"integrity": "sha512-Px6hortI5i82qNL9wab/IPLNObIlCp/ei2OS1R64U64k9nF1gDVnMpcK7AdBgbsJX3Zga8CB3bBqb9aXo6uWBA==",
+				"shasum": "fe226eac64565a9a88e857f05e750bfb596f5411",
+				"tarball": "http://localhost:4873/duplicate-name-and-version/-/duplicate-name-and-version-1.0.2.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-10T11:59:00.837Z",
+		"created": "2024-06-10T11:58:44.485Z",
+		"1.0.1": "2024-06-10T11:58:44.485Z",
+		"1.0.2": "2024-06-10T11:59:00.837Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.2"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"duplicate-name-and-version-1.0.1.tgz": {
+			"shasum": "a0fb63c06c4d3d83f9b61cba6970a436b158f1f6",
+			"version": "1.0.1"
+		},
+		"duplicate-name-and-version-1.0.2.tgz": {
+			"shasum": "fe226eac64565a9a88e857f05e750bfb596f5411",
+			"version": "1.0.2"
+		}
+	},
+	"_rev": "",
+	"_id": "duplicate-name-and-version",
+	"readme": "ERROR: No README data found!"
+}

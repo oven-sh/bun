@@ -1,13 +1,10 @@
-import { expect, describe, it } from "bun:test";
+import { expect, describe, it, jest } from "bun:test";
 import { Stream, Readable, Writable, Duplex, Transform, PassThrough } from "node:stream";
 import { createReadStream } from "node:fs";
 import { join } from "path";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, tmpdirSync, isGlibcVersionAtLeast, isMacOS } from "harness";
 import { tmpdir } from "node:os";
 import { writeFileSync, mkdirSync } from "node:fs";
-import { spawn } from "node:child_process";
-
-const isWindows = process.platform === "win32";
 
 describe("Readable", () => {
   it("should be able to be created without _construct method defined", done => {
@@ -46,6 +43,7 @@ describe("Readable", () => {
 
     readable.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, issue #3607", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStreamEmptyFile.txt`;
     writeFileSync(path, "");
@@ -72,6 +70,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, issue #3668", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStream.txt`;
     writeFileSync(path, "12345");
@@ -96,6 +95,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe, both start and end are 0", done => {
     const path = `${tmpdir()}/${Date.now()}.testReadStream2.txt`;
     writeFileSync(path, "12345");
@@ -121,6 +121,7 @@ describe("Readable", () => {
 
     stream.pipe(writable);
   });
+
   it("should be able to be piped via .pipe with a large file", done => {
     const data = Buffer.allocUnsafe(768 * 1024)
       .fill("B")
@@ -152,6 +153,15 @@ describe("Readable", () => {
       done(err);
     });
     stream.pipe(writable);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Readable({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
   });
 });
 
@@ -193,6 +203,17 @@ describe("createReadStream", () => {
   });
 });
 
+describe("Writable", () => {
+  it.todo("should have the correct fields in _events", () => {
+    const s = Writable({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+  });
+});
+
 describe("Duplex", () => {
   it("should allow subclasses to be derived via .call() on class", () => {
     function Subclass(opts) {
@@ -205,6 +226,18 @@ describe("Duplex", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof Duplex).toBe(true);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Duplex({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
   });
 });
 
@@ -221,6 +254,18 @@ describe("Transform", () => {
     const subclass = new Subclass();
     expect(subclass instanceof Transform).toBe(true);
   });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = Transform({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
+  });
 });
 
 describe("PassThrough", () => {
@@ -235,6 +280,18 @@ describe("PassThrough", () => {
 
     const subclass = new Subclass();
     expect(subclass instanceof PassThrough).toBe(true);
+  });
+
+  it.todo("should have the correct fields in _events", () => {
+    const s = PassThrough({});
+    expect(s._events).toHaveProperty("close");
+    expect(s._events).toHaveProperty("error");
+    expect(s._events).toHaveProperty("prefinish");
+    expect(s._events).toHaveProperty("finish");
+    expect(s._events).toHaveProperty("drain");
+    expect(s._events).toHaveProperty("data");
+    expect(s._events).toHaveProperty("end");
+    expect(s._events).toHaveProperty("readable");
   });
 });
 
@@ -279,131 +336,11 @@ describe("process.stdin", () => {
   });
 });
 
-const ttyStreamsTest = `
-import tty from "tty";
-import fs from "fs";
-
-import { dlopen } from "bun:ffi";
-
-const suffix = process.platform === "darwin" ? "dylib" : "so.6";
-
-var lazyOpenpty;
-export function openpty() {
-  if (!lazyOpenpty) {
-    lazyOpenpty = dlopen(\`libc.\${suffix}\`, {
-      openpty: {
-        args: ["ptr", "ptr", "ptr", "ptr", "ptr"],
-        returns: "int",
-      },
-    }).symbols.openpty;
-  }
-
-  const parent_fd = new Int32Array(1).fill(0);
-  const child_fd = new Int32Array(1).fill(0);
-  const name_buf = new Int8Array(1000).fill(0);
-  const term_buf = new Uint8Array(1000).fill(0);
-  const win_buf = new Uint8Array(1000).fill(0);
-
-  lazyOpenpty(parent_fd, child_fd, name_buf, term_buf, win_buf);
-
-  return {
-    parent_fd: parent_fd[0],
-    child_fd: child_fd[0],
-  };
-}
-
-var lazyClose;
-export function close(fd) {
-  if (!lazyClose) {
-    lazyClose = dlopen(\`libc.\${suffix}\`, {
-      close: {
-        args: ["int"],
-        returns: "int",
-      },
-    }).symbols.close;
-  }
-
-  lazyClose(fd);
-}
-
-describe("TTY", () => {
-  it("ReadStream stdin", () => {
-    const { parent_fd, child_fd } = openpty();
-    const rs = new tty.ReadStream(parent_fd);
-    const rs1 = tty.ReadStream(child_fd);
-    expect(rs1 instanceof tty.ReadStream).toBe(true);
-    expect(rs instanceof tty.ReadStream).toBe(true);
-    expect(tty.isatty(rs.fd)).toBe(true);
-    expect(tty.isatty(rs1.fd)).toBe(true);
-    expect(rs.isRaw).toBe(false);
-    expect(rs.isTTY).toBe(true);
-    expect(rs.setRawMode).toBeInstanceOf(Function);
-    expect(rs.setRawMode(true)).toBe(rs);
-    expect(rs.isRaw).toBe(true);
-    expect(rs.setRawMode(false)).toBe(rs);
-    expect(rs.isRaw).toBe(false);
-    close(parent_fd);
-    close(child_fd);
-  });
-  it("WriteStream stdout", () => {
-    const { child_fd, parent_fd } = openpty();
-    const ws = new tty.WriteStream(child_fd);
-    const ws1 = tty.WriteStream(parent_fd);
-    expect(ws1 instanceof tty.WriteStream).toBe(true);
-    expect(ws instanceof tty.WriteStream).toBe(true);
-    expect(tty.isatty(ws.fd)).toBe(true);
-    expect(ws.isTTY).toBe(true);
-
-    // pseudo terminal, not the best test because cols and rows can be 0
-    expect(ws.columns).toBeGreaterThanOrEqual(0);
-    expect(ws.rows).toBeGreaterThanOrEqual(0);
-    expect(ws.getColorDepth()).toBeGreaterThanOrEqual(0);
-    expect(ws.hasColors(2)).toBe(true);
-    close(parent_fd);
-    close(child_fd);
-  });
-  it("process.stdio tty", () => {
-    // this isnt run in a tty, so stdin will not appear to be a tty
-    expect(process.stdin instanceof fs.ReadStream).toBe(true);
-    expect(process.stdout instanceof tty.WriteStream).toBe(true);
-    expect(process.stderr instanceof tty.WriteStream).toBe(true);
-    expect(process.stdin.isTTY).toBeUndefined();
-
-    if (tty.isatty(1)) {
-      expect(process.stdout.isTTY).toBeDefined();
-    } else {
-      expect(process.stdout.isTTY).toBeUndefined();
-    }
-
-    if (tty.isatty(2)) {
-      expect(process.stderr.isTTY).toBeDefined();
-    } else {
-      expect(process.stderr.isTTY).toBeUndefined();
-    }
-  });
-  it("read and write stream prototypes", () => {
-    expect(tty.ReadStream.prototype.setRawMode).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.clearLine).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.clearScreenDown).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.cursorTo).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.getColorDepth).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.getWindowSize).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.hasColors).toBeInstanceOf(Function);
-    expect(tty.WriteStream.prototype.moveCursor).toBeInstanceOf(Function);
-  });
-});
-`;
-
-it.skipIf(isWindows)("TTY streams", () => {
-  mkdirSync(join(tmpdir(), "tty-test"), { recursive: true });
-  writeFileSync(join(tmpdir(), "tty-test/tty-streams.test.js"), ttyStreamsTest, {});
-
+it.if(isMacOS || isGlibcVersionAtLeast("2.36.0"))("TTY streams", () => {
   const { stdout, stderr, exitCode } = Bun.spawnSync({
-    cmd: [bunExe(), "test", "tty-streams.test.js"],
+    cmd: [bunExe(), "test", join(import.meta.dir, "tty-streams.fixture.js")],
     env: bunEnv,
     stdio: ["ignore", "pipe", "pipe"],
-    cwd: join(tmpdir(), "tty-test"),
   });
 
   expect(stdout.toString()).toBe("");
@@ -473,4 +410,138 @@ it("#9242.9 Transform has constructor", () => {
 it("#9242.10 PassThrough has constructor", () => {
   const pt = new PassThrough({});
   expect(pt.constructor).toBe(PassThrough);
+});
+
+it("should send Readable events in the right order", async () => {
+  const package_dir = tmpdirSync();
+  const fixture_path = join(package_dir, "fixture.js");
+
+  await Bun.write(
+    fixture_path,
+    String.raw`
+    function patchEmitter(emitter, prefix) {
+      var oldEmit = emitter.emit;
+
+      emitter.emit = function () {
+        console.log([prefix, arguments[0]]);
+        oldEmit.apply(emitter, arguments);
+      };
+    }
+
+    const stream = require("node:stream");
+
+    const readable = new stream.Readable({
+      read() {
+        this.push("Hello ");
+        this.push("World!\n");
+        this.push(null);
+      },
+    });
+    patchEmitter(readable, "readable");
+
+    const webReadable = stream.Readable.toWeb(readable);
+
+    const result = await new Response(webReadable).text();
+    console.log([1, result]);
+    `,
+  );
+
+  const { stdout, stderr } = Bun.spawn({
+    cmd: [bunExe(), "run", fixture_path],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  expect(out.split("\n")).toEqual([
+    `[ "readable", "pause" ]`,
+    `[ "readable", "resume" ]`,
+    `[ "readable", "data" ]`,
+    `[ "readable", "data" ]`,
+    `[ "readable", "readable" ]`,
+    `[ "readable", "end" ]`,
+    `[ "readable", "close" ]`,
+    `[ 1, "Hello World!\\n" ]`,
+    ``,
+  ]);
+});
+
+it("emits newListener event _before_ adding the listener", () => {
+  const cb = jest.fn(event => {
+    expect(stream.listenerCount(event)).toBe(0);
+  });
+  const stream = new Stream();
+  stream.on("newListener", cb);
+  stream.on("foo", () => {});
+  expect(cb).toHaveBeenCalled();
+});
+
+it("reports error", () => {
+  expect(() => {
+    const dup = new Duplex({
+      read() {
+        this.push("Hello World!\n");
+        this.push(null);
+      },
+      write(chunk, encoding, callback) {
+        callback(new Error("test"));
+      },
+    });
+
+    dup.emit("error", new Error("test"));
+  }).toThrow("test");
+});
+
+it("should correctly call removed listeners", () => {
+  const s = new Stream();
+  let l2Called = false;
+  const l1 = () => {
+    s.removeListener("x", l2);
+  };
+  const l2 = () => {
+    l2Called = true;
+  };
+  s.on("x", l1);
+  s.on("x", l2);
+
+  s.emit("x");
+  expect(l2Called).toBeTrue();
+});
+
+it("should emit prefinish on current tick", done => {
+  class UpperCaseTransform extends Transform {
+    _transform(chunk, encoding, callback) {
+      this.push(chunk.toString().toUpperCase());
+      callback();
+    }
+  }
+
+  const upperCaseTransform = new UpperCaseTransform();
+
+  let prefinishCalled = false;
+  upperCaseTransform.on("prefinish", () => {
+    prefinishCalled = true;
+  });
+
+  let finishCalled = false;
+  upperCaseTransform.on("finish", () => {
+    finishCalled = true;
+  });
+
+  upperCaseTransform.end("hi");
+
+  expect(prefinishCalled).toBeTrue();
+
+  const res = upperCaseTransform.read();
+  expect(res.toString()).toBe("HI");
+
+  expect(finishCalled).toBeFalse();
+
+  process.nextTick(() => {
+    expect(finishCalled).toBeTrue();
+    done();
+  });
 });

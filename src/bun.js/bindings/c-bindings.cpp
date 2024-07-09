@@ -13,6 +13,7 @@
 #include <cstdlib>
 #include <sys/termios.h>
 #include <sys/ioctl.h>
+#include <sys/socket.h>
 #else
 #include <uv.h>
 #include <windows.h>
@@ -545,7 +546,11 @@ extern "C" void bun_initialize_process()
     Bun__setCTRLHandler(1);
 #endif
 
+#if OS(DARWIN)
     atexit(Bun__onExit);
+#else
+    at_quick_exit(Bun__onExit);
+#endif
 }
 
 #if OS(WINDOWS)
@@ -590,6 +595,26 @@ extern "C" int32_t open_as_nonblocking_tty(int32_t fd, int32_t mode)
     }
 
     return open(pathbuf, mode | O_NONBLOCK | O_NOCTTY | O_CLOEXEC);
+}
+
+#endif
+
+#if !OS(WINDOWS)
+
+extern "C" void Bun__disableSOLinger(int fd)
+{
+    struct linger l = { 1, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_LINGER, &l, sizeof(l));
+}
+
+#else
+
+#include <winsock2.h>
+
+extern "C" void Bun__disableSOLinger(SOCKET fd)
+{
+    struct linger l = { 1, 0 };
+    setsockopt(fd, SOL_SOCKET, SO_LINGER, (char*)&l, sizeof(l));
 }
 
 #endif

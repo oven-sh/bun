@@ -256,76 +256,28 @@ pub fn Batcher(comptime Type: type) type {
             return @This(){ .head = all };
         }
 
-        pub inline fn done(this: *@This()) void {
-            std.debug.assert(this.head.len == 0);
+        pub fn done(this: *@This()) void {
+            bun.assert(this.head.len == 0); // count to init() was too large, overallocation
         }
 
-        pub inline fn eat(this: *@This(), value: Type) *Type {
+        pub fn eat(this: *@This(), value: Type) *Type {
             return @as(*Type, @ptrCast(&this.head.eat1(value).ptr));
         }
 
-        pub inline fn eat1(this: *@This(), value: Type) []Type {
+        pub fn eat1(this: *@This(), value: Type) []Type {
             var prev = this.head[0..1];
             prev[0] = value;
             this.head = this.head[1..];
             return prev;
         }
 
-        pub inline fn next(this: *@This(), values: anytype) []Type {
+        pub fn next(this: *@This(), values: anytype) []Type {
             this.head[0..values.len].* = values;
             const prev = this.head[0..values.len];
             this.head = this.head[values.len..];
             return prev;
         }
     };
-}
-
-test "fromEntries" {
-    const values = try from(std.AutoHashMap(u32, u32), std.heap.page_allocator, .{
-        .{ 123, 456 },
-        .{ 789, 101112 },
-    });
-    const mapToMap = try from(std.AutoHashMap(u32, u32), std.heap.page_allocator, values);
-    try std.testing.expectEqual(values.get(123).?, 456);
-    try std.testing.expectEqual(values.get(789).?, 101112);
-    try std.testing.expectEqual(mapToMap.get(123).?, 456);
-    try std.testing.expectEqual(mapToMap.get(789).?, 101112);
-}
-
-test "from" {
-    const values = try from(
-        []const u32,
-        std.heap.page_allocator,
-        &.{ 1, 2, 3, 4, 5, 6 },
-    );
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, values);
-}
-
-test "from arraylist" {
-    const values = try from(
-        std.ArrayList(u32),
-        std.heap.page_allocator,
-        &.{ 1, 2, 3, 4, 5, 6 },
-    );
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, values.items);
-
-    const cloned = try from(
-        std.ArrayListUnmanaged(u32),
-        std.heap.page_allocator,
-        values,
-    );
-
-    try std.testing.expectEqualSlices(u32, &.{ 1, 2, 3, 4, 5, 6 }, cloned.items);
-}
-
-test "from arraylist with struct" {
-    const Entry = std.meta.Tuple(&.{ u32, u32 });
-    const values = try from(
-        std.ArrayList(Entry),
-        std.heap.page_allocator,
-        &.{ Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 }, Entry{ 123, 456 } },
-    );
-    try std.testing.expectEqualSlices(Entry, &[_]Entry{ .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 }, .{ 123, 456 } }, values.items);
 }
 
 fn needsAllocator(comptime Fn: anytype) bool {

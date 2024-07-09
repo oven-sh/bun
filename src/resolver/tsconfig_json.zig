@@ -14,7 +14,6 @@ const logger = bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -68,10 +67,10 @@ pub const TSConfigJSON = struct {
         remove,
         invalid,
 
-        pub const List = ComptimeStringMap(ImportsNotUsedAsValue, .{
-            .{ "preserve", ImportsNotUsedAsValue.preserve },
-            .{ "error", ImportsNotUsedAsValue.err },
-            .{ "remove", ImportsNotUsedAsValue.remove },
+        pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, .{
+            .{ "preserve", .preserve },
+            .{ "error", .err },
+            .{ "remove", .remove },
         });
     };
 
@@ -321,14 +320,14 @@ pub const TSConfigJSON = struct {
         }
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(result.base_url.len > 0);
+            assert(result.base_url.len > 0);
         }
 
         const _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(_result.base_url.len > 0);
+            assert(_result.base_url.len > 0);
         }
         return _result;
     }
@@ -443,3 +442,5 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
+
+const assert = bun.assert;

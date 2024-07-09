@@ -24,7 +24,7 @@
  * | `null` | `NULL` |
  */
 declare module "bun:sqlite" {
-  export class Database {
+  export class Database implements Disposable {
     /**
      * Open or create a SQLite3 database
      *
@@ -36,7 +36,7 @@ declare module "bun:sqlite" {
      * ```ts
      * const db = new Database("mydb.sqlite");
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", "baz");
+     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * console.log(db.query("SELECT * FROM foo").all());
      * ```
      *
@@ -47,7 +47,7 @@ declare module "bun:sqlite" {
      * ```ts
      * const db = new Database(":memory:");
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", "hiiiiii");
+     * db.run("INSERT INTO foo VALUES (?)", ["hiiiiii"]);
      * console.log(db.query("SELECT * FROM foo").all());
      * ```
      *
@@ -82,6 +82,40 @@ declare module "bun:sqlite" {
              * Equivalent to {@link constants.SQLITE_OPEN_READWRITE}
              */
             readwrite?: boolean;
+
+            /**
+             * When set to `true`, integers are returned as `bigint` types.
+             *
+             * When set to `false`, integers are returned as `number` types and truncated to 52 bits.
+             *
+             * @default false
+             * @since v1.1.14
+             */
+            safeInteger?: boolean;
+
+            /**
+             * When set to `false` or `undefined`:
+             * - Queries missing bound parameters will NOT throw an error
+             * - Bound named parameters in JavaScript need to exactly match the SQL query.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: false });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { $name: "foo" });
+             * ```
+             *
+             * When set to `true`:
+             * - Queries missing bound parameters will throw an error
+             * - Bound named parameters in JavaScript no longer need to be `$`, `:`, or `@`. The SQL query will remain prefixed.
+             *
+             * @example
+             * ```ts
+             * const db = new Database(":memory:", { strict: true });
+             * db.run("INSERT INTO foo (name) VALUES ($name)", { name: "foo" });
+             * ```
+             * @since v1.1.14
+             */
+            strict?: boolean;
           },
     );
 
@@ -124,7 +158,7 @@ declare module "bun:sqlite" {
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", "baz");
+     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * ```
      *
      * Useful for queries like:
@@ -165,11 +199,11 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    run<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
     /**
         This is an alias of {@link Database.prototype.run}
      */
-    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): void;
+    exec<ParamsType extends SQLQueryBindings[]>(sqlQuery: string, ...bindings: ParamsType[]): Changes;
 
     /**
      * Compile a SQL query and return a {@link Statement} object. This is the
@@ -234,9 +268,9 @@ declare module "bun:sqlite" {
      * @example
      * ```ts
      * db.run("CREATE TABLE foo (bar TEXT)");
-     * db.run("INSERT INTO foo VALUES (?)", "baz");
+     * db.run("INSERT INTO foo VALUES (?)", ["baz"]);
      * db.run("BEGIN");
-     * db.run("INSERT INTO foo VALUES (?)", "qux");
+     * db.run("INSERT INTO foo VALUES (?)", ["qux"]);
      * console.log(db.inTransaction());
      * ```
      */
@@ -257,7 +291,20 @@ declare module "bun:sqlite" {
      *
      * Internally, this calls `sqlite3_close_v2`.
      */
-    close(): void;
+    close(
+      /**
+       * If `true`, then the database will throw an error if it is in use
+       * @default false
+       *
+       * When true, this calls `sqlite3_close` instead of `sqlite3_close_v2`.
+       *
+       * Learn more about this in the [sqlite3 documentation](https://www.sqlite.org/c3ref/close.html).
+       *
+       * Bun will automatically call close by default when the database instance is garbage collected.
+       * In The future, Bun may default `throwOnError` to be true but for backwards compatibility, it is false by default.
+       */
+      throwOnError?: boolean,
+    ): void;
 
     /**
      * The filename passed when `new Database()` was called
@@ -303,6 +350,8 @@ declare module "bun:sqlite" {
      * @param path The path to the SQLite library
      */
     static setCustomSQLite(path: string): boolean;
+
+    [Symbol.dispose](): void;
 
     /**
      * Creates a function that always runs inside a transaction. When the
@@ -427,6 +476,17 @@ declare module "bun:sqlite" {
      * ```
      */
     static deserialize(serialized: NodeJS.TypedArray | ArrayBufferLike, isReadOnly?: boolean): Database;
+
+    /**
+     * See `sqlite3_file_control` for more information.
+     * @link https://www.sqlite.org/c3ref/file_control.html
+     */
+    fileControl(op: number, arg?: ArrayBufferView | number): number;
+    /**
+     * See `sqlite3_file_control` for more information.
+     * @link https://www.sqlite.org/c3ref/file_control.html
+     */
+    fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
   }
 
   /**
@@ -455,7 +515,7 @@ declare module "bun:sqlite" {
    * // => undefined
    * ```
    */
-  export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> {
+  export class Statement<ReturnType = unknown, ParamsType extends SQLQueryBindings[] = any[]> implements Disposable {
     /**
      * Creates a new prepared statement from native code.
      *
@@ -549,7 +609,7 @@ declare module "bun:sqlite" {
      * | `bigint` | `INTEGER` |
      * | `null` | `NULL` |
      */
-    run(...params: ParamsType): void;
+    run(...params: ParamsType): Changes;
 
     /**
      * Execute the prepared statement and return the results as an array of arrays.
@@ -634,6 +694,11 @@ declare module "bun:sqlite" {
     finalize(): void;
 
     /**
+     * Calls {@link finalize} if it wasn't already called.
+     */
+    [Symbol.dispose](): void;
+
+    /**
      * Return the expanded SQL string for the prepared statement.
      *
      * Internally, this calls `sqlite3_expanded_sql()` on the underlying `sqlite3_stmt`.
@@ -648,6 +713,44 @@ declare module "bun:sqlite" {
      * ```
      */
     toString(): string;
+
+    /**
+     *
+     * Make {@link get} and {@link all} return an instance of the provided
+     * `Class` instead of the default `Object`.
+     *
+     * @param Class A class to use
+     * @returns The same statement instance, modified to return an instance of `Class`
+     *
+     * This lets you attach methods, getters, and setters to the returned
+     * objects.
+     *
+     * For performance reasons, constructors for classes are not called, which means
+     * initializers will not be called and private fields will not be
+     * accessible.
+     *
+     * @example
+     *
+     * ## Custom class
+     * ```ts
+     * class User {
+     *    rawBirthdate: string;
+     *    get birthdate() {
+     *      return new Date(this.rawBirthdate);
+     *    }
+     * }
+     *
+     * const db = new Database(":memory:");
+     * db.exec("CREATE TABLE users (id INTEGER PRIMARY KEY, rawBirthdate TEXT)");
+     * db.run("INSERT INTO users (rawBirthdate) VALUES ('1995-12-19')");
+     * const query = db.query("SELECT * FROM users");
+     * query.as(User);
+     * const user = query.get();
+     * console.log(user.birthdate);
+     * // => Date(1995, 11, 19)
+     * ```
+     */
+    as<T = unknown>(Class: new (...args: any[]) => T): Statement<T, ParamsType>;
 
     /**
      * Native object representing the underlying `sqlite3_stmt`
@@ -766,6 +869,187 @@ declare module "bun:sqlite" {
      * @constant 0x04
      */
     SQLITE_PREPARE_NO_VTAB: number;
+
+    /**
+     * @constant 1
+     */
+    SQLITE_FCNTL_LOCKSTATE: number;
+    /**
+     * @constant 2
+     */
+    SQLITE_FCNTL_GET_LOCKPROXYFILE: number;
+    /**
+     * @constant 3
+     */
+    SQLITE_FCNTL_SET_LOCKPROXYFILE: number;
+    /**
+     * @constant 4
+     */
+    SQLITE_FCNTL_LAST_ERRNO: number;
+    /**
+     * @constant 5
+     */
+    SQLITE_FCNTL_SIZE_HINT: number;
+    /**
+     * @constant 6
+     */
+    SQLITE_FCNTL_CHUNK_SIZE: number;
+    /**
+     * @constant 7
+     */
+    SQLITE_FCNTL_FILE_POINTER: number;
+    /**
+     * @constant 8
+     */
+    SQLITE_FCNTL_SYNC_OMITTED: number;
+    /**
+     * @constant 9
+     */
+    SQLITE_FCNTL_WIN32_AV_RETRY: number;
+    /**
+     * @constant 10
+     *
+     * Control whether or not the WAL is persisted
+     * Some versions of macOS configure WAL to be persistent by default.
+     *
+     * You can change this with code like the below:
+     * ```ts
+     * import { Database } from "bun:sqlite";
+     *
+     * const db = Database.open("mydb.sqlite");
+     * db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+     * // enable WAL
+     * db.exec("PRAGMA journal_mode = WAL");
+     * // .. do some work
+     * db.close();
+     * ```
+     *
+     */
+    SQLITE_FCNTL_PERSIST_WAL: number;
+    /**
+     * @constant 11
+     */
+    SQLITE_FCNTL_OVERWRITE: number;
+    /**
+     * @constant 12
+     */
+    SQLITE_FCNTL_VFSNAME: number;
+    /**
+     * @constant 13
+     */
+    SQLITE_FCNTL_POWERSAFE_OVERWRITE: number;
+    /**
+     * @constant 14
+     */
+    SQLITE_FCNTL_PRAGMA: number;
+    /**
+     * @constant 15
+     */
+    SQLITE_FCNTL_BUSYHANDLER: number;
+    /**
+     * @constant 16
+     */
+    SQLITE_FCNTL_TEMPFILENAME: number;
+    /**
+     * @constant 18
+     */
+    SQLITE_FCNTL_MMAP_SIZE: number;
+    /**
+     * @constant 19
+     */
+    SQLITE_FCNTL_TRACE: number;
+    /**
+     * @constant 20
+     */
+    SQLITE_FCNTL_HAS_MOVED: number;
+    /**
+     * @constant 21
+     */
+    SQLITE_FCNTL_SYNC: number;
+    /**
+     * @constant 22
+     */
+    SQLITE_FCNTL_COMMIT_PHASETWO: number;
+    /**
+     * @constant 23
+     */
+    SQLITE_FCNTL_WIN32_SET_HANDLE: number;
+    /**
+     * @constant 24
+     */
+    SQLITE_FCNTL_WAL_BLOCK: number;
+    /**
+     * @constant 25
+     */
+    SQLITE_FCNTL_ZIPVFS: number;
+    /**
+     * @constant 26
+     */
+    SQLITE_FCNTL_RBU: number;
+    /**
+     * @constant 27
+     */
+    SQLITE_FCNTL_VFS_POINTER: number;
+    /**
+     * @constant 28
+     */
+    SQLITE_FCNTL_JOURNAL_POINTER: number;
+    /**
+     * @constant 29
+     */
+    SQLITE_FCNTL_WIN32_GET_HANDLE: number;
+    /**
+     * @constant 30
+     */
+    SQLITE_FCNTL_PDB: number;
+    /**
+     * @constant 31
+     */
+    SQLITE_FCNTL_BEGIN_ATOMIC_WRITE: number;
+    /**
+     * @constant 32
+     */
+    SQLITE_FCNTL_COMMIT_ATOMIC_WRITE: number;
+    /**
+     * @constant 33
+     */
+    SQLITE_FCNTL_ROLLBACK_ATOMIC_WRITE: number;
+    /**
+     * @constant 34
+     */
+    SQLITE_FCNTL_LOCK_TIMEOUT: number;
+    /**
+     * @constant 35
+     */
+    SQLITE_FCNTL_DATA_VERSION: number;
+    /**
+     * @constant 36
+     */
+    SQLITE_FCNTL_SIZE_LIMIT: number;
+    /**
+     * @constant 37
+     */
+    SQLITE_FCNTL_CKPT_DONE: number;
+    /**
+     * @constant 38
+     */
+    SQLITE_FCNTL_RESERVE_BYTES: number;
+    /**
+     * @constant 39
+     */
+    SQLITE_FCNTL_CKPT_START: number;
+    /**
+     * @constant 40
+     */
+    SQLITE_FCNTL_EXTERNAL_READER: number;
+    /**
+     * @constant 41
+     */
+    SQLITE_FCNTL_CKSM_FILE: number;
+    /**
+     * @constant 42
+     */
+    SQLITE_FCNTL_RESET_CACHE: number;
   };
 
   /**
@@ -827,5 +1111,22 @@ declare module "bun:sqlite" {
      * @since v1.0.21
      */
     readonly byteOffset: number;
+  }
+
+  /**
+   * An object representing the changes made to the database since the last `run` or `exec` call.
+   *
+   * @since Bun v1.1.14
+   */
+  interface Changes {
+    /**
+     * The number of rows changed by the last `run` or `exec` call.
+     */
+    changes: number;
+
+    /**
+     * If `safeIntegers` is `true`, this is a `bigint`. Otherwise, it is a `number`.
+     */
+    lastInsertRowid: number | bigint;
   }
 }

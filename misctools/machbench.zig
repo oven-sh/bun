@@ -126,11 +126,11 @@ pub fn main() anyerror!void {
     Output.prettyErrorln("For {d} messages and {d} threads:", .{ count, thread_count });
     Output.flush();
     defer Output.flush();
-    const runs = if (std.os.getenv("RUNS")) |run_count| try std.fmt.parseInt(usize, run_count, 10) else 1;
+    const runs = if (std.posix.getenv("RUNS")) |run_count| try std.fmt.parseInt(usize, run_count, 10) else 1;
 
-    if (std.os.getenv("NO_MACH") == null)
+    if (std.posix.getenv("NO_MACH") == null)
         try machMain(runs);
 
-    if (std.os.getenv("NO_USER") == null)
+    if (std.posix.getenv("NO_USER") == null)
         try userMain(runs);
 }

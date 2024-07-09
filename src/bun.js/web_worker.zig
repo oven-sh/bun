@@ -7,13 +7,15 @@ const JSValue = JSC.JSValue;
 const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
+const Bool = std.atomic.Value(bool);
+
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
     /// null when haven't started yet
     vm: ?*JSC.VirtualMachine = null,
     status: std.atomic.Value(Status) = std.atomic.Value(Status).init(.start),
     /// To prevent UAF, the `spin` function (aka the worker's event loop) will call deinit once this is set and properly exit the loop.
-    requested_terminate: bool = false,
+    requested_terminate: Bool = Bool.init(false),
     execution_context_id: u32 = 0,
     parent_context_id: u32 = 0,
     parent: *JSC.VirtualMachine,
@@ -49,6 +51,14 @@ pub const WebWorker = struct {
     export fn WebWorker__getParentWorker(vm: *JSC.VirtualMachine) ?*anyopaque {
         const worker = vm.worker orelse return null;
         return worker.cpp_worker;
+    }
+
+    pub fn hasRequestedTerminate(this: *const WebWorker) bool {
+        return this.requested_terminate.load(.monotonic);
+    }
+
+    pub fn setRequestedTerminate(this: *WebWorker) bool {
+        return this.requested_terminate.swap(true, .release);
     }
 
     export fn WebWorker__updatePtr(worker: *WebWorker, ptr: *anyopaque) bool {
@@ -91,29 +101,50 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point = parent.bundler.resolveEntryPoint(spec_slice.slice()) catch {
-            const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
-            error_message.* = out;
-            return null;
+        var resolved_entry_point: bun.resolver.Result = undefined;
+
+        const path = brk: {
+            const str = spec_slice.slice();
+            if (parent.standalone_module_graph) |graph| {
+                if (graph.find(str) != null) {
+                    break :brk str;
+                }
+            }
+
+            if (JSC.WebCore.ObjectURLRegistry.isBlobURL(str)) {
+                if (JSC.WebCore.ObjectURLRegistry.singleton().has(str["blob:".len..])) {
+                    break :brk str;
+                } else {
+                    error_message.* = bun.String.static("Blob URL is missing");
+                    return null;
+                }
+            }
+
+            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+                const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
+                error_message.* = out;
+                return null;
+            };
+
+            const entry_path = resolved_entry_point.path() orelse {
+                error_message.* = bun.String.static("Worker entry point is missing");
+                return null;
+            };
+            break :brk entry_path.text;
         };
 
-        const path = resolved_entry_point.path() orelse {
-            error_message.* = bun.String.static("Worker entry point is missing");
-            return null;
-        };
-
-        var worker = bun.default_allocator.create(WebWorker) catch @panic("OOM");
+        var worker = bun.default_allocator.create(WebWorker) catch bun.outOfMemory();
         worker.* = WebWorker{
             .cpp_worker = cpp_worker,
             .parent = parent,
             .parent_context_id = parent_context_id,
             .execution_context_id = this_context_id,
             .mini = mini,
-            .specifier = bun.default_allocator.dupe(u8, path.text) catch @panic("OOM"),
+            .specifier = bun.default_allocator.dupe(u8, path) catch bun.outOfMemory(),
             .store_fd = parent.bundler.resolver.store_fd,
             .name = brk: {
                 if (!name_str.isEmpty()) {
-                    break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch @panic("OOM");
+                    break :brk std.fmt.allocPrintZ(bun.default_allocator, "{}", .{name_str}) catch bun.outOfMemory();
                 }
                 break :brk "";
             },
@@ -123,7 +154,7 @@ pub const WebWorker = struct {
             .execArgv = if (execArgv_ptr) |ptr| ptr[0..execArgv_len] else null,
         };
 
-        worker.parent_poll_ref.refConcurrently(parent);
+        worker.parent_poll_ref.ref(parent);
 
         return worker;
     }
@@ -145,18 +176,20 @@ pub const WebWorker = struct {
             Output.Source.configureNamedThread("Worker");
         }
 
-        if (this.requested_terminate) {
+        if (this.hasRequestedTerminate()) {
             this.deinit();
             return;
         }
 
-        std.debug.assert(this.status.load(.Acquire) == .start);
-        std.debug.assert(this.vm == null);
+        assert(this.status.load(.acquire) == .start);
+        assert(this.vm == null);
+
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
             .allocator = this.arena.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
+            .graph = this.parent.standalone_module_graph,
         });
         vm.allocator = this.arena.allocator();
         vm.arena = &this.arena;
@@ -173,6 +206,16 @@ pub const WebWorker = struct {
             this.exitAndDeinit();
             return;
         };
+
+        // TODO: we may have to clone other parts of vm state. this will be more
+        // important when implementing vm.deinit()
+        const map = try vm.allocator.create(bun.DotEnv.Map);
+        map.* = try vm.bundler.env.map.cloneWithAllocator(vm.allocator);
+
+        const loader = try vm.allocator.create(bun.DotEnv.Loader);
+        loader.* = bun.DotEnv.Loader.init(map, vm.allocator);
+
+        vm.bundler.env = loader;
 
         vm.loadExtraEnv();
         vm.is_main_thread = false;
@@ -237,12 +280,12 @@ pub const WebWorker = struct {
             },
         );
         buffered_writer.flush() catch {
-            @panic("OOM");
+            bun.outOfMemory();
         };
         JSC.markBinding(@src());
         WebWorker__dispatchError(globalObject, worker.cpp_worker, bun.String.createUTF8(array.toOwnedSliceLeaky()), error_instance);
         if (vm.worker) |worker_| {
-            worker.requested_terminate = true;
+            _ = worker.setRequestedTerminate();
             worker.parent_poll_ref.unrefConcurrently(worker.parent);
             worker_.exitAndDeinit();
         }
@@ -251,7 +294,7 @@ pub const WebWorker = struct {
     fn setStatus(this: *WebWorker, status: Status) void {
         log("[{d}] status: {s}", .{ this.execution_context_id, @tagName(status) });
 
-        this.status.store(status, .Release);
+        this.status.store(status, .release);
     }
 
     fn unhandledError(this: *WebWorker, _: anyerror) void {
@@ -262,7 +305,7 @@ pub const WebWorker = struct {
         log("[{d}] spin start", .{this.execution_context_id});
 
         var vm = this.vm.?;
-        std.debug.assert(this.status.load(.Acquire) == .start);
+        assert(this.status.load(.acquire) == .start);
         this.setStatus(.starting);
 
         var promise = vm.loadEntryPointForWebWorker(this.specifier) catch {
@@ -272,14 +315,16 @@ pub const WebWorker = struct {
         };
 
         if (promise.status(vm.global.vm()) == .Rejected) {
-            vm.onUnhandledError(vm.global, promise.result(vm.global.vm()));
+            const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-            vm.exit_handler.exit_code = 1;
-            this.exitAndDeinit();
-            return;
+            if (!handled) {
+                vm.exit_handler.exit_code = 1;
+                this.exitAndDeinit();
+                return;
+            }
+        } else {
+            _ = promise.result(vm.global.vm());
         }
-
-        _ = promise.result(vm.global.vm());
 
         this.flushLogs();
         log("[{d}] event loop start", .{this.execution_context_id});
@@ -300,15 +345,15 @@ pub const WebWorker = struct {
 
         while (vm.isEventLoopAlive()) {
             vm.tick();
-            if (this.requested_terminate) break;
+            if (this.hasRequestedTerminate()) break;
             vm.eventLoop().autoTickActive();
-            if (this.requested_terminate) break;
+            if (this.hasRequestedTerminate()) break;
         }
 
-        log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.requested_terminate) "(terminated)" else "(event loop dead)" });
+        log("[{d}] before exit {s}", .{ this.execution_context_id, if (this.hasRequestedTerminate()) "(terminated)" else "(event loop dead)" });
 
         // Only call "beforeExit" if we weren't from a .terminate
-        if (!this.requested_terminate) {
+        if (!this.hasRequestedTerminate()) {
             // TODO: is this able to allow the event loop to continue?
             vm.onBeforeExit();
         }
@@ -320,9 +365,14 @@ pub const WebWorker = struct {
 
     /// This is worker.ref()/.unref() from JS (Caller thread)
     pub fn setRef(this: *WebWorker, value: bool) callconv(.C) void {
-        if (this.requested_terminate) {
+        if (this.hasRequestedTerminate()) {
             return;
         }
+
+        this.setRefInternal(value);
+    }
+
+    pub fn setRefInternal(this: *WebWorker, value: bool) void {
         if (value) {
             this.parent_poll_ref.ref(this.parent);
         } else {
@@ -333,19 +383,19 @@ pub const WebWorker = struct {
     /// Request a terminate (Called from main thread from worker.terminate(), or inside worker in process.exit())
     /// The termination will actually happen after the next tick of the worker's loop.
     pub fn requestTerminate(this: *WebWorker) callconv(.C) void {
-        if (this.status.load(.Acquire) == .terminated) {
+        if (this.status.load(.acquire) == .terminated) {
             return;
         }
-        if (this.requested_terminate) {
+        if (this.setRequestedTerminate()) {
             return;
         }
         log("[{d}] requestTerminate", .{this.execution_context_id});
-        this.setRef(false);
-        this.requested_terminate = true;
+
         if (this.vm) |vm| {
-            vm.jsc.notifyNeedTermination();
             vm.eventLoop().wakeup();
         }
+
+        this.setRefInternal(false);
     }
 
     /// This handles cleanup, emitting the "close" event, and deinit.
@@ -390,3 +440,5 @@ pub const WebWorker = struct {
         }
     }
 };
+
+const assert = bun.assert;

@@ -73,6 +73,11 @@ bool EventTarget::isNode() const
     return false;
 }
 
+bool EventTarget::isContextStopped() const
+{
+    return !scriptExecutionContext();
+}
+
 bool EventTarget::isPaymentRequest() const
 {
     return false;

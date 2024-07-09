@@ -1068,23 +1068,6 @@ declare global {
      */
     canParse(url: string, base?: string): boolean;
   }
-  var URL: typeof globalThis extends {
-    onerror: any;
-    URL: infer T;
-  }
-    ? T
-    : typeof URL;
-
-  interface URLSearchParams {
-    new (init?: string | string[][] | Record<string, string> | URLSearchParams | undefined): URLSearchParams;
-    toString(): string;
-  }
-  var URLSearchParams: typeof globalThis extends {
-    onerror: any;
-    URLSearchParams: infer T;
-  }
-    ? T
-    : typeof URLSearchParams;
 
   interface EventListener {
     (evt: Event): void;

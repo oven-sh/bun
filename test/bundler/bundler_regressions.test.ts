@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "./expectBundled";
+import { describe } from "bun:test";
 
 describe("bundler", () => {
   // https://x.com/jeroendotdot/status/1740651288239460384?s=46&t=0Uhw6mmGT650_9M2pXUsCw
@@ -215,5 +213,65 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: "你好" },
+  });
+
+  itBundled("regression/WindowsBackslashAssertion1#9974", {
+    files: {
+      "/test/entry.ts": `
+        import { loadFonts } from "../base";
+        console.log(loadFonts);
+      `,
+    },
+    entryPointsRaw: ["test/entry.ts", "--external", "*"],
+  });
+
+  itBundled("regression/NamespaceTracking#12337", {
+    files: {
+      "/entry.ts": /* ts */ `
+        (0, eval)('globalThis.ca' + 'pture = () => {};')
+
+        export namespace Test {
+          export function anInstance(): Test {
+            return {
+              level1: {
+                level2: {
+                  level3: Level1.Level2.Level3.anInstance(),
+                }
+              },
+            }
+          }
+ 
+          export namespace Level1 {
+            export namespace Level2 {
+              export function anInstance(): Level2 {
+                return {
+                  level3: Level3.anInstance(),
+                }
+              }
+              export enum Enum {
+                Value = 1,
+              }
+              export namespace Level3 {
+                export type Value = Level3['value']
+                export function anInstance(): Level3 {
+                  return {
+                    value: 'Hello, World!',
+                  }
+                }
+                capture(Enum.Value);
+              }
+            }
+            capture(Level2.Enum.Value);
+          }
+        }
+
+        if(Test.anInstance().level1.level2.level3.value !== 'Hello, World!')
+          throw new Error('fail')
+
+        capture(Test.Level1.Level2.Enum.Value);
+      `,
+    },
+    run: true,
+    capture: ["1 /* Value */", "1 /* Value */", "1 /* Value */"],
   });
 });

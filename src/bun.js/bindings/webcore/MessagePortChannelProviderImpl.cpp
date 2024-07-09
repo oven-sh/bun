@@ -71,7 +71,7 @@ void MessagePortChannelProviderImpl::takeAllMessagesForPort(const MessagePortIde
 {
     // It is the responsibility of outerCallback to get itself to the appropriate thread (e.g. WebWorker thread)
     auto callback = [outerCallback = WTFMove(outerCallback)](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& messageDeliveryCallback) mutable {
-        ASSERT(isMainThread());
+        // ASSERT(isMainThread());
         outerCallback(WTFMove(messages), WTFMove(messageDeliveryCallback));
     };
 

@@ -472,6 +472,28 @@ pub const Request = struct {
         url,
     };
 
+    // https://fetch.spec.whatwg.org/#request
+    // The new Request(input, init) constructor steps are:
+    // 34. Let inputBody be input’s request’s body if input is a Request object; otherwise null.
+    // 35. If either init["body"] exists and is non-null or inputBody is non-null, and request’s method is `GET` or `HEAD`, then throw a TypeError.
+    // 36. Let initBody be null.
+    // 37. If init["body"] exists and is non-null, then:
+    //   1. Let bodyWithType be the result of extracting init["body"], with keepalive set to request’s keepalive.
+    //   2. Set initBody to bodyWithType’s body.
+    //   3. Let type be bodyWithType’s type.
+    //   4. If type is non-null and this’s headers’s header list does not contain `Content-Type`, then append (`Content-Type`, type) to this’s headers
+    // 38. Let inputOrInitBody be initBody if it is non-null; otherwise inputBody.
+    // 39. If inputOrInitBody is non-null and inputOrInitBody’s source is null, then:
+    //   1. If initBody is non-null and init["duplex"] does not exist, then throw a TypeError.
+    //   2. If this’s request’s mode is neither "same-origin" nor "cors", then throw a TypeError.
+    //   3. Set this’s request’s use-CORS-preflight flag.
+    // 40. Let finalBody be inputOrInitBody.
+    // 41. If initBody is null and inputBody is non-null, then:
+    //   1. If input is unusable, then throw a TypeError.
+    //   2. Set finalBody to the result of creating a proxy for inputBody.
+    // 42. Set this’s request’s body to finalBody.
+    //                        std.debug.print("method {s}: \n", .{@tagName(req.method)});
+
     pub fn constructInto(
         globalThis: *JSC.JSGlobalObject,
         arguments: []const JSC.JSValue,
@@ -541,7 +563,7 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url));
+                        request.cloneIntoForRequestConstructor(&req, globalThis.allocator(), globalThis, fields.contains(.url), value);
                         success = true;
                         return req;
                     }
@@ -823,6 +845,86 @@ pub const Request = struct {
         this.ensureURL() catch {};
 
         const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+            globalThis.throw("Failed to clone request", .{});
+            return;
+        };
+        const original_url = req.url;
+
+        req.* = Request{
+            .body = body,
+            .url = if (preserve_url) original_url else this.url.dupeRef(),
+            .method = this.method,
+            ._headers = this.cloneHeaders(globalThis),
+        };
+
+        if (this.signal) |signal| {
+            req.signal = signal.ref();
+        }
+    }
+
+    // TODO: we will keep this private and for use of new Request(existing_request) for now. Can replace external cloneInto with it when we have more tests to ensure it
+    // doesn't break existing external uses of request.clone
+    fn cloneIntoForRequestConstructor(
+        this: *Request,
+        req: *Request,
+        allocator: std.mem.Allocator,
+        globalThis: *JSGlobalObject,
+        preserve_url: bool,
+        req_jsvalue: JSC.JSValue,
+    ) void {
+        _ = allocator;
+        this.ensureURL() catch {};
+
+        const body = InitRequestBodyValue(
+            switch (this.body.value.clone(globalThis)) {
+                .Empty => brk: {
+                    const stream = stream: {
+                        if (Request.bodyGetCached(req_jsvalue)) |existing_stream_value| {
+                            const existing_stream = JSC.WebCore.ReadableStream.fromJS(existing_stream_value, globalThis) orelse break :stream null;
+                            if (existing_stream.isDisturbed(globalThis)) {
+                                break :stream null;
+                            }
+
+                            break :stream existing_stream;
+                        }
+
+                        if (this.body.value.Locked.readable.get()) |stream| {
+                            if (stream.isDisturbed(globalThis)) {
+                                break :stream null;
+                            }
+
+                            break :stream stream;
+                        }
+
+                        if (this.body.value.Locked.promise == null) {
+                            const stream_value = this.body.value.toReadableStream(globalThis);
+                            break :stream JSC.WebCore.ReadableStream.fromJS(stream_value, globalThis);
+                        }
+
+                        break :stream null;
+                    };
+
+                    if (stream) |s| {
+                        if (s.tee(globalThis)) |teed| {
+                            Request.bodySetCached(req_jsvalue, globalThis, teed[0].value);
+
+                            teed[1].value.protect();
+
+                            break :brk Body.Value{
+                                .Locked = .{
+                                    .readable = JSC.WebCore.ReadableStream.Strong.init(teed[1], globalThis),
+                                    //                                    .readable = teed[1],
+                                    .global = globalThis,
+                                },
+                            };
+                        }
+                    }
+
+                    break :brk .{ .Empty = {} };
+                },
+                else => |result| result,
+            },
+        ) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };

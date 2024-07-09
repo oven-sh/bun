@@ -1920,6 +1920,18 @@ extern "C" void ReadableStream__cancel(JSC__JSValue possibleReadableStream, Zig:
     ReadableStream::cancel(*globalObject, readableStream, exception);
 }
 
+extern "C" void ReadableStream__tee(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject, JSC__JSValue ptr[2])
+{
+    auto* readableStream = jsDynamicCast<JSReadableStream*>(JSC::JSValue::decode(possibleReadableStream));
+    if (UNLIKELY(!readableStream))
+        return;
+
+    if (auto pair = ReadableStream::tee(*globalObject, readableStream)) {
+        ptr[0] = JSC::JSValue::encode(pair->first);
+        ptr[1] = JSC::JSValue::encode(pair->second);
+    }
+}
+
 extern "C" void ReadableStream__detach(JSC__JSValue possibleReadableStream, Zig::GlobalObject* globalObject)
 {
     auto value = JSC::JSValue::decode(possibleReadableStream);

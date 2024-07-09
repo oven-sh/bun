@@ -237,6 +237,7 @@ pub const ReadableStream = struct {
     extern fn ReadableStream__cancel(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__abort(stream: JSValue, *JSGlobalObject) void;
     extern fn ReadableStream__detach(stream: JSValue, *JSGlobalObject) void;
+    extern fn ReadableStream__tee(stream: JSValue, *JSGlobalObject, [*]JSValue) void;
     extern fn ReadableStream__fromBlob(
         *JSGlobalObject,
         store: *anyopaque,
@@ -257,6 +258,17 @@ pub const ReadableStream = struct {
     pub fn isLocked(this: *const ReadableStream, globalObject: *JSGlobalObject) bool {
         JSC.markBinding(@src());
         return ReadableStream__isLocked(this.value, globalObject);
+    }
+
+    pub fn tee(this: *const ReadableStream, globalObject: *JSGlobalObject) ?[2]ReadableStream {
+        JSC.markBinding(@src());
+        var values: [2]JSC.JSValue = .{ .zero, .zero };
+        ReadableStream__tee(this.value, globalObject, &values);
+
+        return .{
+            ReadableStream.fromJS(values[0], globalObject) orelse return null,
+            ReadableStream.fromJS(values[1], globalObject) orelse return null,
+        };
     }
 
     pub fn fromJS(value: JSValue, globalThis: *JSGlobalObject) ?ReadableStream {

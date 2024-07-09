@@ -780,6 +780,24 @@ pub fn normalizePathWindows(
         return .{ .result = norm };
     }
 
+    if (std.mem.indexOfAny(T, path_, &.{ '\\', '/', '.' }) == null) {
+        if (buf.len < path.len) {
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .syscall = .open,
+                },
+            };
+        }
+
+        // Skip the system call to get the final path name if it doesn't have any of the above characters.
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        return .{
+            .result = buf[0..path.len :0],
+        };
+    }
+
     const base_fd = if (dir_fd == bun.invalid_fd)
         std.fs.cwd().fd
     else

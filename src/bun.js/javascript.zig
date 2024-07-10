@@ -460,12 +460,9 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    const concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-    concurrent.* = JSC.ConcurrentTask{
-        .task = Task.init(task),
-        .auto_delete = true,
-    };
-    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(concurrent);
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
+        JSC.ConcurrentTask.create(Task.init(task)),
+    );
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
@@ -1777,7 +1774,7 @@ pub const VirtualMachine = struct {
             return ResolvedSource{
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
-                .source_url = bun.String.init(source_url),
+                .source_url = specifier.createIfDifferent(source_url),
                 .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
@@ -1792,7 +1789,7 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = bun.String.init(source_url),
+            .source_url = specifier.createIfDifferent(source_url),
             .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,

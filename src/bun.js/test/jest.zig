@@ -1551,7 +1551,7 @@ pub const TestRunnerTask = struct {
             },
             .pending => @panic("Unexpected pending test"),
         }
-        describe.onTestComplete(globalThis, test_id, result == .skip);
+        describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
         Jest.runner.?.runNextTest();
     }
 

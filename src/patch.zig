@@ -611,11 +611,11 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 result.parts.append(bun.default_allocator, .{
                     .file_deletion = bun.new(FileDeletion, FileDeletion{
                         .hunk = if (file.hunks.items.len > 0) brk: {
-                            var value = file.hunks.items[0];
+                            const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
                                 .header = Hunk.Header.zeroes,
                             };
-                            break :brk bun.dupe(Hunk, &value);
+                            break :brk bun.new(Hunk, value);
                         } else null,
                         .path = path,
                         .mode = parseFileMode(file.deleted_file_mode.?) orelse {
@@ -632,11 +632,11 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 result.parts.append(bun.default_allocator, .{
                     .file_creation = bun.new(FileCreation, FileCreation{
                         .hunk = if (file.hunks.items.len > 0) brk: {
-                            var value = file.hunks.items[0];
+                            const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
                                 .header = Hunk.Header.zeroes,
                             };
-                            break :brk bun.dupe(Hunk, &value);
+                            break :brk bun.new(Hunk, value);
                         } else null,
                         .path = path,
                         .mode = parseFileMode(file.new_file_mode.?) orelse {

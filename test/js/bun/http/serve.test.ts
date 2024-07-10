@@ -1550,25 +1550,26 @@ it("should be able to stop in the middle of a file response", async () => {
     process.kill();
   }
 }, 60_000);
-// it("should be able to abrupt stop the server", async () => {
-//   for (let i = 0; i < 10; i++) {
-//     using server = Bun.serve({
-//       port: 0,
-//       error() {
-//         return new Response("Error", { status: 500 });
-//       },
-//       async fetch(req, server) {
-//         server.stop(true);
-//         await Bun.sleep(100);
-//         return new Response("Hello, World!");
-//       },
-//     });
 
-//     try {
-//       await fetch(server.url).then(res => res.text());
-//       expect.unreachable();
-//     } catch (e) {
-//       expect(e.code).toBe("ConnectionClosed");
-//     }
-//   }
-// });
+it("should be able to abrupt stop the server", async () => {
+  for (let i = 0; i < 10; i++) {
+    using server = Bun.serve({
+      port: 0,
+      error() {
+        return new Response("Error", { status: 500 });
+      },
+      async fetch(req, server) {
+        server.stop(true);
+        await Bun.sleep(100);
+        return new Response("Hello, World!");
+      },
+    });
+
+    try {
+      await fetch(server.url).then(res => res.text());
+      expect.unreachable();
+    } catch (e) {
+      expect(e.code).toBe("ConnectionClosed");
+    }
+  }
+});

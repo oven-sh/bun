@@ -3803,9 +3803,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                 // Note that we set the count _before_ we reload, so that if we
                 // get another hot reload request while we're reloading, we'll
                 // still enqueue it.
-                this.reloader.pending_count.store(0, .monotonic);
-
-                this.reloader.ctx.reload();
+                while (this.reloader.pending_count.swap(0, .monotonic) > 0) {
+                    this.reloader.ctx.reload();
+                }
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
@@ -3821,15 +3821,16 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
-                if (this.reloader.pending_count.fetchAdd(1, .monotonic) == 0) {
-                    BunDebugger__willHotReload();
-                    var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
 
-                    that.* = this.*;
-                    this.count = 0;
-                    that.concurrent_task.task = Task.init(that);
-                    this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
-                }
+                _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
+
+                BunDebugger__willHotReload();
+                var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
+
+                that.* = this.*;
+                this.count = 0;
+                that.concurrent_task.task = Task.init(that);
+                this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
             }
 
             pub fn deinit(this: *HotReloadTask) void {

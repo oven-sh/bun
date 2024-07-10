@@ -2342,6 +2342,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
             this.flags.has_pending_read = false;
+
             if (this.isAborted() or this.resp == null) {
                 this.finalizeForAbort();
                 return;

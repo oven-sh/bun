@@ -8220,6 +8220,13 @@ pub const PackageManager = struct {
         unlink,
         patch,
         @"patch-commit",
+
+        pub fn canGloballyInstallPackages(this: Subcommand) bool {
+            return switch (this) {
+                .install, .update, .add => true,
+                else => false,
+            };
+        }
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -9751,7 +9758,7 @@ pub const PackageManager = struct {
 
         // When you run `bun add -g <pkg>` or `bun install -g <pkg>` and the global bin dir is not in $PATH
         // We should tell the user to add it to $PATH so they don't get confused.
-        if (subcommand == .add or subcommand == .install) {
+        if (subcommand.canGloballyInstallPackages()) {
             if (manager.options.global and manager.options.log_level != .silent) {
                 manager.track_installed_bin = .{ .pending = {} };
             }
@@ -9775,7 +9782,7 @@ pub const PackageManager = struct {
         // >
         // > fish_add_path "/private/tmp/test"
         //
-        if (subcommand == .add or subcommand == .install) {
+        if (subcommand.canGloballyInstallPackages()) {
             if (manager.options.global) {
                 if (manager.options.bin_path.len > 0 and manager.track_installed_bin == .basename) {
                     const needs_to_print = if (bun.getenvZ("PATH")) |PATH|

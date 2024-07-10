@@ -14,6 +14,8 @@ for (const [name, inspect] of process.versions.bun
       ["Bun.inspect", Bun.inspect],
     ]
   : [["util.inspect", util.inspect]]) {
+  const isBunInspect = name === "Bun.inspect";
+
   test(name + " calls inspect.custom", () => {
     const obj = {
       [customSymbol]() {
@@ -51,7 +53,8 @@ for (const [name, inspect] of process.versions.bun
       },
     };
 
-    expect(inspect(obj).replace(/\s/g, "")).toBe("{prop:42}");
+    const expected = isBunInspect ? "{prop:42,}" : "{prop:42}";
+    expect(inspect(obj).replace(/\s/g, "")).toBe(expected);
   });
 
   test(name + " calls inspect.custom recursivly nested 2", () => {
@@ -67,7 +70,8 @@ for (const [name, inspect] of process.versions.bun
       },
     };
 
-    expect(inspect(obj).replace(/\s/g, "")).toBe("{prop:42}");
+    const expected = isBunInspect ? "{prop:42,}" : "{prop:42}";
+    expect(inspect(obj).replace(/\s/g, "")).toBe(expected);
   });
 
   test(name + " calls inspect.custom with valid options", () => {
@@ -127,13 +131,19 @@ for (const [name, inspect] of process.versions.bun
         },
       },
     };
-    expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe("{prop:[2,3]}");
+
+    const expected = isBunInspect ? "{prop:[2,3],}" : "{prop:[2,3]}";
+    expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
   test(name + " non-callable does not get called", () => {
     const obj = {
       [customSymbol]: 512,
     };
-    expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe("{[Symbol(nodejs.util.inspect.custom)]:512}");
+
+    const expected = isBunInspect
+      ? "{[Symbol(nodejs.util.inspect.custom)]:512,}"
+      : "{[Symbol(nodejs.util.inspect.custom)]:512}";
+    expect(inspect(obj, { depth: 3 }).replace(/\s/g, "")).toBe(expected);
   });
 
   const exceptions = [new Error("don't crash!"), 42];

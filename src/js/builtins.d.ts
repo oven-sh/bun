@@ -12,7 +12,9 @@ declare function $debug(...args: any[]): void;
 /** $assert is a preprocessor macro that only runs in debug mode. it throws an error if the first argument is falsy.
  * The source code passed to `check` is inlined in the message, but in addition you can pass additional messages.
  */
-declare function $assert(check: any, ...message: any[]): void;
+declare function $assert(check: any, ...message: any[]): asserts check;
+
+declare const IS_BUN_DEVELOPMENT: boolean;
 
 /** Place this directly above a function declaration (like a decorator) to make it a getter. */
 declare const $getter: never;
@@ -21,14 +23,17 @@ declare var $overriddenName: string;
 /** ??? */
 declare var $linkTimeConstant: never;
 /** Assign to this directly above a function declaration (like a decorator) to set visibility */
-declare var $visibility: "Public" | "Private";
+declare var $visibility: "Public" | "Private" | "PrivateRecursive";
 /** ??? */
 declare var $nakedConstructor: never;
 /** Assign to this directly above a function declaration (like a decorator) to set intrinsic */
 declare var $intrinsic: string;
+/** Assign to this directly above a function declaration (like a decorator) to make it a constructor. */
 declare var $constructor;
 /** Place this directly above a function declaration (like a decorator) to NOT include "use strict" */
 declare var $sloppy;
+/** Place this directly above a function declaration (like a decorator) to always inline the function */
+declare var $alwaysInline;
 
 declare function $extractHighWaterMarkFromQueuingStrategyInit(obj: any): any;
 
@@ -85,6 +90,7 @@ declare function $getSetIteratorInternalField(): TODO;
 declare function $getProxyInternalField(): TODO;
 declare function $idWithProfile(): TODO;
 declare function $isObject(obj: unknown): obj is object;
+declare function $isArray(obj: unknown): obj is any[];
 declare function $isCallable(fn: unknown): fn is CallableFunction;
 declare function $isConstructor(fn: unknown): fn is { new (...args: any[]): any };
 declare function $isJSArray(obj: unknown): obj is any[];
@@ -102,7 +108,7 @@ declare function $isArrayIterator(obj: unknown): obj is Iterator<any>;
 declare function $isMapIterator(obj: unknown): obj is Iterator<any>;
 declare function $isSetIterator(obj: unknown): obj is Iterator<any>;
 declare function $isUndefinedOrNull(obj: unknown): obj is null | undefined;
-declare function $tailCallForwardArguments(): TODO;
+declare function $tailCallForwardArguments(fn: CallableFunction, thisValue: ThisType): any;
 /**
  * **NOTE** - use `throw new TypeError()` instead. it compiles to the same builtin
  * @deprecated
@@ -223,6 +229,7 @@ declare const $asyncContext: InternalFieldObject<[ReadonlyArray<any> | undefined
 declare var $_events: TODO;
 declare function $abortAlgorithm(): TODO;
 declare function $abortSteps(): TODO;
+declare function $addAbortAlgorithmToSignal(signal: AbortSignal, algorithm: () => void): TODO;
 declare function $addEventListener(): TODO;
 declare function $appendFromJS(): TODO;
 declare function $argv(): TODO;
@@ -249,7 +256,6 @@ declare function $closedPromise(): TODO;
 declare function $closedPromiseCapability(): TODO;
 declare function $code(): TODO;
 declare function $connect(): TODO;
-declare function $consumeReadableStream(): TODO;
 declare function $controlledReadableStream(): TODO;
 declare function $controller(): TODO;
 declare function $cork(): TODO;
@@ -315,8 +321,6 @@ declare function $isPaused(): TODO;
 declare function $isWindows(): TODO;
 declare function $join(): TODO;
 declare function $kind(): TODO;
-declare function $lazy(): TODO;
-declare function $lazyLoad(): TODO;
 declare function $lazyStreamPrototypeMap(): TODO;
 declare function $loadModule(): TODO;
 declare function $localStreams(): TODO;
@@ -365,13 +369,14 @@ declare function $readableStreamToArray(): TODO;
 declare function $reader(): TODO;
 declare function $readyPromise(): TODO;
 declare function $readyPromiseCapability(): TODO;
+declare function $removeAbortAlgorithmFromSignal(signal: AbortSignal, algorithmIdentifier: number): TODO;
 declare function $redirect(): TODO;
 declare function $relative(): TODO;
 declare function $releaseLock(): TODO;
 declare function $removeEventListener(): TODO;
 declare function $require(): TODO;
 declare function $requireESM(path: string): any;
-declare const $requireMap: Map<string, NodeModule>;
+declare const $requireMap: Map<string, CommonJSModuleRecord>;
 declare const $internalModuleRegistry: InternalFieldObject<any[]>;
 declare function $resolve(name: string, from: string): Promise<string>;
 declare function $resolveSync(name: string, from: string, isESM?: boolean): string;
@@ -433,7 +438,14 @@ declare function $writer(): TODO;
 declare function $writing(): TODO;
 declare function $written(): TODO;
 
-declare function $createCommonJSModule(id: string, exports: any, hasEvaluated: boolean): NodeModule;
+declare function $createCommonJSModule(
+  id: string,
+  exports: any,
+  hasEvaluated: boolean,
+  parent: CommonJSModuleRecord,
+): CommonJSModuleRecord;
+
+declare function $overridableRequire(this: CommonJSModuleRecord, id: string): any;
 
 // The following I cannot find any definitions of, but they are functional.
 declare function $toLength(length: number): number;
@@ -455,8 +467,8 @@ type PromiseFieldType = typeof $promiseFieldFlags | typeof $promiseFieldReaction
 type PromiseFieldToValue<X extends PromiseFieldType, V> = X extends typeof $promiseFieldFlags
   ? number
   : X extends typeof $promiseFieldReactionsOrResult
-  ? V | any
-  : any;
+    ? V | any
+    : any;
 type WellKnownSymbol = keyof { [K in keyof SymbolConstructor as SymbolConstructor[K] extends symbol ? K : never]: K };
 
 // You can also `@` on any method on a classes to avoid prototype pollution and secret internals
@@ -470,8 +482,7 @@ declare interface PromiseConstructor<T> extends ClassWithIntrinsics<PromiseConst
 
 declare interface UnderlyingSource {
   $lazy?: boolean;
-  $bunNativeType?: number;
-  $bunNativePtr?: number;
+  $bunNativePtr?: undefined | TODO;
   autoAllocateChunkSize?: number;
 }
 

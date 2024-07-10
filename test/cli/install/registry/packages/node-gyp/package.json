@@ -1,0 +1,64 @@
+{
+	"name": "node-gyp",
+	"versions": {
+		"1.0.0": {
+			"name": "node-gyp",
+			"version": "1.0.0",
+			"bin": {
+				"node-gyp": "node-gyp.js"
+			},
+			"_id": "node-gyp@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-mtxr4aMYeRWQbdEk0uJMkwmCoqAMayXErcepM4GfKo7YSxrI3mgvBqTlGhwlEJ37fF19wBh3jx7zpRwr2tgruw==",
+				"shasum": "2090b8b9d65cc24afc6f7169a2d98abf6420c9f6",
+				"tarball": "http://localhost:4873/node-gyp/-/node-gyp-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "node-gyp",
+			"version": "1.5.0",
+			"bin": {
+				"node-gyp": "node-gyp.js"
+			},
+			"gitHead": "e0a78fdc023bcc2f4d739c6ba9d5c026a1b586ae",
+			"_id": "node-gyp@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-zb79rA2oVxlrxbZ2TqdAD8nAbgZq9u98U9i/kKGjlW6E62t9s/da03c+JVpC67BJOzB1qS+D2SpvO9l44FoyYg==",
+				"shasum": "e9585e24a8bd25e99ce960d2dae7e1ce6b756414",
+				"tarball": "http://localhost:4873/node-gyp/-/node-gyp-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T06:24:01.661Z",
+		"created": "2023-11-01T22:05:22.357Z",
+		"1.0.0": "2023-11-01T22:05:22.357Z",
+		"1.5.0": "2023-11-15T06:24:01.661Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"node-gyp-1.0.0.tgz": {
+			"shasum": "2090b8b9d65cc24afc6f7169a2d98abf6420c9f6",
+			"version": "1.0.0"
+		},
+		"node-gyp-1.5.0.tgz": {
+			"shasum": "e9585e24a8bd25e99ce960d2dae7e1ce6b756414",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "3-9adf8a3d5d3c73ec",
+	"_id": "node-gyp",
+	"readme": "ERROR: No README data found!"
+}

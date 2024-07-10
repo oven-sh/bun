@@ -27,7 +27,7 @@
 
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
-#include "JavaScriptCore/StrongInlines.h"
+#include <JavaScriptCore/StrongInlines.h>
 
 namespace WebCore {
 

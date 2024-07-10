@@ -11,7 +11,6 @@ const C = bun.C;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
@@ -31,7 +30,7 @@ pub const PercentEncoding = struct {
 
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn isPchar(str: []const u8) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
+        if (comptime Environment.allow_assert) bun.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
             '%' => str.len >= 3 and isHex(str[1]) and isHex(str[2]),
@@ -39,18 +38,24 @@ pub const PercentEncoding = struct {
         };
     }
 
-    /// decode path if it is percent encoded
+    /// decode path if it is percent encoded, returns EncodeError if URL unsafe characters are present and not percent encoded
     pub fn decode(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
+        return _decode(allocator, path, true);
+    }
+
+    /// Replaces percent encoded entities within `path` without throwing an error if other URL unsafe characters are present
+    pub fn decodeUnstrict(allocator: Allocator, path: []const u8) EncodeError!?[]u8 {
+        return _decode(allocator, path, false);
+    }
+
+    fn _decode(allocator: Allocator, path: []const u8, strict: bool) EncodeError!?[]u8 {
         var ret: ?[]u8 = null;
         errdefer if (ret) |some| allocator.free(some);
         var ret_index: usize = 0;
         var i: usize = 0;
 
         while (i < path.len) : (i += 1) {
-            if (path[i] == '%') {
-                if (!isPchar(path[i..])) {
-                    return error.InvalidCharacter;
-                }
+            if (path[i] == '%' and path[i..].len >= 3 and isHex(path[i + 1]) and isHex(path[i + 2])) {
                 if (ret == null) {
                     ret = try allocator.alloc(u8, path.len);
                     bun.copy(u8, ret.?, path[0..i]);
@@ -63,7 +68,7 @@ pub const PercentEncoding = struct {
                 ret.?[ret_index] = new;
                 ret_index += 1;
                 i += 2;
-            } else if (path[i] != '/' and !isPchar(path[i..])) {
+            } else if (path[i] != '/' and !isPchar(path[i..]) and strict) {
                 return error.InvalidCharacter;
             } else if (ret != null) {
                 ret.?[ret_index] = path[i];
@@ -87,8 +92,7 @@ pub const DataURL = struct {
             return null;
         }
 
-        var result = try parseWithoutCheck(url);
-        return result;
+        return try parseWithoutCheck(url);
     }
 
     pub fn parseWithoutCheck(url: string) !DataURL {
@@ -107,17 +111,17 @@ pub const DataURL = struct {
         return parsed;
     }
 
-    pub fn decodeMimeType(d: DataURL) bun.HTTP.MimeType {
-        return bun.HTTP.MimeType.init(d.mime_type, null, null);
+    pub fn decodeMimeType(d: DataURL) bun.http.MimeType {
+        return bun.http.MimeType.init(d.mime_type, null, null);
     }
 
     pub fn decodeData(url: DataURL, allocator: std.mem.Allocator) ![]u8 {
-        const percent_decoded = PercentEncoding.decode(allocator, url.data) catch url.data orelse url.data;
+        const percent_decoded = PercentEncoding.decodeUnstrict(allocator, url.data) catch url.data orelse url.data;
         if (url.is_base64) {
             const len = bun.base64.decodeLen(percent_decoded);
-            var buf = try allocator.alloc(u8, len);
+            const buf = try allocator.alloc(u8, len);
             const result = bun.base64.decode(buf, percent_decoded);
-            if (result.fail or result.written != len) {
+            if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;
             }
             return buf;

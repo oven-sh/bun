@@ -1,7 +1,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { gc } from "harness";
 import fs from "fs";
+import { tmpdir } from "os";
 import path from "path";
+import { bunExe } from "harness";
 
 let proxy, auth_proxy, server;
 
@@ -166,5 +168,32 @@ it("proxy non-TLS auth can fail", async () => {
     } catch (err) {
       expect(true).toBeFalsy();
     }
+  }
+});
+
+it.each([
+  [undefined, undefined],
+  ["", ""],
+  ["''", "''"],
+  ['""', '""'],
+])("test proxy env, http_proxy=%s https_proxy=%s", async (http_proxy, https_proxy) => {
+  const path = `${tmpdir()}/bun-test-http-proxy-env-${Date.now()}.ts`;
+  fs.writeFileSync(path, 'await fetch("https://example.com");');
+
+  const { stdout, stderr, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path],
+    env: {
+      http_proxy: http_proxy,
+      https_proxy: https_proxy,
+    },
+    stdout: "pipe",
+    stderr: "pipe",
+  });
+
+  try {
+    expect(stderr.includes("FailedToOpenSocket: Was there a typo in the url or port?")).toBe(false);
+    expect(exitCode).toBe(0);
+  } finally {
+    fs.unlinkSync(path);
   }
 });

@@ -29,17 +29,22 @@ public:
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(JSCDeferredWorkTask);
 
-static JSC::VM& getVM(Ticket ticket)
+static JSC::VM& getVM(Ref<TicketData> ticket)
 {
-    return ticket->scriptExecutionOwner.get()->vm();
+    return ticket->scriptExecutionOwner()->vm();
 }
 
-void JSCTaskScheduler::onAddPendingWork(std::unique_ptr<TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind)
+static JSC::VM& getVM(Ticket& ticket)
 {
-    JSC::VM& vm = getVM(ticket.get());
+    return ticket->scriptExecutionOwner()->vm();
+}
+
+void JSCTaskScheduler::onAddPendingWork(Ref<TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind)
+{
+    JSC::VM& vm = getVM(ticket);
     auto clientData = WebCore::clientData(vm);
     auto& scheduler = clientData->deferredWorkTimer;
-    LockHolder holder { scheduler.m_lock };
+    Locker<Lock> holder { scheduler.m_lock };
     if (kind != DeferredWorkTimer::WorkKind::Other) {
 
         Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
@@ -58,9 +63,9 @@ void JSCTaskScheduler::onCancelPendingWork(Ticket ticket)
 {
     auto& scheduler = WebCore::clientData(getVM(ticket))->deferredWorkTimer;
 
-    LockHolder holder { scheduler.m_lock };
-    bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([ticket](const auto& pendingTicket) {
-        return pendingTicket.get() == ticket;
+    Locker<Lock> holder { scheduler.m_lock };
+    bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([ticket](auto pendingTicket) {
+        return pendingTicket.ptr() == ticket;
     });
 
     if (isKeepingEventLoopAlive) {
@@ -68,15 +73,15 @@ void JSCTaskScheduler::onCancelPendingWork(Ticket ticket)
         JSC::VM& vm = getVM(ticket);
         Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm)->bunVM, -1);
     } else {
-        scheduler.m_pendingTicketsOther.removeIf([ticket](const auto& pendingTicket) {
-            return pendingTicket.get() == ticket;
+        scheduler.m_pendingTicketsOther.removeIf([ticket](auto pendingTicket) {
+            return pendingTicket.ptr() == ticket;
         });
     }
 }
 
 static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDeferredWorkTask* job)
 {
-    LockHolder holder { scheduler.m_lock };
+    Locker<Lock> holder { scheduler.m_lock };
     auto pendingTicket = scheduler.m_pendingTicketsKeepingEventLoopAlive.take(job->ticket);
     if (!pendingTicket) {
         pendingTicket = scheduler.m_pendingTicketsOther.take(job->ticket);

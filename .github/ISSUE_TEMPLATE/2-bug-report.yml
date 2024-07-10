@@ -1,6 +1,8 @@
 name: 🐛 Bug Report
 description: Report an issue that should be fixed
-labels: [bug]
+labels:
+  - bug
+  - needs triage
 body:
   - type: markdown
     attributes:
@@ -10,7 +12,11 @@ body:
         If you need help or support using Bun, and are not reporting a bug, please
         join our [Discord](https://discord.gg/CXdq2DP29u) server, where you can ask questions in the [`#help`](https://discord.gg/32EtH6p7HN) forum.
 
+        Make sure you are running the [latest](https://bun.sh/docs/installation#upgrading) version of Bun.
+        The bug you are experiencing may already have been fixed.
+
         Please try to include as much information as possible.
+
   - type: input
     attributes:
       label: What version of Bun is running?

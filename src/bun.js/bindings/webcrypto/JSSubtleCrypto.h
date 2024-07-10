@@ -60,6 +60,7 @@ public:
     }
     static JSC::GCClient::IsoSubspace* subspaceForImpl(JSC::VM& vm);
     static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
 protected:
     JSSubtleCrypto(JSC::Structure*, JSDOMGlobalObject&, Ref<SubtleCrypto>&&);
 
@@ -68,7 +69,7 @@ protected:
 
 class JSSubtleCryptoOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
@@ -96,8 +97,7 @@ String convertEnumerationToString(SubtleCrypto::KeyFormat);
 template<> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, SubtleCrypto::KeyFormat);
 
 template<> std::optional<SubtleCrypto::KeyFormat> parseEnumeration<SubtleCrypto::KeyFormat>(JSC::JSGlobalObject&, JSC::JSValue);
-template<> const char* expectedEnumerationValues<SubtleCrypto::KeyFormat>();
-
+template<> ASCIILiteral expectedEnumerationValues<SubtleCrypto::KeyFormat>();
 
 } // namespace WebCore
 

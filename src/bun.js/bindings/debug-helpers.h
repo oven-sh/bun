@@ -1,6 +1,6 @@
 #include "root.h"
 
-#include "JavaScriptCore/InspectorDebuggerAgent.h"
+#include <JavaScriptCore/InspectorDebuggerAgent.h>
 
 namespace JSC {
 Inspector::InspectorDebuggerAgent* debuggerAgent(JSC::JSGlobalObject* globalObject)

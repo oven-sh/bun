@@ -1,14 +1,14 @@
 #include "root.h"
 #include "ZigGeneratedClasses.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/InternalFunction.h"
-#include "JavaScriptCore/FunctionPrototype.h"
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/InternalFunction.h>
+#include <JavaScriptCore/FunctionPrototype.h>
 #include "JSDOMFile.h"
 
 using namespace JSC;
 
-extern "C" void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
-extern "C" bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
+extern "C" SYSV_ABI void* JSDOMFile__construct(JSC::JSGlobalObject*, JSC::CallFrame* callframe);
+extern "C" SYSV_ABI bool JSDOMFile__hasInstance(EncodedJSValue, JSC::JSGlobalObject*, EncodedJSValue);
 
 // TODO: make this inehrit from JSBlob instead of InternalFunction
 // That will let us remove this hack for [Symbol.hasInstance] and fix the prototype chain.
@@ -17,7 +17,7 @@ class JSDOMFile : public JSC::InternalFunction {
 
 public:
     JSDOMFile(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, nullptr, construct)
+        : Base(vm, structure, call, construct)
     {
     }
 
@@ -43,7 +43,8 @@ public:
     static JSDOMFile* create(JSC::VM& vm, JSGlobalObject* globalObject)
     {
         auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-        auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, createStructure(vm, globalObject, zigGlobal->functionPrototype()));
+        auto structure = createStructure(vm, globalObject, zigGlobal->functionPrototype());
+        auto* object = new (NotNull, JSC::allocateCell<JSDOMFile>(vm)) JSDOMFile(vm, structure);
         object->finishCreation(vm);
 
         // This is not quite right. But we'll fix it if someone files an issue about it.
@@ -62,7 +63,7 @@ public:
         return JSDOMFile__hasInstance(JSValue::encode(object), globalObject, JSValue::encode(value));
     }
 
-    static EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
     {
         Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
         JSC::VM& vm = globalObject->vm();
@@ -90,6 +91,13 @@ public:
 
         return JSValue::encode(
             WebCore::JSBlob::create(vm, globalObject, structure, ptr));
+    }
+
+    static JSC_HOST_CALL_ATTRIBUTES EncodedJSValue call(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+    {
+        auto scope = DECLARE_THROW_SCOPE(lexicalGlobalObject->vm());
+        throwTypeError(lexicalGlobalObject, scope, "Class constructor File cannot be invoked without 'new'"_s);
+        return {};
     }
 };
 

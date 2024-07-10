@@ -141,7 +141,7 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
     , m_identifier(local)
     , m_remoteIdentifier(remote)
 {
-    LOG(MessagePorts, "Created MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, ProcessIdent::identifier().toUInt64());
+    // LOG(MessagePorts, "Created MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, ProcessIdent::identifier().toUInt64());
 
     Locker locker { allMessagePortsLock };
     allMessagePorts().set(m_identifier, this);
@@ -157,7 +157,7 @@ MessagePort::MessagePort(ScriptExecutionContext& scriptExecutionContext, const M
 
 MessagePort::~MessagePort()
 {
-    LOG(MessagePorts, "Destroyed MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, ProcessIdent::identifier().toUInt64());
+    // LOG(MessagePorts, "Destroyed MessagePort %s (%p) in process %" PRIu64, m_identifier.logString().utf8().data(), this, ProcessIdent::identifier().toUInt64());
 
     ASSERT(allMessagePortsLock.isLocked());
 
@@ -175,7 +175,7 @@ void MessagePort::entangle()
 
 ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSValue messageValue, StructuredSerializeOptions&& options)
 {
-    LOG(MessagePorts, "Attempting to post message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
+    // LOG(MessagePorts, "Attempting to post message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
 
     Vector<RefPtr<MessagePort>> ports;
     auto messageData = SerializedScriptValue::create(state, messageValue, WTFMove(options.transfer), ports, SerializationForStorage::No, SerializationContext::WorkerPostMessage);
@@ -202,7 +202,7 @@ ExceptionOr<void> MessagePort::postMessage(JSC::JSGlobalObject& state, JSC::JSVa
 
     MessageWithMessagePorts message { messageData.releaseReturnValue(), WTFMove(transferredPorts) };
 
-    LOG(MessagePorts, "Actually posting message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
+    // LOG(MessagePorts, "Actually posting message to port %s (to be received by port %s)", m_identifier.logString().utf8().data(), m_remoteIdentifier.logString().utf8().data());
 
     ScriptExecutionContextIdentifier contextId = contextIdForMessagePortId(m_remoteIdentifier);
 
@@ -280,13 +280,13 @@ void MessagePort::dispatchMessages()
     auto messagesTakenHandler = [this, protectedThis = Ref { *this }](Vector<MessageWithMessagePorts>&& messages, CompletionHandler<void()>&& completionCallback) mutable {
         auto scopeExit = makeScopeExit(WTFMove(completionCallback));
 
-        LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", m_identifier.logString().utf8().data(), this, messages.size());
+        // LOG(MessagePorts, "MessagePort %s (%p) dispatching %zu messages", m_identifier.logString().utf8().data(), this, messages.size());
 
         auto* context = scriptExecutionContext();
         if (!context || !context->jsGlobalObject())
             return;
 
-        ASSERT(context->isContextThread());
+        // ASSERT(context->isContextThread());
 
         // bool contextIsWorker = is<WorkerGlobalScope>(*context);
         for (auto& message : messages) {
@@ -382,7 +382,7 @@ ExceptionOr<Vector<TransferredMessagePort>> MessagePort::disentanglePorts(Vector
 
 Vector<RefPtr<MessagePort>> MessagePort::entanglePorts(ScriptExecutionContext& context, Vector<TransferredMessagePort>&& transferredPorts)
 {
-    LOG(MessagePorts, "Entangling %zu transferred ports to ScriptExecutionContext %s (%p)", transferredPorts.size(), context.url().string().utf8().data(), &context);
+    // LOG(MessagePorts, "Entangling %zu transferred ports to ScriptExecutionContext %s (%p)", transferredPorts.size(), context.url().string().utf8().data(), &context);
 
     if (transferredPorts.isEmpty())
         return {};

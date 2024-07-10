@@ -1,7 +1,8 @@
 #pragma once
 
 #include "root.h"
-#include "wtf/Deque.h"
+#include <wtf/Deque.h>
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -46,15 +47,15 @@ public:
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
     static void destroy(JSCell*) {}
 
-    size_t length() { return m_deque.size(); }
+    inline size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
-        m_deque.append(WriteBarrier<Unknown>());
+        m_deque.append(WriteBarrier<JSC::Unknown>());
         m_deque.last().set(vm, this, v);
     }
     void unshift(JSC::VM& vm, JSC::JSValue v)
     {
-        m_deque.prepend(WriteBarrier<Unknown>());
+        m_deque.prepend(WriteBarrier<JSC::Unknown>());
         m_deque.first().set(vm, this, v);
     }
     JSC::JSValue shift()
@@ -83,7 +84,7 @@ public:
     JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, size_t);
 
 private:
-    Deque<WriteBarrier<Unknown>> m_deque;
+    Deque<WriteBarrier<JSC::Unknown>> m_deque;
 };
 
 class JSBufferListPrototype : public JSC::JSNonFinalObject {
@@ -100,6 +101,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSBufferListPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
@@ -143,5 +145,7 @@ private:
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype);
 };
+
+JSValue getBufferList(Zig::GlobalObject* globalObject);
 
 }

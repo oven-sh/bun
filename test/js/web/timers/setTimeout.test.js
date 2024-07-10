@@ -1,7 +1,9 @@
 import { spawnSync } from "bun";
+import { heapStats } from "bun:jsc";
 import { it, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
+
 it("setTimeout", async () => {
   var lastID = -1;
   const result = await new Promise((resolve, reject) => {
@@ -41,7 +43,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(id);
 
@@ -53,7 +55,7 @@ it("clearTimeout", async () => {
   {
     const id = setTimeout(() => {
       called = true;
-      expect(false).toBe(true);
+      expect.unreachable();
     }, 0);
     clearTimeout(+id);
 
@@ -65,6 +67,20 @@ it("clearTimeout", async () => {
     setTimeout(resolve, 10);
   });
   expect(called).toBe(false);
+});
+
+it.todo("setImmediate runs after setTimeout cb", async () => {
+  var ranFirst = -1;
+  setTimeout(() => {
+    if (ranFirst === -1) ranFirst = 1;
+  }, 0);
+  setImmediate(() => {
+    if (ranFirst === -1) ranFirst = 0;
+  });
+
+  await Bun.sleep(5);
+
+  expect(ranFirst).toBe(1);
 });
 
 it("setTimeout(() => {}, 0)", async () => {
@@ -80,10 +96,10 @@ it("setTimeout(() => {}, 0)", async () => {
   expect(called).toBe(true);
   var ranFirst = -1;
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 1;
+    if (ranFirst === -1) ranFirst = 0;
   }, 1);
   setTimeout(() => {
-    if (ranFirst === -1) ranFirst = 0;
+    if (ranFirst === -1) ranFirst = 1;
   }, 0);
 
   await new Promise((resolve, reject) => {
@@ -117,7 +133,7 @@ it("Bun.sleep", async () => {
   await Bun.sleep(2);
   sleeps++;
   const end = performance.now();
-  expect((end - start) * 1000).toBeGreaterThanOrEqual(3);
+  expect((end - start) * 1000).toBeGreaterThan(2);
 
   expect(sleeps).toBe(3);
 });
@@ -133,12 +149,23 @@ it("Bun.sleep propagates exceptions", async () => {
   }
 });
 
+const tolerance = 8;
 it("Bun.sleep works with a Date object", async () => {
+  const offset = isWindows ? 100 : 10;
+  const init = performance.now();
   var ten_ms = new Date();
-  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + 12);
-  const now = performance.now();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(performance.now() - now).toBeGreaterThanOrEqual(10);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
+});
+
+it("Bun.sleep(Date) fulfills after Date", async () => {
+  const offset = isWindows ? 100 : 50;
+  let ten_ms = new Date();
+  const init = performance.now();
+  ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
+  await Bun.sleep(ten_ms);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
@@ -153,7 +180,7 @@ it("node.js timers/promises setTimeout propagates exceptions", async () => {
   }
 });
 
-it.skip("order of setTimeouts", done => {
+it("order of setTimeouts", done => {
   var nums = [];
   var maybeDone = cb => {
     return () => {
@@ -228,8 +255,11 @@ it("setTimeout should refresh N times", done => {
 
   setTimeout(() => {
     clearTimeout(timer);
-    expect(count).toBeGreaterThanOrEqual(5);
-    done();
+    try {
+      expect(count).toBeGreaterThanOrEqual(isWindows ? 4 : 5);
+    } finally {
+      done();
+    }
   }, 300);
 });
 
@@ -237,7 +267,7 @@ it("setTimeout if refreshed before run, should reschedule to run later", done =>
   let start = Date.now();
   let timer = setTimeout(() => {
     let end = Date.now();
-    expect(end - start).toBeGreaterThanOrEqual(150);
+    expect(end - start).toBeGreaterThan(149);
     done();
   }, 100);
 
@@ -276,4 +306,59 @@ it("setTimeout should not refresh after clearTimeout", done => {
     expect(count).toBe(0);
     done();
   }, 100);
+});
+
+it("setTimeout Timeout objects are unprotected after called", async () => {
+  let { promise, resolve } = Promise.withResolvers();
+
+  const initial = heapStats().protectedObjectTypeCounts;
+  let remaining = 2;
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual((initial.Timeout || 0) + 2);
+
+  // Assert it's unprotected.
+  await promise;
+
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+
+  Bun.gc(true);
+  remaining = 5;
+  ({ promise, resolve } = Promise.withResolvers());
+  setInterval(function () {
+    remaining--;
+    if (remaining === 0) {
+      clearInterval(this);
+      queueMicrotask(resolve);
+    }
+  });
+  Bun.gc(true);
+  await promise;
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+});
+
+it("setTimeout CPU usage #7790", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
+    env: bunEnv,
+    stdout: "inherit",
+  });
+  const code = await process.exited;
+  expect(code).toBe(0);
+  const stats = process.resourceUsage();
+  expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+});
+
+it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+});
+
+it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
 });

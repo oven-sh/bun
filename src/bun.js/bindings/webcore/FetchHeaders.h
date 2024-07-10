@@ -69,6 +69,11 @@ public:
         return m_headers.size();
     }
 
+    inline uint32_t sizeAfterJoiningSetCookieHeader()
+    {
+        return m_headers.commonHeaders().size() + m_headers.uncommonHeaders().size() + (m_headers.getSetCookieHeaders().size() > 0);
+    }
+
     String fastGet(HTTPHeaderName name) const { return m_headers.get(name); }
     bool fastHas(HTTPHeaderName name) const { return m_headers.contains(name); }
     bool fastRemove(HTTPHeaderName name) { return m_headers.remove(name); }
@@ -79,6 +84,7 @@ public:
     class Iterator {
     public:
         explicit Iterator(FetchHeaders&);
+        Iterator(FetchHeaders&, bool lowerCaseKeys);
         std::optional<KeyValuePair<String, String>> next();
 
     private:
@@ -87,8 +93,12 @@ public:
         Vector<String> m_keys;
         uint64_t m_updateCounter { 0 };
         size_t m_cookieIndex { 0 };
+        bool m_lowerCaseKeys { true };
     };
-    Iterator createIterator() { return Iterator { *this }; }
+    Iterator createIterator(bool lowerCaseKeys = true)
+    {
+        return Iterator(*this, lowerCaseKeys);
+    }
 
     void setInternalHeaders(HTTPHeaderMap&& headers) { m_headers = WTFMove(headers); }
     const HTTPHeaderMap& internalHeaders() const { return m_headers; }

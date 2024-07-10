@@ -1,14 +1,17 @@
 #include "InternalModuleRegistry.h"
 
 #include "ZigGlobalObject.h"
-#include "JavaScriptCore/BuiltinUtils.h"
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/LazyProperty.h"
-#include "JavaScriptCore/LazyPropertyInlines.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/BuiltinUtils.h>
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/LazyProperty.h>
+#include <JavaScriptCore/LazyPropertyInlines.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <JavaScriptCore/JSModuleLoader.h>
+
+#include <utility>
 
 #include "InternalModuleRegistryConstants.h"
+#include "wtf/Forward.h"
 
 namespace Bun {
 
@@ -17,7 +20,7 @@ extern "C" void ByteRangeMapping__generate(BunString sourceURL, BunString code, 
 
 static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 {
-#ifdef BUN_DEBUG
+#if ASSERT_ENABLED
     bool isCodeCoverageEnabled = !!vm.controlFlowProfiler();
     bool shouldGenerateCodeCoverage = isCodeCoverageEnabled && BunTest__shouldGenerateCodeCoverage(Bun::toString(code.provider()->sourceURL()));
     if (shouldGenerateCodeCoverage) {
@@ -33,7 +36,9 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 #define INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, SOURCE, moduleName, urlString) \
     auto throwScope = DECLARE_THROW_SCOPE(vm);                                              \
     auto&& origin = SourceOrigin(WTF::URL(urlString));                                      \
-    SourceCode source = JSC::makeSource(SOURCE, origin, moduleName);                        \
+    SourceCode source = JSC::makeSource(SOURCE, origin,                                     \
+        JSC::SourceTaintedOrigin::Untainted,                                                \
+        moduleName);                                                                        \
     maybeAddCodeCoverage(vm, source);                                                       \
     JSFunction* func                                                                        \
         = JSFunction::create(                                                               \
@@ -43,7 +48,8 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
                 Identifier(),                                                               \
                 ImplementationVisibility::Public,                                           \
                 ConstructorKind::None,                                                      \
-                ConstructAbility::CannotConstruct)                                          \
+                ConstructAbility::CannotConstruct,                                          \
+                InlineAttribute::None)                                                      \
                 ->link(vm, nullptr, source),                                                \
             static_cast<JSC::JSGlobalObject*>(globalObject));                               \
                                                                                             \
@@ -62,7 +68,6 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     return result;
 
 #if BUN_DEBUG
-#include "../../src/js/out/DebugPath.h"
 #define ASSERT_INTERNAL_MODULE(result, moduleName)                                                        \
     if (!result || !result.isCell() || !jsDynamicCast<JSObject*>(result)) {                               \
         printf("Expected \"%s\" to export a JSObject. Bun is going to crash.", moduleName.utf8().data()); \
@@ -70,25 +75,23 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
-    WTF::String moduleName,
+    const WTF::String& moduleName,
     WTF::String fileBase,
-    WTF::String fallback,
-    WTF::String urlString)
+    const WTF::String& urlString)
 {
-    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "modules_dev/"_s, fileBase);
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
         INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);
     } else {
-        printf("bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
-               "Please run `make js` to rebundle these builtins.\n",
+        printf("\nFATAL: bun-debug failed to load bundled version of \"%s\" at \"%s\" (was it deleted?)\n"
+               "Please re-compile Bun to continue.\n\n",
             moduleName.utf8().data(), file.utf8().data());
-        // Fallback to embedded source
-        INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, fallback, moduleName, urlString);
+        CRASH();
     }
 }
 #define INTERNAL_MODULE_REGISTRY_GENERATE(globalObject, vm, moduleId, filename, SOURCE, urlString) \
-    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, SOURCE, urlString)
+    return initializeInternalModuleFromDisk(globalObject, vm, moduleId, filename, urlString)
 #else
 
 #define ASSERT_INTERNAL_MODULE(result, moduleName) \
@@ -118,16 +121,23 @@ DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, InternalModuleRegistry);
 InternalModuleRegistry* InternalModuleRegistry::create(VM& vm, Structure* structure)
 {
     InternalModuleRegistry* registry = new (NotNull, allocateCell<InternalModuleRegistry>(vm)) InternalModuleRegistry(vm, structure);
-    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
-        registry->internalField(static_cast<Field>(i))
-            .set(vm, registry, jsUndefined());
-    }
+    registry->finishCreation(vm);
     return registry;
+}
+
+void InternalModuleRegistry::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+
+    for (uint8_t i = 0; i < BUN_INTERNAL_MODULE_COUNT; i++) {
+        this->internalField(static_cast<Field>(i)).set(vm, this, jsUndefined());
+    }
 }
 
 Structure* InternalModuleRegistry::createStructure(VM& vm, JSGlobalObject* globalObject)
 {
-    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 48);
+    return Structure::create(vm, globalObject, jsNull(), TypeInfo(InternalFieldTupleType, StructureFlags), info(), 0, 0);
 }
 
 JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, Field id)
@@ -140,7 +150,7 @@ JSValue InternalModuleRegistry::requireId(JSGlobalObject* globalObject, VM& vm, 
     return value;
 }
 
-#include "../../../src/js/out/InternalModuleRegistry+createInternalModuleById.h"
+#include "InternalModuleRegistry+createInternalModuleById.h"
 
 // This is called like @getInternalField(@internalModuleRegistry, 1) ?? @createInternalModuleById(1)
 // so we want to write it to the internal field when loaded.
@@ -150,7 +160,7 @@ JSC_DEFINE_HOST_FUNCTION(InternalModuleRegistry::jsCreateInternalModuleById, (JS
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto id = callframe->argument(0).toUInt32(lexicalGlobalObject);
 
-    auto registry = static_cast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
+    auto registry = jsCast<Zig::GlobalObject*>(lexicalGlobalObject)->internalModuleRegistry();
     auto mod = registry->createInternalModuleById(lexicalGlobalObject, vm, static_cast<Field>(id));
     RETURN_IF_EXCEPTION(throwScope, {});
     registry->internalField(static_cast<Field>(id)).set(vm, registry, mod);

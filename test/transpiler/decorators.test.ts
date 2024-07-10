@@ -330,7 +330,11 @@ test("parameter decorators", () => {
   }
 
   class Maybe {
-    constructor(@m1 private x: number, @m2 public y: boolean, @m3 protected z: string) {}
+    constructor(
+      @m1 private x: number,
+      @m2 public y: boolean,
+      @m3 protected z: string,
+    ) {}
   }
 
   function m1(target, propertyKey, index) {
@@ -712,7 +716,9 @@ test("decorators with different property key types", () => {
   function d1(x) {
     return function (target, propertyKey) {
       expect(propertyKey).toBeDefined();
-      expect(propertyKey).toBe(x);
+
+      // If Reflect.decorate is defined, propertyKey will be stringified
+      expect(String(propertyKey)).toBe(String(x));
     };
   }
   function foo(x, y, z) {
@@ -727,7 +733,7 @@ test("decorators with different property key types", () => {
       "string" = 30;
       @d1("string method")
       "string method"() {}
-      @d1(12e3)
+      @d1(12000)
       12e3 = "number key";
       @d1(12e3 + 1)
       [12e3 + 1]() {}
@@ -881,7 +887,10 @@ describe("constructor statements", () => {
     }
 
     class A extends B {
-      constructor(value: number, public v: string = "test") {
+      constructor(
+        value: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
       }
@@ -907,7 +916,11 @@ describe("constructor statements", () => {
 
     class A extends B {
       b: number;
-      constructor(value: number, @d1 b: number, public v: string = "test") {
+      constructor(
+        value: number,
+        @d1 b: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
         expect(this.v).toBe("test");
@@ -944,7 +957,11 @@ describe("constructor statements", () => {
 
     class A {
       l: number;
-      constructor(protected u: string, @d1 l: number = 3, @d2 public k: number = 4) {
+      constructor(
+        protected u: string,
+        @d1 l: number = 3,
+        @d2 public k: number = 4,
+      ) {
         this.l = l;
       }
     }
@@ -978,7 +995,10 @@ describe("constructor statements", () => {
     };
 
     const A = class a extends B {
-      constructor(value: number, public v: string = "test") {
+      constructor(
+        value: number,
+        public v: string = "test",
+      ) {
         const newValue = value * 10;
         super(newValue);
       }
@@ -1001,13 +1021,11 @@ test("export default class works (anonymous name)", () => {
 
 test("decorator and declare", () => {
   let counter = 0;
-  function d1(t) {
-    t();
+  function d1() {
+    counter++;
   }
   class A {
-    @d1(() => {
-      counter++;
-    })
+    @d1
     declare a: number;
 
     m() {

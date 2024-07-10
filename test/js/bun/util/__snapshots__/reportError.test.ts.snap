@@ -2,14 +2,15 @@
 
 exports[`reportError 1`] = `
 "1 | reportError(new Error("reportError Test!"));
-               ^
+                ^
 error: reportError Test!
-      at /reportError.ts:1:12
+      at /reportError.ts:1:13
 error: true
 error: false
 error: null
 error: 123
 error: Infinity
+error: NaN
 error: NaN
 error
 error

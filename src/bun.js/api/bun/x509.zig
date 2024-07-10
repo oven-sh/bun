@@ -2,7 +2,7 @@ const BoringSSL = bun.BoringSSL;
 const bun = @import("root").bun;
 const ZigString = JSC.ZigString;
 const std = @import("std");
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
@@ -56,17 +56,17 @@ fn x509GetNameObject(globalObject: *JSGlobalObject, name: ?*BoringSSL.X509_NAME)
         // accurately.
         if (result.getTruthy(globalObject, name_slice)) |value| {
             if (value.jsType().isArray()) {
-                value.push(globalObject, JSC.ZigString.fromUTF8(value_slice).toValueGC(globalObject));
+                value.push(globalObject, JSC.ZigString.fromUTF8(value_slice).toJS(globalObject));
             } else {
                 const prop_name = JSC.ZigString.fromUTF8(name_slice);
                 const array = JSValue.createEmptyArray(globalObject, 2);
                 array.putIndex(globalObject, 0, value);
-                array.putIndex(globalObject, 1, JSC.ZigString.fromUTF8(value_slice).toValueGC(globalObject));
+                array.putIndex(globalObject, 1, JSC.ZigString.fromUTF8(value_slice).toJS(globalObject));
                 result.put(globalObject, &prop_name, array);
             }
         } else {
             const prop_name = JSC.ZigString.fromUTF8(name_slice);
-            result.put(globalObject, &prop_name, JSC.ZigString.fromUTF8(value_slice).toValueGC(globalObject));
+            result.put(globalObject, &prop_name, JSC.ZigString.fromUTF8(value_slice).toJS(globalObject));
         }
     }
     return result;
@@ -273,7 +273,8 @@ fn x509PrintGeneralName(out: *BoringSSL.BIO, name: *BoringSSL.GENERAL_NAME) bool
         // instead always print its numeric representation.
         var oline: [256]u8 = undefined;
         _ = BoringSSL.OBJ_obj2txt(&oline, @sizeOf(@TypeOf(oline)), name.d.rid, 1);
-        _ = BoringSSL.BIO_printf(out, "Registered ID:%s", &oline);
+        // Workaround for https://github.com/ziglang/zig/issues/16197
+        _ = BoringSSL.BIO_printf(out, "Registered ID:%s", @as([*]const u8, &oline));
     } else if (name.name_type == .GEN_X400) {
         _ = BoringSSL.BIO_printf(out, "X400Name:<unsupported>");
     } else if (name.name_type == .GEN_EDIPARTY) {
@@ -301,7 +302,8 @@ fn x509InfoAccessPrint(out: *BoringSSL.BIO, ext: *BoringSSL.X509_EXTENSION) bool
                 }
                 var tmp: [80]u8 = undefined;
                 _ = BoringSSL.i2t_ASN1_OBJECT(&tmp, @sizeOf(@TypeOf(tmp)), desc.method);
-                _ = BoringSSL.BIO_printf(out, "%s - ", &tmp);
+                // Workaround for https://github.com/ziglang/zig/issues/16197
+                _ = BoringSSL.BIO_printf(out, "%s - ", @as([*]const u8, &tmp));
 
                 if (!x509PrintGeneralName(out, desc.location)) {
                     return false;
@@ -352,7 +354,7 @@ fn x509GetSubjectAltNameString(globalObject: *JSGlobalObject, bio: *BoringSSL.BI
         return JSValue.jsNull();
     }
 
-    return JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
+    return JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject);
 }
 
 fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, cert: *BoringSSL.X509) JSValue {
@@ -366,7 +368,7 @@ fn x509GetInfoAccessString(globalObject: *JSGlobalObject, bio: *BoringSSL.BIO, c
         return JSValue.jsNull();
     }
 
-    return JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
+    return JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject);
 }
 
 fn addFingerprintDigest(md: []const u8, mdSize: c_uint, fingerprint: []u8) usize {
@@ -392,7 +394,7 @@ fn getFingerprintDigest(cert: *BoringSSL.X509, method: *const BoringSSL.EVP_MD, 
 
     if (BoringSSL.X509_digest(cert, method, @as([*c]u8, @ptrCast(&md)), &md_size) != 0) {
         const length = addFingerprintDigest(&md, md_size, &fingerprint);
-        return JSC.ZigString.fromUTF8(fingerprint[0..length]).toValueGC(globalObject);
+        return JSC.ZigString.fromUTF8(fingerprint[0..length]).toJS(globalObject);
     }
     return JSValue.jsUndefined();
 }
@@ -407,7 +409,7 @@ fn getSerialNumber(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue
                 const slice = data[0..bun.len(data)];
                 // BoringSSL prints the hex value of the serialNumber in lower case, but we need upper case
                 toUpper(slice);
-                return JSC.ZigString.fromUTF8(slice).toValueGC(globalObject);
+                return JSC.ZigString.fromUTF8(slice).toJS(globalObject);
             }
         }
     }
@@ -419,7 +421,7 @@ fn getRawDERCertificate(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JS
     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
     var buffer_ptr = buffer.asArrayBuffer(globalObject).?.ptr;
     const result_size = BoringSSL.i2d_X509(cert, &buffer_ptr);
-    std.debug.assert(result_size == size);
+    bun.assert(result_size == size);
     return buffer;
 }
 
@@ -471,13 +473,13 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                 const slice = bio.slice();
                 // BoringSSL prints the hex value of the modulus in lower case, but we need upper case
                 toUpper(slice);
-                const modulus = JSC.ZigString.fromUTF8(slice).toValueGC(globalObject);
+                const modulus = JSC.ZigString.fromUTF8(slice).toJS(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
                 result.put(globalObject, ZigString.static("modulus"), modulus);
 
                 const exponent_word = BoringSSL.BN_get_word(e);
                 _ = BoringSSL.BIO_printf(bio, "0x" ++ BoringSSL.BN_HEX_FMT1, exponent_word);
-                const exponent = JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject);
+                const exponent = JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject);
                 _ = BoringSSL.BIO_reset(bio);
                 result.put(globalObject, ZigString.static("exponent"), exponent);
 
@@ -518,10 +520,10 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     }
 
                     var buffer = JSValue.createBufferFromLength(globalObject, @as(usize, @intCast(size)));
-                    var buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
+                    const buffer_ptr = @as([*c]u8, @ptrCast(buffer.asArrayBuffer(globalObject).?.ptr));
 
                     const result_size = BoringSSL.EC_POINT_point2oct(group, point, form, buffer_ptr, size, null);
-                    std.debug.assert(result_size == size);
+                    bun.assert(result_size == size);
                     result.put(globalObject, ZigString.static("pubkey"), buffer);
                 } else {
                     result.put(globalObject, ZigString.static("pubkey"), JSValue.jsUndefined());
@@ -532,11 +534,11 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
                     // Curve is well-known, get its OID and NIST nick-name (if it has one).
                     const asn1Curve_str = BoringSSL.OBJ_nid2sn(nid);
                     if (asn1Curve_str != null) {
-                        result.put(globalObject, ZigString.static("asn1Curve"), JSC.ZigString.fromUTF8(asn1Curve_str[0..bun.len(asn1Curve_str)]).toValueGC(globalObject));
+                        result.put(globalObject, ZigString.static("asn1Curve"), JSC.ZigString.fromUTF8(asn1Curve_str[0..bun.len(asn1Curve_str)]).toJS(globalObject));
                     }
                     const nistCurve_str = BoringSSL.EC_curve_nid2nist(nid);
                     if (nistCurve_str != null) {
-                        result.put(globalObject, ZigString.static("nistCurve"), JSC.ZigString.fromUTF8(nistCurve_str[0..bun.len(nistCurve_str)]).toValueGC(globalObject));
+                        result.put(globalObject, ZigString.static("nistCurve"), JSC.ZigString.fromUTF8(nistCurve_str[0..bun.len(nistCurve_str)]).toJS(globalObject));
                     }
                 }
             }
@@ -544,11 +546,11 @@ pub fn toJS(cert: *BoringSSL.X509, globalObject: *JSGlobalObject) JSValue {
         else => {},
     }
     _ = BoringSSL.ASN1_TIME_print(bio, BoringSSL.X509_get0_notBefore(cert));
-    result.put(globalObject, ZigString.static("valid_from"), JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject));
+    result.put(globalObject, ZigString.static("valid_from"), JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject));
     _ = BoringSSL.BIO_reset(bio);
 
     _ = BoringSSL.ASN1_TIME_print(bio, BoringSSL.X509_get0_notAfter(cert));
-    result.put(globalObject, ZigString.static("valid_to"), JSC.ZigString.fromUTF8(bio.slice()).toValueGC(globalObject));
+    result.put(globalObject, ZigString.static("valid_to"), JSC.ZigString.fromUTF8(bio.slice()).toJS(globalObject));
     _ = BoringSSL.BIO_reset(bio);
 
     result.put(globalObject, ZigString.static("fingerprint"), getFingerprintDigest(cert, BoringSSL.EVP_sha1(), globalObject));

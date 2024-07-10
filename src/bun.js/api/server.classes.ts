@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 function generate(name) {
   return define({
@@ -20,8 +20,16 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
+      "@@dispose": {
+        fn: "dispose",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
+        length: 1,
+      },
+      requestIP: {
+        fn: "doRequestIP",
         length: 1,
       },
       port: {
@@ -37,8 +45,22 @@ function generate(name) {
       pendingWebSockets: {
         getter: "getPendingWebSockets",
       },
+      ref: {
+        fn: "doRef",
+      },
+      unref: {
+        fn: "doUnref",
+      },
       hostname: {
         getter: "getHostname",
+        cache: true,
+      },
+      address: {
+        getter: "getAddress",
+        cache: true,
+      },
+      url: {
+        getter: "getURL",
         cache: true,
       },
       protocol: {
@@ -71,18 +93,28 @@ export default [
       sendText: {
         fn: "sendText",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSString", "bool"],
-        },
+        // ASSERTION FAILED: m_data[index].lockCount
+        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
+        // 1   0x102740124 WTFCrash
+        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
+        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
+        // DOMJIT: {
+        //   returns: "int",
+        //   args: ["JSString", "bool"],
+        // },
       },
       sendBinary: {
         fn: "sendBinary",
         length: 2,
-        DOMJIT: {
-          returns: "int",
-          args: ["JSUint8Array", "bool"],
-        },
+        // ASSERTION FAILED: m_data[index].lockCount
+        // /Users/jarred/actions-runner/_work/WebKit/WebKit/Source/JavaScriptCore/dfg/DFGRegisterBank.h(204) : void JSC::DFG::RegisterBank<JSC::GPRInfo>::unlock(RegID) [BankInfo = JSC::GPRInfo]
+        // 1   0x102740124 WTFCrash
+        // 3   0x103076bac JSC::MacroAssemblerARM64::add64(JSC::AbstractMacroAssembler<JSC::ARM64Assembler>::TrustedImm64, JSC::ARM64Registers::RegisterID, JSC::ARM64Registers::RegisterID)
+        // 4   0x10309a2d0 JSC::DFG::SpeculativeJIT::compileCallDOM(JSC::DFG::Node*)::$_0::operator()(JSC::DFG::Edge) const
+        // DOMJIT: {
+        //   returns: "int",
+        //   args: ["JSUint8Array", "bool"],
+        // },
       },
       publishText: {
         fn: "publishText",

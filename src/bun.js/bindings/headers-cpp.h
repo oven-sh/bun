@@ -16,7 +16,7 @@
 
 #ifndef INCLUDED_JavaScriptCore_JSObject_h
 #define INCLUDED_JavaScriptCore_JSObject_h
-#include "JavaScriptCore/JSObject.h"
+#include <JavaScriptCore/JSObject.h>
 #endif
 
 extern "C" const size_t JSC__JSObject_object_size_ = sizeof(JSC::JSObject);
@@ -40,7 +40,7 @@ extern "C" const size_t WebCore__FetchHeaders_object_align_ = alignof(WebCore::F
 
 #ifndef INCLUDED_JavaScriptCore_JSCell_h
 #define INCLUDED_JavaScriptCore_JSCell_h
-#include "JavaScriptCore/JSCell.h"
+#include <JavaScriptCore/JSCell.h>
 #endif
 
 extern "C" const size_t JSC__JSCell_object_size_ = sizeof(JSC::JSCell);
@@ -48,7 +48,7 @@ extern "C" const size_t JSC__JSCell_object_align_ = alignof(JSC::JSCell);
 
 #ifndef INCLUDED_JavaScriptCore_JSString_h
 #define INCLUDED_JavaScriptCore_JSString_h
-#include "JavaScriptCore/JSString.h"
+#include <JavaScriptCore/JSString.h>
 #endif
 
 extern "C" const size_t JSC__JSString_object_size_ = sizeof(JSC::JSString);
@@ -56,7 +56,7 @@ extern "C" const size_t JSC__JSString_object_align_ = alignof(JSC::JSString);
 
 #ifndef INCLUDED_JavaScriptCore_JSModuleLoader_h
 #define INCLUDED_JavaScriptCore_JSModuleLoader_h
-#include "JavaScriptCore/JSModuleLoader.h"
+#include <JavaScriptCore/JSModuleLoader.h>
 #endif
 
 extern "C" const size_t JSC__JSModuleLoader_object_size_ = sizeof(JSC::JSModuleLoader);
@@ -72,7 +72,7 @@ extern "C" const size_t WebCore__AbortSignal_object_align_ = alignof(WebCore::Ab
 
 #ifndef INCLUDED_JavaScriptCore_JSPromise_h
 #define INCLUDED_JavaScriptCore_JSPromise_h
-#include "JavaScriptCore/JSPromise.h"
+#include <JavaScriptCore/JSPromise.h>
 #endif
 
 extern "C" const size_t JSC__JSPromise_object_size_ = sizeof(JSC::JSPromise);
@@ -80,7 +80,7 @@ extern "C" const size_t JSC__JSPromise_object_align_ = alignof(JSC::JSPromise);
 
 #ifndef INCLUDED_JavaScriptCore_JSInternalPromise_h
 #define INCLUDED_JavaScriptCore_JSInternalPromise_h
-#include "JavaScriptCore/JSInternalPromise.h"
+#include <JavaScriptCore/JSInternalPromise.h>
 #endif
 
 extern "C" const size_t JSC__JSInternalPromise_object_size_ = sizeof(JSC::JSInternalPromise);
@@ -88,7 +88,7 @@ extern "C" const size_t JSC__JSInternalPromise_object_align_ = alignof(JSC::JSIn
 
 #ifndef INCLUDED_JavaScriptCore_JSFunction_h
 #define INCLUDED_JavaScriptCore_JSFunction_h
-#include "JavaScriptCore/JSFunction.h"
+#include <JavaScriptCore/JSFunction.h>
 #endif
 
 extern "C" const size_t JSC__JSFunction_object_size_ = sizeof(JSC::JSFunction);
@@ -96,7 +96,7 @@ extern "C" const size_t JSC__JSFunction_object_align_ = alignof(JSC::JSFunction)
 
 #ifndef INCLUDED_JavaScriptCore_JSGlobalObject_h
 #define INCLUDED_JavaScriptCore_JSGlobalObject_h
-#include "JavaScriptCore/JSGlobalObject.h"
+#include <JavaScriptCore/JSGlobalObject.h>
 #endif
 
 extern "C" const size_t JSC__JSGlobalObject_object_size_ = sizeof(JSC::JSGlobalObject);
@@ -104,7 +104,7 @@ extern "C" const size_t JSC__JSGlobalObject_object_align_ = alignof(JSC::JSGloba
 
 #ifndef INCLUDED_JavaScriptCore_JSMap_h
 #define INCLUDED_JavaScriptCore_JSMap_h
-#include "JavaScriptCore/JSMap.h"
+#include <JavaScriptCore/JSMap.h>
 #endif
 
 extern "C" const size_t JSC__JSMap_object_size_ = sizeof(JSC::JSMap);
@@ -112,7 +112,7 @@ extern "C" const size_t JSC__JSMap_object_align_ = alignof(JSC::JSMap);
 
 #ifndef INCLUDED_JavaScriptCore_JSValue_h
 #define INCLUDED_JavaScriptCore_JSValue_h
-#include "JavaScriptCore/JSValue.h"
+#include <JavaScriptCore/JSValue.h>
 #endif
 
 extern "C" const size_t JSC__JSValue_object_size_ = sizeof(JSC::JSValue);
@@ -120,7 +120,7 @@ extern "C" const size_t JSC__JSValue_object_align_ = alignof(JSC::JSValue);
 
 #ifndef INCLUDED_JavaScriptCore_Exception_h
 #define INCLUDED_JavaScriptCore_Exception_h
-#include "JavaScriptCore/Exception.h"
+#include <JavaScriptCore/Exception.h>
 #endif
 
 extern "C" const size_t JSC__Exception_object_size_ = sizeof(JSC::Exception);
@@ -128,7 +128,7 @@ extern "C" const size_t JSC__Exception_object_align_ = alignof(JSC::Exception);
 
 #ifndef INCLUDED_JavaScriptCore_VM_h
 #define INCLUDED_JavaScriptCore_VM_h
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/VM.h>
 #endif
 
 extern "C" const size_t JSC__VM_object_size_ = sizeof(JSC::VM);
@@ -136,7 +136,7 @@ extern "C" const size_t JSC__VM_object_align_ = alignof(JSC::VM);
 
 #ifndef INCLUDED_JavaScriptCore_ThrowScope_h
 #define INCLUDED_JavaScriptCore_ThrowScope_h
-#include "JavaScriptCore/ThrowScope.h"
+#include <JavaScriptCore/ThrowScope.h>
 #endif
 
 extern "C" const size_t JSC__ThrowScope_object_size_ = sizeof(JSC::ThrowScope);
@@ -144,7 +144,7 @@ extern "C" const size_t JSC__ThrowScope_object_align_ = alignof(JSC::ThrowScope)
 
 #ifndef INCLUDED_JavaScriptCore_CatchScope_h
 #define INCLUDED_JavaScriptCore_CatchScope_h
-#include "JavaScriptCore/CatchScope.h"
+#include <JavaScriptCore/CatchScope.h>
 #endif
 
 extern "C" const size_t JSC__CatchScope_object_size_ = sizeof(JSC::CatchScope);
@@ -166,13 +166,13 @@ extern "C" const size_t Zig__GlobalObject_object_align_ = alignof(Zig::GlobalObj
 extern "C" const size_t Bun__Path_object_size_ = sizeof(Bun__Path);
 extern "C" const size_t Bun__Path_object_align_ = alignof(Bun__Path);
 
-#ifndef INCLUDED__ZigConsoleClient_h_
-#define INCLUDED__ZigConsoleClient_h_
-#include ""ZigConsoleClient.h""
+#ifndef INCLUDED__ConsoleObject_h_
+#define INCLUDED__ConsoleObject_h_
+#include ""ConsoleObject.h""
 #endif
 
-extern "C" const size_t Zig__ConsoleClient_object_size_ = sizeof(Zig::ConsoleClient);
-extern "C" const size_t Zig__ConsoleClient_object_align_ = alignof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_size_ = sizeof(Zig::ConsoleClient);
+extern "C" const size_t Bun__ConsoleObject_object_align_ = alignof(Zig::ConsoleClient);
 
 #ifndef INCLUDED_
 #define INCLUDED_
@@ -190,8 +190,8 @@ extern "C" const size_t Bun__Timer_object_align_ = alignof(Bun__Timer);
 extern "C" const size_t Bun__BodyValueBufferer_object_size_ = sizeof(Bun__BodyValueBufferer);
 extern "C" const size_t Bun__BodyValueBufferer_object_align_ = alignof(Bun__BodyValueBufferer);
 
-const size_t sizes[38] = {sizeof(JSC::JSObject), sizeof(WebCore::DOMURL), sizeof(WebCore::DOMFormData), sizeof(WebCore::FetchHeaders), sizeof(SystemError), sizeof(JSC::JSCell), sizeof(JSC::JSString), sizeof(JSC::JSModuleLoader), sizeof(WebCore::AbortSignal), sizeof(JSC::JSPromise), sizeof(JSC::JSInternalPromise), sizeof(JSC::JSFunction), sizeof(JSC::JSGlobalObject), sizeof(JSC::JSMap), sizeof(JSC::JSValue), sizeof(JSC::Exception), sizeof(JSC::VM), sizeof(JSC::ThrowScope), sizeof(JSC::CatchScope), sizeof(FFI__ptr), sizeof(Reader__u8), sizeof(Reader__u16), sizeof(Reader__u32), sizeof(Reader__ptr), sizeof(Reader__i8), sizeof(Reader__i16), sizeof(Reader__i32), sizeof(Reader__f32), sizeof(Reader__f64), sizeof(Reader__i64), sizeof(Reader__u64), sizeof(Reader__intptr), sizeof(Zig::GlobalObject), sizeof(Bun__Path), sizeof(ArrayBufferSink), sizeof(HTTPSResponseSink), sizeof(HTTPResponseSink), sizeof(FileSink)};
+const size_t sizes[39] = {sizeof(JSC::JSObject), sizeof(WebCore::DOMURL), sizeof(WebCore::DOMFormData), sizeof(WebCore::FetchHeaders), sizeof(SystemError), sizeof(JSC::JSCell), sizeof(JSC::JSString), sizeof(JSC::JSModuleLoader), sizeof(WebCore::AbortSignal), sizeof(JSC::JSPromise), sizeof(JSC::JSInternalPromise), sizeof(JSC::JSFunction), sizeof(JSC::JSGlobalObject), sizeof(JSC::JSMap), sizeof(JSC::JSValue), sizeof(JSC::Exception), sizeof(JSC::VM), sizeof(JSC::ThrowScope), sizeof(JSC::CatchScope), sizeof(FFI__ptr), sizeof(Reader__u8), sizeof(Reader__u16), sizeof(Reader__u32), sizeof(Reader__ptr), sizeof(Reader__i8), sizeof(Reader__i16), sizeof(Reader__i32), sizeof(Reader__f32), sizeof(Reader__f64), sizeof(Reader__i64), sizeof(Reader__u64), sizeof(Reader__intptr), sizeof(Zig::GlobalObject), sizeof(Bun__Path), sizeof(ArrayBufferSink), sizeof(HTTPSResponseSink), sizeof(HTTPResponseSink), sizeof(FileSink), sizeof(FileSink)};
 
-const char* names[38] = {"JSC__JSObject", "WebCore__DOMURL", "WebCore__DOMFormData", "WebCore__FetchHeaders", "SystemError", "JSC__JSCell", "JSC__JSString", "JSC__JSModuleLoader", "WebCore__AbortSignal", "JSC__JSPromise", "JSC__JSInternalPromise", "JSC__JSFunction", "JSC__JSGlobalObject", "JSC__JSMap", "JSC__JSValue", "JSC__Exception", "JSC__VM", "JSC__ThrowScope", "JSC__CatchScope", "FFI__ptr", "Reader__u8", "Reader__u16", "Reader__u32", "Reader__ptr", "Reader__i8", "Reader__i16", "Reader__i32", "Reader__f32", "Reader__f64", "Reader__i64", "Reader__u64", "Reader__intptr", "Zig__GlobalObject", "Bun__Path", "ArrayBufferSink", "HTTPSResponseSink", "HTTPResponseSink", "FileSink"};
+const char* names[39] = {"JSC__JSObject", "WebCore__DOMURL", "WebCore__DOMFormData", "WebCore__FetchHeaders", "SystemError", "JSC__JSCell", "JSC__JSString", "JSC__JSModuleLoader", "WebCore__AbortSignal", "JSC__JSPromise", "JSC__JSInternalPromise", "JSC__JSFunction", "JSC__JSGlobalObject", "JSC__JSMap", "JSC__JSValue", "JSC__Exception", "JSC__VM", "JSC__ThrowScope", "JSC__CatchScope", "FFI__ptr", "Reader__u8", "Reader__u16", "Reader__u32", "Reader__ptr", "Reader__i8", "Reader__i16", "Reader__i32", "Reader__f32", "Reader__f64", "Reader__i64", "Reader__u64", "Reader__intptr", "Zig__GlobalObject", "Bun__Path", "ArrayBufferSink", "HTTPSResponseSink", "HTTPResponseSink", "FileSink", "FileSink"};
 
-const size_t aligns[38] = {alignof(JSC::JSObject), alignof(WebCore::DOMURL), alignof(WebCore::DOMFormData), alignof(WebCore::FetchHeaders), alignof(SystemError), alignof(JSC::JSCell), alignof(JSC::JSString), alignof(JSC::JSModuleLoader), alignof(WebCore::AbortSignal), alignof(JSC::JSPromise), alignof(JSC::JSInternalPromise), alignof(JSC::JSFunction), alignof(JSC::JSGlobalObject), alignof(JSC::JSMap), alignof(JSC::JSValue), alignof(JSC::Exception), alignof(JSC::VM), alignof(JSC::ThrowScope), alignof(JSC::CatchScope), alignof(FFI__ptr), alignof(Reader__u8), alignof(Reader__u16), alignof(Reader__u32), alignof(Reader__ptr), alignof(Reader__i8), alignof(Reader__i16), alignof(Reader__i32), alignof(Reader__f32), alignof(Reader__f64), alignof(Reader__i64), alignof(Reader__u64), alignof(Reader__intptr), alignof(Zig::GlobalObject), alignof(Bun__Path), alignof(ArrayBufferSink), alignof(HTTPSResponseSink), alignof(HTTPResponseSink), alignof(FileSink)};
+const size_t aligns[39] = {alignof(JSC::JSObject), alignof(WebCore::DOMURL), alignof(WebCore::DOMFormData), alignof(WebCore::FetchHeaders), alignof(SystemError), alignof(JSC::JSCell), alignof(JSC::JSString), alignof(JSC::JSModuleLoader), alignof(WebCore::AbortSignal), alignof(JSC::JSPromise), alignof(JSC::JSInternalPromise), alignof(JSC::JSFunction), alignof(JSC::JSGlobalObject), alignof(JSC::JSMap), alignof(JSC::JSValue), alignof(JSC::Exception), alignof(JSC::VM), alignof(JSC::ThrowScope), alignof(JSC::CatchScope), alignof(FFI__ptr), alignof(Reader__u8), alignof(Reader__u16), alignof(Reader__u32), alignof(Reader__ptr), alignof(Reader__i8), alignof(Reader__i16), alignof(Reader__i32), alignof(Reader__f32), alignof(Reader__f64), alignof(Reader__i64), alignof(Reader__u64), alignof(Reader__intptr), alignof(Zig::GlobalObject), alignof(Bun__Path), alignof(ArrayBufferSink), alignof(HTTPSResponseSink), alignof(HTTPResponseSink), alignof(FileSink), alignof(FileSink)};

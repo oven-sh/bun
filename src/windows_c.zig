@@ -2,28 +2,22 @@ const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
 const win32 = std.os.windows;
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 
 pub fn getTotalMemory() usize {
-    return 0;
-}
-pub fn getSystemMemory() usize {
-    return 0;
+    return uv.uv_get_total_memory();
 }
 
 pub fn getFreeMemory() usize {
-    return 0;
-}
-
-pub fn getSystemUptime() usize {
-    return 0;
+    return uv.uv_get_free_memory();
 }
 
 pub fn getSystemLoadavg() [3]f32 {
+    // loadavg is not supported on windows even in node
     return .{ 0, 0, 0 };
 }
 
@@ -34,7 +28,7 @@ const Win32Error = bun.windows.Win32Error;
 // This is way too complicated.
 // The problem is because we use libc in some cases and we use zig's std lib in other places and other times we go direct.
 // So we end up with a lot of redundant code.
-pub const SystemErrno = enum(u8) {
+pub const SystemErrno = enum(u16) {
     SUCCESS = 0,
     EPERM = 1,
     ENOENT = 2,
@@ -177,145 +171,231 @@ pub const SystemErrno = enum(u8) {
     ECHARSET = 135,
     EOF = 136,
 
+    UV_E2BIG = -uv.UV_E2BIG,
+    UV_EACCES = -uv.UV_EACCES,
+    UV_EADDRINUSE = -uv.UV_EADDRINUSE,
+    UV_EADDRNOTAVAIL = -uv.UV_EADDRNOTAVAIL,
+    UV_EAFNOSUPPORT = -uv.UV_EAFNOSUPPORT,
+    UV_EAGAIN = -uv.UV_EAGAIN,
+    UV_EAI_ADDRFAMILY = -uv.UV_EAI_ADDRFAMILY,
+    UV_EAI_AGAIN = -uv.UV_EAI_AGAIN,
+    UV_EAI_BADFLAGS = -uv.UV_EAI_BADFLAGS,
+    UV_EAI_BADHINTS = -uv.UV_EAI_BADHINTS,
+    UV_EAI_CANCELED = -uv.UV_EAI_CANCELED,
+    UV_EAI_FAIL = -uv.UV_EAI_FAIL,
+    UV_EAI_FAMILY = -uv.UV_EAI_FAMILY,
+    UV_EAI_MEMORY = -uv.UV_EAI_MEMORY,
+    UV_EAI_NODATA = -uv.UV_EAI_NODATA,
+    UV_EAI_NONAME = -uv.UV_EAI_NONAME,
+    UV_EAI_OVERFLOW = -uv.UV_EAI_OVERFLOW,
+    UV_EAI_PROTOCOL = -uv.UV_EAI_PROTOCOL,
+    UV_EAI_SERVICE = -uv.UV_EAI_SERVICE,
+    UV_EAI_SOCKTYPE = -uv.UV_EAI_SOCKTYPE,
+    UV_EALREADY = -uv.UV_EALREADY,
+    UV_EBADF = -uv.UV_EBADF,
+    UV_EBUSY = -uv.UV_EBUSY,
+    UV_ECANCELED = -uv.UV_ECANCELED,
+    UV_ECHARSET = -uv.UV_ECHARSET,
+    UV_ECONNABORTED = -uv.UV_ECONNABORTED,
+    UV_ECONNREFUSED = -uv.UV_ECONNREFUSED,
+    UV_ECONNRESET = -uv.UV_ECONNRESET,
+    UV_EDESTADDRREQ = -uv.UV_EDESTADDRREQ,
+    UV_EEXIST = -uv.UV_EEXIST,
+    UV_EFAULT = -uv.UV_EFAULT,
+    UV_EFBIG = -uv.UV_EFBIG,
+    UV_EHOSTUNREACH = -uv.UV_EHOSTUNREACH,
+    UV_EINVAL = -uv.UV_EINVAL,
+    UV_EINTR = -uv.UV_EINTR,
+    UV_EISCONN = -uv.UV_EISCONN,
+    UV_EIO = -uv.UV_EIO,
+    UV_ELOOP = -uv.UV_ELOOP,
+    UV_EISDIR = -uv.UV_EISDIR,
+    UV_EMSGSIZE = -uv.UV_EMSGSIZE,
+    UV_EMFILE = -uv.UV_EMFILE,
+    UV_ENETDOWN = -uv.UV_ENETDOWN,
+    UV_ENAMETOOLONG = -uv.UV_ENAMETOOLONG,
+    UV_ENFILE = -uv.UV_ENFILE,
+    UV_ENETUNREACH = -uv.UV_ENETUNREACH,
+    UV_ENODEV = -uv.UV_ENODEV,
+    UV_ENOBUFS = -uv.UV_ENOBUFS,
+    UV_ENOMEM = -uv.UV_ENOMEM,
+    UV_ENOENT = -uv.UV_ENOENT,
+    UV_ENOPROTOOPT = -uv.UV_ENOPROTOOPT,
+    UV_ENONET = -uv.UV_ENONET,
+    UV_ENOSYS = -uv.UV_ENOSYS,
+    UV_ENOSPC = -uv.UV_ENOSPC,
+    UV_ENOTDIR = -uv.UV_ENOTDIR,
+    UV_ENOTCONN = -uv.UV_ENOTCONN,
+    UV_ENOTSOCK = -uv.UV_ENOTSOCK,
+    UV_ENOTEMPTY = -uv.UV_ENOTEMPTY,
+    UV_EOVERFLOW = -uv.UV_EOVERFLOW,
+    UV_ENOTSUP = -uv.UV_ENOTSUP,
+    UV_EPIPE = -uv.UV_EPIPE,
+    UV_EPERM = -uv.UV_EPERM,
+    UV_EPROTONOSUPPORT = -uv.UV_EPROTONOSUPPORT,
+    UV_EPROTO = -uv.UV_EPROTO,
+    UV_ERANGE = -uv.UV_ERANGE,
+    UV_EPROTOTYPE = -uv.UV_EPROTOTYPE,
+    UV_ESHUTDOWN = -uv.UV_ESHUTDOWN,
+    UV_EROFS = -uv.UV_EROFS,
+    UV_ESRCH = -uv.UV_ESRCH,
+    UV_ESPIPE = -uv.UV_ESPIPE,
+    UV_ETXTBSY = -uv.UV_ETXTBSY,
+    UV_ETIMEDOUT = -uv.UV_ETIMEDOUT,
+    UV_UNKNOWN = -uv.UV_UNKNOWN,
+    UV_EXDEV = -uv.UV_EXDEV,
+    UV_ENXIO = -uv.UV_ENXIO,
+    UV_EOF = -uv.UV_EOF,
+    UV_EHOSTDOWN = -uv.UV_EHOSTDOWN,
+    UV_EMLINK = -uv.UV_EMLINK,
+    UV_ENOTTY = -uv.UV_ENOTTY,
+    UV_EREMOTEIO = -uv.UV_EREMOTEIO,
+    UV_EILSEQ = -uv.UV_EILSEQ,
+    UV_EFTYPE = -uv.UV_EFTYPE,
+    UV_ENODATA = -uv.UV_ENODATA,
+    UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
+    UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
+    UV_EUNATCH = -uv.UV_EUNATCH,
+
     pub const max = 137;
 
     pub const Error = error{
-        PERM,
-        NOENT,
-        SRCH,
-        INTR,
-        IO,
-        NXIO,
-        @"2BIG",
-        NOEXEC,
-        BADF,
-        CHILD,
-        AGAIN,
-        NOMEM,
-        ACCES,
-        FAULT,
-        NOTBLK,
-        BUSY,
-        EXIST,
-        XDEV,
-        NODEV,
-        NOTDIR,
-        ISDIR,
-        INVAL,
-        NFILE,
-        MFILE,
-        NOTTY,
-        TXTBSY,
-        FBIG,
-        NOSPC,
-        SPIPE,
-        ROFS,
-        MLINK,
-        PIPE,
-        DOM,
-        RANGE,
-        DEADLK,
-        NAMETOOLONG,
-        NOLCK,
-        NOSYS,
-        NOTEMPTY,
-        LOOP,
-        WOULDBLOCK,
-        NOMSG,
-        IDRM,
-        CHRNG,
-        L2NSYNC,
-        L3HLT,
-        L3RST,
-        LNRNG,
-        UNATCH,
-        NOCSI,
-        L2HLT,
-        BADE,
-        BADR,
-        XFULL,
-        NOANO,
-        BADRQC,
-        BADSLT,
-        DEADLOCK,
-        BFONT,
-        NOSTR,
-        NODATA,
-        TIME,
-        NOSR,
-        NONET,
-        NOPKG,
-        REMOTE,
-        NOLINK,
-        ADV,
-        SRMNT,
-        COMM,
-        PROTO,
-        MULTIHOP,
-        DOTDOT,
-        BADMSG,
-        OVERFLOW,
-        NOTUNIQ,
-        BADFD,
-        REMCHG,
-        LIBACC,
-        LIBBAD,
-        LIBSCN,
-        LIBMAX,
-        LIBEXEC,
-        ILSEQ,
-        RESTART,
-        STRPIPE,
-        USERS,
-        NOTSOCK,
-        DESTADDRREQ,
-        MSGSIZE,
-        PROTOTYPE,
-        NOPROTOOPT,
-        PROTONOSUPPORT,
-        SOCKTNOSUPPORT,
-        NOTSUP,
-        PFNOSUPPORT,
-        AFNOSUPPORT,
-        ADDRINUSE,
-        ADDRNOTAVAIL,
-        NETDOWN,
-        NETUNREACH,
-        NETRESET,
-        CONNABORTED,
-        CONNRESET,
-        NOBUFS,
-        ISCONN,
-        NOTCONN,
-        SHUTDOWN,
-        TOOMANYREFS,
-        TIMEDOUT,
-        CONNREFUSED,
-        HOSTDOWN,
-        HOSTUNREACH,
-        ALREADY,
-        INPROGRESS,
-        STALE,
-        UCLEAN,
-        NOTNAM,
-        NAVAIL,
-        ISNAM,
-        REMOTEIO,
-        DQUOT,
-        NOMEDIUM,
-        MEDIUMTYPE,
-        CANCELED,
-        NOKEY,
-        KEYEXPIRED,
-        KEYREVOKED,
-        KEYREJECTED,
-        OWNERDEAD,
-        NOTRECOVERABLE,
-        RFKILL,
-        HWPOISON,
-        UNKNOWN,
-        CHARSET,
-        OF,
+        EPERM,
+        ENOENT,
+        ESRCH,
+        EINTR,
+        EIO,
+        ENXIO,
+        E2BIG,
+        ENOEXEC,
+        EBADF,
+        ECHILD,
+        EAGAIN,
+        ENOMEM,
+        EACCES,
+        EFAULT,
+        ENOTBLK,
+        EBUSY,
+        EEXIST,
+        EXDEV,
+        ENODEV,
+        ENOTDIR,
+        EISDIR,
+        EINVAL,
+        ENFILE,
+        EMFILE,
+        ENOTTY,
+        ETXTBSY,
+        EFBIG,
+        ENOSPC,
+        ESPIPE,
+        EROFS,
+        EMLINK,
+        EPIPE,
+        EDOM,
+        ERANGE,
+        EDEADLK,
+        ENAMETOOLONG,
+        ENOLCK,
+        ENOSYS,
+        ENOTEMPTY,
+        ELOOP,
+        EWOULDBLOCK,
+        ENOMSG,
+        EIDRM,
+        ECHRNG,
+        EL2NSYNC,
+        EL3HLT,
+        EL3RST,
+        ELNRNG,
+        EUNATCH,
+        ENOCSI,
+        EL2HLT,
+        EBADE,
+        EBADR,
+        EXFULL,
+        ENOANO,
+        EBADRQC,
+        EBADSLT,
+        EDEADLOCK,
+        EBFONT,
+        ENOSTR,
+        ENODATA,
+        ETIME,
+        ENOSR,
+        ENONET,
+        ENOPKG,
+        EREMOTE,
+        ENOLINK,
+        EADV,
+        ESRMNT,
+        ECOMM,
+        EPROTO,
+        EMULTIHOP,
+        EDOTDOT,
+        EBADMSG,
+        EOVERFLOW,
+        ENOTUNIQ,
+        EBADFD,
+        EREMCHG,
+        ELIBACC,
+        ELIBBAD,
+        ELIBSCN,
+        ELIBMAX,
+        ELIBEXEC,
+        EILSEQ,
+        ERESTART,
+        ESTRPIPE,
+        EUSERS,
+        ENOTSOCK,
+        EDESTADDRREQ,
+        EMSGSIZE,
+        EPROTOTYPE,
+        ENOPROTOOPT,
+        EPROTONOSUPPORT,
+        ESOCKTNOSUPPORT,
+        ENOTSUP,
+        EPFNOSUPPORT,
+        EAFNOSUPPORT,
+        EADDRINUSE,
+        EADDRNOTAVAIL,
+        ENETDOWN,
+        ENETUNREACH,
+        ENETRESET,
+        ECONNABORTED,
+        ECONNRESET,
+        ENOBUFS,
+        EISCONN,
+        ENOTCONN,
+        ESHUTDOWN,
+        ETOOMANYREFS,
+        ETIMEDOUT,
+        ECONNREFUSED,
+        EHOSTDOWN,
+        EHOSTUNREACH,
+        EALREADY,
+        EINPROGRESS,
+        ESTALE,
+        EUCLEAN,
+        ENOTNAM,
+        ENAVAIL,
+        EISNAM,
+        EREMOTEIO,
+        EDQUOT,
+        ENOMEDIUM,
+        EMEDIUMTYPE,
+        ECANCELED,
+        ENOKEY,
+        EKEYEXPIRED,
+        EKEYREVOKED,
+        EKEYREJECTED,
+        EOWNERDEAD,
+        ENOTRECOVERABLE,
+        ERFKILL,
+        EHWPOISON,
+        EUNKNOWN,
+        ECHARSET,
+        EOF,
         Unexpected,
     };
 
@@ -325,283 +405,283 @@ pub const SystemErrno = enum(u8) {
 
     const error_map: [SystemErrno.max]Error = brk: {
         var errors: [SystemErrno.max]Error = undefined;
-        errors[@intFromEnum(SystemErrno.EPERM)] = error.PERM;
-        errors[@intFromEnum(SystemErrno.ENOENT)] = error.NOENT;
-        errors[@intFromEnum(SystemErrno.ESRCH)] = error.SRCH;
-        errors[@intFromEnum(SystemErrno.EINTR)] = error.INTR;
-        errors[@intFromEnum(SystemErrno.EIO)] = error.IO;
-        errors[@intFromEnum(SystemErrno.ENXIO)] = error.NXIO;
-        errors[@intFromEnum(SystemErrno.E2BIG)] = error.@"2BIG";
-        errors[@intFromEnum(SystemErrno.ENOEXEC)] = error.NOEXEC;
-        errors[@intFromEnum(SystemErrno.EBADF)] = error.BADF;
-        errors[@intFromEnum(SystemErrno.ECHILD)] = error.CHILD;
-        errors[@intFromEnum(SystemErrno.EAGAIN)] = error.AGAIN;
-        errors[@intFromEnum(SystemErrno.ENOMEM)] = error.NOMEM;
-        errors[@intFromEnum(SystemErrno.EACCES)] = error.ACCES;
-        errors[@intFromEnum(SystemErrno.EFAULT)] = error.FAULT;
-        errors[@intFromEnum(SystemErrno.ENOTBLK)] = error.NOTBLK;
-        errors[@intFromEnum(SystemErrno.EBUSY)] = error.BUSY;
-        errors[@intFromEnum(SystemErrno.EEXIST)] = error.EXIST;
-        errors[@intFromEnum(SystemErrno.EXDEV)] = error.XDEV;
-        errors[@intFromEnum(SystemErrno.ENODEV)] = error.NODEV;
-        errors[@intFromEnum(SystemErrno.ENOTDIR)] = error.NOTDIR;
-        errors[@intFromEnum(SystemErrno.EISDIR)] = error.ISDIR;
-        errors[@intFromEnum(SystemErrno.EINVAL)] = error.INVAL;
-        errors[@intFromEnum(SystemErrno.ENFILE)] = error.NFILE;
-        errors[@intFromEnum(SystemErrno.EMFILE)] = error.MFILE;
-        errors[@intFromEnum(SystemErrno.ENOTTY)] = error.NOTTY;
-        errors[@intFromEnum(SystemErrno.ETXTBSY)] = error.TXTBSY;
-        errors[@intFromEnum(SystemErrno.EFBIG)] = error.FBIG;
-        errors[@intFromEnum(SystemErrno.ENOSPC)] = error.NOSPC;
-        errors[@intFromEnum(SystemErrno.ESPIPE)] = error.SPIPE;
-        errors[@intFromEnum(SystemErrno.EROFS)] = error.ROFS;
-        errors[@intFromEnum(SystemErrno.EMLINK)] = error.MLINK;
-        errors[@intFromEnum(SystemErrno.EPIPE)] = error.PIPE;
-        errors[@intFromEnum(SystemErrno.EDOM)] = error.DOM;
-        errors[@intFromEnum(SystemErrno.ERANGE)] = error.RANGE;
-        errors[@intFromEnum(SystemErrno.EDEADLK)] = error.DEADLK;
-        errors[@intFromEnum(SystemErrno.ENAMETOOLONG)] = error.NAMETOOLONG;
-        errors[@intFromEnum(SystemErrno.ENOLCK)] = error.NOLCK;
-        errors[@intFromEnum(SystemErrno.ENOSYS)] = error.NOSYS;
-        errors[@intFromEnum(SystemErrno.ENOTEMPTY)] = error.NOTEMPTY;
-        errors[@intFromEnum(SystemErrno.ELOOP)] = error.LOOP;
-        errors[@intFromEnum(SystemErrno.EWOULDBLOCK)] = error.WOULDBLOCK;
-        errors[@intFromEnum(SystemErrno.ENOMSG)] = error.NOMSG;
-        errors[@intFromEnum(SystemErrno.EIDRM)] = error.IDRM;
-        errors[@intFromEnum(SystemErrno.ECHRNG)] = error.CHRNG;
-        errors[@intFromEnum(SystemErrno.EL2NSYNC)] = error.L2NSYNC;
-        errors[@intFromEnum(SystemErrno.EL3HLT)] = error.L3HLT;
-        errors[@intFromEnum(SystemErrno.EL3RST)] = error.L3RST;
-        errors[@intFromEnum(SystemErrno.ELNRNG)] = error.LNRNG;
-        errors[@intFromEnum(SystemErrno.EUNATCH)] = error.UNATCH;
-        errors[@intFromEnum(SystemErrno.ENOCSI)] = error.NOCSI;
-        errors[@intFromEnum(SystemErrno.EL2HLT)] = error.L2HLT;
-        errors[@intFromEnum(SystemErrno.EBADE)] = error.BADE;
-        errors[@intFromEnum(SystemErrno.EBADR)] = error.BADR;
-        errors[@intFromEnum(SystemErrno.EXFULL)] = error.XFULL;
-        errors[@intFromEnum(SystemErrno.ENOANO)] = error.NOANO;
-        errors[@intFromEnum(SystemErrno.EBADRQC)] = error.BADRQC;
-        errors[@intFromEnum(SystemErrno.EBADSLT)] = error.BADSLT;
-        errors[@intFromEnum(SystemErrno.EDEADLOCK)] = error.DEADLOCK;
-        errors[@intFromEnum(SystemErrno.EBFONT)] = error.BFONT;
-        errors[@intFromEnum(SystemErrno.ENOSTR)] = error.NOSTR;
-        errors[@intFromEnum(SystemErrno.ENODATA)] = error.NODATA;
-        errors[@intFromEnum(SystemErrno.ETIME)] = error.TIME;
-        errors[@intFromEnum(SystemErrno.ENOSR)] = error.NOSR;
-        errors[@intFromEnum(SystemErrno.ENONET)] = error.NONET;
-        errors[@intFromEnum(SystemErrno.ENOPKG)] = error.NOPKG;
-        errors[@intFromEnum(SystemErrno.EREMOTE)] = error.REMOTE;
-        errors[@intFromEnum(SystemErrno.ENOLINK)] = error.NOLINK;
-        errors[@intFromEnum(SystemErrno.EADV)] = error.ADV;
-        errors[@intFromEnum(SystemErrno.ESRMNT)] = error.SRMNT;
-        errors[@intFromEnum(SystemErrno.ECOMM)] = error.COMM;
-        errors[@intFromEnum(SystemErrno.EPROTO)] = error.PROTO;
-        errors[@intFromEnum(SystemErrno.EMULTIHOP)] = error.MULTIHOP;
-        errors[@intFromEnum(SystemErrno.EDOTDOT)] = error.DOTDOT;
-        errors[@intFromEnum(SystemErrno.EBADMSG)] = error.BADMSG;
-        errors[@intFromEnum(SystemErrno.EOVERFLOW)] = error.OVERFLOW;
-        errors[@intFromEnum(SystemErrno.ENOTUNIQ)] = error.NOTUNIQ;
-        errors[@intFromEnum(SystemErrno.EBADFD)] = error.BADFD;
-        errors[@intFromEnum(SystemErrno.EREMCHG)] = error.REMCHG;
-        errors[@intFromEnum(SystemErrno.ELIBACC)] = error.LIBACC;
-        errors[@intFromEnum(SystemErrno.ELIBBAD)] = error.LIBBAD;
-        errors[@intFromEnum(SystemErrno.ELIBSCN)] = error.LIBSCN;
-        errors[@intFromEnum(SystemErrno.ELIBMAX)] = error.LIBMAX;
-        errors[@intFromEnum(SystemErrno.ELIBEXEC)] = error.LIBEXEC;
-        errors[@intFromEnum(SystemErrno.EILSEQ)] = error.ILSEQ;
-        errors[@intFromEnum(SystemErrno.ERESTART)] = error.RESTART;
-        errors[@intFromEnum(SystemErrno.ESTRPIPE)] = error.STRPIPE;
-        errors[@intFromEnum(SystemErrno.EUSERS)] = error.USERS;
-        errors[@intFromEnum(SystemErrno.ENOTSOCK)] = error.NOTSOCK;
-        errors[@intFromEnum(SystemErrno.EDESTADDRREQ)] = error.DESTADDRREQ;
-        errors[@intFromEnum(SystemErrno.EMSGSIZE)] = error.MSGSIZE;
-        errors[@intFromEnum(SystemErrno.EPROTOTYPE)] = error.PROTOTYPE;
-        errors[@intFromEnum(SystemErrno.ENOPROTOOPT)] = error.NOPROTOOPT;
-        errors[@intFromEnum(SystemErrno.EPROTONOSUPPORT)] = error.PROTONOSUPPORT;
-        errors[@intFromEnum(SystemErrno.ESOCKTNOSUPPORT)] = error.SOCKTNOSUPPORT;
-        errors[@intFromEnum(SystemErrno.ENOTSUP)] = error.NOTSUP;
-        errors[@intFromEnum(SystemErrno.EPFNOSUPPORT)] = error.PFNOSUPPORT;
-        errors[@intFromEnum(SystemErrno.EAFNOSUPPORT)] = error.AFNOSUPPORT;
-        errors[@intFromEnum(SystemErrno.EADDRINUSE)] = error.ADDRINUSE;
-        errors[@intFromEnum(SystemErrno.EADDRNOTAVAIL)] = error.ADDRNOTAVAIL;
-        errors[@intFromEnum(SystemErrno.ENETDOWN)] = error.NETDOWN;
-        errors[@intFromEnum(SystemErrno.ENETUNREACH)] = error.NETUNREACH;
-        errors[@intFromEnum(SystemErrno.ENETRESET)] = error.NETRESET;
-        errors[@intFromEnum(SystemErrno.ECONNABORTED)] = error.CONNABORTED;
-        errors[@intFromEnum(SystemErrno.ECONNRESET)] = error.CONNRESET;
-        errors[@intFromEnum(SystemErrno.ENOBUFS)] = error.NOBUFS;
-        errors[@intFromEnum(SystemErrno.EISCONN)] = error.ISCONN;
-        errors[@intFromEnum(SystemErrno.ENOTCONN)] = error.NOTCONN;
-        errors[@intFromEnum(SystemErrno.ESHUTDOWN)] = error.SHUTDOWN;
-        errors[@intFromEnum(SystemErrno.ETOOMANYREFS)] = error.TOOMANYREFS;
-        errors[@intFromEnum(SystemErrno.ETIMEDOUT)] = error.TIMEDOUT;
-        errors[@intFromEnum(SystemErrno.ECONNREFUSED)] = error.CONNREFUSED;
-        errors[@intFromEnum(SystemErrno.EHOSTDOWN)] = error.HOSTDOWN;
-        errors[@intFromEnum(SystemErrno.EHOSTUNREACH)] = error.HOSTUNREACH;
-        errors[@intFromEnum(SystemErrno.EALREADY)] = error.ALREADY;
-        errors[@intFromEnum(SystemErrno.EINPROGRESS)] = error.INPROGRESS;
-        errors[@intFromEnum(SystemErrno.ESTALE)] = error.STALE;
-        errors[@intFromEnum(SystemErrno.EUCLEAN)] = error.UCLEAN;
-        errors[@intFromEnum(SystemErrno.ENOTNAM)] = error.NOTNAM;
-        errors[@intFromEnum(SystemErrno.ENAVAIL)] = error.NAVAIL;
-        errors[@intFromEnum(SystemErrno.EISNAM)] = error.ISNAM;
-        errors[@intFromEnum(SystemErrno.EREMOTEIO)] = error.REMOTEIO;
-        errors[@intFromEnum(SystemErrno.EDQUOT)] = error.DQUOT;
-        errors[@intFromEnum(SystemErrno.ENOMEDIUM)] = error.NOMEDIUM;
-        errors[@intFromEnum(SystemErrno.EMEDIUMTYPE)] = error.MEDIUMTYPE;
-        errors[@intFromEnum(SystemErrno.ECANCELED)] = error.CANCELED;
-        errors[@intFromEnum(SystemErrno.ENOKEY)] = error.NOKEY;
-        errors[@intFromEnum(SystemErrno.EKEYEXPIRED)] = error.KEYEXPIRED;
-        errors[@intFromEnum(SystemErrno.EKEYREVOKED)] = error.KEYREVOKED;
-        errors[@intFromEnum(SystemErrno.EKEYREJECTED)] = error.KEYREJECTED;
-        errors[@intFromEnum(SystemErrno.EOWNERDEAD)] = error.OWNERDEAD;
-        errors[@intFromEnum(SystemErrno.ENOTRECOVERABLE)] = error.NOTRECOVERABLE;
-        errors[@intFromEnum(SystemErrno.ERFKILL)] = error.RFKILL;
-        errors[@intFromEnum(SystemErrno.EHWPOISON)] = error.HWPOISON;
-        errors[@intFromEnum(SystemErrno.EUNKNOWN)] = error.UNKNOWN;
-        errors[@intFromEnum(SystemErrno.ECHARSET)] = error.CHARSET;
-        errors[@intFromEnum(SystemErrno.EOF)] = error.OF;
+        errors[@intFromEnum(SystemErrno.EPERM)] = error.EPERM;
+        errors[@intFromEnum(SystemErrno.ENOENT)] = error.ENOENT;
+        errors[@intFromEnum(SystemErrno.ESRCH)] = error.ESRCH;
+        errors[@intFromEnum(SystemErrno.EINTR)] = error.EINTR;
+        errors[@intFromEnum(SystemErrno.EIO)] = error.EIO;
+        errors[@intFromEnum(SystemErrno.ENXIO)] = error.ENXIO;
+        errors[@intFromEnum(SystemErrno.E2BIG)] = error.E2BIG;
+        errors[@intFromEnum(SystemErrno.ENOEXEC)] = error.ENOEXEC;
+        errors[@intFromEnum(SystemErrno.EBADF)] = error.EBADF;
+        errors[@intFromEnum(SystemErrno.ECHILD)] = error.ECHILD;
+        errors[@intFromEnum(SystemErrno.EAGAIN)] = error.EAGAIN;
+        errors[@intFromEnum(SystemErrno.ENOMEM)] = error.ENOMEM;
+        errors[@intFromEnum(SystemErrno.EACCES)] = error.EACCES;
+        errors[@intFromEnum(SystemErrno.EFAULT)] = error.EFAULT;
+        errors[@intFromEnum(SystemErrno.ENOTBLK)] = error.ENOTBLK;
+        errors[@intFromEnum(SystemErrno.EBUSY)] = error.EBUSY;
+        errors[@intFromEnum(SystemErrno.EEXIST)] = error.EEXIST;
+        errors[@intFromEnum(SystemErrno.EXDEV)] = error.EXDEV;
+        errors[@intFromEnum(SystemErrno.ENODEV)] = error.ENODEV;
+        errors[@intFromEnum(SystemErrno.ENOTDIR)] = error.ENOTDIR;
+        errors[@intFromEnum(SystemErrno.EISDIR)] = error.EISDIR;
+        errors[@intFromEnum(SystemErrno.EINVAL)] = error.EINVAL;
+        errors[@intFromEnum(SystemErrno.ENFILE)] = error.ENFILE;
+        errors[@intFromEnum(SystemErrno.EMFILE)] = error.EMFILE;
+        errors[@intFromEnum(SystemErrno.ENOTTY)] = error.ENOTTY;
+        errors[@intFromEnum(SystemErrno.ETXTBSY)] = error.ETXTBSY;
+        errors[@intFromEnum(SystemErrno.EFBIG)] = error.EFBIG;
+        errors[@intFromEnum(SystemErrno.ENOSPC)] = error.ENOSPC;
+        errors[@intFromEnum(SystemErrno.ESPIPE)] = error.ESPIPE;
+        errors[@intFromEnum(SystemErrno.EROFS)] = error.EROFS;
+        errors[@intFromEnum(SystemErrno.EMLINK)] = error.EMLINK;
+        errors[@intFromEnum(SystemErrno.EPIPE)] = error.EPIPE;
+        errors[@intFromEnum(SystemErrno.EDOM)] = error.EDOM;
+        errors[@intFromEnum(SystemErrno.ERANGE)] = error.ERANGE;
+        errors[@intFromEnum(SystemErrno.EDEADLK)] = error.EDEADLK;
+        errors[@intFromEnum(SystemErrno.ENAMETOOLONG)] = error.ENAMETOOLONG;
+        errors[@intFromEnum(SystemErrno.ENOLCK)] = error.ENOLCK;
+        errors[@intFromEnum(SystemErrno.ENOSYS)] = error.ENOSYS;
+        errors[@intFromEnum(SystemErrno.ENOTEMPTY)] = error.ENOTEMPTY;
+        errors[@intFromEnum(SystemErrno.ELOOP)] = error.ELOOP;
+        errors[@intFromEnum(SystemErrno.EWOULDBLOCK)] = error.EWOULDBLOCK;
+        errors[@intFromEnum(SystemErrno.ENOMSG)] = error.ENOMSG;
+        errors[@intFromEnum(SystemErrno.EIDRM)] = error.EIDRM;
+        errors[@intFromEnum(SystemErrno.ECHRNG)] = error.ECHRNG;
+        errors[@intFromEnum(SystemErrno.EL2NSYNC)] = error.EL2NSYNC;
+        errors[@intFromEnum(SystemErrno.EL3HLT)] = error.EL3HLT;
+        errors[@intFromEnum(SystemErrno.EL3RST)] = error.EL3RST;
+        errors[@intFromEnum(SystemErrno.ELNRNG)] = error.ELNRNG;
+        errors[@intFromEnum(SystemErrno.EUNATCH)] = error.EUNATCH;
+        errors[@intFromEnum(SystemErrno.ENOCSI)] = error.ENOCSI;
+        errors[@intFromEnum(SystemErrno.EL2HLT)] = error.EL2HLT;
+        errors[@intFromEnum(SystemErrno.EBADE)] = error.EBADE;
+        errors[@intFromEnum(SystemErrno.EBADR)] = error.EBADR;
+        errors[@intFromEnum(SystemErrno.EXFULL)] = error.EXFULL;
+        errors[@intFromEnum(SystemErrno.ENOANO)] = error.ENOANO;
+        errors[@intFromEnum(SystemErrno.EBADRQC)] = error.EBADRQC;
+        errors[@intFromEnum(SystemErrno.EBADSLT)] = error.EBADSLT;
+        errors[@intFromEnum(SystemErrno.EDEADLOCK)] = error.EDEADLOCK;
+        errors[@intFromEnum(SystemErrno.EBFONT)] = error.EBFONT;
+        errors[@intFromEnum(SystemErrno.ENOSTR)] = error.ENOSTR;
+        errors[@intFromEnum(SystemErrno.ENODATA)] = error.ENODATA;
+        errors[@intFromEnum(SystemErrno.ETIME)] = error.ETIME;
+        errors[@intFromEnum(SystemErrno.ENOSR)] = error.ENOSR;
+        errors[@intFromEnum(SystemErrno.ENONET)] = error.ENONET;
+        errors[@intFromEnum(SystemErrno.ENOPKG)] = error.ENOPKG;
+        errors[@intFromEnum(SystemErrno.EREMOTE)] = error.EREMOTE;
+        errors[@intFromEnum(SystemErrno.ENOLINK)] = error.ENOLINK;
+        errors[@intFromEnum(SystemErrno.EADV)] = error.EADV;
+        errors[@intFromEnum(SystemErrno.ESRMNT)] = error.ESRMNT;
+        errors[@intFromEnum(SystemErrno.ECOMM)] = error.ECOMM;
+        errors[@intFromEnum(SystemErrno.EPROTO)] = error.EPROTO;
+        errors[@intFromEnum(SystemErrno.EMULTIHOP)] = error.EMULTIHOP;
+        errors[@intFromEnum(SystemErrno.EDOTDOT)] = error.EDOTDOT;
+        errors[@intFromEnum(SystemErrno.EBADMSG)] = error.EBADMSG;
+        errors[@intFromEnum(SystemErrno.EOVERFLOW)] = error.EOVERFLOW;
+        errors[@intFromEnum(SystemErrno.ENOTUNIQ)] = error.ENOTUNIQ;
+        errors[@intFromEnum(SystemErrno.EBADFD)] = error.EBADFD;
+        errors[@intFromEnum(SystemErrno.EREMCHG)] = error.EREMCHG;
+        errors[@intFromEnum(SystemErrno.ELIBACC)] = error.ELIBACC;
+        errors[@intFromEnum(SystemErrno.ELIBBAD)] = error.ELIBBAD;
+        errors[@intFromEnum(SystemErrno.ELIBSCN)] = error.ELIBSCN;
+        errors[@intFromEnum(SystemErrno.ELIBMAX)] = error.ELIBMAX;
+        errors[@intFromEnum(SystemErrno.ELIBEXEC)] = error.ELIBEXEC;
+        errors[@intFromEnum(SystemErrno.EILSEQ)] = error.EILSEQ;
+        errors[@intFromEnum(SystemErrno.ERESTART)] = error.ERESTART;
+        errors[@intFromEnum(SystemErrno.ESTRPIPE)] = error.ESTRPIPE;
+        errors[@intFromEnum(SystemErrno.EUSERS)] = error.EUSERS;
+        errors[@intFromEnum(SystemErrno.ENOTSOCK)] = error.ENOTSOCK;
+        errors[@intFromEnum(SystemErrno.EDESTADDRREQ)] = error.EDESTADDRREQ;
+        errors[@intFromEnum(SystemErrno.EMSGSIZE)] = error.EMSGSIZE;
+        errors[@intFromEnum(SystemErrno.EPROTOTYPE)] = error.EPROTOTYPE;
+        errors[@intFromEnum(SystemErrno.ENOPROTOOPT)] = error.ENOPROTOOPT;
+        errors[@intFromEnum(SystemErrno.EPROTONOSUPPORT)] = error.EPROTONOSUPPORT;
+        errors[@intFromEnum(SystemErrno.ESOCKTNOSUPPORT)] = error.ESOCKTNOSUPPORT;
+        errors[@intFromEnum(SystemErrno.ENOTSUP)] = error.ENOTSUP;
+        errors[@intFromEnum(SystemErrno.EPFNOSUPPORT)] = error.EPFNOSUPPORT;
+        errors[@intFromEnum(SystemErrno.EAFNOSUPPORT)] = error.EAFNOSUPPORT;
+        errors[@intFromEnum(SystemErrno.EADDRINUSE)] = error.EADDRINUSE;
+        errors[@intFromEnum(SystemErrno.EADDRNOTAVAIL)] = error.EADDRNOTAVAIL;
+        errors[@intFromEnum(SystemErrno.ENETDOWN)] = error.ENETDOWN;
+        errors[@intFromEnum(SystemErrno.ENETUNREACH)] = error.ENETUNREACH;
+        errors[@intFromEnum(SystemErrno.ENETRESET)] = error.ENETRESET;
+        errors[@intFromEnum(SystemErrno.ECONNABORTED)] = error.ECONNABORTED;
+        errors[@intFromEnum(SystemErrno.ECONNRESET)] = error.ECONNRESET;
+        errors[@intFromEnum(SystemErrno.ENOBUFS)] = error.ENOBUFS;
+        errors[@intFromEnum(SystemErrno.EISCONN)] = error.EISCONN;
+        errors[@intFromEnum(SystemErrno.ENOTCONN)] = error.ENOTCONN;
+        errors[@intFromEnum(SystemErrno.ESHUTDOWN)] = error.ESHUTDOWN;
+        errors[@intFromEnum(SystemErrno.ETOOMANYREFS)] = error.ETOOMANYREFS;
+        errors[@intFromEnum(SystemErrno.ETIMEDOUT)] = error.ETIMEDOUT;
+        errors[@intFromEnum(SystemErrno.ECONNREFUSED)] = error.ECONNREFUSED;
+        errors[@intFromEnum(SystemErrno.EHOSTDOWN)] = error.EHOSTDOWN;
+        errors[@intFromEnum(SystemErrno.EHOSTUNREACH)] = error.EHOSTUNREACH;
+        errors[@intFromEnum(SystemErrno.EALREADY)] = error.EALREADY;
+        errors[@intFromEnum(SystemErrno.EINPROGRESS)] = error.EINPROGRESS;
+        errors[@intFromEnum(SystemErrno.ESTALE)] = error.ESTALE;
+        errors[@intFromEnum(SystemErrno.EUCLEAN)] = error.EUCLEAN;
+        errors[@intFromEnum(SystemErrno.ENOTNAM)] = error.ENOTNAM;
+        errors[@intFromEnum(SystemErrno.ENAVAIL)] = error.ENAVAIL;
+        errors[@intFromEnum(SystemErrno.EISNAM)] = error.EISNAM;
+        errors[@intFromEnum(SystemErrno.EREMOTEIO)] = error.EREMOTEIO;
+        errors[@intFromEnum(SystemErrno.EDQUOT)] = error.EDQUOT;
+        errors[@intFromEnum(SystemErrno.ENOMEDIUM)] = error.ENOMEDIUM;
+        errors[@intFromEnum(SystemErrno.EMEDIUMTYPE)] = error.EMEDIUMTYPE;
+        errors[@intFromEnum(SystemErrno.ECANCELED)] = error.ECANCELED;
+        errors[@intFromEnum(SystemErrno.ENOKEY)] = error.ENOKEY;
+        errors[@intFromEnum(SystemErrno.EKEYEXPIRED)] = error.EKEYEXPIRED;
+        errors[@intFromEnum(SystemErrno.EKEYREVOKED)] = error.EKEYREVOKED;
+        errors[@intFromEnum(SystemErrno.EKEYREJECTED)] = error.EKEYREJECTED;
+        errors[@intFromEnum(SystemErrno.EOWNERDEAD)] = error.EOWNERDEAD;
+        errors[@intFromEnum(SystemErrno.ENOTRECOVERABLE)] = error.ENOTRECOVERABLE;
+        errors[@intFromEnum(SystemErrno.ERFKILL)] = error.ERFKILL;
+        errors[@intFromEnum(SystemErrno.EHWPOISON)] = error.EHWPOISON;
+        errors[@intFromEnum(SystemErrno.EUNKNOWN)] = error.EUNKNOWN;
+        errors[@intFromEnum(SystemErrno.ECHARSET)] = error.ECHARSET;
+        errors[@intFromEnum(SystemErrno.EOF)] = error.EOF;
         break :brk errors;
     };
 
     pub fn fromError(err: anyerror) ?SystemErrno {
         return switch (err) {
-            error.PERM => SystemErrno.EPERM,
-            error.NOENT => SystemErrno.ENOENT,
-            error.SRCH => SystemErrno.ESRCH,
-            error.INTR => SystemErrno.EINTR,
-            error.IO => SystemErrno.EIO,
-            error.NXIO => SystemErrno.ENXIO,
-            error.@"2BIG" => SystemErrno.E2BIG,
-            error.NOEXEC => SystemErrno.ENOEXEC,
-            error.BADF => SystemErrno.EBADF,
-            error.CHILD => SystemErrno.ECHILD,
-            error.AGAIN => SystemErrno.EAGAIN,
-            error.NOMEM => SystemErrno.ENOMEM,
-            error.ACCES => SystemErrno.EACCES,
-            error.FAULT => SystemErrno.EFAULT,
-            error.NOTBLK => SystemErrno.ENOTBLK,
-            error.BUSY => SystemErrno.EBUSY,
-            error.EXIST => SystemErrno.EEXIST,
-            error.XDEV => SystemErrno.EXDEV,
-            error.NODEV => SystemErrno.ENODEV,
-            error.NOTDIR => SystemErrno.ENOTDIR,
-            error.ISDIR => SystemErrno.EISDIR,
-            error.INVAL => SystemErrno.EINVAL,
-            error.NFILE => SystemErrno.ENFILE,
-            error.MFILE => SystemErrno.EMFILE,
-            error.NOTTY => SystemErrno.ENOTTY,
-            error.TXTBSY => SystemErrno.ETXTBSY,
-            error.FBIG => SystemErrno.EFBIG,
-            error.NOSPC => SystemErrno.ENOSPC,
-            error.SPIPE => SystemErrno.ESPIPE,
-            error.ROFS => SystemErrno.EROFS,
-            error.MLINK => SystemErrno.EMLINK,
-            error.PIPE => SystemErrno.EPIPE,
-            error.DOM => SystemErrno.EDOM,
-            error.RANGE => SystemErrno.ERANGE,
-            error.DEADLK => SystemErrno.EDEADLK,
-            error.NAMETOOLONG => SystemErrno.ENAMETOOLONG,
-            error.NOLCK => SystemErrno.ENOLCK,
-            error.NOSYS => SystemErrno.ENOSYS,
-            error.NOTEMPTY => SystemErrno.ENOTEMPTY,
-            error.LOOP => SystemErrno.ELOOP,
-            error.WOULDBLOCK => SystemErrno.EWOULDBLOCK,
-            error.NOMSG => SystemErrno.ENOMSG,
-            error.IDRM => SystemErrno.EIDRM,
-            error.CHRNG => SystemErrno.ECHRNG,
-            error.L2NSYNC => SystemErrno.EL2NSYNC,
-            error.L3HLT => SystemErrno.EL3HLT,
-            error.L3RST => SystemErrno.EL3RST,
-            error.LNRNG => SystemErrno.ELNRNG,
-            error.UNATCH => SystemErrno.EUNATCH,
-            error.NOCSI => SystemErrno.ENOCSI,
-            error.L2HLT => SystemErrno.EL2HLT,
-            error.BADE => SystemErrno.EBADE,
-            error.BADR => SystemErrno.EBADR,
-            error.XFULL => SystemErrno.EXFULL,
-            error.NOANO => SystemErrno.ENOANO,
-            error.BADRQC => SystemErrno.EBADRQC,
-            error.BADSLT => SystemErrno.EBADSLT,
-            error.DEADLOCK => SystemErrno.EDEADLOCK,
-            error.BFONT => SystemErrno.EBFONT,
-            error.NOSTR => SystemErrno.ENOSTR,
-            error.NODATA => SystemErrno.ENODATA,
-            error.TIME => SystemErrno.ETIME,
-            error.NOSR => SystemErrno.ENOSR,
-            error.NONET => SystemErrno.ENONET,
-            error.NOPKG => SystemErrno.ENOPKG,
-            error.REMOTE => SystemErrno.EREMOTE,
-            error.NOLINK => SystemErrno.ENOLINK,
-            error.ADV => SystemErrno.EADV,
-            error.SRMNT => SystemErrno.ESRMNT,
-            error.COMM => SystemErrno.ECOMM,
-            error.PROTO => SystemErrno.EPROTO,
-            error.MULTIHOP => SystemErrno.EMULTIHOP,
-            error.DOTDOT => SystemErrno.EDOTDOT,
-            error.BADMSG => SystemErrno.EBADMSG,
-            error.OVERFLOW => SystemErrno.EOVERFLOW,
-            error.NOTUNIQ => SystemErrno.ENOTUNIQ,
-            error.BADFD => SystemErrno.EBADFD,
-            error.REMCHG => SystemErrno.EREMCHG,
-            error.LIBACC => SystemErrno.ELIBACC,
-            error.LIBBAD => SystemErrno.ELIBBAD,
-            error.LIBSCN => SystemErrno.ELIBSCN,
-            error.LIBMAX => SystemErrno.ELIBMAX,
-            error.LIBEXEC => SystemErrno.ELIBEXEC,
-            error.ILSEQ => SystemErrno.EILSEQ,
-            error.RESTART => SystemErrno.ERESTART,
-            error.STRPIPE => SystemErrno.ESTRPIPE,
-            error.USERS => SystemErrno.EUSERS,
-            error.NOTSOCK => SystemErrno.ENOTSOCK,
-            error.DESTADDRREQ => SystemErrno.EDESTADDRREQ,
-            error.MSGSIZE => SystemErrno.EMSGSIZE,
-            error.PROTOTYPE => SystemErrno.EPROTOTYPE,
-            error.NOPROTOOPT => SystemErrno.ENOPROTOOPT,
-            error.PROTONOSUPPORT => SystemErrno.EPROTONOSUPPORT,
-            error.SOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
-            error.NOTSUP => SystemErrno.ENOTSUP,
-            error.PFNOSUPPORT => SystemErrno.EPFNOSUPPORT,
-            error.AFNOSUPPORT => SystemErrno.EAFNOSUPPORT,
-            error.ADDRINUSE => SystemErrno.EADDRINUSE,
-            error.ADDRNOTAVAIL => SystemErrno.EADDRNOTAVAIL,
-            error.NETDOWN => SystemErrno.ENETDOWN,
-            error.NETUNREACH => SystemErrno.ENETUNREACH,
-            error.NETRESET => SystemErrno.ENETRESET,
-            error.CONNABORTED => SystemErrno.ECONNABORTED,
-            error.CONNRESET => SystemErrno.ECONNRESET,
-            error.NOBUFS => SystemErrno.ENOBUFS,
-            error.ISCONN => SystemErrno.EISCONN,
-            error.NOTCONN => SystemErrno.ENOTCONN,
-            error.SHUTDOWN => SystemErrno.ESHUTDOWN,
-            error.TOOMANYREFS => SystemErrno.ETOOMANYREFS,
-            error.TIMEDOUT => SystemErrno.ETIMEDOUT,
-            error.CONNREFUSED => SystemErrno.ECONNREFUSED,
-            error.HOSTDOWN => SystemErrno.EHOSTDOWN,
-            error.HOSTUNREACH => SystemErrno.EHOSTUNREACH,
-            error.ALREADY => SystemErrno.EALREADY,
-            error.INPROGRESS => SystemErrno.EINPROGRESS,
-            error.STALE => SystemErrno.ESTALE,
-            error.UCLEAN => SystemErrno.EUCLEAN,
-            error.NOTNAM => SystemErrno.ENOTNAM,
-            error.NAVAIL => SystemErrno.ENAVAIL,
-            error.ISNAM => SystemErrno.EISNAM,
-            error.REMOTEIO => SystemErrno.EREMOTEIO,
-            error.DQUOT => SystemErrno.EDQUOT,
-            error.NOMEDIUM => SystemErrno.ENOMEDIUM,
-            error.MEDIUMTYPE => SystemErrno.EMEDIUMTYPE,
-            error.CANCELED => SystemErrno.ECANCELED,
-            error.NOKEY => SystemErrno.ENOKEY,
-            error.KEYEXPIRED => SystemErrno.EKEYEXPIRED,
-            error.KEYREVOKED => SystemErrno.EKEYREVOKED,
-            error.KEYREJECTED => SystemErrno.EKEYREJECTED,
-            error.OWNERDEAD => SystemErrno.EOWNERDEAD,
-            error.NOTRECOVERABLE => SystemErrno.ENOTRECOVERABLE,
-            error.RFKILL => SystemErrno.ERFKILL,
-            error.HWPOISON => SystemErrno.EHWPOISON,
-            error.UNKNOWN => SystemErrno.EUNKNOWN,
-            error.CHARSET => SystemErrno.ECHARSET,
-            error.OF => SystemErrno.EOF,
+            error.EPERM => SystemErrno.EPERM,
+            error.ENOENT => SystemErrno.ENOENT,
+            error.ESRCH => SystemErrno.ESRCH,
+            error.EINTR => SystemErrno.EINTR,
+            error.EIO => SystemErrno.EIO,
+            error.ENXIO => SystemErrno.ENXIO,
+            error.E2BIG => SystemErrno.E2BIG,
+            error.ENOEXEC => SystemErrno.ENOEXEC,
+            error.EBADF => SystemErrno.EBADF,
+            error.ECHILD => SystemErrno.ECHILD,
+            error.EAGAIN => SystemErrno.EAGAIN,
+            error.ENOMEM => SystemErrno.ENOMEM,
+            error.EACCES => SystemErrno.EACCES,
+            error.EFAULT => SystemErrno.EFAULT,
+            error.ENOTBLK => SystemErrno.ENOTBLK,
+            error.EBUSY => SystemErrno.EBUSY,
+            error.EEXIST => SystemErrno.EEXIST,
+            error.EXDEV => SystemErrno.EXDEV,
+            error.ENODEV => SystemErrno.ENODEV,
+            error.ENOTDIR => SystemErrno.ENOTDIR,
+            error.EISDIR => SystemErrno.EISDIR,
+            error.EINVAL => SystemErrno.EINVAL,
+            error.ENFILE => SystemErrno.ENFILE,
+            error.EMFILE => SystemErrno.EMFILE,
+            error.ENOTTY => SystemErrno.ENOTTY,
+            error.ETXTBSY => SystemErrno.ETXTBSY,
+            error.EFBIG => SystemErrno.EFBIG,
+            error.ENOSPC => SystemErrno.ENOSPC,
+            error.ESPIPE => SystemErrno.ESPIPE,
+            error.EROFS => SystemErrno.EROFS,
+            error.EMLINK => SystemErrno.EMLINK,
+            error.EPIPE => SystemErrno.EPIPE,
+            error.EDOM => SystemErrno.EDOM,
+            error.ERANGE => SystemErrno.ERANGE,
+            error.EDEADLK => SystemErrno.EDEADLK,
+            error.ENAMETOOLONG => SystemErrno.ENAMETOOLONG,
+            error.ENOLCK => SystemErrno.ENOLCK,
+            error.ENOSYS => SystemErrno.ENOSYS,
+            error.ENOTEMPTY => SystemErrno.ENOTEMPTY,
+            error.ELOOP => SystemErrno.ELOOP,
+            error.EWOULDBLOCK => SystemErrno.EWOULDBLOCK,
+            error.ENOMSG => SystemErrno.ENOMSG,
+            error.EIDRM => SystemErrno.EIDRM,
+            error.ECHRNG => SystemErrno.ECHRNG,
+            error.EL2NSYNC => SystemErrno.EL2NSYNC,
+            error.EL3HLT => SystemErrno.EL3HLT,
+            error.EL3RST => SystemErrno.EL3RST,
+            error.ELNRNG => SystemErrno.ELNRNG,
+            error.EUNATCH => SystemErrno.EUNATCH,
+            error.ENOCSI => SystemErrno.ENOCSI,
+            error.EL2HLT => SystemErrno.EL2HLT,
+            error.EBADE => SystemErrno.EBADE,
+            error.EBADR => SystemErrno.EBADR,
+            error.EXFULL => SystemErrno.EXFULL,
+            error.ENOANO => SystemErrno.ENOANO,
+            error.EBADRQC => SystemErrno.EBADRQC,
+            error.EBADSLT => SystemErrno.EBADSLT,
+            error.EDEADLOCK => SystemErrno.EDEADLOCK,
+            error.EBFONT => SystemErrno.EBFONT,
+            error.ENOSTR => SystemErrno.ENOSTR,
+            error.ENODATA => SystemErrno.ENODATA,
+            error.ETIME => SystemErrno.ETIME,
+            error.ENOSR => SystemErrno.ENOSR,
+            error.ENONET => SystemErrno.ENONET,
+            error.ENOPKG => SystemErrno.ENOPKG,
+            error.EREMOTE => SystemErrno.EREMOTE,
+            error.ENOLINK => SystemErrno.ENOLINK,
+            error.EADV => SystemErrno.EADV,
+            error.ESRMNT => SystemErrno.ESRMNT,
+            error.ECOMM => SystemErrno.ECOMM,
+            error.EPROTO => SystemErrno.EPROTO,
+            error.EMULTIHOP => SystemErrno.EMULTIHOP,
+            error.EDOTDOT => SystemErrno.EDOTDOT,
+            error.EBADMSG => SystemErrno.EBADMSG,
+            error.EOVERFLOW => SystemErrno.EOVERFLOW,
+            error.ENOTUNIQ => SystemErrno.ENOTUNIQ,
+            error.EBADFD => SystemErrno.EBADFD,
+            error.EREMCHG => SystemErrno.EREMCHG,
+            error.ELIBACC => SystemErrno.ELIBACC,
+            error.ELIBBAD => SystemErrno.ELIBBAD,
+            error.ELIBSCN => SystemErrno.ELIBSCN,
+            error.ELIBMAX => SystemErrno.ELIBMAX,
+            error.ELIBEXEC => SystemErrno.ELIBEXEC,
+            error.EILSEQ => SystemErrno.EILSEQ,
+            error.ERESTART => SystemErrno.ERESTART,
+            error.ESTRPIPE => SystemErrno.ESTRPIPE,
+            error.EUSERS => SystemErrno.EUSERS,
+            error.ENOTSOCK => SystemErrno.ENOTSOCK,
+            error.EDESTADDRREQ => SystemErrno.EDESTADDRREQ,
+            error.EMSGSIZE => SystemErrno.EMSGSIZE,
+            error.EPROTOTYPE => SystemErrno.EPROTOTYPE,
+            error.ENOPROTOOPT => SystemErrno.ENOPROTOOPT,
+            error.EPROTONOSUPPORT => SystemErrno.EPROTONOSUPPORT,
+            error.ESOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
+            error.ENOTSUP => SystemErrno.ENOTSUP,
+            error.EPFNOSUPPORT => SystemErrno.EPFNOSUPPORT,
+            error.EAFNOSUPPORT => SystemErrno.EAFNOSUPPORT,
+            error.EADDRINUSE => SystemErrno.EADDRINUSE,
+            error.EADDRNOTAVAIL => SystemErrno.EADDRNOTAVAIL,
+            error.ENETDOWN => SystemErrno.ENETDOWN,
+            error.ENETUNREACH => SystemErrno.ENETUNREACH,
+            error.ENETRESET => SystemErrno.ENETRESET,
+            error.ECONNABORTED => SystemErrno.ECONNABORTED,
+            error.ECONNRESET => SystemErrno.ECONNRESET,
+            error.ENOBUFS => SystemErrno.ENOBUFS,
+            error.EISCONN => SystemErrno.EISCONN,
+            error.ENOTCONN => SystemErrno.ENOTCONN,
+            error.ESHUTDOWN => SystemErrno.ESHUTDOWN,
+            error.ETOOMANYREFS => SystemErrno.ETOOMANYREFS,
+            error.ETIMEDOUT => SystemErrno.ETIMEDOUT,
+            error.ECONNREFUSED => SystemErrno.ECONNREFUSED,
+            error.EHOSTDOWN => SystemErrno.EHOSTDOWN,
+            error.EHOSTUNREACH => SystemErrno.EHOSTUNREACH,
+            error.EALREADY => SystemErrno.EALREADY,
+            error.EINPROGRESS => SystemErrno.EINPROGRESS,
+            error.ESTALE => SystemErrno.ESTALE,
+            error.EUCLEAN => SystemErrno.EUCLEAN,
+            error.ENOTNAM => SystemErrno.ENOTNAM,
+            error.ENAVAIL => SystemErrno.ENAVAIL,
+            error.EISNAM => SystemErrno.EISNAM,
+            error.EREMOTEIO => SystemErrno.EREMOTEIO,
+            error.EDQUOT => SystemErrno.EDQUOT,
+            error.ENOMEDIUM => SystemErrno.ENOMEDIUM,
+            error.EMEDIUMTYPE => SystemErrno.EMEDIUMTYPE,
+            error.ECANCELED => SystemErrno.ECANCELED,
+            error.ENOKEY => SystemErrno.ENOKEY,
+            error.EKEYEXPIRED => SystemErrno.EKEYEXPIRED,
+            error.EKEYREVOKED => SystemErrno.EKEYREVOKED,
+            error.EKEYREJECTED => SystemErrno.EKEYREJECTED,
+            error.EOWNERDEAD => SystemErrno.EOWNERDEAD,
+            error.ENOTRECOVERABLE => SystemErrno.ENOTRECOVERABLE,
+            error.ERFKILL => SystemErrno.ERFKILL,
+            error.EHWPOISON => SystemErrno.EHWPOISON,
+            error.EUNKNOWN => SystemErrno.EUNKNOWN,
+            error.ECHARSET => SystemErrno.ECHARSET,
+            error.EOF => SystemErrno.EOF,
             else => return null,
         };
     }
@@ -615,16 +695,16 @@ pub const SystemErrno = enum(u8) {
                 return init(@as(Win32Error, @enumFromInt(code)));
             } else {
                 if (comptime bun.Environment.allow_assert)
-                    bun.Output.debug("Unknown error code: {}\n", .{code});
+                    bun.Output.debugWarn("Unknown error code: {any}\n", .{code});
 
                 return null;
             }
         }
 
-        if (comptime @TypeOf(code) == Win32Error) {
-            return switch (code) {
+        if (comptime @TypeOf(code) == Win32Error or @TypeOf(code) == std.os.windows.Win32Error) {
+            return switch (@as(Win32Error, @enumFromInt(@intFromEnum(code)))) {
                 Win32Error.NOACCESS => SystemErrno.EACCES,
-                @as(Win32Error, @enumFromInt(10013)) => SystemErrno.EACCES,
+                Win32Error.WSAEACCES => SystemErrno.EACCES,
                 Win32Error.ELEVATION_REQUIRED => SystemErrno.EACCES,
                 Win32Error.CANT_ACCESS_FILE => SystemErrno.EACCES,
                 Win32Error.ADDRESS_ALREADY_ASSOCIATED => SystemErrno.EADDRINUSE,
@@ -685,7 +765,7 @@ pub const SystemErrno = enum(u8) {
                 Win32Error.WSAENETUNREACH => SystemErrno.ENETUNREACH,
                 Win32Error.WSAENOBUFS => SystemErrno.ENOBUFS,
                 Win32Error.BAD_PATHNAME => SystemErrno.ENOENT,
-                Win32Error.DIRECTORY => SystemErrno.ENOENT,
+                Win32Error.DIRECTORY => SystemErrno.ENOTDIR,
                 Win32Error.ENVVAR_NOT_FOUND => SystemErrno.ENOENT,
                 Win32Error.FILE_NOT_FOUND => SystemErrno.ENOENT,
                 Win32Error.INVALID_NAME => SystemErrno.ENOENT,
@@ -707,7 +787,7 @@ pub const SystemErrno = enum(u8) {
                 Win32Error.DIR_NOT_EMPTY => SystemErrno.ENOTEMPTY,
                 Win32Error.WSAENOTSOCK => SystemErrno.ENOTSOCK,
                 Win32Error.NOT_SUPPORTED => SystemErrno.ENOTSUP,
-                Win32Error.BROKEN_PIPE => SystemErrno.EOF,
+                Win32Error.BROKEN_PIPE => SystemErrno.EPIPE,
                 Win32Error.ACCESS_DENIED => SystemErrno.EPERM,
                 Win32Error.PRIVILEGE_NOT_HELD => SystemErrno.EPERM,
                 Win32Error.BAD_PIPE => SystemErrno.EPIPE,
@@ -723,14 +803,12 @@ pub const SystemErrno = enum(u8) {
                 Win32Error.META_EXPANSION_TOO_LONG => SystemErrno.E2BIG,
                 Win32Error.WSAESOCKTNOSUPPORT => SystemErrno.ESOCKTNOSUPPORT,
                 Win32Error.DELETE_PENDING => SystemErrno.EBUSY,
-                else => return null,
+                else => null,
             };
         }
 
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
-        }
+        if (code < 0)
+            return init(-code);
 
         if (code >= max) return null;
         return @as(SystemErrno, @enumFromInt(code));
@@ -740,7 +818,7 @@ pub const SystemErrno = enum(u8) {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.enums.EnumMap(SystemErrno, []const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
 
@@ -881,9 +959,11 @@ pub const SystemErrno = enum(u8) {
 };
 
 pub const off_t = i64;
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {}
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {}
 
-pub const E = enum(u8) {
+const uv = @import("./deps/libuv.zig");
+
+pub const E = enum(u16) {
     SUCCESS = 0,
     PERM = 1,
     NOENT = 2,
@@ -1021,6 +1101,148 @@ pub const E = enum(u8) {
     UNKNOWN = 134,
     CHARSET = 135,
     OF = 136,
+
+    UV_E2BIG = -uv.UV_E2BIG,
+    UV_EACCES = -uv.UV_EACCES,
+    UV_EADDRINUSE = -uv.UV_EADDRINUSE,
+    UV_EADDRNOTAVAIL = -uv.UV_EADDRNOTAVAIL,
+    UV_EAFNOSUPPORT = -uv.UV_EAFNOSUPPORT,
+    UV_EAGAIN = -uv.UV_EAGAIN,
+    UV_EAI_ADDRFAMILY = -uv.UV_EAI_ADDRFAMILY,
+    UV_EAI_AGAIN = -uv.UV_EAI_AGAIN,
+    UV_EAI_BADFLAGS = -uv.UV_EAI_BADFLAGS,
+    UV_EAI_BADHINTS = -uv.UV_EAI_BADHINTS,
+    UV_EAI_CANCELED = -uv.UV_EAI_CANCELED,
+    UV_EAI_FAIL = -uv.UV_EAI_FAIL,
+    UV_EAI_FAMILY = -uv.UV_EAI_FAMILY,
+    UV_EAI_MEMORY = -uv.UV_EAI_MEMORY,
+    UV_EAI_NODATA = -uv.UV_EAI_NODATA,
+    UV_EAI_NONAME = -uv.UV_EAI_NONAME,
+    UV_EAI_OVERFLOW = -uv.UV_EAI_OVERFLOW,
+    UV_EAI_PROTOCOL = -uv.UV_EAI_PROTOCOL,
+    UV_EAI_SERVICE = -uv.UV_EAI_SERVICE,
+    UV_EAI_SOCKTYPE = -uv.UV_EAI_SOCKTYPE,
+    UV_EALREADY = -uv.UV_EALREADY,
+    UV_EBADF = -uv.UV_EBADF,
+    UV_EBUSY = -uv.UV_EBUSY,
+    UV_ECANCELED = -uv.UV_ECANCELED,
+    UV_ECHARSET = -uv.UV_ECHARSET,
+    UV_ECONNABORTED = -uv.UV_ECONNABORTED,
+    UV_ECONNREFUSED = -uv.UV_ECONNREFUSED,
+    UV_ECONNRESET = -uv.UV_ECONNRESET,
+    UV_EDESTADDRREQ = -uv.UV_EDESTADDRREQ,
+    UV_EEXIST = -uv.UV_EEXIST,
+    UV_EFAULT = -uv.UV_EFAULT,
+    UV_EFBIG = -uv.UV_EFBIG,
+    UV_EHOSTUNREACH = -uv.UV_EHOSTUNREACH,
+    UV_EINVAL = -uv.UV_EINVAL,
+    UV_EINTR = -uv.UV_EINTR,
+    UV_EISCONN = -uv.UV_EISCONN,
+    UV_EIO = -uv.UV_EIO,
+    UV_ELOOP = -uv.UV_ELOOP,
+    UV_EISDIR = -uv.UV_EISDIR,
+    UV_EMSGSIZE = -uv.UV_EMSGSIZE,
+    UV_EMFILE = -uv.UV_EMFILE,
+    UV_ENETDOWN = -uv.UV_ENETDOWN,
+    UV_ENAMETOOLONG = -uv.UV_ENAMETOOLONG,
+    UV_ENFILE = -uv.UV_ENFILE,
+    UV_ENETUNREACH = -uv.UV_ENETUNREACH,
+    UV_ENODEV = -uv.UV_ENODEV,
+    UV_ENOBUFS = -uv.UV_ENOBUFS,
+    UV_ENOMEM = -uv.UV_ENOMEM,
+    UV_ENOENT = -uv.UV_ENOENT,
+    UV_ENOPROTOOPT = -uv.UV_ENOPROTOOPT,
+    UV_ENONET = -uv.UV_ENONET,
+    UV_ENOSYS = -uv.UV_ENOSYS,
+    UV_ENOSPC = -uv.UV_ENOSPC,
+    UV_ENOTDIR = -uv.UV_ENOTDIR,
+    UV_ENOTCONN = -uv.UV_ENOTCONN,
+    UV_ENOTSOCK = -uv.UV_ENOTSOCK,
+    UV_ENOTEMPTY = -uv.UV_ENOTEMPTY,
+    UV_EOVERFLOW = -uv.UV_EOVERFLOW,
+    UV_ENOTSUP = -uv.UV_ENOTSUP,
+    UV_EPIPE = -uv.UV_EPIPE,
+    UV_EPERM = -uv.UV_EPERM,
+    UV_EPROTONOSUPPORT = -uv.UV_EPROTONOSUPPORT,
+    UV_EPROTO = -uv.UV_EPROTO,
+    UV_ERANGE = -uv.UV_ERANGE,
+    UV_EPROTOTYPE = -uv.UV_EPROTOTYPE,
+    UV_ESHUTDOWN = -uv.UV_ESHUTDOWN,
+    UV_EROFS = -uv.UV_EROFS,
+    UV_ESRCH = -uv.UV_ESRCH,
+    UV_ESPIPE = -uv.UV_ESPIPE,
+    UV_ETXTBSY = -uv.UV_ETXTBSY,
+    UV_ETIMEDOUT = -uv.UV_ETIMEDOUT,
+    UV_UNKNOWN = -uv.UV_UNKNOWN,
+    UV_EXDEV = -uv.UV_EXDEV,
+    UV_ENXIO = -uv.UV_ENXIO,
+    UV_EOF = -uv.UV_EOF,
+    UV_EHOSTDOWN = -uv.UV_EHOSTDOWN,
+    UV_EMLINK = -uv.UV_EMLINK,
+    UV_ENOTTY = -uv.UV_ENOTTY,
+    UV_EREMOTEIO = -uv.UV_EREMOTEIO,
+    UV_EILSEQ = -uv.UV_EILSEQ,
+    UV_EFTYPE = -uv.UV_EFTYPE,
+    UV_ENODATA = -uv.UV_ENODATA,
+    UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT,
+    UV_ERRNO_MAX = -uv.UV_ERRNO_MAX,
+    UV_EUNATCH = -uv.UV_EUNATCH,
+};
+
+pub const S = struct {
+    pub const IFMT = 0o170000;
+
+    pub const IFDIR = 0o040000;
+    pub const IFCHR = 0o020000;
+    pub const IFBLK = 0o060000;
+    pub const IFREG = 0o100000;
+    pub const IFIFO = 0o010000;
+    pub const IFLNK = 0o120000;
+    pub const IFSOCK = 0o140000;
+
+    pub const ISUID = 0o4000;
+    pub const ISGID = 0o2000;
+    pub const ISVTX = 0o1000;
+    pub const IRUSR = 0o400;
+    pub const IWUSR = 0o200;
+    pub const IXUSR = 0o100;
+    pub const IRWXU = 0o700;
+    pub const IRGRP = 0o040;
+    pub const IWGRP = 0o020;
+    pub const IXGRP = 0o010;
+    pub const IRWXG = 0o070;
+    pub const IROTH = 0o004;
+    pub const IWOTH = 0o002;
+    pub const IXOTH = 0o001;
+    pub const IRWXO = 0o007;
+
+    pub inline fn ISREG(m: i32) bool {
+        return m & IFMT == IFREG;
+    }
+
+    pub inline fn ISDIR(m: i32) bool {
+        return m & IFMT == IFDIR;
+    }
+
+    pub inline fn ISCHR(m: i32) bool {
+        return m & IFMT == IFCHR;
+    }
+
+    pub inline fn ISBLK(m: i32) bool {
+        return m & IFMT == IFBLK;
+    }
+
+    pub inline fn ISFIFO(m: i32) bool {
+        return m & IFMT == IFIFO;
+    }
+
+    pub inline fn ISLNK(m: i32) bool {
+        return m & IFMT == IFLNK;
+    }
+
+    pub inline fn ISSOCK(m: i32) bool {
+        return m & IFMT == IFSOCK;
+    }
 };
 
 pub fn getErrno(_: anytype) E {
@@ -1030,3 +1252,184 @@ pub fn getErrno(_: anytype) E {
 
     return .SUCCESS;
 }
+
+const Maybe = bun.JSC.Maybe;
+
+const w = std.os.windows;
+
+extern "c" fn _umask(Mode) Mode;
+pub const umask = _umask;
+
+/// Derived from std.os.windows.renameAtW
+/// Allows more errors
+pub fn renameAtW(
+    old_dir_fd: bun.FileDescriptor,
+    old_path_w: []const u16,
+    new_dir_fd: bun.FileDescriptor,
+    new_path_w: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    const src_fd = brk: {
+        switch (bun.sys.openFileAtWindows(
+            old_dir_fd,
+            old_path_w,
+            w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+            w.FILE_OPEN,
+            w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+        )) {
+            .err => {
+                // retry, wtihout FILE_TRAVERSE flag
+                switch (bun.sys.openFileAtWindows(
+                    old_dir_fd,
+                    old_path_w,
+                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                    w.FILE_OPEN,
+                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                )) {
+                    .err => |err2| return .{ .err = err2 },
+                    .result => |fd| break :brk fd,
+                }
+            },
+            .result => |fd| break :brk fd,
+        }
+    };
+    defer _ = bun.sys.close(src_fd);
+
+    return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
+}
+
+const log = bun.sys.syslog;
+
+/// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
+/// Does not close the file descriptor.
+///
+/// For this to succeed
+/// - source_fd must have been opened with access_mask=w.DELETE
+/// - new_path_w must be the name of a file. it cannot be a path relative to new_dir_fd. see moveOpenedFileAtLoose
+pub fn moveOpenedFileAt(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_file_name: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    // FILE_RENAME_INFORMATION_EX and FILE_RENAME_POSIX_SEMANTICS require >= win10_rs1,
+    // but FILE_RENAME_IGNORE_READONLY_ATTRIBUTE requires >= win10_rs5. We check >= rs5 here
+    // so that we only use POSIX_SEMANTICS when we know IGNORE_READONLY_ATTRIBUTE will also be
+    // supported in order to avoid either (1) using a redundant call that we can know in advance will return
+    // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
+    // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+
+    if (bun.Environment.allow_assert) {
+        bun.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+    }
+
+    const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
+    var rename_info_buf: [struct_buf_len]u8 align(@alignOf(w.FILE_RENAME_INFORMATION_EX)) = undefined;
+
+    const struct_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) - 1 + new_file_name.len * 2;
+    if (struct_len > struct_buf_len) return Maybe(void).errno(bun.C.E.NAMETOOLONG, .NtSetInformationFile);
+
+    const rename_info = @as(*w.FILE_RENAME_INFORMATION_EX, @ptrCast(&rename_info_buf));
+    var io_status_block: w.IO_STATUS_BLOCK = undefined;
+
+    var flags: w.ULONG = w.FILE_RENAME_POSIX_SEMANTICS | w.FILE_RENAME_IGNORE_READONLY_ATTRIBUTE;
+    if (replace_if_exists) flags |= w.FILE_RENAME_REPLACE_IF_EXISTS;
+    rename_info.* = .{
+        .Flags = flags,
+        .RootDirectory = if (std.fs.path.isAbsoluteWindowsWTF16(new_file_name)) null else new_dir_fd.cast(),
+        .FileNameLength = @intCast(new_file_name.len * 2), // already checked error.NameTooLong
+        .FileName = undefined,
+    };
+    @memcpy(@as([*]u16, &rename_info.FileName)[0..new_file_name.len], new_file_name);
+    const rc = w.ntdll.NtSetInformationFile(
+        src_fd.cast(),
+        &io_status_block,
+        rename_info,
+        @intCast(struct_len), // already checked for error.NameTooLong
+        .FileRenameInformationEx,
+    );
+    log("moveOpenedFileAt({} ->> {} '{}', {s}) = {s}", .{ src_fd, new_dir_fd, bun.fmt.utf16(new_file_name), if (replace_if_exists) "replace_if_exists" else "no flag", @tagName(rc) });
+
+    if (bun.Environment.isDebug) {
+        if (rc == .ACCESS_DENIED) {
+            bun.Output.debugWarn("moveOpenedFileAt was called on a file descriptor without access_mask=w.DELETE", .{});
+        }
+    }
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+/// Same as moveOpenedFileAt but allows new_path to be a path relative to new_dir_fd.
+///
+/// Aka: moveOpenedFileAtLoose(fd, dir, ".\\a\\relative\\not-normalized-path.txt", false);
+pub fn moveOpenedFileAtLoose(
+    src_fd: bun.FileDescriptor,
+    new_dir_fd: bun.FileDescriptor,
+    new_path: []const u16,
+    replace_if_exists: bool,
+) Maybe(void) {
+    bun.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+
+    const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
+        new_path[2..]
+    else
+        new_path;
+
+    if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
+        const dirname = new_path[0..last_slash];
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true, .iterable = false })) {
+            .err => |e| return .{ .err = e },
+            .result => |fd| fd,
+        };
+        defer _ = bun.sys.close(fd);
+
+        const basename = new_path[last_slash + 1 ..];
+        return moveOpenedFileAt(src_fd, fd, basename, replace_if_exists);
+    }
+
+    // easy mode
+    return moveOpenedFileAt(src_fd, new_dir_fd, without_leading_dot_slash, replace_if_exists);
+}
+
+const FILE_DISPOSITION_DO_NOT_DELETE: w.ULONG = 0x00000000;
+const FILE_DISPOSITION_DELETE: w.ULONG = 0x00000001;
+const FILE_DISPOSITION_POSIX_SEMANTICS: w.ULONG = 0x00000002;
+const FILE_DISPOSITION_FORCE_IMAGE_SECTION_CHECK: w.ULONG = 0x00000004;
+const FILE_DISPOSITION_ON_CLOSE: w.ULONG = 0x00000008;
+const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: w.ULONG = 0x00000010;
+
+/// Extracted from standard library except this takes an open file descriptor
+///
+/// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
+pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    var info = w.FILE_DISPOSITION_INFORMATION_EX{
+        .Flags = FILE_DISPOSITION_DELETE |
+            FILE_DISPOSITION_POSIX_SEMANTICS |
+            FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE,
+    };
+
+    var io: w.IO_STATUS_BLOCK = undefined;
+    const rc = w.ntdll.NtSetInformationFile(
+        fd.cast(),
+        &io,
+        &info,
+        @sizeOf(w.FILE_DISPOSITION_INFORMATION_EX),
+        .FileDispositionInformationEx,
+    );
+
+    log("deleteOpenedFile({}) = {s}", .{ fd, @tagName(rc) });
+
+    return if (rc == .SUCCESS)
+        Maybe(void).success
+    else
+        Maybe(void).errno(rc, .NtSetInformationFile);
+}
+
+pub extern fn windows_enable_stdio_inheritance() void;
+
+pub extern "c" fn quick_exit(code: c_int) noreturn;

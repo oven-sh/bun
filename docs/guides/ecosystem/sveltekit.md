@@ -2,10 +2,10 @@
 name: Build an app with SvelteKit and Bun
 ---
 
-Use `bunx` to scaffold your app with the `create-svelte` CLI. Answer the prompts to select a template and set up your development environment.
+Use `bun create` to scaffold your app with the `svelte` package. Answer the prompts to select a template and set up your development environment.
 
 ```sh
-$ bunx create-svelte my-app
+$ bun create svelte@latest my-app
 ┌  Welcome to SvelteKit!
 │
 ◇  Which Svelte app template?
@@ -72,20 +72,20 @@ To build for production, you'll need to add the right SvelteKit adapter. Current
 
 Now, make the following changes to your `svelte.config.js`.
 
-```ts
+```ts-diff
 - import adapter from "@sveltejs/adapter-auto";
 + import adapter from "svelte-adapter-bun";
-import { vitePreprocess } from "@sveltejs/kit/vite";
+  import { vitePreprocess } from "@sveltejs/kit/vite";
 
-/** @type {import('@sveltejs/kit').Config} */
-const config = {
-  kit: {
-    adapter: adapter(),
-  },
-  preprocess: vitePreprocess(),
-};
+  /** @type {import('@sveltejs/kit').Config} */
+  const config = {
+    kit: {
+      adapter: adapter(),
+    },
+    preprocess: vitePreprocess(),
+  };
 
-export default config;
+  export default config;
 ```
 
 ---

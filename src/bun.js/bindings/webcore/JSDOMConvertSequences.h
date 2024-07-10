@@ -1,5 +1,5 @@
 /*
- * Copyright (C) 2016-2017 Apple Inc. All rights reserved.
+ * Copyright (C) 2016-2022 Apple Inc. All rights reserved.
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -29,10 +29,10 @@
 #include "JSDOMConvertBase.h"
 #include "JSDOMConvertNumbers.h"
 #include "JSDOMGlobalObject.h"
-#include "JavaScriptCore/IteratorOperations.h"
-#include "JavaScriptCore/JSArray.h"
-#include "JavaScriptCore/JSGlobalObjectInlines.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/IteratorOperations.h>
+#include <JavaScriptCore/JSArray.h>
+#include <JavaScriptCore/JSGlobalObjectInlines.h>
+#include <JavaScriptCore/ObjectConstructor.h>
 
 namespace WebCore {
 
@@ -95,23 +95,24 @@ struct NumericSequenceConverter {
                 auto indexValue = array->butterfly()->contiguousInt32().at(array, i).get();
                 ASSERT(!indexValue || indexValue.isInt32());
                 if (!indexValue)
-                    result.uncheckedAppend(0);
+                    result.append(0);
                 else
-                    result.uncheckedAppend(indexValue.asInt32());
+                    result.append(indexValue.asInt32());
             }
             return WTFMove(result);
         }
 
         ASSERT(indexingType == JSC::DoubleShape);
+        ASSERT(JSC::Options::allowDoubleShape());
         for (unsigned i = 0; i < length; i++) {
             double doubleValue = array->butterfly()->contiguousDouble().at(array, i);
             if (std::isnan(doubleValue))
-                result.uncheckedAppend(0);
+                result.append(0);
             else {
                 auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, scope, doubleValue);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                result.uncheckedAppend(convertedValue);
+                result.append(convertedValue);
             }
         }
         return WTFMove(result);
@@ -219,7 +220,7 @@ struct SequenceConverter {
                 auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
                 RETURN_IF_EXCEPTION(scope, {});
 
-                result.uncheckedAppend(convertedValue);
+                result.append(convertedValue);
             }
             return result;
         }
@@ -234,7 +235,7 @@ struct SequenceConverter {
             auto convertedValue = Converter<IDLType>::convert(lexicalGlobalObject, indexValue);
             RETURN_IF_EXCEPTION(scope, {});
 
-            result.uncheckedAppend(convertedValue);
+            result.append(convertedValue);
         }
         return result;
     }
@@ -380,6 +381,7 @@ template<typename T> struct JSConverter<IDLSequence<T>> {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer list;
+        list.ensureCapacity(vector.size());
         for (auto& element : vector) {
             auto jsValue = toJS<T>(lexicalGlobalObject, globalObject, element);
             RETURN_IF_EXCEPTION(scope, {});
@@ -417,6 +419,7 @@ template<typename T> struct JSConverter<IDLFrozenArray<T>> {
         JSC::VM& vm = JSC::getVM(&lexicalGlobalObject);
         auto scope = DECLARE_THROW_SCOPE(vm);
         JSC::MarkedArgumentBuffer list;
+        list.ensureCapacity(vector.size());
         for (auto& element : vector) {
             auto jsValue = toJS<T>(lexicalGlobalObject, globalObject, element);
             RETURN_IF_EXCEPTION(scope, {});

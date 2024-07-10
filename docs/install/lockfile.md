@@ -10,30 +10,24 @@ Run `bun install -y` to generate a Yarn-compatible `yarn.lock` (v1) that can be 
 
 #### How do I `git diff` Bun's lockfile?
 
-To add to the global gitattributes file:
-
-- First try `$XDG_CONFIG_HOME/git/attributes`
-- If `$XDG_CONFIG_HOME` is not set, try `~/.config/git/attributes`
-
-For example, on macOS, add the following to `~/.config/git/attributes`:
+Add the following to your local or global `.gitattributes` file:
 
 ```
-*.lockb diff=lockb
+*.lockb binary diff=lockb
 ```
 
-Then add the following to `~/.gitconfig`:
-
-```
-[diff "lockb"]
-    textconv = bun
-    binary = true
-```
-
-To only add to the local gitattributes file:
+Then add the following to you local git config with:
 
 ```sh
 $ git config diff.lockb.textconv bun
 $ git config diff.lockb.binary true
+```
+
+Or to your global git config (system-wide) with the `--global` option:
+
+```sh
+$ git config --global diff.lockb.textconv bun
+$ git config --global diff.lockb.binary true
 ```
 
 **Why this works:**
@@ -84,12 +78,6 @@ print = "yarn"
 
 ```toml
 [install.lockfile]
-
-# path to read bun.lockb from
-path = "bun.lockb"
-
-# path to save bun.lockb to
-savePath = "bun.lockb"
 
 # whether to save the lockfile to disk
 save = true

@@ -22,7 +22,7 @@ Bun.serve<{ socketId: number }>({
   websocket: {
     // define websocket handlers
     async message(ws, message) {
-      // the contextual dta is available as the `data` property
+      // the contextual data is available as the `data` property
       // on the WebSocket instance
       console.log(`Received ${message} from ${ws.data.socketId}}`);
     },
@@ -47,7 +47,7 @@ Bun.serve<WebSocketData>({
     // use a library to parse cookies
     const cookies = parseCookies(req.headers.get("Cookie"));
     const token = cookies["X-Token"];
-    const user = await getUserFromToken(ws.data.authToken);
+    const user = await getUserFromToken(token);
 
     const upgraded = server.upgrade(req, {
       data: {

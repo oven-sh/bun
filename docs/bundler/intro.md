@@ -40,7 +40,7 @@ When a user visits this website, the files are loaded in the following order:
 
 This approach works, it requires three round-trip HTTP requests before the browser is ready to render the page. On slow internet connections, this may add up to a non-trivial delay.
 
-This example is extremely simplistic. A modern app may be loading dozens of modules from `node_modules`, each consisting of hundrends of files. Loading each of these files with a separate HTTP request becomes untenable very quickly. While most of these requests will be running in parallel, the number of round-trip requests can still be very high; plus, there are limits on how many simultaneous requests a browser can make.
+This example is extremely simplistic. A modern app may be loading dozens of modules from `node_modules`, each consisting of hundred of files. Loading each of these files with a separate HTTP request becomes untenable very quickly. While most of these requests will be running in parallel, the number of round-trip requests can still be very high; plus, there are limits on how many simultaneous requests a browser can make.
 
 {% callout %}
 Some recent advances like modulepreload and HTTP/3 are intended to solve some of these problems, but at the moment bundling is still the most performant approach.

@@ -35,7 +35,7 @@ Structure* cacheDOMStructure(JSDOMGlobalObject& globalObject, Structure* structu
 {
     auto addToStructures = [](JSDOMStructureMap& structures, JSDOMGlobalObject& globalObject, Structure* structure, const ClassInfo* classInfo) {
         ASSERT(!structures.contains(classInfo));
-        return structures.set(classInfo, WriteBarrier<Structure>(globalObject.vm(), &globalObject, structure)).iterator->value.get();
+        return structures.set(classInfo, JSC::WriteBarrier<Structure>(globalObject.vm(), &globalObject, structure)).iterator->value.get();
     };
     if (globalObject.vm().heap.mutatorShouldBeFenced()) {
         Locker locker { globalObject.gcLock() };

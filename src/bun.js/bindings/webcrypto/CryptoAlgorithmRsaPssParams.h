@@ -34,6 +34,7 @@ namespace WebCore {
 class CryptoAlgorithmRsaPssParams final : public CryptoAlgorithmParameters {
 public:
     size_t saltLength;
+    size_t padding = 0; // 0 = default
 
     Class parametersClass() const final { return Class::RsaPssParams; }
 
@@ -42,6 +43,7 @@ public:
         CryptoAlgorithmRsaPssParams result;
         result.identifier = identifier;
         result.saltLength = saltLength;
+        result.padding = padding;
 
         return result;
     }

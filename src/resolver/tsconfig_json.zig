@@ -10,11 +10,10 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const options = @import("../options.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -56,6 +55,8 @@ pub const TSConfigJSON = struct {
 
     preserve_imports_not_used_as_values: ?bool = false,
 
+    emit_decorator_metadata: bool = false,
+
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -66,10 +67,10 @@ pub const TSConfigJSON = struct {
         remove,
         invalid,
 
-        pub const List = ComptimeStringMap(ImportsNotUsedAsValue, .{
-            .{ "preserve", ImportsNotUsedAsValue.preserve },
-            .{ "error", ImportsNotUsedAsValue.err },
-            .{ "remove", ImportsNotUsedAsValue.remove },
+        pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, .{
+            .{ "preserve", .preserve },
+            .{ "error", .err },
+            .{ "remove", .remove },
         });
     };
 
@@ -115,6 +116,8 @@ pub const TSConfigJSON = struct {
         // behavior may also be different).
         const json: js_ast.Expr = (json_cache.parseTSConfig(log, source, allocator) catch null) orelse return null;
 
+        bun.Analytics.Features.tsconfig += 1;
+
         var result: TSConfigJSON = TSConfigJSON{ .abs_path = source.key_path.text, .paths = PathsMap.init(allocator) };
         errdefer allocator.free(result.paths);
         if (json.asProperty("extends")) |extends_value| {
@@ -137,6 +140,13 @@ pub const TSConfigJSON = struct {
                 }
             }
 
+            // Parse "emitDecoratorMetadata"
+            if (compiler_opts.expr.asProperty("emitDecoratorMetadata")) |emit_decorator_metadata_prop| {
+                if (emit_decorator_metadata_prop.expr.asBool()) |val| {
+                    result.emit_decorator_metadata = val;
+                }
+            }
+
             // Parse "jsxFactory"
             if (compiler_opts.expr.asProperty("jsxFactory")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
@@ -156,7 +166,7 @@ pub const TSConfigJSON = struct {
             // https://www.typescriptlang.org/docs/handbook/jsx.html#basic-usages
             if (compiler_opts.expr.asProperty("jsx")) |jsx_prop| {
                 if (jsx_prop.expr.asString(allocator)) |str| {
-                    var str_lower = allocator.alloc(u8, str.len) catch unreachable;
+                    const str_lower = allocator.alloc(u8, str.len) catch unreachable;
                     defer allocator.free(str_lower);
                     _ = strings.copyLowercase(str, str_lower);
                     // - We don't support "preserve" yet
@@ -217,6 +227,9 @@ pub const TSConfigJSON = struct {
             if (compiler_opts.expr.asProperty("paths")) |paths_prop| {
                 switch (paths_prop.expr.data) {
                     .e_object => {
+                        defer {
+                            bun.Analytics.Features.tsconfig_paths += 1;
+                        }
                         var paths = paths_prop.expr.data.e_object;
                         result.base_url_for_paths = if (result.base_url.len > 0) result.base_url else ".";
                         result.paths = PathsMap.init(allocator);
@@ -307,14 +320,14 @@ pub const TSConfigJSON = struct {
         }
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(result.base_url.len > 0);
+            assert(result.base_url.len > 0);
         }
 
-        var _result = allocator.create(TSConfigJSON) catch unreachable;
+        const _result = allocator.create(TSConfigJSON) catch unreachable;
         _result.* = result;
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(_result.base_url.len > 0);
+            assert(_result.base_url.len > 0);
         }
         return _result;
     }
@@ -429,3 +442,5 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
+
+const assert = bun.assert;

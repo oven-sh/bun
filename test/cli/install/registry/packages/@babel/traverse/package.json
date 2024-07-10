@@ -1,0 +1,39 @@
+{
+	"name": "@babel/traverse",
+	"versions": {
+		"7.99.0": {
+			"name": "@babel/traverse",
+			"version": "7.99.0",
+			"_id": "@babel/traverse@7.99.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Ew4BCxCuvx4F5t7JDsLZSzEK1YE88mLWlZ0QmDQ8lnefK0JGj3Ov3kWfTvOH3eJt7+GvAMye/+6WaFAwjZVDEw==",
+				"shasum": "1a846b5333ad8ea4897a518ad93c392608b3b5c9",
+				"tarball": "http://localhost:4873/@babel/traverse/-/@babel/traverse-7.99.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:04:56.735Z",
+		"created": "2023-11-01T22:04:56.735Z",
+		"7.99.0": "2023-11-01T22:04:56.735Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "7.99.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"traverse-7.99.0.tgz": {
+			"shasum": "1a846b5333ad8ea4897a518ad93c392608b3b5c9",
+			"version": "7.99.0"
+		}
+	},
+	"_rev": "3-4455b3df2384b9e0",
+	"_id": "@babel/traverse",
+	"readme": "ERROR: No README data found!"
+}

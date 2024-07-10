@@ -1,0 +1,62 @@
+{
+	"name": "bin-change-dir",
+	"versions": {
+		"1.0.0": {
+			"name": "bin-change-dir",
+			"version": "1.0.0",
+			"bin": {
+				"bin-change-dir": "bin-1.0.0/bin.js"
+			},
+			"_id": "bin-change-dir@1.0.0",
+			"_nodeVersion": "21.6.0",
+			"_npmVersion": "10.3.0",
+			"dist": {
+				"integrity": "sha512-TObkCWW09we7ck/288Iz8JmBP0R69McmZuXy524RfsmGPyRshkMR/812upjX7DfT26YdxqlGp42I/oHNRkCA7g==",
+				"shasum": "04cc81284106b998ea73b90ef0b805bce8b1f803",
+				"tarball": "http://localhost:4873/bin-change-dir/-/bin-change-dir-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.1": {
+			"name": "bin-change-dir",
+			"version": "1.0.1",
+			"bin": {
+				"bin-change-dir": "bin-1.0.1/bin.js"
+			},
+			"_id": "bin-change-dir@1.0.1",
+			"_nodeVersion": "21.6.0",
+			"_npmVersion": "10.3.0",
+			"dist": {
+				"integrity": "sha512-8v8HjJ0rLcOZFmIJnlv/uFgitfRGEzl3TObl05UM1HynyZVjPcQTZLSCDJFQO54tzdySr+zmsIkm21jAFFKLzw==",
+				"shasum": "e311353d2d033e96cc4adb07c1c377e8a4a70623",
+				"tarball": "http://localhost:4873/bin-change-dir/-/bin-change-dir-1.0.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-01-20T01:14:30.608Z",
+		"created": "2024-01-20T01:14:17.228Z",
+		"1.0.0": "2024-01-20T01:14:17.228Z",
+		"1.0.1": "2024-01-20T01:14:30.608Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"bin-change-dir-1.0.0.tgz": {
+			"shasum": "04cc81284106b998ea73b90ef0b805bce8b1f803",
+			"version": "1.0.0"
+		},
+		"bin-change-dir-1.0.1.tgz": {
+			"shasum": "e311353d2d033e96cc4adb07c1c377e8a4a70623",
+			"version": "1.0.1"
+		}
+	},
+	"_rev": "",
+	"_id": "bin-change-dir",
+	"readme": "ERROR: No README data found!"
+}

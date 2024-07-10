@@ -43,9 +43,11 @@ public:
     {
         return adoptRef(*new CryptoKeyHMAC(key, hash, extractable, usage));
     }
+    
     virtual ~CryptoKeyHMAC();
 
     static RefPtr<CryptoKeyHMAC> generate(size_t lengthBits, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
+    static RefPtr<CryptoKeyHMAC> generateFromBytes(void* data, size_t byteLength, CryptoAlgorithmIdentifier hash, bool extractable, CryptoKeyUsageBitmap);
     static RefPtr<CryptoKeyHMAC> importRaw(size_t lengthBits, CryptoAlgorithmIdentifier hash, Vector<uint8_t>&& keyData, bool extractable, CryptoKeyUsageBitmap);
     using CheckAlgCallback = Function<bool(CryptoAlgorithmIdentifier, const String&)>;
     static RefPtr<CryptoKeyHMAC> importJwk(size_t lengthBits, CryptoAlgorithmIdentifier hash, JsonWebKey&&, bool extractable, CryptoKeyUsageBitmap, CheckAlgCallback&&);

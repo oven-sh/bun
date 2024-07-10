@@ -156,7 +156,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSCustomEventPrototype, JSCustomEventPrototy
 
 using JSCustomEventDOMConstructor = JSDOMConstructor<JSCustomEvent>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSCustomEventDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -246,7 +246,7 @@ JSValue JSCustomEvent::getConstructor(VM& vm, const JSGlobalObject* globalObject
     return getDOMConstructor<JSCustomEventDOMConstructor, DOMConstructorID::CustomEvent>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCustomEventConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCustomEventConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -262,7 +262,7 @@ static inline JSValue jsCustomEvent_detailGetter(JSGlobalObject& lexicalGlobalOb
     return thisObject.detail(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCustomEvent_detail, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCustomEvent_detail, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCustomEvent>::get<jsCustomEvent_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -333,7 +333,7 @@ void JSCustomEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSCustomEvent*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -355,18 +355,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     //     if constexpr (std::is_polymorphic_v<CustomEvent>) {
     // #if ENABLE(BINDING_INTEGRITY)
-    //         const void* actualVTablePointer = getVTablePointer(impl.ptr());
+    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
     // #if PLATFORM(WIN)
     //         void* expectedVTablePointer = __identifier("??_7CustomEvent@WebCore@@6B@");
     // #else
-    //         void* expectedVTablePointer = &_ZTVN7WebCore11CustomEventE[2];
+    //         // void* expectedVTablePointer = &_ZTVN7WebCore11CustomEventE[2];
     // #endif
 
     //         // If you hit this assertion you either have a use after free bug, or
     //         // CustomEvent has subclasses. If CustomEvent has subclasses that get passed
     //         // to toJS() we currently require CustomEvent you to opt out of binding hardening
     //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     //     }
     return createWrapper<CustomEvent>(globalObject, WTFMove(impl));

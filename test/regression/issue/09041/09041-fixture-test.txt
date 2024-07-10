@@ -1,0 +1,21 @@
+import { $ } from "bun";
+import {join } from 'path';
+test("09041", async () => {
+  const buffer = Buffer.alloc(1024 * 1024);
+  let i = 0;
+  while (i < 1024 * 1024) {
+    i += buffer.write(Number(i).toString(10), i);
+  }
+  const buns = Array.from(
+    { length: 5 },
+    () => $`${process.argv0} run ${join(import.meta.dir, "09041-fixture.mjs")} < ${buffer}`,
+  );
+
+  const runs = await Promise.all(buns);
+  for (let i = 0; i < runs.length; i++) {
+    const run = runs[i];
+    expect(run.exitCode).toBe(0);
+    expect(run.stdout).toHaveLength(1024 * 1024);
+    expect(run.stdout).toEqual(buffer);
+  }
+}, 30000);

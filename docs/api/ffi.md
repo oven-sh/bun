@@ -58,17 +58,18 @@ Pass a path to the shared library and a map of symbols to import into `dlopen`:
 
 ```ts
 import { dlopen, FFIType, suffix } from "bun:ffi";
+const { i32 } = FFIType;
 
 const path = `libadd.${suffix}`;
 
 const lib = dlopen(path, {
   add: {
-    args: [FFIType.i32, FFIType.i32],
-    returns: FFIType.i32,
+    args: [i32, i32],
+    returns: i32,
   },
 });
 
-lib.symbols.add(1, 2);
+console.log(lib.symbols.add(1, 2));
 ```
 
 ### Rust
@@ -76,7 +77,7 @@ lib.symbols.add(1, 2);
 ```rust
 // add.rs
 #[no_mangle]
-pub extern "C" fn add(a: isize, b: isize) -> isize {
+pub extern "C" fn add(a: i32, b: i32) -> i32 {
     a + b
 }
 ```
@@ -85,6 +86,22 @@ To compile:
 
 ```bash
 $ rustc --crate-type cdylib add.rs
+```
+
+### C++
+
+```c
+#include <cstdint>
+
+extern "C" int32_t add(int32_t a, int32_t b) {
+    return a + b;
+}
+```
+
+To compile:
+
+```bash
+$ zig build-lib add.cpp -dynamic -lc -lc++
 ```
 
 ## FFI types

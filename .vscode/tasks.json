@@ -2,33 +2,51 @@
   "version": "2.0.0",
   "tasks": [
     {
-      "label": "build",
       "type": "process",
-      "command": "zig",
-      "args": ["build"],
-      "presentation": {
-        "echo": true,
-        "reveal": "silent",
-        "focus": false,
-        "panel": "shared",
-        "showReuseMessage": false,
-        "clear": false
+      "label": "Install Dependencies",
+      "command": "scripts/all-dependencies.sh",
+      "windows": {
+        "command": "scripts/all-dependencies.ps1",
       },
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      }
+      "icon": {
+        "id": "arrow-down",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
     },
     {
-      "label": "run",
       "type": "process",
-      "command": "zig",
-      "args": ["run", "${file}"],
-      "group": "build",
-      "presentation": {
-        "showReuseMessage": false,
-        "clear": true
-      }
-    }
-  ]
+      "label": "Setup Environment",
+      "dependsOn": ["Install Dependencies"],
+      "command": "scripts/setup.sh",
+      "windows": {
+        "command": "scripts/setup.ps1",
+      },
+      "icon": {
+        "id": "check",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+    },
+    {
+      "type": "process",
+      "label": "Build Bun",
+      "dependsOn": ["Setup Environment"],
+      "command": "bun",
+      "args": ["run", "build"],
+      "icon": {
+        "id": "gear",
+      },
+      "options": {
+        "cwd": "${workspaceFolder}",
+      },
+      "isBuildCommand": true,
+      "runOptions": {
+        "instanceLimit": 1,
+        "reevaluateOnRerun": true,
+      },
+    },
+  ],
 }

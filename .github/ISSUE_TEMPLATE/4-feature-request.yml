@@ -1,0 +1,24 @@
+name: 🚀 Feature Request
+description: Suggest an idea, feature, or enhancement
+labels: [enhancement]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for submitting an idea. It helps make Bun better.
+
+        If you want to discuss Bun, or learn how others are using Bun, please
+        join our [Discord](https://discord.gg/CXdq2DP29u) server, where you can share in the [`#feedback`](https://discord.gg/unwUnHBNqy) channel.
+  - type: textarea
+    attributes:
+      label: What is the problem this feature would solve?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What is the feature you are proposing to solve the problem?
+    validations:
+      required: true
+  - type: textarea
+    attributes:
+      label: What alternatives have you considered?

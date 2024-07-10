@@ -1,0 +1,39 @@
+{
+	"name": "no-deps-mjs",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-mjs",
+			"version": "1.0.0",
+			"_id": "no-deps-mjs@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-3FZA/YbbEZU3TVeZ1aCc5xM8SDTYUmZh+IOWjIkfuYn2PpmAafwZ0A+t/q9ynG0UgTCrV47szn4eo7eboWNWBw==",
+				"shasum": "8d3b83d0c5dcc499660520bf974759b4cf590fa1",
+				"tarball": "http://localhost:4873/no-deps-mjs/-/no-deps-mjs-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:19.749Z",
+		"created": "2023-11-01T22:05:19.749Z",
+		"1.0.0": "2023-11-01T22:05:19.749Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-mjs-1.0.0.tgz": {
+			"shasum": "8d3b83d0c5dcc499660520bf974759b4cf590fa1",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-7567677ddacbab98",
+	"_id": "no-deps-mjs",
+	"readme": "ERROR: No README data found!"
+}

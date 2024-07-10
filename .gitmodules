@@ -1,16 +1,16 @@
-[submodule "src/deps/picohttpparser"]
-path = src/deps/picohttpparser
-url = https://github.com/h2o/picohttpparser.git
-ignore = dirty
-depth = 1
-shallow = true
-fetchRecurseSubmodules = false
 [submodule "src/javascript/jsc/WebKit"]
 path = src/bun.js/WebKit
 url = https://github.com/oven-sh/WebKit.git
 ignore = dirty
 depth = 1
 update = none
+shallow = true
+fetchRecurseSubmodules = false
+[submodule "src/deps/picohttpparser"]
+path = src/deps/picohttpparser
+url = https://github.com/h2o/picohttpparser.git
+ignore = dirty
+depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/mimalloc"]
@@ -56,15 +56,29 @@ depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/c-ares"]
-	path = src/deps/c-ares
-	url = https://github.com/c-ares/c-ares.git
+path = src/deps/c-ares
+url = https://github.com/c-ares/c-ares.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
 [submodule "src/deps/zstd"]
-	path = src/deps/zstd
-	url = https://github.com/facebook/zstd.git
-	ignore = dirty
-[submodule "src/deps/base64"]
-	path = src/deps/base64
-	url = https://github.com/aklomp/base64.git
-	ignore = dirty
-	depth = 1
-	shallow = true
+path = src/deps/zstd
+url = https://github.com/facebook/zstd.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
+[submodule "src/deps/ls-hpack"]
+path = src/deps/ls-hpack
+url = https://github.com/litespeedtech/ls-hpack.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
+[submodule "zig"]
+path = src/deps/zig
+url = https://github.com/oven-sh/zig
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false

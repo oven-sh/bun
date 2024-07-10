@@ -175,6 +175,27 @@ void ReadableStream::cancel(const Exception& exception)
     invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
 }
 
+void ReadableStream::cancel(WebCore::JSDOMGlobalObject& globalObject, JSReadableStream* readableStream, const Exception& exception)
+{
+    auto* clientData = static_cast<JSVMClientData*>(globalObject.vm().clientData);
+    auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamCancelPrivateName();
+
+    auto& vm = globalObject.vm();
+    JSC::JSLockHolder lock(vm);
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+    auto value = createDOMException(&globalObject, exception.code(), exception.message());
+    if (UNLIKELY(scope.exception())) {
+        ASSERT(vm.hasPendingTerminationException());
+        return;
+    }
+
+    MarkedArgumentBuffer arguments;
+    arguments.append(readableStream);
+    arguments.append(value);
+    ASSERT(!arguments.hasOverflowed());
+    invokeReadableStreamFunction(globalObject, privateName, JSC::jsUndefined(), arguments);
+}
+
 static inline bool checkReadableStream(JSDOMGlobalObject& globalObject, JSReadableStream* readableStream, JSC::JSValue function)
 {
     auto& lexicalGlobalObject = globalObject;
@@ -211,16 +232,12 @@ bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* re
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
+    return readableStream->disturbed();
 }
 
 bool ReadableStream::isDisturbed() const
 {
-    auto clientData = WebCore::clientData(globalObject()->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream()->getDirect(globalObject()->vm(), privateName).isTrue();
+    return readableStream()->disturbed();
 }
 
 }

@@ -1,4 +1,4 @@
-import { define } from "./scripts/class-definitions";
+import { define } from "../codegen/class-definitions";
 
 export default [
   define({
@@ -12,6 +12,7 @@ export default [
       message: {
         getter: "getMessage",
         cache: true,
+        writable: true,
       },
       code: {
         getter: "getCode",
@@ -40,6 +41,13 @@ export default [
         getter: "getPosition",
         cache: true,
       },
+      line: {
+        getter: "getLine",
+      },
+
+      column: {
+        getter: "getColumn",
+      },
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,
@@ -66,6 +74,7 @@ export default [
       message: {
         getter: "getMessage",
         cache: true,
+        writable: true,
       },
       name: {
         value: "BuildMessage",
@@ -78,6 +87,20 @@ export default [
         getter: "getPosition",
         cache: true,
       },
+
+      notes: {
+        getter: "getNotes",
+        cache: true,
+      },
+
+      line: {
+        getter: "getLine",
+      },
+
+      column: {
+        getter: "getColumn",
+      },
+
       ["@@toPrimitive"]: {
         fn: "toPrimitive",
         length: 1,

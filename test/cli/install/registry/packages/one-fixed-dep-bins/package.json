@@ -1,0 +1,83 @@
+{
+	"name": "one-fixed-dep-bins",
+	"versions": {
+		"0.0.0": {
+			"name": "one-fixed-dep-bins",
+			"version": "0.0.0",
+			"_id": "one-fixed-dep-bins@0.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-cd5WdMIEUumT6fVlBTNNLO6wJVkFicDq6UKGPlqm+GhFDnCawNucIFpfvtek6ANXOgNSfsbNNzymU+epkXnYvg==",
+				"shasum": "431ccd5174342af4246b720df129277c6ef46b8b",
+				"tarball": "http://localhost:4873/one-fixed-dep-bins/-/one-fixed-dep-bins-0.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0": {
+			"name": "one-fixed-dep-bins",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps-bins": "1.0.0"
+			},
+			"_id": "one-fixed-dep-bins@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-rGnrSNNmqcJRYUDAmQY91O0rE3zYX6iQtfeo7LJ4bSUEAZKv0Hdn/pg9ocw6c9fyN0Rny5EpwmV8CuTrFHcsgQ==",
+				"shasum": "df88733165d57ffc461f72e31b86373ba79025a5",
+				"tarball": "http://localhost:4873/one-fixed-dep-bins/-/one-fixed-dep-bins-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "one-fixed-dep-bins",
+			"version": "2.0.0",
+			"dependencies": {
+				"no-deps-bins": "2.0.0"
+			},
+			"_id": "one-fixed-dep-bins@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-mnCQ6xkPdkr5BEbGmXBpb4RK0dr6YBxJEGZBkZJi69Gi1KiMyGBuSuT3g/9H6VVG+pBrsffZ9oYIzTtzf1Nk5Q==",
+				"shasum": "da4ecbfcd9fe7d3592a10a2f5bd312a343a10e81",
+				"tarball": "http://localhost:4873/one-fixed-dep-bins/-/one-fixed-dep-bins-2.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:25.244Z",
+		"created": "2023-11-01T22:05:24.671Z",
+		"0.0.0": "2023-11-01T22:05:24.671Z",
+		"1.0.0": "2023-11-01T22:05:24.952Z",
+		"2.0.0": "2023-11-01T22:05:25.244Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "2.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-fixed-dep-bins-0.0.0.tgz": {
+			"shasum": "431ccd5174342af4246b720df129277c6ef46b8b",
+			"version": "0.0.0"
+		},
+		"one-fixed-dep-bins-1.0.0.tgz": {
+			"shasum": "df88733165d57ffc461f72e31b86373ba79025a5",
+			"version": "1.0.0"
+		},
+		"one-fixed-dep-bins-2.0.0.tgz": {
+			"shasum": "da4ecbfcd9fe7d3592a10a2f5bd312a343a10e81",
+			"version": "2.0.0"
+		}
+	},
+	"_rev": "9-5896b526c2cad8d0",
+	"_id": "one-fixed-dep-bins",
+	"readme": "ERROR: No README data found!"
+}

@@ -1,7 +1,7 @@
 import assert from "assert";
 import { readdirSync } from "fs";
 import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe, expect } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_splitting_test.go
@@ -359,6 +359,7 @@ describe("bundler", () => {
     },
     entryPoints: ["/a.js", "/b.js", "/c.js"],
     splitting: true,
+    target: "bun",
     runtimeFiles: {
       "/test.js": /* js */ `
         import './out/c.js';
@@ -367,14 +368,14 @@ describe("bundler", () => {
           console.log('observer', getValue());
         }
         setObserver(observer);
-        import('./out/a.js');
-        import('./out/b.js');
+        await import('./out/a.js');
+        await import('./out/b.js');
       `,
     },
     run: [
-      { file: "/out/a.js", stdout: "side effects! [Function]\nsetValue 123" },
-      { file: "/out/b.js", stdout: "side effects! [Function]\nb" },
-      { file: "/test.js", stdout: "side effects! [Function]\nsetValue 123\nobserver 123\nb" },
+      { file: "/out/a.js", stdout: "side effects! [Function: getValue]\nsetValue 123" },
+      { file: "/out/b.js", stdout: "side effects! [Function: getValue]\nb" },
+      { file: "/test.js", stdout: "side effects! [Function: getValue]\nsetValue 123\nobserver 123\nb" },
     ],
   });
   itBundled("splitting/CrossChunkAssignmentDependenciesRecursive", {
@@ -513,8 +514,8 @@ describe("bundler", () => {
     splitting: true,
     minifyIdentifiers: true,
     run: [
-      { file: "/out/a.js", stdout: "[Function]" },
-      { file: "/out/b.js", stdout: "[Function]" },
+      { file: "/out/a.js", stdout: "[Function: f]" },
+      { file: "/out/b.js", stdout: "[Function: f]" },
     ],
   });
   itBundled("splitting/HybridESMAndCJSESBuildIssue617", {
@@ -540,14 +541,13 @@ describe("bundler", () => {
     },
   });
   itBundled("splitting/PublicPathEntryName", {
-    todo: true,
     files: {
       "/a.js": `import("./b")`,
       "/b.js": `console.log('b')`,
     },
     outdir: "/out",
     splitting: true,
-    publicPath: "/www",
+    publicPath: "/www/",
     onAfterBundle(api) {
       const t = new Bun.Transpiler();
       const imports = t.scanImports(api.readFile("/out/a.js"));

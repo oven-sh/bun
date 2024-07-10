@@ -7,34 +7,6 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const MAX_WBITS = 15;
 
-test "Zlib Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var output = std.ArrayList(u8).init(std.heap.c_allocator);
-    var writer = output.writer();
-    const ZlibReader = NewZlibReader(@TypeOf(&writer), 4096);
-
-    var reader = try ZlibReader.init(&writer, input, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, output.items);
-}
-
-test "ZlibArrayList Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var list = std.ArrayListUnmanaged(u8){};
-    try list.ensureUnusedCapacity(std.heap.c_allocator, 4096);
-    var reader = try ZlibReaderArrayList.init(input, &list, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, list.items);
-}
-
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
@@ -65,12 +37,10 @@ const z_crc_t = c_uint;
 // typedef voidpf (*alloc_func) OF((voidpf opaque, uInt items, uInt size));
 // typedef void   (*free_func)  OF((voidpf opaque, voidpf address));
 
-pub const z_alloc_fn = ?*const fn (*anyopaque, uInt, uInt) callconv(.C) voidpf;
-pub const z_free_fn = ?*const fn (*anyopaque, *anyopaque) callconv(.C) void;
+const zStream_struct = @import("zlib-internal").zStream_struct;
+const z_stream = @import("zlib-internal").z_stream;
+const z_streamp = @import("zlib-internal").z_streamp;
 
-pub const struct_internal_state = extern struct {
-    dummy: c_int,
-};
 // typedef struct z_stream_s {
 //     z_const Bytef *next_in;  /* next input byte */
 //     uInt     avail_in;  /* number of bytes available at next_in */
@@ -93,97 +63,9 @@ pub const struct_internal_state = extern struct {
 //     uLong   reserved;   /* reserved for future use */
 // } z_stream;
 
-pub const zStream_struct = extern struct {
-    /// next input byte
-    next_in: [*c]const u8,
-    /// number of bytes available at next_in
-    avail_in: uInt,
-    /// total number of input bytes read so far
-    total_in: uLong,
-
-    /// next output byte will go here
-    next_out: [*c]u8,
-    /// remaining free space at next_out
-    avail_out: uInt,
-    /// total number of bytes output so far
-    total_out: uLong,
-
-    /// last error message, NULL if no error
-    err_msg: [*c]const u8,
-    /// not visible by applications
-    internal_state: ?*struct_internal_state,
-
-    /// used to allocate the internal state
-    alloc_func: z_alloc_fn,
-    /// used to free the internal state
-    free_func: z_free_fn,
-    /// private data object passed to zalloc and zfree
-    user_data: *anyopaque,
-
-    /// best guess about the data type: binary or text for deflate, or the decoding state for inflate
-    data_type: DataType,
-
-    ///Adler-32 or CRC-32 value of the uncompressed data
-    adler: uLong,
-    /// reserved for future use
-    reserved: uLong,
-};
-
-pub const z_stream = zStream_struct;
-pub const z_streamp = *z_stream;
-
-// #define Z_BINARY   0
-// #define Z_TEXT     1
-// #define Z_ASCII    Z_TEXT   /* for compatibility with 1.2.2 and earlier */
-// #define Z_UNKNOWN  2
-pub const DataType = enum(c_int) {
-    Binary = 0,
-    Text = 1,
-    Unknown = 2,
-};
-
-// #define Z_OK            0
-// #define Z_STREAM_END    1
-// #define Z_NEED_DICT     2
-// #define Z_ERRNO        (-1)
-// #define Z_STREAM_ERROR (-2)
-// #define Z_DATA_ERROR   (-3)
-// #define Z_MEM_ERROR    (-4)
-// #define Z_BUF_ERROR    (-5)
-// #define Z_VERSION_ERROR (-6)
-pub const ReturnCode = enum(c_int) {
-    Ok = 0,
-    StreamEnd = 1,
-    NeedDict = 2,
-    ErrNo = -1,
-    StreamError = -2,
-    DataError = -3,
-    MemError = -4,
-    BufError = -5,
-    VersionError = -6,
-};
-
-// #define Z_NO_FLUSH      0
-// #define Z_PARTIAL_FLUSH 1
-// #define Z_SYNC_FLUSH    2
-// #define Z_FULL_FLUSH    3
-// #define Z_FINISH        4
-// #define Z_BLOCK         5
-// #define Z_TREES         6
-pub const FlushValue = enum(c_int) {
-    NoFlush = 0,
-    PartialFlush = 1,
-    /// Z_SYNC_FLUSH requests that inflate() flush as much output as possible to the output buffer
-    SyncFlush = 2,
-    FullFlush = 3,
-    Finish = 4,
-
-    /// Z_BLOCK requests that inflate() stop if and when it gets to the next / deflate block boundary When decoding the zlib or gzip format, this will / cause inflate() to return immediately after the header and before the / first block. When doing a raw inflate, inflate() will go ahead and / process the first block, and will return when it gets to the end of that / block, or when it runs out of data. / The Z_BLOCK option assists in appending to or combining deflate streams. / To assist in this, on return inflate() always sets strm->data_type to the / number of unused bits in the last byte taken from strm->next_in, plus 64 / if inflate() is currently decoding the last block in the deflate stream, / plus 128 if inflate() returned immediately after decoding an end-of-block / code or decoding the complete header up to just before the first byte of / the deflate stream. The end-of-block will not be indicated until all of / the uncompressed data from that block has been written to strm->next_out. / The number of unused bits may in general be greater than seven, except / when bit 7 of data_type is set, in which case the number of unused bits / will be less than eight. data_type is set as noted here every time / inflate() returns for all flush options, and so can be used to determine / the amount of currently consumed input in bits.
-    Block = 5,
-
-    /// The Z_TREES option behaves as Z_BLOCK does, but it also returns when the end of each deflate block header is reached, before any actual data in that block is decoded. This allows the caller to determine the length of the deflate block header for later use in random access within a deflate block. 256 is added to the value of strm->data_type when inflate() returns immediately after reaching the end of the deflate block header.
-    Trees = 6,
-};
+const DataType = @import("zlib-internal").DataType;
+const FlushValue = @import("zlib-internal").FlushValue;
+pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -406,6 +288,27 @@ pub const ZlibError = error{
     ShortRead,
 };
 
+const ZlibAllocator = struct {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone(ZlibAllocator);
+            return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
+        }
+
+        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
+    }
+
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone(ZlibAllocator);
+            zone.malloc_zone_free(data);
+            return;
+        }
+
+        mimalloc.mi_free(data);
+    }
+};
+
 pub const ZlibReaderArrayList = struct {
     const ZlibReader = ZlibReaderArrayList;
 
@@ -423,14 +326,6 @@ pub const ZlibReaderArrayList = struct {
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
-
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        return mimalloc.mi_malloc(items * len) orelse unreachable;
-    }
-
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        mimalloc.mi_free(data);
-    }
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;
@@ -475,16 +370,16 @@ pub const ZlibReaderArrayList = struct {
 
         zlib_reader.zlib = zStream_struct{
             .next_in = input.ptr,
-            .avail_in = @as(uInt, @intCast(input.len)),
-            .total_in = @as(uInt, @intCast(input.len)),
+            .avail_in = @truncate(input.len),
+            .total_in = @truncate(input.len),
 
             .next_out = zlib_reader.list.items.ptr,
-            .avail_out = @as(u32, @intCast(zlib_reader.list.items.len)),
-            .total_out = zlib_reader.list.items.len,
+            .avail_out = @truncate(zlib_reader.list.items.len),
+            .total_out = @truncate(zlib_reader.list.items.len),
 
             .err_msg = null,
-            .alloc_func = ZlibReader.alloc,
-            .free_func = ZlibReader.free,
+            .alloc_func = ZlibAllocator.alloc,
+            .free_func = ZlibAllocator.free,
 
             .internal_state = null,
             .user_data = zlib_reader,
@@ -562,8 +457,8 @@ pub const ZlibReaderArrayList = struct {
                 const initial = this.list.items.len;
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
-                this.zlib.next_out = &this.list.items[initial];
-                this.zlib.avail_out = @as(u32, @intCast(this.list.items.len - initial));
+                this.zlib.next_out = @ptrCast(&this.list.items[initial]);
+                this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
             if (this.zlib.avail_in == 0) {
@@ -575,8 +470,6 @@ pub const ZlibReaderArrayList = struct {
 
             switch (rc) {
                 ReturnCode.StreamEnd => {
-                    this.state = State.End;
-
                     this.end();
                     return;
                 },
@@ -870,12 +763,12 @@ pub const ZlibCompressorArrayList = struct {
 
         zlib_reader.zlib = zStream_struct{
             .next_in = input.ptr,
-            .avail_in = @as(uInt, @intCast(input.len)),
-            .total_in = @as(uInt, @intCast(input.len)),
+            .avail_in = @truncate(input.len),
+            .total_in = @truncate(input.len),
 
             .next_out = zlib_reader.list.items.ptr,
-            .avail_out = @as(u32, @intCast(zlib_reader.list.items.len)),
-            .total_out = zlib_reader.list.items.len,
+            .avail_out = @truncate(zlib_reader.list.items.len),
+            .total_out = @truncate(zlib_reader.list.items.len),
 
             .err_msg = null,
             .alloc_func = ZlibCompressor.alloc,
@@ -902,7 +795,7 @@ pub const ZlibCompressorArrayList = struct {
             ReturnCode.Ok => {
                 try zlib_reader.list.ensureTotalCapacityPrecise(list_allocator, deflateBound(&zlib_reader.zlib, input.len));
                 zlib_reader.list_ptr.* = zlib_reader.list;
-                zlib_reader.zlib.avail_out = @as(uInt, @truncate(zlib_reader.list.capacity));
+                zlib_reader.zlib.avail_out = @truncate(zlib_reader.list.capacity);
                 zlib_reader.zlib.next_out = zlib_reader.list.items.ptr;
 
                 return zlib_reader;
@@ -969,8 +862,8 @@ pub const ZlibCompressorArrayList = struct {
                 const initial = this.list.items.len;
                 try this.list.ensureUnusedCapacity(this.list_allocator, 4096);
                 this.list.expandToCapacity();
-                this.zlib.next_out = &this.list.items[initial];
-                this.zlib.avail_out = @as(u32, @intCast(this.list.items.len - initial));
+                this.zlib.next_out = @ptrCast(&this.list.items[initial]);
+                this.zlib.avail_out = @truncate(this.list.items.len -| initial);
             }
 
             if (this.zlib.avail_out == 0) {

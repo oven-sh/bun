@@ -29,7 +29,7 @@ SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #include "root.h"
 
 #include "ExceptionCode.h"
-#include "wtf/text/WTFString.h"
+#include <wtf/text/WTFString.h>
 
 namespace WebCore {
 

@@ -79,10 +79,7 @@
       "env": {
         "NAME": "Bun"
       },
-      "args": [
-        "--jsx-import-source",
-        "src/middleware/jsx/jsx-dev-runtime"
-      ],
+      "args": ["--jsx-import-source", "src/middleware/jsx/jsx-dev-runtime"],
       "path": "runtime_tests/bun/index.test.tsx"
     }
   },

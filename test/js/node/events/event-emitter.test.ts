@@ -1,4 +1,4 @@
-import { test, describe, expect } from "bun:test";
+import { test, describe, expect, mock } from "bun:test";
 import { sleep } from "bun";
 import { createRequire } from "module";
 
@@ -65,22 +65,6 @@ describe("node:events", () => {
     await promise;
     expect(emitter.listenerCount("hey")).toBe(0);
   });
-
-  // TODO: extensive events.on tests
-  // test("on", () => {
-  //   const emitter = new EventEmitter();
-  //   const asyncIterator = EventEmitter.on(emitter, "hey");
-
-  //   expect(asyncIterator.next).toBeDefined();
-  //   expect(asyncIterator[Symbol.asyncIterator]).toBeDefined();
-
-  //   const fn = async () => {
-  //     const { value } = await asyncIterator.next();
-  //     expect(value).toBe(1);
-  //   };
-
-  //   emitter.emit("hey", 1, 2, 3);
-  // });
 });
 
 describe("EventEmitter", () => {
@@ -183,6 +167,21 @@ describe("EventEmitter", () => {
       emitter.on("wow", () => done());
       setTimeout(() => emitter.emit("wow"), 1);
     });
+
+    test("emit multiple values", () => {
+      const emitter = new EventEmitter();
+
+      const receivedVals: number[] = [];
+      emitter.on("multiple-vals", (val1, val2, val3) => {
+        receivedVals[0] = val1;
+        receivedVals[1] = val2;
+        receivedVals[2] = val3;
+      });
+
+      emitter.emit("multiple-vals", 1, 2, 3);
+
+      expect(receivedVals).toEqual([1, 2, 3]);
+    });
   });
 
   test("addListener return type", () => {
@@ -278,6 +277,60 @@ describe("EventEmitter", () => {
     expect(order).toEqual([3, 2, 1, 4, 1, 4]);
   });
 
+  test("prependListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.prependListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 2, 1, 3]);
+  });
+
+  test("addListener in callback", () => {
+    const myEmitter = new EventEmitter();
+    const order: number[] = [];
+
+    myEmitter.on("foo", () => {
+      order.push(1);
+    });
+
+    myEmitter.once("foo", () => {
+      myEmitter.addListener("foo", () => {
+        order.push(2);
+      });
+    });
+
+    myEmitter.on("foo", () => {
+      order.push(3);
+    });
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3]);
+
+    myEmitter.emit("foo");
+
+    expect(order).toEqual([1, 3, 1, 3, 2]);
+  });
+
   test("listeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
@@ -288,18 +341,26 @@ describe("EventEmitter", () => {
     expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
     expect(myEmitter.listeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    expect(myEmitter.listeners("foo")).toEqual([fn, fn3]);
   });
 
   test("rawListeners", () => {
     const myEmitter = new EventEmitter();
     const fn = () => {};
     myEmitter.on("foo", fn);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
     const fn2 = () => {};
     myEmitter.on("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn, fn2]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn, fn2]);
     myEmitter.off("foo", fn2);
-    expect(myEmitter.listeners("foo")).toEqual([fn]);
+    expect(myEmitter.rawListeners("foo")).toEqual([fn]);
+    const fn3 = () => {};
+    myEmitter.once("foo", fn3);
+    const rawListeners: (Function & { listener?: Function })[] = myEmitter.rawListeners("foo");
+    // rawListeners() returns onceWrappers as well
+    expect([rawListeners[0], rawListeners[1].listener]).toEqual([fn, fn3]);
   });
 
   test("eventNames", () => {
@@ -342,6 +403,204 @@ describe("EventEmitter", () => {
     expect(instance._maxListeners).toBeUndefined();
     expect(instance._events).toEqual({});
     expect(instance instanceof EventEmitter).toBe(true);
+  });
+});
+
+describe("EventEmitter.on", () => {
+  test("Basic test", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    expect(asyncIterator.next).toBeDefined();
+    expect(asyncIterator[Symbol.asyncIterator]).toBeDefined();
+
+    process.nextTick(() => {
+      emitter.emit("hey", 1);
+    });
+
+    const { value } = await asyncIterator.next();
+    expect(value).toEqual([1]);
+  });
+
+  test("Basic test with for await...of", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"] } as any);
+
+    process.nextTick(() => {
+      emitter.emit("hey", 1);
+      emitter.emit("hey", 2);
+      emitter.emit("hey", 3);
+      emitter.emit("hey", 4);
+      emitter.emit("close");
+    });
+
+    const result = [];
+    for await (const ev of asyncIterator) {
+      result.push(ev);
+    }
+
+    expect(result).toEqual([[1], [2], [3], [4]]);
+  });
+
+  test("Stop reading events after 'close' event is emitted", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { close: ["close"] } as any);
+
+    process.nextTick(() => {
+      emitter.emit("hey", 1);
+      emitter.emit("hey", 2);
+      emitter.emit("close");
+      emitter.emit("hey", 3);
+    });
+
+    const result = [];
+    for await (const ev of asyncIterator) {
+      result.push(ev);
+    }
+
+    expect(result).toEqual([[1], [2]]);
+  });
+
+  test("Queue events before first next() call", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    emitter.emit("hey", 1);
+    emitter.emit("hey", 2);
+    emitter.emit("hey", 3);
+
+    await new Promise(resolve => setTimeout(resolve, 1000));
+
+    expect((await asyncIterator.next()).value).toEqual([1]);
+    expect((await asyncIterator.next()).value).toEqual([2]);
+    expect((await asyncIterator.next()).value).toEqual([3]);
+  });
+
+  test("Emit multiple values", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    emitter.emit("hey", 1, 2, 3);
+
+    const { value } = await asyncIterator.next();
+    expect(value).toEqual([1, 2, 3]);
+  });
+
+  test("kFirstEventParam", async () => {
+    const kFirstEventParam = Symbol.for("nodejs.kFirstEventParam");
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey", { [kFirstEventParam]: true } as any);
+
+    emitter.emit("hey", 1, 2, 3);
+    emitter.emit("hey", [4, 5, 6]);
+
+    expect((await asyncIterator.next()).value).toBe(1);
+    expect((await asyncIterator.next()).value).toEqual([4, 5, 6]);
+  });
+
+  test("Cancel via error event", async () => {
+    const { on, EventEmitter } = require("node:events");
+    const process = require("node:process");
+
+    const ee = new EventEmitter();
+    const output = [];
+
+    // Emit later on
+    process.nextTick(() => {
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      ee.emit("foo", "baz");
+    });
+
+    setTimeout(() => {
+      ee.emit("error", "DONE");
+    }, 1_000);
+
+    try {
+      for await (const event of on(ee, "foo")) {
+        output.push([1, event]);
+      }
+    } catch (error) {
+      output.push([2, error]);
+    }
+
+    expect(output).toEqual([
+      [1, ["bar"]],
+      [1, [42]],
+      [1, ["baz"]],
+      [2, "DONE"],
+    ]);
+  });
+
+  test("AbortController", () => {
+    const { on, EventEmitter } = require("node:events");
+
+    const ac = new AbortController();
+    const ee = new EventEmitter();
+    const output = [];
+
+    process.nextTick(() => {
+      ee.emit("foo", "bar");
+      ee.emit("foo", 42);
+      ee.emit("foo", "baz");
+    });
+    (async () => {
+      try {
+        for await (const event of on(ee, "foo", { signal: ac.signal })) {
+          output.push([1, event]);
+        }
+        console.log("unreachable");
+      } catch (error: any) {
+        const { code, message } = error;
+        output.push([2, { code, message }]);
+
+        expect(output).toEqual([
+          [1, ["bar"]],
+          [1, [42]],
+          [1, ["baz"]],
+          [
+            2,
+            {
+              code: "ABORT_ERR",
+              message: "The operation was aborted",
+            },
+          ],
+        ]);
+      }
+    })();
+
+    process.nextTick(() => ac.abort());
+  });
+
+  // Checks for potential issues with FixedQueue size
+  test("Queue many events", async () => {
+    const emitter = new EventEmitter();
+    const asyncIterator = EventEmitter.on(emitter, "hey");
+
+    for (let i = 0; i < 2500; i += 1) {
+      emitter.emit("hey", i);
+    }
+
+    expect((await asyncIterator.next()).value).toEqual([0]);
+  });
+
+  test("readline.createInterface", async () => {
+    const { createInterface } = require("node:readline");
+    const { createReadStream } = require("node:fs");
+    const path = require("node:path");
+
+    const fpath = path.join(__filename, "..", "..", "child_process", "fixtures", "child-process-echo-options.js");
+    const text = await Bun.file(fpath).text();
+    const interfaced = createInterface(createReadStream(fpath));
+    const output = [];
+
+    try {
+      for await (const line of interfaced) {
+        output.push(line);
+      }
+    } catch (e) {}
+    const out = text.replaceAll("\r\n", "\n").trim().split("\n");
+    expect(output).toEqual(out);
   });
 });
 
@@ -553,4 +812,40 @@ describe("EventEmitter constructors", () => {
     const events = req("events");
     new events();
   });
+
+  test("in cjs, events is callable", () => {
+    const EventEmitter = require("events");
+    new EventEmitter();
+  });
+});
+
+test("addAbortListener", async () => {
+  const emitter = new EventEmitter();
+  const controller = new AbortController();
+  const promise = EventEmitter.once(emitter, "hey", { signal: controller.signal });
+  const mocked = mock();
+  EventEmitter.addAbortListener(controller.signal, mocked);
+  controller.abort();
+  expect(promise).rejects.toThrow("aborted");
+  expect(mocked).toHaveBeenCalled();
+});
+
+test("using addAbortListener", async () => {
+  const emitter = new EventEmitter();
+  const controller = new AbortController();
+  const promise = EventEmitter.once(emitter, "hey", { signal: controller.signal });
+  const mocked = mock();
+  {
+    using aborty = EventEmitter.addAbortListener(controller.signal, mocked);
+  }
+  controller.abort();
+  expect(promise).rejects.toThrow("aborted");
+  expect(mocked).not.toHaveBeenCalled();
+});
+
+test("getMaxListeners", () => {
+  const emitter = new EventEmitter();
+  expect(emitter.getMaxListeners()).toBe(10);
+  emitter.setMaxListeners(20);
+  expect(emitter.getMaxListeners()).toBe(20);
 });

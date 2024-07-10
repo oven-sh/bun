@@ -1,6 +1,6 @@
 Bun aims for complete Node.js API compatibility. Most `npm` packages intended for `Node.js` environments will work with Bun out of the box; the best way to know for certain is to try it.
 
-This page is updated regularly to reflect compatibility status of the latest version of Bun. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
+This page is updated regularly to reflect compatibility status of the latest version of Bun. The information below reflects Bun's compatibility with _Node.js v20_. If you run into any bugs with a particular package, please [open an issue](https://bun.sh/issues). Opening issues for compatibility bugs helps us prioritize what to work on next.
 
 ## Built-in modules
 
@@ -10,7 +10,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:async_hooks`](https://nodejs.org/api/async_hooks.html)
 
-🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented.
+🟡 Only `AsyncLocalStorage`, and `AsyncResource` are implemented. `AsyncResource` is missing `bind`.
 
 ### [`node:buffer`](https://nodejs.org/api/buffer.html)
 
@@ -18,7 +18,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:child_process`](https://nodejs.org/api/child_process.html)
 
-🟡 Missing `Stream` stdio, `proc.gid`, `proc.uid`. IPC has partial support and only current only works with other `bun` processes.
+🟡 Missing `proc.gid` `proc.uid`. `Stream` class not exported. IPC cannot send socket handles. Node.js <> Bun IPC can be used with JSON serialization.
 
 ### [`node:cluster`](https://nodejs.org/api/cluster.html)
 
@@ -26,15 +26,18 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:console`](https://nodejs.org/api/console.html)
 
-🟡 Missing `Console` constructor.
+🟢 Fully implemented.
 
 ### [`node:crypto`](https://nodejs.org/api/crypto.html)
 
-🟡 Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`. Some methods are not optimized yet.
+🟡 Missing `Certificate` `ECDH` `X509Certificate` `checkPrime` `checkPrimeSync` `diffieHellman` `generatePrime` `generatePrimeSync` `getCipherInfo` `getFips` `hkdf` `hkdfSync` `secureHeapUsed` `setEngine` `setFips`
+
+Some methods are not optimized yet.
 
 ### [`node:dgram`](https://nodejs.org/api/dgram.html)
 
-🔴 Not implemented.
+🟡 Missing `setBroadcast` `setTTL` `setMulticastTTL` `setMulticastLoopback` `setMulticastInterface` `addMembership` `dropMembership`
+`addSourceSpecificMembership` `dropSourceSpecificMembership`
 
 ### [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html)
 
@@ -42,31 +45,31 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:dns`](https://nodejs.org/api/dns.html)
 
-🟢 Fully implemented.
+🟡 Missing `cancel` `setServers` `getDefaultResultOrder`
 
 ### [`node:domain`](https://nodejs.org/api/domain.html)
 
-🟢 Fully implemented.
+🟡 Missing `Domain` `active`
 
 ### [`node:events`](https://nodejs.org/api/events.html)
 
-🟡 Missing `on`
+🟡 `events.addAbortListener` & `events.getMaxListeners` do not support (web api) `EventTarget`
 
 ### [`node:fs`](https://nodejs.org/api/fs.html)
 
-🟡 Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
+🟡 Missing `statfs` `statfsSync`, `opendirSync`. `Dir` is partially implemented.
 
 ### [`node:http`](https://nodejs.org/api/http.html)
 
-🟢 Fully implemented.
+🟢 Fully implemented. Outgoing client request body is currently buffered instead of streamed.
 
 ### [`node:http2`](https://nodejs.org/api/http2.html)
 
-🔴 Not implemented.
+🟡 Client is supported, but server isn't yet.
 
 ### [`node:https`](https://nodejs.org/api/https.html)
 
-🟢 Fully implemented.
+🟢 APIs are implemented, but `Agent` is not always used yet.
 
 ### [`node:inspector`](https://nodejs.org/api/inspector.html)
 
@@ -74,11 +77,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:module`](https://nodejs.org/api/module.html)
 
-🟢 Fully implemented.
+🟡 Missing `runMain` `syncBuiltinESMExports`, `Module#load()`. Attempts to override or patch the module cache will fail.
 
 ### [`node:net`](https://nodejs.org/api/net.html)
 
-🟡 Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
+🟡 Missing `SocketAddress` `Stream`. `BlockList` exists but is a no-op.
 
 ### [`node:os`](https://nodejs.org/api/os.html)
 
@@ -90,11 +93,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html)
 
-🟡 Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Recommended to use `performance` global instead of `perf_hooks.performance`.
+🟡 Missing `createHistogram` `monitorEventLoopDelay`. It's recommended to use `performance` global instead of `perf_hooks.performance`.
 
 ### [`node:process`](https://nodejs.org/api/process.html)
 
-🟡 See `Globals > process`.
+🟡 See [`process`](#process) Global.
 
 ### [`node:punycode`](https://nodejs.org/api/punycode.html)
 
@@ -114,7 +117,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:stream`](https://nodejs.org/api/stream.html)
 
-🟢 Fully implemented.
+🟡 Missing `getDefaultHighWaterMark` `setDefaultHighWaterMark` `toWeb`
 
 ### [`node:string_decoder`](https://nodejs.org/api/string_decoder.html)
 
@@ -122,7 +125,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:sys`](https://nodejs.org/api/util.html)
 
-🟡 See `node:util`.
+🟡 See [`node:util`](#node-util).
+
+### [`node:test`](https://nodejs.org/api/test.html)
+
+🔴 Not implemented. Use [`bun:test`](https://bun.sh/docs/cli/test) instead.
 
 ### [`node:timers`](https://nodejs.org/api/timers.html)
 
@@ -130,7 +137,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:tls`](https://nodejs.org/api/tls.html)
 
-🟡 Missing `tls.createSecurePair`
+🟡 Missing `tls.createSecurePair`.
 
 ### [`node:trace_events`](https://nodejs.org/api/tracing.html)
 
@@ -142,11 +149,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:url`](https://nodejs.org/api/url.html)
 
-🟡 Missing `url.domainTo{ASCII|Unicode}`. Recommended to use `URL` and `URLSearchParams` globals instead.
+🟢 Fully implemented.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `util.MIMEParams` `util.MIMEType` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
+🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -154,7 +161,7 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:vm`](https://nodejs.org/api/vm.html)
 
-🟡 Core functionality works, but VM modules are not implemented. `ShadowRealm` can be used.
+🟡 Core functionality works, but experimental VM ES modules are not implemented, including `vm.Module`, `vm.SourceTextModule`, `vm.SyntheticModule`,`importModuleDynamically`, and `vm.measureMemory`. Options like `timeout`, `breakOnSigint`, `cachedData` are not implemented yet. There is a bug with `this` value for contextified options not having the correct prototype.
 
 ### [`node:wasi`](https://nodejs.org/api/wasi.html)
 
@@ -162,266 +169,11 @@ This page is updated regularly to reflect compatibility status of the latest ver
 
 ### [`node:worker_threads`](https://nodejs.org/api/worker_threads.html)
 
-🟡 `Worker` doesn't support the following options: `eval`, `argv`, `execArgv`, `stdin`, `stdout`, `stderr`, `trackedUnmanagedFds`, `resourceLimits`. Missing `markAsUntransferable`, `moveMessagePortToContext`, `getHeapSnapshot`.
+🟡 `Worker` doesn't support the following options: `stdin` `stdout` `stderr` `trackedUnmanagedFds` `resourceLimits`. Missing `markAsUntransferable` `moveMessagePortToContext` `getHeapSnapshot`.
 
 ### [`node:zlib`](https://nodejs.org/api/zlib.html)
 
-🟡 Missing `zlib.brotli*`. Has not been optimized.
-
-<!-- {% block className="ScrollFrame" %}
-{% table %}
-
-- Module
-- Status
-- Notes
-
----
-
-- {% anchor id="node_assert" %} [`node:assert`](https://nodejs.org/api/assert.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_async_hooks" %} [`node:async_hooks`](https://nodejs.org/api/async_hooks.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_buffer" %} [`node:buffer`](https://nodejs.org/api/buffer.html) {% /anchor %}
-- 🟢
-
----
-
-- {% anchor id="node_child_process" %} [`node:child_process`](https://nodejs.org/api/child_process.html) {% /anchor %}
-- 🟡
-- Missing IPC, `Stream` stdio, `proc.gid`, `proc.uid`, advanced serialization.
-
----
-
-- {% anchor id="node_cluster" %} [`node:cluster`](https://nodejs.org/api/cluster.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_console" %} [`node:console`](https://nodejs.org/api/console.html) {% /anchor %}
-- 🟢
-- Recommended to use `console` global instead
-
----
-
-- {% anchor id="node_crypto" %} [`node:crypto`](https://nodejs.org/api/crypto.html) {% /anchor %}
-- 🟡
-- Missing `crypto.Certificate` `crypto.ECDH` `crypto.KeyObject` `crypto.X509Certificate` `crypto.checkPrime{Sync}` `crypto.createPrivateKey` `crypto.createPublicKey` `crypto.createSecretKey` `crypto.diffieHellman` `crypto.generateKey{Sync}` `crypto.generateKeyPair{Sync}` `crypto.generatePrime{Sync}` `crypto.getCipherInfo` `crypto.{get|set}Fips` `crypto.hkdf` `crypto.hkdfSync` `crypto.secureHeapUsed` `crypto.setEngine` `crypto.sign` `crypto.verify`. Some methods are not optimized yet.
-
----
-
-- {% anchor id="node_dgram" %} [`node:dgram`](https://nodejs.org/api/dgram.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_diagnostics_channel" %} [`node:diagnostics_channel`](https://nodejs.org/api/diagnostics_channel.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_dns" %} [`node:dns`](https://nodejs.org/api/dns.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_domain" %} [`node:domain`](https://nodejs.org/api/domain.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_events" %} [`node:events`](https://nodejs.org/api/events.html) {% /anchor %}
-- 🟡
-- Missing `EventEmitterAsyncResource` `events.on`.
-
----
-
-- {% anchor id="node_fs" %} [`node:fs`](https://nodejs.org/api/fs.html) {% /anchor %}
-- 🟡
-- Missing `fs.fdatasync{Sync}` `fs.opendir{Sync}`. `fs.promises.open` incorrectly returns a file descriptor instead of a `FileHandle`.
-
----
-
-- {% anchor id="node_http" %} [`node:http`](https://nodejs.org/api/http.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_http2" %} [`node:http2`](https://nodejs.org/api/http2.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_https" %} [`node:https`](https://nodejs.org/api/https.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_inspector" %} [`node:inspector`](https://nodejs.org/api/inspector.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_module" %} [`node:module`](https://nodejs.org/api/module.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_net" %} [`node:net`](https://nodejs.org/api/net.html) {% /anchor %}
-- 🟡
-- Missing `net.{get|set}DefaultAutoSelectFamily` `net.SocketAddress` `net.BlockList`.
-
----
-
-- {% anchor id="node_os" %} [`node:os`](https://nodejs.org/api/os.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_path" %} [`node:path`](https://nodejs.org/api/path.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_perf_hooks" %} [`node:perf_hooks`](https://nodejs.org/api/perf_hooks.html) {% /anchor %}
-- 🟡
-- Only `perf_hooks.performance.now()` and `perf_hooks.performance.timeOrigin` are implemented. Recommended to use `performance` global instead of `perf_hooks.performance`.
-
----
-
-- {% anchor id="node_process" %} [`node:process`](https://nodejs.org/api/process.html) {% /anchor %}
-- 🟡
-- See `Globals > process`.
-
----
-
-- {% anchor id="node_punycode" %} [`node:punycode`](https://nodejs.org/api/punycode.html) {% /anchor %}
-- 🟢
-- Fully implemented. _Deprecated by Node.js._
-
----
-
-- {% anchor id="node_querystring" %} [`node:querystring`](https://nodejs.org/api/querystring.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_readline" %} [`node:readline`](https://nodejs.org/api/readline.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_repl" %} [`node:repl`](https://nodejs.org/api/repl.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_stream" %} [`node:stream`](https://nodejs.org/api/stream.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_string_decoder" %} [`node:string_decoder`](https://nodejs.org/api/string_decoder.html) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_sys" %} [`node:sys`](https://nodejs.org/api/util.html) {% /anchor %}
-- 🟡
-- See `node:util`.
-
----
-
-- {% anchor id="node_timers" %} [`node:timers`](https://nodejs.org/api/timers.html) {% /anchor %}
-- 🟢
-- Recommended to use global `setTimeout`, et. al. instead.
-
----
-
-- {% anchor id="node_tls" %} [`node:tls`](https://nodejs.org/api/tls.html) {% /anchor %}
-- 🟡
-- Missing `tls.createSecurePair`
-
----
-
-- {% anchor id="node_trace_events" %} [`node:trace_events`](https://nodejs.org/api/tracing.html) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_tty" %} [`node:tty`](https://nodejs.org/api/tty.html) {% /anchor %}
-- 🟡
-- Missing `tty.ReadStream` and `tty.WriteStream`.
-
----
-
-- {% anchor id="node_url" %} [`node:url`](https://nodejs.org/api/url.html) {% /anchor %}
-- 🟡
-- Missing `url.domainTo{ASCII|Unicode}`. Recommended to use `URL` and `URLSearchParams` globals instead.
-
----
-
-- {% anchor id="node_util" %} [`node:util`](https://nodejs.org/api/util.html) {% /anchor %}
-- 🟡
-- Missing `util.MIMEParams` `util.MIMEType` `util.formatWithOptions()` `util.getSystemErrorMap()` `util.getSystemErrorName()` `util.parseArgs()` `util.stripVTControlCharacters()` `util.transferableAbortController()` `util.transferableAbortSignal()`.
-
----
-
-- {% anchor id="node_v8" %} [`node:v8`](https://nodejs.org/api/v8.html) {% /anchor %}
-- 🔴
-- `serialize` and `deserialize` use JavaScriptCore's wire format instead of V8's. Otherwise, not implemented. For profiling, use [`bun:jsc`](/docs/project/benchmarking#bunjsc) instead.
-
----
-
-- {% anchor id="node_vm" %} [`node:vm`](https://nodejs.org/api/vm.html) {% /anchor %}
-- 🟡
-- Core functionality works, but VM modules are not implemented. `ShadowRealm` can be used.
-
----
-
-- {% anchor id="node_wasi" %} [`node:wasi`](https://nodejs.org/api/wasi.html) {% /anchor %}
-- 🟡
-- Partially implemented.
-
----
-
-- {% anchor id="node_worker_threads" %} [`node:worker_threads`](https://nodejs.org/api/worker_threads.html) {% /anchor %}
-- 🔴
-- Not implemented, but coming soon.
-
----
-
-- {% anchor id="node_zlib" %} [`node:zlib`](https://nodejs.org/api/zlib.html) {% /anchor %}
-- 🟡
-- Missing `zlib.brotli*`
-
-{% /table %}
-{% /block %} -->
+🟡 Unoptimized.
 
 ## Globals
 
@@ -441,7 +193,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer)
 
-🟡 Incomplete implementation of `base64` and `base64url` encodings.
+🟢 Fully implemented.
 
 ### [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy)
 
@@ -485,7 +237,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console)
 
-🟡 Missing `Console` constructor.
+🟢 Fully implemented.
 
 ### [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy)
 
@@ -561,23 +313,23 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming)
 
@@ -589,7 +341,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`process`](https://nodejs.org/api/process.html)
 
-🟡 Missing `process.allowedNodeEnvironmentFlags` `process.channel` `process.constrainedMemory()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()`.
+🟡 Missing `domain` `initgroups` `setegid` `seteuid` `setgid` `setgroups` `setuid` `allowedNodeEnvironmentFlags` `getActiveResourcesInfo` `setActiveResourcesInfo` `moduleLoadList` `setSourceMapsEnabled` `channel`. `process.binding` is partially implemented.
 
 ### [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask)
 
@@ -605,11 +357,11 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController)
 
@@ -621,7 +373,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`require()`](https://nodejs.org/api/globals.html#require)
 
-🟢 Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
+🟢 Fully implemented, including [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
 
 ### [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response)
 
@@ -702,421 +454,3 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 ### [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter)
 
 🟢 Fully implemented.
-
-<!-- {% table %}
-
----
-
-- {% anchor id="node_abortcontroller" %} [`AbortController`](https://developer.mozilla.org/en-US/docs/Web/API/AbortController) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_abortsignal" %} [`AbortSignal`](https://developer.mozilla.org/en-US/docs/Web/API/AbortSignal) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_blob" %} [`Blob`](https://developer.mozilla.org/en-US/docs/Web/API/Blob) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_buffer" %} [`Buffer`](https://nodejs.org/api/buffer.html#class-buffer) {% /anchor %}
-- 🟡
-- Incomplete implementation of `base64` and `base64url` encodings.
-
----
-
-- {% anchor id="node_bytelengthqueuingstrategy" %} [`ByteLengthQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/ByteLengthQueuingStrategy) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_dirname" %} [`__dirname`](https://nodejs.org/api/globals.html#__dirname) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_filename" %} [`__filename`](https://nodejs.org/api/globals.html#__filename) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_atob" %} [`atob()`](https://developer.mozilla.org/en-US/docs/Web/API/atob) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_broadcastchannel" %} [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_btoa" %} [`btoa()`](https://developer.mozilla.org/en-US/docs/Web/API/btoa) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_clearimmediate" %} [`clearImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearImmediate) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_clearinterval" %} [`clearInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearInterval) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_cleartimeout" %} [`clearTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/clearTimeout) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_compressionstream" %} [`CompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/CompressionStream) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_console" %} [`console`](https://developer.mozilla.org/en-US/docs/Web/API/console) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_countqueuingstrategy" %} [`CountQueuingStrategy`](https://developer.mozilla.org/en-US/docs/Web/API/CountQueuingStrategy) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_crypto" %} [`Crypto`](https://developer.mozilla.org/en-US/docs/Web/API/Crypto) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_crypto" %} [`SubtleCrypto (crypto)`](https://developer.mozilla.org/en-US/docs/Web/API/crypto) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_cryptokey" %} [`CryptoKey`](https://developer.mozilla.org/en-US/docs/Web/API/CryptoKey) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_customevent" %} [`CustomEvent`](https://developer.mozilla.org/en-US/docs/Web/API/CustomEvent) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_decompressionstream" %} [`DecompressionStream`](https://developer.mozilla.org/en-US/docs/Web/API/DecompressionStream) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_event" %} [`Event`](https://developer.mozilla.org/en-US/docs/Web/API/Event) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_eventtarget" %} [`EventTarget`](https://developer.mozilla.org/en-US/docs/Web/API/EventTarget) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_exports" %} [`exports`](https://nodejs.org/api/globals.html#exports) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_fetch" %} [`fetch`](https://developer.mozilla.org/en-US/docs/Web/API/fetch) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_formdata" %} [`FormData`](https://developer.mozilla.org/en-US/docs/Web/API/FormData) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_global" %} [`global`](https://nodejs.org/api/globals.html#global) {% /anchor %}
-- 🟢
-- Implemented. This is an object containing all objects in the global namespace. It's rarely referenced directly, as its contents are available without an additional prefix, e.g. `__dirname` instead of `global.__dirname`.
-
----
-
-- {% anchor id="node_globalthis" %} [`globalThis`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/globalThis) {% /anchor %}
-- 🟢
-- Aliases to `global`.
-
----
-
-- {% anchor id="node_headers" %} [`Headers`](https://developer.mozilla.org/en-US/docs/Web/API/Headers) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_messagechannel" %} [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_messageevent" %} [`MessageEvent`](https://developer.mozilla.org/en-US/docs/Web/API/MessageEvent) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_messageport" %} [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_module" %} [`module`](https://nodejs.org/api/globals.html#module) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_performanceentry" %} [`PerformanceEntry`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceEntry) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performancemark" %} [`PerformanceMark`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMark) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performancemeasure" %} [`PerformanceMeasure`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceMeasure) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performanceobserver" %} [`PerformanceObserver`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserver) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performanceobserverentrylist" %} [`PerformanceObserverEntryList`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceObserverEntryList) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performanceresourcetiming" %} [`PerformanceResourceTiming`](https://developer.mozilla.org/en-US/docs/Web/API/PerformanceResourceTiming) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_performance" %} [`performance`](https://developer.mozilla.org/en-US/docs/Web/API/performance) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_process" %} [`process`](https://nodejs.org/api/process.html) {% /anchor %}
-- 🟡
-- Missing `process.allowedNodeEnvironmentFlags` `process.channel()` `process.connected` `process.constrainedMemory()` `process.disconnect()` `process.getActiveResourcesInfo/setActiveResourcesInfo()` `process.setuid/setgid/setegid/seteuid/setgroups()` `process.hasUncaughtExceptionCaptureCallback` `process.initGroups()` `process.report` `process.resourceUsage()` `process.send()`.
-
----
-
-- {% anchor id="node_queuemicrotask" %} [`queueMicrotask()`](https://developer.mozilla.org/en-US/docs/Web/API/queueMicrotask) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_readablebytestreamcontroller" %} [`ReadableByteStreamController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableByteStreamController) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_readablestream" %} [`ReadableStream`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStream) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_readablestreambyobreader" %} [`ReadableStreamBYOBReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBReader) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_readablestreambyobrequest" %} [`ReadableStreamBYOBRequest`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamBYOBRequest) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_readablestreamdefaultcontroller" %} [`ReadableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultController) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_readablestreamdefaultreader" %} [`ReadableStreamDefaultReader`](https://developer.mozilla.org/en-US/docs/Web/API/ReadableStreamDefaultReader) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_require" %} [`require()`](https://nodejs.org/api/globals.html#require) {% /anchor %}
-- 🟢
-- Fully implemented, as well as [`require.main`](https://nodejs.org/api/modules.html#requiremain), [`require.cache`](https://nodejs.org/api/modules.html#requirecache), and [`require.resolve`](https://nodejs.org/api/modules.html#requireresolverequest-options)
-
----
-
-- {% anchor id="node_response" %} [`Response`](https://developer.mozilla.org/en-US/docs/Web/API/Response) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_request" %} [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_setimmediate" %} [`setImmediate()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setImmediate) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_setinterval" %} [`setInterval()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setInterval) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_settimeout" %} [`setTimeout()`](https://developer.mozilla.org/en-US/docs/Web/API/Window/setTimeout) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_structuredclone" %} [`structuredClone()`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_subtlecrypto" %} [`SubtleCrypto`](https://developer.mozilla.org/en-US/docs/Web/API/SubtleCrypto) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_domexception" %} [`DOMException`](https://developer.mozilla.org/en-US/docs/Web/API/DOMException) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_textdecoder" %} [`TextDecoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoder) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_textdecoderstream" %} [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_textencoder" %} [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_textencoderstream" %} [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream) {% /anchor %}
-- 🔴
-- Not implemented.
-
----
-
-- {% anchor id="node_transformstream" %} [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_transformstreamdefaultcontroller" %} [`TransformStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStreamDefaultController) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_url" %} [`URL`](https://developer.mozilla.org/en-US/docs/Web/API/URL) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_urlsearchparams" %} [`URLSearchParams`](https://developer.mozilla.org/en-US/docs/Web/API/URLSearchParams) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_webassembly" %} [`WebAssembly`](https://nodejs.org/api/globals.html#webassembly) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_writablestream" %} [`WritableStream`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStream) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_writablestreamdefaultcontroller" %} [`WritableStreamDefaultController`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultController) {% /anchor %}
-- 🟢
-- Fully implemented.
-
----
-
-- {% anchor id="node_writablestreamdefaultwriter" %} [`WritableStreamDefaultWriter`](https://developer.mozilla.org/en-US/docs/Web/API/WritableStreamDefaultWriter) {% /anchor %}
-- 🟢
-- Fully implemented.
-
-{% /table %} -->

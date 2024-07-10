@@ -15,7 +15,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const options = @import("./options.zig");
 const import_record = @import("import_record.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Options = options;
 const resolver = @import("./resolver/resolver.zig");
 const _linker = @import("./linker.zig");
@@ -281,7 +281,7 @@ pub const Scanner = struct {
                 '\\' => {
                     text.needs_decode_escape = true;
                     if (!scanner.isValidEscape()) {
-                        var loc = logger.Loc{
+                        const loc = logger.Loc{
                             .start = @as(i32, @intCast(scanner.end)),
                         };
                         scanner.log.addError(scanner.source, loc, "Expected \")\" to end URL token") catch {};
@@ -411,7 +411,7 @@ pub const Scanner = struct {
                             continue :toplevel;
                         }
 
-                        var url_start = scanner.end;
+                        const url_start = scanner.end;
                         scanner.step();
                         switch (scanner.codepoint) {
                             'r', 'R' => {},
@@ -505,7 +505,7 @@ pub const Scanner = struct {
                                     scanner.step();
                                 }
 
-                                var word = scanner.source.contents[word_start..scanner.end];
+                                const word = scanner.source.contents[word_start..scanner.end];
 
                                 while (switch (scanner.codepoint) {
                                     ' ', '\n', '\r' => true,
@@ -675,7 +675,7 @@ pub const Scanner = struct {
                             },
                         }
 
-                        var suffix_start = scanner.end;
+                        const suffix_start = scanner.end;
 
                         get_suffix: while (true) {
                             switch (scanner.codepoint) {
@@ -751,7 +751,7 @@ pub const Scanner = struct {
     pub fn consumeEscape(scanner: *Scanner) CodePoint {
         scanner.step();
 
-        var c = scanner.codepoint;
+        const c = scanner.codepoint;
 
         if (isHex(c)) |__hex| {
             var hex = __hex;
@@ -806,7 +806,7 @@ pub const Scanner = struct {
     inline fn nextCodepointSlice(it: *Scanner, comptime advance: bool) []const u8 {
         @setRuntimeSafety(false);
         if (comptime Environment.allow_assert) {
-            std.debug.assert(it.source.contents.len > 0);
+            bun.assert(it.source.contents.len > 0);
         }
 
         const cp_len = strings.utf8ByteSequenceLength(it.source.contents[it.current]);
@@ -900,7 +900,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) anyerror!void {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,
@@ -918,7 +918,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) !usize {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,
@@ -938,7 +938,7 @@ pub fn NewWriter(
             log: *logger.Log,
             allocator: std.mem.Allocator,
         ) anyerror!void {
-            std.debug.assert(writer.source.contents.len > 0);
+            bun.assert(writer.source.contents.len > 0);
 
             var scanner = Scanner.init(
                 log,
@@ -1089,7 +1089,7 @@ pub fn NewWriter(
                     }
                 },
                 .t_verbatim => {
-                    if (comptime std.meta.trait.hasFn("copyFileRange")(WriterType)) {
+                    if (comptime std.meta.hasFn(WriterType, "copyFileRange")) {
                         try writer.ctx.copyFileRange(
                             @as(usize, @intCast(chunk.range.loc.start)),
                             @as(
@@ -1273,7 +1273,7 @@ pub fn NewBundler(
             const watcher_index = this.watcher.indexOf(hash);
 
             if (watcher_index == null) {
-                var file = try std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only });
+                const file = try std.fs.openFileAbsolute(absolute_path, .{ .mode = .read_only });
 
                 try this.watcher.appendFile(file.handle, absolute_path, hash, .css, 0, null, true);
                 if (this.watcher.watchloop_handle == null) {

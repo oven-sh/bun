@@ -1,4 +1,4 @@
-Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun​`.
+Bun is an all-in-one toolkit for JavaScript and TypeScript apps. It ships as a single executable called `bun`.
 
 At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-in replacement for Node.js. It's written in Zig and powered by JavaScriptCore under the hood, dramatically reducing startup times and memory usage.
 
@@ -6,18 +6,18 @@ At its core is the _Bun runtime_, a fast JavaScript runtime designed as a drop-i
 $ bun run index.tsx  # TS and JSX supported out of the box
 ```
 
-​​The `bun​` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
+The `bun` command-line tool also implements a test runner, script runner, and Node.js-compatible package manager, all significantly faster than existing tools and usable in existing Node.js projects with little to no changes necessary.
 
 ```bash
 $ bun run start                 # run the `start` script
-$ bun install <pkg>​             # install a package
+$ bun install <pkg>             # install a package
 $ bun build ./index.tsx         # bundle a project for browsers
 $ bun test                      # run tests
-$ bunx cowsay "Hello, world!"   # execute a package
+$ bunx cowsay 'Hello, world!'   # execute a package
 ```
 
 {% callout type="note" %}
-**​​Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
+**Bun is still under development.** Use it to speed up your development workflows or run simpler production code in resource-constrained environments like serverless functions. We're working on more complete Node.js compatibility and integration with existing frameworks. Join the [Discord](https://bun.sh/discord) and watch the [GitHub repository](https://github.com/oven-sh/bun) to keep tabs on future releases.
 {% /callout %}
 
 Get started with one of the quick links below, or read on to learn more about Bun.
@@ -26,7 +26,7 @@ Get started with one of the quick links below, or read on to learn more about Bu
 {% arrowbutton href="/docs/installation" text="Install Bun" /%}
 {% arrowbutton href="/docs/quickstart" text="Do the quickstart" /%}
 {% arrowbutton href="/docs/cli/install" text="Install a package" /%}
-{% arrowbutton href="/docs/templates" text="Use a project template" /%}
+{% arrowbutton href="/docs/cli/bun-create" text="Use a project template" /%}
 {% arrowbutton href="/docs/bundler" text="Bundle code for production" /%}
 {% arrowbutton href="/docs/api/http" text="Build an HTTP server" /%}
 {% arrowbutton href="/docs/api/websockets" text="Build a Websocket server" /%}
@@ -37,11 +37,14 @@ Get started with one of the quick links below, or read on to learn more about Bu
 
 ## What is a runtime?
 
-JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google) and JavaScriptCore (developed by Apple). Both are open source.
+JavaScript (or, more formally, ECMAScript) is just a _specification_ for a programming language. Anyone can write a JavaScript _engine_ that ingests a valid JavaScript program and executes it. The two most popular engines in use today are V8 (developed by Google)
+and JavaScriptCore (developed by Apple). Both are open source.
+
+But most JavaScript programs don't run in a vacuum. They need a way to access the outside world to perform useful tasks. This is where _runtimes_ come in. They implement additional APIs that are then made available to the JavaScript programs they execute.
 
 ### Browsers
 
-But most JavaScript programs don't run in a vacuum. They need a way to access the outside world to perform useful tasks. This is where _runtimes_ come in. They implement additional APIs that are then made available to the JavaScript programs they execute. Notably, browsers ship with JavaScript runtimes that implement a set of Web-specific APIs that are exposed via the global `window` object. Any JavaScript code executed by the browser can use these APIs to implement interactive or dynamic behavior in the context of the current webpage.
+Notably, browsers ship with JavaScript runtimes that implement a set of Web-specific APIs that are exposed via the global `window` object. Any JavaScript code executed by the browser can use these APIs to implement interactive or dynamic behavior in the context of the current webpage.
 
 <!-- JavaScript runtime that exposes  JavaScript engines are designed to run "vanilla" JavaScript programs, but it's often JavaScript _runtimes_ use an engine internally to execute the code and implement additional APIs that are then made available to executed programs.
 JavaScript was [initially designed](https://en.wikipedia.org/wiki/JavaScript) as a language to run in web browsers to implement interactivity and dynamic behavior in web pages. Browsers are the first JavaScript runtimes. JavaScript programs that are executed in browsers have access to a set of Web-specific global APIs on the `window` object. -->

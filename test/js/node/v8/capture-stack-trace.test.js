@@ -1,3 +1,4 @@
+import { nativeFrameForTesting } from "bun:internal-for-testing";
 import { test, expect, afterEach } from "bun:test";
 
 const origPrepareStackTrace = Error.prepareStackTrace;
@@ -15,6 +16,15 @@ test("Regular .stack", () => {
 
   new Foo();
   expect(err.stack).toMatch(/at new Foo/);
+});
+
+test("throw inside Error.prepareStackTrace doesnt crash", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    Error.prepareStackTrace = null;
+    throw new Error("wat");
+  };
+
+  expect(() => new Error().stack).toThrow("wat");
 });
 
 test("capture stack trace", () => {
@@ -122,13 +132,16 @@ test("capture stack trace limit", () => {
     captureStackTrace();
   }
 
+  var originalLimit = Error.stackTraceLimit;
   function captureStackTrace() {
     let e1 = {};
     Error.captureStackTrace(e1);
+
     expect(e1.stack.split("\n").length).toBe(11);
 
     let e2 = new Error();
     Error.captureStackTrace(e2);
+
     expect(e2.stack.split("\n").length).toBe(11);
 
     let e3 = {};
@@ -149,8 +162,11 @@ test("capture stack trace limit", () => {
     Error.captureStackTrace(e6);
     expect(e6.stack.split("\n").length).toBe(13);
   }
-
-  f1();
+  try {
+    f1();
+  } finally {
+    Error.stackTraceLimit = originalLimit;
+  }
 });
 
 test("prepare stack trace", () => {
@@ -434,9 +450,12 @@ test("CallFrame.p.isNative", () => {
   Error.prepareStackTrace = (e, s) => {
     expect(s[0].isNative()).toBe(false);
     expect(s[1].isNative()).toBe(true);
+    expect(s[2].isNative()).toBe(false);
   };
-  [1, 2].sort(() => {
-    Error.captureStackTrace(new Error(""));
+
+  nativeFrameForTesting(() => {
+    const err = new Error("");
+    Error.captureStackTrace(err);
     return 0;
   });
   Error.prepareStackTrace = prevPrepareStackTrace;
@@ -460,14 +479,83 @@ test("CallFrame.p.toString", () => {
   expect(e.stack[0].toString().includes("<anonymous>")).toBe(true);
 });
 
+// TODO: line numbers are wrong in a release build
 test.todo("err.stack should invoke prepareStackTrace", () => {
-  // This is V8's behavior.
-  let prevPrepareStackTrace = Error.prepareStackTrace;
-  let wasCalled = false;
-  Error.prepareStackTrace = (e, s) => {
-    wasCalled = true;
+  var lineNumber = -1;
+  var functionName = "";
+  var parentLineNumber = -1;
+  function functionWithAName() {
+    // This is V8's behavior.
+    let prevPrepareStackTrace = Error.prepareStackTrace;
+
+    Error.prepareStackTrace = (e, s) => {
+      lineNumber = s[0].getLineNumber();
+      functionName = s[0].getFunctionName();
+      parentLineNumber = s[1].getLineNumber();
+      expect(s[0].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+      expect(s[1].getFileName().includes("capture-stack-trace.test.js")).toBe(true);
+    };
+    const e = new Error();
+    e.stack;
+    Error.prepareStackTrace = prevPrepareStackTrace;
+  }
+
+  functionWithAName();
+
+  expect(functionName).toBe("functionWithAName");
+  expect(lineNumber).toBe(391);
+  // TODO: this is wrong
+  expect(parentLineNumber).toBe(394);
+});
+
+test("Error.prepareStackTrace inside a node:vm works", () => {
+  const { runInNewContext } = require("node:vm");
+  Error.prepareStackTrace = null;
+  const result = runInNewContext(
+    `
+    Error.prepareStackTrace = (err, stack) => {
+      if (typeof err.stack !== "string") {
+        throw new Error("err.stack is not a string");
+      }
+
+      return "custom stack trace";
+    };
+
+    const err = new Error();
+    err.stack;
+    `,
+  );
+  expect(result).toBe("custom stack trace");
+  expect(Error.prepareStackTrace).toBeNull();
+});
+
+test("Error.captureStackTrace inside error constructor works", () => {
+  class ExtendedError extends Error {
+    constructor() {
+      super();
+      Error.captureStackTrace(this, ExtendedError);
+    }
+  }
+
+  class AnotherError extends ExtendedError {}
+
+  expect(() => {
+    throw new AnotherError();
+  }).toThrow();
+});
+
+import "harness";
+import { join } from "path";
+
+test("Error.prepareStackTrace has a default implementation which behaves the same as being unset", () => {
+  expect([join(import.meta.dirname, "error-prepare-stack-default-fixture.js")]).toRun();
+});
+
+test("Error.prepareStackTrace returns a CallSite object", () => {
+  Error.prepareStackTrace = function (err, stack) {
+    return stack;
   };
-  const e = new Error();
-  e.stack;
-  expect(wasCalled).toBe(true);
+  const error = new Error();
+  expect(error.stack[0]).not.toBeString();
+  expect(error.stack[0][Symbol.toStringTag]).toBe("CallSite");
 });

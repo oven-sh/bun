@@ -2,7 +2,7 @@
 process.stdout.getWindowSize = () => [80, 80];
 process.stderr.getWindowSize = () => [80, 80];
 
-import { createReadStream, createWriteStream } from "node:fs";
+import { createReadStream, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { Command, Flags } from "@oclif/core";
 import JSZip from "jszip";
@@ -85,15 +85,16 @@ export class BuildCommand extends Command {
       archive.file(filename, createReadStream(path));
     }
     this.log("Saving...", output);
-    archive
-      .generateNodeStream({
-        streamFiles: true,
+    const archiveBuffer = await archive
+      .generateAsync({
+        type: "blob",
         compression: "DEFLATE",
         compressionOptions: {
           level: 9,
         },
       })
-      .pipe(createWriteStream(output));
+      .then(blob => blob.arrayBuffer());
+    writeFileSync(output, archiveBuffer);
     this.log("Saved");
   }
 }

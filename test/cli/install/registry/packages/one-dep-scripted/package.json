@@ -1,0 +1,70 @@
+{
+	"name": "one-dep-scripted",
+	"versions": {
+		"1.0.0": {
+			"name": "one-dep-scripted",
+			"version": "1.0.0",
+			"dependencies": {
+				"has-bin-entries": "1.0.0"
+			},
+			"scripts": {
+				"install": "has-bin-entries"
+			},
+			"_id": "one-dep-scripted@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-LfPLrOUEOvonUbajvISRjW7ekzwcQ6OIn3F5IK5MPQUOf+tiFJ2fRiLeudnPCRkThjY+WMz3NCcDJe6kO6nJEQ==",
+				"shasum": "fce9ca522efdeb8e9e0b3e205a25603f82e1c5fc",
+				"tarball": "http://localhost:4873/one-dep-scripted/-/one-dep-scripted-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "one-dep-scripted",
+			"version": "1.5.0",
+			"dependencies": {
+				"has-bin-entries": "1.5.0"
+			},
+			"scripts": {
+				"install": "has-bin-entries"
+			},
+			"gitHead": "e0a78fdc023bcc2f4d739c6ba9d5c026a1b586ae",
+			"_id": "one-dep-scripted@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-mFVlLoVtKZ+FEUKvmKwB2fCMIlFjJ8jt/ugz8n3ahiiGZ5IsdfmezerZFuX/2z588DZcSR7ZkcO9t7Z0yG/SHA==",
+				"shasum": "f28892bbfd62143695757d7fa53eff067da0aa1e",
+				"tarball": "http://localhost:4873/one-dep-scripted/-/one-dep-scripted-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T01:33:17.813Z",
+		"created": "2023-11-01T22:05:23.788Z",
+		"1.0.0": "2023-11-01T22:05:23.788Z",
+		"1.5.0": "2023-11-15T01:33:17.813Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-dep-scripted-1.0.0.tgz": {
+			"shasum": "fce9ca522efdeb8e9e0b3e205a25603f82e1c5fc",
+			"version": "1.0.0"
+		},
+		"one-dep-scripted-1.5.0.tgz": {
+			"shasum": "f28892bbfd62143695757d7fa53eff067da0aa1e",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "3-3ec6efca7c822777",
+	"_id": "one-dep-scripted",
+	"readme": "ERROR: No README data found!"
+}

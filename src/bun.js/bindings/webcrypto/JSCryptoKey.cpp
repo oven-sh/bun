@@ -98,9 +98,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<CryptoKey::Type>()
+template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
 {
-    return "\"public\", \"private\", \"secret\"";
+    return "\"public\", \"private\", \"secret\""_s;
 }
 
 // Attributes
@@ -198,7 +198,9 @@ void JSCryptoKey::finishCreation(VM& vm)
 
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSCryptoKeyPrototype::create(vm, &globalObject, JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSCryptoKeyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSCryptoKey::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -217,7 +219,7 @@ void JSCryptoKey::destroy(JSC::JSCell* cell)
     thisObject->JSCryptoKey::~JSCryptoKey();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKeyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -235,7 +237,7 @@ static inline JSValue jsCryptoKey_typeGetter(JSGlobalObject& lexicalGlobalObject
     RELEASE_AND_RETURN(throwScope, (toJS<IDLEnumeration<CryptoKey::Type>>(lexicalGlobalObject, throwScope, impl.type())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_type, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_typeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -248,7 +250,7 @@ static inline JSValue jsCryptoKey_extractableGetter(JSGlobalObject& lexicalGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLBoolean>(lexicalGlobalObject, throwScope, impl.extractable())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_extractable, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_extractableGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -266,7 +268,7 @@ static inline JSValue jsCryptoKey_algorithmGetter(JSGlobalObject& lexicalGlobalO
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_algorithm, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_algorithmGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -284,7 +286,7 @@ static inline JSValue jsCryptoKey_usagesGetter(JSGlobalObject& lexicalGlobalObje
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsCryptoKey_usages, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSCryptoKey>::get<jsCryptoKey_usagesGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -316,16 +318,14 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSCryptoKey*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, const char** reason)
+bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsCryptoKey = jsCast<JSCryptoKey*>(handle.slot()->asCell());
-    CryptoKey* owner = &jsCryptoKey->wrapped();
     if (UNLIKELY(reason))
-        *reason = "Reachable from CryptoKey";
+        *reason = "Reachable from CryptoKey"_s;
     return visitor.containsOpaqueRoot(context);
 }
 

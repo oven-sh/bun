@@ -130,7 +130,9 @@ void JSReadableStreamSource::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamSource::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamSourcePrototype::create(vm, &globalObject, JSReadableStreamSourcePrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamSourcePrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamSourcePrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamSource::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -150,7 +152,7 @@ static inline JSValue jsReadableStreamSource_controllerGetter(JSGlobalObject& le
     return thisObject.controller(lexicalGlobalObject);
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamSource_controller, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamSource_controller, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSReadableStreamSource>::get<jsReadableStreamSource_controllerGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -229,11 +231,11 @@ void JSReadableStreamSource::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSReadableStreamSource*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSReadableStreamSourceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSReadableStreamSourceOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);

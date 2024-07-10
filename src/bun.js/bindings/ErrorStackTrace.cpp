@@ -5,6 +5,8 @@
 
 #include "config.h"
 #include "ErrorStackTrace.h"
+#include "JavaScriptCore/Error.h"
+#include "wtf/text/OrdinalNumber.h"
 
 #include <JavaScriptCore/CatchScope.h>
 #include <JavaScriptCore/DebuggerPrimitives.h>
@@ -12,7 +14,10 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ErrorInstance.h>
 #include <JavaScriptCore/StackVisitor.h>
+#include <JavaScriptCore/NativeCallee.h>
 #include <wtf/IterationStatus.h>
+
+#include "ErrorStackFrame.h"
 
 using namespace JSC;
 using namespace WebCore;
@@ -34,6 +39,37 @@ JSCStackTrace JSCStackTrace::fromExisting(JSC::VM& vm, const WTF::Vector<JSC::St
     }
 
     return JSCStackTrace(newFrames);
+}
+
+static bool isImplementationVisibilityPrivate(JSC::StackVisitor& visitor)
+{
+    ImplementationVisibility implementationVisibility = [&]() -> ImplementationVisibility {
+        if (auto* codeBlock = visitor->codeBlock()) {
+            if (auto* executable = codeBlock->ownerExecutable()) {
+                return executable->implementationVisibility();
+            }
+            return ImplementationVisibility::Public;
+        }
+
+#if ENABLE(WEBASSEMBLY)
+        if (visitor->isNativeCalleeFrame())
+            return visitor->callee().asNativeCallee()->implementationVisibility();
+#endif
+
+        if (visitor->callee().isCell()) {
+            if (auto* callee = visitor->callee().asCell()) {
+                if (auto* jsFunction = jsDynamicCast<JSFunction*>(callee)) {
+                    if (auto* executable = jsFunction->executable())
+                        return executable->implementationVisibility();
+                    return ImplementationVisibility::Public;
+                }
+            }
+        }
+
+        return ImplementationVisibility::Public;
+    }();
+
+    return implementationVisibility != ImplementationVisibility::Public;
 }
 
 JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globalObject, JSC::CallFrame* callFrame, size_t frameLimit, JSC::JSValue caller)
@@ -62,23 +98,64 @@ JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globa
         callerName = callerFunctionInternal->name();
     }
 
-    JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
-        // skip caller frame and all frames above it
-        if (!callerName.isEmpty()) {
+    if (!callerName.isEmpty()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
             if (!belowCaller) {
+                skipFrames += 1;
+
                 if (visitor->functionName() == callerName) {
                     belowCaller = true;
                     return WTF::IterationStatus::Continue;
                 }
-                skipFrames += 1;
             }
-        }
-        if (!visitor->isNativeFrame()) {
-            framesCount++;
-        }
 
-        return WTF::IterationStatus::Continue;
-    });
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller && caller.isCell()) {
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            // skip caller frame and all frames above it
+            if (!belowCaller) {
+                auto callee = visitor->callee();
+                skipFrames += 1;
+                if (callee.isCell() && callee.asCell() == caller) {
+                    belowCaller = true;
+                    return WTF::IterationStatus::Continue;
+                }
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    } else if (caller.isEmpty() || caller.isUndefined()) {
+        // Skip the first frame.
+        JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
+            if (isImplementationVisibilityPrivate(visitor)) {
+                return WTF::IterationStatus::Continue;
+            }
+
+            framesCount += 1;
+
+            if (!belowCaller) {
+                skipFrames += 1;
+                belowCaller = true;
+            }
+
+            return WTF::IterationStatus::Continue;
+        });
+    }
+
     framesCount = std::min(frameLimit, framesCount);
 
     // Create the actual stack frames
@@ -86,7 +163,7 @@ JSCStackTrace JSCStackTrace::captureCurrentJSStackTrace(Zig::GlobalObject* globa
     stackFrames.reserveInitialCapacity(framesCount);
     JSC::StackVisitor::visit(callFrame, vm, [&](JSC::StackVisitor& visitor) -> WTF::IterationStatus {
         // Skip native frames
-        if (visitor->isNativeFrame()) {
+        if (isImplementationVisibilityPrivate(visitor)) {
             return WTF::IterationStatus::Continue;
         }
 
@@ -130,8 +207,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     : m_vm(vm)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL(nullptr)
-    , m_functionName(nullptr)
+    , m_sourceURL()
+    , m_functionName()
     , m_isWasmFrame(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
@@ -139,9 +216,18 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, JSC::StackVisitor& visitor)
     m_callFrame = visitor->callFrame();
 
     // Based on JSC's GetStackTraceFunctor (Interpreter.cpp)
-    if (visitor->isWasmFrame()) {
-        m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
-        m_isWasmFrame = true;
+    if (visitor->isNativeCalleeFrame()) {
+        auto* nativeCallee = visitor->callee().asNativeCallee();
+        switch (nativeCallee->category()) {
+        case NativeCallee::Category::Wasm: {
+            m_wasmFunctionIndexOrName = visitor->wasmFunctionIndexOrName();
+            m_isWasmFrame = true;
+            break;
+        }
+        case NativeCallee::Category::InlineCache: {
+            break;
+        }
+        }
     } else if (!!visitor->codeBlock() && !visitor->codeBlock()->unlinkedCodeBlock()->isBuiltinFunction()) {
         m_codeBlock = visitor->codeBlock();
         m_bytecodeIndex = visitor->bytecodeIndex();
@@ -153,8 +239,8 @@ JSCStackFrame::JSCStackFrame(JSC::VM& vm, const JSC::StackFrame& frame)
     , m_callFrame(nullptr)
     , m_codeBlock(nullptr)
     , m_bytecodeIndex(JSC::BytecodeIndex())
-    , m_sourceURL(nullptr)
-    , m_functionName(nullptr)
+    , m_sourceURL()
+    , m_functionName()
     , m_isWasmFrame(false)
     , m_sourcePositionsState(SourcePositionsState::NotCalculated)
 {
@@ -183,7 +269,7 @@ JSC::JSString* JSCStackFrame::sourceURL()
         m_sourceURL = retrieveSourceURL();
     }
 
-    return m_sourceURL;
+    return jsString(this->m_vm, m_sourceURL);
 }
 
 JSC::JSString* JSCStackFrame::functionName()
@@ -192,7 +278,7 @@ JSC::JSString* JSCStackFrame::functionName()
         m_functionName = retrieveFunctionName();
     }
 
-    return m_functionName;
+    return jsString(this->m_vm, m_functionName);
 }
 
 JSC::JSString* JSCStackFrame::typeName()
@@ -201,7 +287,7 @@ JSC::JSString* JSCStackFrame::typeName()
         m_typeName = retrieveTypeName();
     }
 
-    return m_typeName;
+    return jsString(this->m_vm, m_typeName);
 }
 
 JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
@@ -213,91 +299,61 @@ JSCStackFrame::SourcePositions* JSCStackFrame::getSourcePositions()
     return (SourcePositionsState::Calculated == m_sourcePositionsState) ? &m_sourcePositions : nullptr;
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveSourceURL()
+ALWAYS_INLINE String JSCStackFrame::retrieveSourceURL()
 {
     static auto sourceURLWasmString = MAKE_STATIC_STRING_IMPL("[wasm code]");
     static auto sourceURLNativeString = MAKE_STATIC_STRING_IMPL("[native code]");
 
     if (m_isWasmFrame) {
-        return jsOwnedString(m_vm, sourceURLWasmString);
+        return String(sourceURLWasmString);
     }
 
     if (!m_codeBlock) {
-        return jsOwnedString(m_vm, sourceURLNativeString);
+        return String(sourceURLNativeString);
     }
 
-    String sourceURL = m_codeBlock->ownerExecutable()->sourceURL();
-    return sourceURL.isNull() ? m_vm.smallStrings.emptyString() : JSC::jsString(m_vm, sourceURL);
+    return m_codeBlock->ownerExecutable()->sourceURL();
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveFunctionName()
+ALWAYS_INLINE String JSCStackFrame::retrieveFunctionName()
 {
     static auto functionNameEvalCodeString = MAKE_STATIC_STRING_IMPL("eval code");
     static auto functionNameModuleCodeString = MAKE_STATIC_STRING_IMPL("module code");
     static auto functionNameGlobalCodeString = MAKE_STATIC_STRING_IMPL("global code");
 
     if (m_isWasmFrame) {
-        return jsString(m_vm, JSC::Wasm::makeString(m_wasmFunctionIndexOrName));
+        return JSC::Wasm::makeString(m_wasmFunctionIndexOrName);
     }
 
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
         case JSC::EvalCode:
-            return JSC::jsOwnedString(m_vm, functionNameEvalCodeString);
+            return String(functionNameEvalCodeString);
         case JSC::ModuleCode:
-            return JSC::jsOwnedString(m_vm, functionNameModuleCodeString);
+            return String(functionNameModuleCodeString);
         case JSC::FunctionCode:
             break;
         case JSC::GlobalCode:
-            return JSC::jsOwnedString(m_vm, functionNameGlobalCodeString);
+            return String(functionNameGlobalCodeString);
         default:
             ASSERT_NOT_REACHED();
         }
     }
 
-    if (!m_callee || !m_callee->isObject()) {
-        return m_vm.smallStrings.emptyString();
+    String name;
+    if (m_callee) {
+        if (m_callee->isObject())
+            name = getCalculatedDisplayName(m_vm, jsCast<JSObject*>(m_callee)).impl();
     }
 
-    JSC::JSObject* calleeAsObject = JSC::jsCast<JSC::JSObject*>(m_callee);
-
-    // First, try the "displayName" property
-    JSC::JSValue displayName = calleeAsObject->getDirect(m_vm, m_vm.propertyNames->displayName);
-    if (displayName && isJSString(displayName)) {
-        return JSC::asString(displayName);
-    }
-
-    // Our addition - if there's no "dispalyName" property, try the "name" property
-    JSC::JSValue name = calleeAsObject->getDirect(m_vm, m_vm.propertyNames->name);
-    if (name && isJSString(name)) {
-        return JSC::asString(name);
-    }
-
-    /* For functions (either JSFunction or InternalFunction), fallback to their "native" name property.
-     * Based on JSC::getCalculatedDisplayName, "inlining" the
-     * JSFunction::calculatedDisplayName\InternalFunction::calculatedDisplayName calls */
-    if (JSC::JSFunction* function = JSC::jsDynamicCast<JSC::JSFunction*>(calleeAsObject)) {
-        // Based on JSC::JSFunction::calculatedDisplayName, skipping the "displayName" property check
-        WTF::String actualName = function->name(m_vm);
-        if (!actualName.isEmpty() || function->isHostOrBuiltinFunction()) {
-            return JSC::jsString(m_vm, actualName);
-        }
-
-        return JSC::jsString(m_vm, function->jsExecutable()->name().string());
-    }
-    if (JSC::InternalFunction* function = JSC::jsDynamicCast<JSC::InternalFunction*>(calleeAsObject)) {
-        // Based on JSC::InternalFunction::calculatedDisplayName, skipping the "displayName" property check
-        return JSC::jsString(m_vm, function->name());
-    }
-
-    return m_vm.smallStrings.emptyString();
+    return name.isNull() ? emptyString() : name;
 }
 
-ALWAYS_INLINE JSC::JSString* JSCStackFrame::retrieveTypeName()
+ALWAYS_INLINE String JSCStackFrame::retrieveTypeName()
 {
     JSC::JSObject* calleeObject = JSC::jsCast<JSC::JSObject*>(m_callee);
     // return JSC::jsTypeStringForValue(m_globalObjectcalleeObject->toThis()
-    return jsString(m_vm, makeString(calleeObject->className()));
+    return calleeObject->className();
 }
 
 // General flow here is based on JSC's appendSourceToError (ErrorInstance.cpp)
@@ -306,70 +362,13 @@ bool JSCStackFrame::calculateSourcePositions()
     if (!m_codeBlock) {
         return false;
     }
-
-    JSC::BytecodeIndex bytecodeIndex = hasBytecodeIndex() ? m_bytecodeIndex : JSC::BytecodeIndex();
-
-    /* Get the "raw" position info.
-     * Note that we're using m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeOffset rather than m_codeBlock->expressionRangeForBytecodeOffset
-     * in order get the "raw" offsets and avoid the CodeBlock's expressionRangeForBytecodeOffset modifications to the line and column numbers,
-     * (we don't need the column number from it, and we'll calculate the line "fixes" ourselves). */
-    int startOffset = 0;
-    int endOffset = 0;
-    int divotPoint = 0;
-    unsigned line = 0;
-    unsigned unusedColumn = 0;
-    m_codeBlock->unlinkedCodeBlock()->expressionRangeForBytecodeIndex(bytecodeIndex, divotPoint, startOffset, endOffset, line, unusedColumn);
-    divotPoint += m_codeBlock->sourceOffset();
-
-    /* On the first line of the source code, it seems that we need to "fix" the column with the starting
-     * offset. We currently use codeBlock->source()->startPosition().m_column.oneBasedInt() as the
-     * offset in the first line rather than codeBlock->firstLineColumnOffset(), which seems simpler
-     * (and what CodeBlock::expressionRangeForBytecodeOffset does). This is because firstLineColumnOffset
-     * values seems different from what we expect (according to v8's tests) and I haven't dove into the
-     * relevant parts in JSC (yet) to figure out why. */
-    unsigned columnOffset = line ? 0 : m_codeBlock->source().startColumn().zeroBasedInt();
-
-    // "Fix" the line number
-    JSC::ScriptExecutable* executable = m_codeBlock->ownerExecutable();
-    line = executable->overrideLineNumber(m_vm).value_or(line + executable->firstLine());
-
-    // Calculate the staring\ending offsets of the entire expression
-    int expressionStart = divotPoint - startOffset;
-    int expressionStop = divotPoint + endOffset;
-
-    // Make sure the range is valid
-    StringView sourceString = m_codeBlock->source().provider()->source();
-    if (!expressionStop || expressionStart > static_cast<int>(sourceString.length())) {
+    if (!hasBytecodeIndex()) {
         return false;
     }
 
-    // Search for the beginning of the line
-    unsigned int lineStart = expressionStart;
-    while ((lineStart > 0) && ('\n' != sourceString[lineStart - 1])) {
-        lineStart--;
-    }
-    // Search for the end of the line
-    unsigned int lineStop = expressionStop;
-    unsigned int sourceLength = sourceString.length();
-    while ((lineStop < sourceLength) && ('\n' != sourceString[lineStop])) {
-        lineStop++;
-    }
-
-    /* Finally, store the source "positions" info.
-     * Notes:
-     * - The retrieved column seem to point the "end column". To make sure we're current, we'll calculate the
-     *   columns ourselves, since we've already found where the line starts. Note that in v8 it should be 0-based
-     *   here (in contrast the 1-based column number in v8::StackFrame).
-     * - The static_casts are ugly, but comes from differences between JSC and v8's api, and should be OK
-     *   since no source should be longer than "max int" chars.
-     */
-    m_sourcePositions.expressionStart = WTF::OrdinalNumber::fromZeroBasedInt(expressionStart);
-    m_sourcePositions.expressionStop = WTF::OrdinalNumber::fromZeroBasedInt(expressionStop);
-    m_sourcePositions.line = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(line));
-    m_sourcePositions.startColumn = WTF::OrdinalNumber::fromZeroBasedInt((expressionStart - lineStart) + columnOffset);
-    m_sourcePositions.endColumn = WTF::OrdinalNumber::fromZeroBasedInt(m_sourcePositions.startColumn.zeroBasedInt() + (expressionStop - expressionStart));
-    m_sourcePositions.lineStart = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(lineStart));
-    m_sourcePositions.lineStop = WTF::OrdinalNumber::fromZeroBasedInt(static_cast<int>(lineStop));
+    auto location = Bun::getAdjustedPositionForBytecode(m_codeBlock, m_bytecodeIndex);
+    m_sourcePositions.line = location.line();
+    m_sourcePositions.column = location.column();
 
     return true;
 }

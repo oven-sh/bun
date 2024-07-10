@@ -98,6 +98,7 @@ public:
     char *corkBuffer = new char[CORK_BUFFER_SIZE];
     unsigned int corkOffset = 0;
     void *corkedSocket = nullptr;
+    bool corkedSocketIsSSL = false;
 
     /* Per message deflate data */
     ZlibContext *zlibContext = nullptr;

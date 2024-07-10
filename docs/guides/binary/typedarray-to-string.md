@@ -7,7 +7,7 @@ Bun implements the Web-standard [`TextDecoder`](https://developer.mozilla.org/en
 ```ts
 const arr = new Uint8Array([104, 101, 108, 108, 111]);
 const decoder = new TextDecoder();
-const str = decoder.decode(buf);
+const str = decoder.decode(arr);
 // => "hello"
 ```
 

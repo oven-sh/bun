@@ -1,4 +1,4 @@
-Bun ships with a fast built-in test runner. Tests are executed with the Bun runtime, and support the following features.
+Bun ships with a fast, built-in, Jest-compatible test runner. Tests are executed with the Bun runtime, and support the following features.
 
 - TypeScript and JSX
 - Lifecycle hooks
@@ -6,6 +6,10 @@ Bun ships with a fast built-in test runner. Tests are executed with the Bun runt
 - UI & DOM testing
 - Watch mode with `--watch`
 - Script pre-loading with `--preload`
+
+{% callout %}
+Bun aims for compatibility with Jest, but not everything is implemented. To track compatibility, see [this tracking issue](https://github.com/oven-sh/bun/issues/1825).
+{% /callout %}
 
 ## Run tests
 
@@ -41,6 +45,12 @@ To filter by _test name_, use the `-t`/`--test-name-pattern` flag.
 ```sh
 # run all tests or test suites with "addition" in the name
 $ bun test --test-name-pattern addition
+```
+
+To run a specific file in the test runner, make sure the path starts with `./` or `/` to distinguish it from a filter name.
+
+```bash
+$ bun test ./test/specific-file.test.ts
 ```
 
 The test runner runs all tests in a single process. It loads all `--preload` scripts (see [Lifecycle](/docs/test/lifecycle) for details), then runs all tests. If a test fails, the test runner will exit with a non-zero exit code.
@@ -93,7 +103,7 @@ Bun supports the following lifecycle hooks:
 | `afterEach`  | Runs after each test.       |
 | `afterAll`   | Runs once after all tests.  |
 
-These hooks can be define inside test files, or in a separate file that is preloaded with the `--preload` flag.
+These hooks can be defined inside test files, or in a separate file that is preloaded with the `--preload` flag.
 
 ```ts
 $ bun test --preload ./setup.ts
@@ -103,13 +113,13 @@ See [Test > Lifecycle](/docs/test/lifecycle) for complete documentation.
 
 ## Mocks
 
-Create mocks with the `mock` function. Mocks are automatically reset between tests.
+Create mock functions with the `mock` function. Mocks are automatically reset between tests.
 
 ```ts
 import { test, expect, mock } from "bun:test";
 const random = mock(() => Math.random());
 
-test("random", async () => {
+test("random", () => {
   const val = random();
   expect(val).toBeGreaterThan(0);
   expect(random).toHaveBeenCalled();
@@ -117,11 +127,38 @@ test("random", async () => {
 });
 ```
 
+Alternatively, you can use `jest.fn()`, it behaves identically.
+
+```ts-diff
+- import { test, expect, mock } from "bun:test";
++ import { test, expect, jest } from "bun:test";
+
+- const random = mock(() => Math.random());
++ const random = jest.fn(() => Math.random());
+```
+
 See [Test > Mocks](/docs/test/mocks) for complete documentation.
 
 ## Snapshot testing
 
-Snapshots are supported by `bun test`. See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
+Snapshots are supported by `bun test`.
+
+```ts
+// example usage of toMatchSnapshot
+import { test, expect } from "bun:test";
+
+test("snapshot", () => {
+  expect({ a: 1 }).toMatchSnapshot();
+});
+```
+
+To update snapshots, use the `--update-snapshots` flag.
+
+```sh
+$ bun test --update-snapshots
+```
+
+See [Test > Snapshots](/docs/test/snapshots) for complete documentation.
 
 ## UI & DOM testing
 

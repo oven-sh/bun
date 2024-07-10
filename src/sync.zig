@@ -1,5 +1,5 @@
 const std = @import("std");
-const system = if (bun.Environment.isWindows) std.os.windows else std.os.system;
+const system = if (bun.Environment.isWindows) std.os.windows else std.posix.system;
 const bun = @import("root").bun;
 
 // https://gist.github.com/kprotty/0d2dc3da4840341d6ff361b27bdac7dc
@@ -33,7 +33,7 @@ pub const ThreadPool = struct {
 
         for (&self.workers) |*worker| {
             try worker.init(self);
-            @atomicStore(usize, &self.spawned, self.spawned + 1, .SeqCst);
+            @atomicStore(usize, &self.spawned, self.spawned + 1, .seq_cst);
         }
     }
 
@@ -60,8 +60,8 @@ pub const ThreadPool = struct {
             run_node: RunNode = .{ .data = .{ .runFn = runFn } },
 
             fn runFn(runnable: *Runnable) void {
-                const run_node = @fieldParentPtr(RunNode, "data", runnable);
-                const closure = @fieldParentPtr(@This(), "run_node", run_node);
+                const run_node: *RunNode = @fieldParentPtr("data", runnable);
+                const closure: *@This() = @fieldParentPtr("run_node", run_node);
                 _ = @call(.auto, func, closure.func_args);
                 closure.allocator.destroy(closure);
             }
@@ -106,7 +106,7 @@ pub const ThreadPool = struct {
     };
 
     fn wait(self: *ThreadPool) error{Shutdown}!void {
-        var state = State.unpack(@atomicLoad(usize, &self.state, .SeqCst));
+        var state = State.unpack(@atomicLoad(usize, &self.state, .seq_cst));
         while (true) {
             if (state.is_shutdown)
                 return error.Shutdown;
@@ -123,8 +123,8 @@ pub const ThreadPool = struct {
                 &self.state,
                 state.pack(),
                 new_state.pack(),
-                .SeqCst,
-                .SeqCst,
+                .seq_cst,
+                .seq_cst,
             )) |updated| {
                 state = State.unpack(updated);
                 continue;
@@ -137,7 +137,7 @@ pub const ThreadPool = struct {
     }
 
     fn notify(self: *ThreadPool) void {
-        var state = State.unpack(@atomicLoad(usize, &self.state, .SeqCst));
+        var state = State.unpack(@atomicLoad(usize, &self.state, .seq_cst));
         while (true) {
             if (state.is_shutdown)
                 return;
@@ -156,8 +156,8 @@ pub const ThreadPool = struct {
                 &self.state,
                 state.pack(),
                 new_state.pack(),
-                .SeqCst,
-                .SeqCst,
+                .seq_cst,
+                .seq_cst,
             )) |updated| {
                 state = State.unpack(updated);
                 continue;
@@ -175,7 +175,7 @@ pub const ThreadPool = struct {
             &self.state,
             .Xchg,
             (State{ .is_shutdown = true }).pack(),
-            .SeqCst,
+            .seq_cst,
         ));
 
         while (state.idle_workers > 0) : (state.idle_workers -= 1)
@@ -258,7 +258,7 @@ pub const ThreadPool = struct {
                 if (self.steal(pool, rand, .unfair)) |run_node| {
                     return run_node;
                 } else {
-                    std.os.sched_yield() catch spinLoopHint();
+                    std.posix.sched_yield() catch spinLoopHint();
                 }
             }
 
@@ -269,7 +269,7 @@ pub const ThreadPool = struct {
         }
 
         fn steal(self: *Worker, pool: *ThreadPool, rand: *std.rand.Random, mode: anytype) ?*RunNode {
-            const spawned = @atomicLoad(usize, &pool.spawned, .SeqCst);
+            const spawned = @atomicLoad(usize, &pool.spawned, .seq_cst);
             if (spawned < 2)
                 return null;
 
@@ -316,7 +316,7 @@ pub const ThreadPool = struct {
             defer self.mutex.unlock();
 
             self.list.prepend(node);
-            @atomicStore(usize, &self.size, self.size + 1, .SeqCst);
+            @atomicStore(usize, &self.size, self.size + 1, .seq_cst);
         }
 
         fn pop(self: *Queue) ?*List.Node {
@@ -331,7 +331,7 @@ pub const ThreadPool = struct {
         }
 
         fn popFrom(self: *Queue, side: enum { head, tail }) ?*RunNode {
-            if (@atomicLoad(usize, &self.size, .SeqCst) == 0)
+            if (@atomicLoad(usize, &self.size, .seq_cst) == 0)
                 return null;
 
             self.mutex.lock();
@@ -344,7 +344,7 @@ pub const ThreadPool = struct {
             };
 
             if (run_node != null)
-                @atomicStore(usize, &self.size, self.size - 1, .SeqCst);
+                @atomicStore(usize, &self.size, self.size - 1, .seq_cst);
 
             return run_node;
         }
@@ -373,17 +373,17 @@ pub fn Channel(
 
         pub usingnamespace switch (buffer_type) {
             .Static => struct {
-                pub fn init() Self {
+                pub inline fn init() Self {
                     return Self.withBuffer(Buffer.init());
                 }
             },
             .Slice => struct {
-                pub fn init(buf: []T) Self {
+                pub inline fn init(buf: []T) Self {
                     return Self.withBuffer(Buffer.init(buf));
                 }
             },
             .Dynamic => struct {
-                pub fn init(allocator: std.mem.Allocator) Self {
+                pub inline fn init(allocator: std.mem.Allocator) Self {
                     return Self.withBuffer(Buffer.init(allocator));
                 }
             },
@@ -450,11 +450,11 @@ pub fn Channel(
         }
 
         pub fn writeAll(self: *Self, items: []const T) !void {
-            std.debug.assert((try self.writeItems(items, true)) == items.len);
+            bun.assert((try self.writeItems(items, true)) == items.len);
         }
 
         pub fn readAll(self: *Self, items: []T) !void {
-            std.debug.assert((try self.readItems(items, true)) == items.len);
+            bun.assert((try self.readItems(items, true)) == items.len);
         }
 
         fn writeItems(self: *Self, items: []const T, should_block: bool) !usize {
@@ -496,15 +496,17 @@ pub fn Channel(
             var popped: usize = 0;
             while (popped < items.len) {
                 const new_item = blk: {
-                    if (self.buffer.readItem()) |item| {
-                        self.putters.signal();
-                        break :blk item;
+                    // Buffer can contain null items but readItem will return null if the buffer is empty.
+                    // we need to check if the buffer is empty before trying to read an item.
+                    if (self.buffer.count == 0) {
+                        if (self.is_closed)
+                            return error.Closed;
+                        break :blk null;
                     }
 
-                    if (self.is_closed)
-                        return error.Closed;
-
-                    break :blk null;
+                    const item = self.buffer.readItem();
+                    self.putters.signal();
+                    break :blk item;
                 };
 
                 if (new_item) |item| {
@@ -532,12 +534,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
 
         pub fn deinit(self: *RwLock) void {
             const safe_rc = switch (@import("builtin").os.tag) {
-                .dragonfly, .netbsd => std.os.EAGAIN,
+                .dragonfly, .netbsd => std.posix.EAGAIN,
                 else => 0,
             };
 
             const rc = std.c.pthread_rwlock_destroy(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -548,12 +550,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
 
         pub fn lock(self: *RwLock) void {
             const rc = pthread_rwlock_wrlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn tryLockShared(self: *RwLock) bool {
@@ -562,12 +564,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
 
         pub fn lockShared(self: *RwLock) void {
             const rc = pthread_rwlock_rdlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlockShared(self: *RwLock) void {
             const rc = pthread_rwlock_unlock(&self.rwlock);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         const PTHREAD_RWLOCK_INITIALIZER = pthread_rwlock_t{};
@@ -596,7 +598,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                         attr: i32 = 0,
                         __reserved: [36]u8 = [_]u8{0} ** 36,
                     },
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 },
                 else => extern struct {
                     size: [56]u8 align(@alignOf(usize)) = [_]u8{0} ** 56,
@@ -613,7 +615,7 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
                 ptr_interlock: switch (@import("builtin").target.cpu.arch) {
                     .aarch64, .sparc, .x86_64 => u8,
                     .arm, .powerpc => c_int,
-                    else => unreachable,
+                    else => @compileError("unreachable"),
                 } = 0,
                 ptr_rblocked_first: ?*u8 = null,
                 ptr_rblocked_last: ?*u8 = null,
@@ -641,12 +643,12 @@ pub const RwLock = if (@import("builtin").os.tag != .windows and @import("builti
             else => @compileError("pthread_rwlock_t not implemented for this platform"),
         };
 
-        extern "c" fn pthread_rwlock_destroy(p: *pthread_rwlock_t) callconv(.C) std.os.E;
-        extern "c" fn pthread_rwlock_rdlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
-        extern "c" fn pthread_rwlock_wrlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
-        extern "c" fn pthread_rwlock_tryrdlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
-        extern "c" fn pthread_rwlock_trywrlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
-        extern "c" fn pthread_rwlock_unlock(p: *pthread_rwlock_t) callconv(.C) std.os.E;
+        extern "c" fn pthread_rwlock_destroy(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
+        extern "c" fn pthread_rwlock_rdlock(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
+        extern "c" fn pthread_rwlock_wrlock(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
+        extern "c" fn pthread_rwlock_tryrdlock(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
+        extern "c" fn pthread_rwlock_trywrlock(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
+        extern "c" fn pthread_rwlock_unlock(p: *pthread_rwlock_t) callconv(.C) std.posix.E;
     }
 else
     struct {
@@ -678,9 +680,9 @@ else
 
         pub fn tryLock(self: *RwLock) bool {
             if (self.mutex.tryLock()) {
-                const state = @atomicLoad(usize, &self.state, .SeqCst);
+                const state = @atomicLoad(usize, &self.state, .seq_cst);
                 if (state & READER_MASK == 0) {
-                    _ = @atomicRmw(usize, &self.state, .Or, IS_WRITING, .SeqCst);
+                    _ = @atomicRmw(usize, &self.state, .Or, IS_WRITING, .seq_cst);
                     return true;
                 }
 
@@ -691,34 +693,34 @@ else
         }
 
         pub fn lock(self: *RwLock) void {
-            _ = @atomicRmw(usize, &self.state, .Add, WRITER, .SeqCst);
+            _ = @atomicRmw(usize, &self.state, .Add, WRITER, .seq_cst);
             self.mutex.lock();
 
-            const state = @atomicRmw(usize, &self.state, .Or, IS_WRITING, .SeqCst);
+            const state = @atomicRmw(usize, &self.state, .Or, IS_WRITING, .seq_cst);
             if (state & READER_MASK != 0)
                 self.semaphore.wait();
         }
 
         pub fn unlock(self: *RwLock) void {
-            _ = @atomicRmw(usize, &self.state, .And, ~IS_WRITING, .SeqCst);
+            _ = @atomicRmw(usize, &self.state, .And, ~IS_WRITING, .seq_cst);
             self.mutex.unlock();
         }
 
         pub fn tryLockShared(self: *RwLock) bool {
-            const state = @atomicLoad(usize, &self.state, .SeqCst);
+            const state = @atomicLoad(usize, &self.state, .seq_cst);
             if (state & (IS_WRITING | WRITER_MASK) == 0) {
                 _ = @cmpxchgStrong(
                     usize,
                     &self.state,
                     state,
                     state + READER,
-                    .SeqCst,
-                    .SeqCst,
+                    .seq_cst,
+                    .seq_cst,
                 ) orelse return true;
             }
 
             if (self.mutex.tryLock()) {
-                _ = @atomicRmw(usize, &self.state, .Add, READER, .SeqCst);
+                _ = @atomicRmw(usize, &self.state, .Add, READER, .seq_cst);
                 self.mutex.unlock();
                 return true;
             }
@@ -727,25 +729,25 @@ else
         }
 
         pub fn lockShared(self: *RwLock) void {
-            var state = @atomicLoad(usize, &self.state, .SeqCst);
+            var state = @atomicLoad(usize, &self.state, .seq_cst);
             while (state & (IS_WRITING | WRITER_MASK) == 0) {
                 state = @cmpxchgWeak(
                     usize,
                     &self.state,
                     state,
                     state + READER,
-                    .SeqCst,
-                    .SeqCst,
+                    .seq_cst,
+                    .seq_cst,
                 ) orelse return;
             }
 
             self.mutex.lock();
-            _ = @atomicRmw(usize, &self.state, .Add, READER, .SeqCst);
+            _ = @atomicRmw(usize, &self.state, .Add, READER, .seq_cst);
             self.mutex.unlock();
         }
 
         pub fn unlockShared(self: *RwLock) void {
-            const state = @atomicRmw(usize, &self.state, .Sub, READER, .SeqCst);
+            const state = @atomicRmw(usize, &self.state, .Sub, READER, .seq_cst);
 
             if ((state & READER_MASK == READER) and (state & IS_WRITING != 0))
                 self.semaphore.post();
@@ -881,12 +883,12 @@ else if (@import("builtin").link_libc)
 
         pub fn deinit(self: *Mutex) void {
             const safe_rc = switch (@import("builtin").os.tag) {
-                .dragonfly, .netbsd => std.os.EAGAIN,
+                .dragonfly, .netbsd => std.posix.EAGAIN,
                 else => 0,
             };
 
             const rc = std.c.pthread_mutex_destroy(&self.mutex);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
@@ -897,12 +899,12 @@ else if (@import("builtin").link_libc)
 
         pub fn lock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_lock(&self.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn unlock(self: *Mutex) void {
             const rc = std.c.pthread_mutex_unlock(&self.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         extern "c" fn pthread_mutex_trylock(m: *std.c.pthread_mutex_t) callconv(.C) c_int;
@@ -931,13 +933,13 @@ else if (@import("builtin").os.tag == .linux)
                 &self.state,
                 .unlocked,
                 .locked,
-                .Acquire,
-                .Monotonic,
+                .acquire,
+                .monotonic,
             ) == null;
         }
 
         pub fn lock(self: *Mutex) void {
-            switch (@atomicRmw(State, &self.state, .Xchg, .locked, .Acquire)) {
+            switch (@atomicRmw(State, &self.state, .Xchg, .locked, .acquire)) {
                 .unlocked => {},
                 else => |s| self.lockSlow(s),
             }
@@ -948,15 +950,14 @@ else if (@import("builtin").os.tag == .linux)
 
             var new_state = current_state;
             while (true) {
-                var spin: u8 = 0;
-                while (spin < 100) : (spin += 1) {
+                for (0..100) |spin| {
                     const state = @cmpxchgWeak(
                         State,
                         &self.state,
                         .unlocked,
                         new_state,
-                        .Acquire,
-                        .Monotonic,
+                        .acquire,
+                        .monotonic,
                     ) orelse return;
 
                     switch (state) {
@@ -965,13 +966,12 @@ else if (@import("builtin").os.tag == .linux)
                         .waiting => break,
                     }
 
-                    var iter = spin + 1;
-                    while (iter > 0) : (iter -= 1)
+                    for (0..spin) |_|
                         spinLoopHint();
                 }
 
                 new_state = .waiting;
-                switch (@atomicRmw(State, &self.state, .Xchg, new_state, .Acquire)) {
+                switch (@atomicRmw(State, &self.state, .Xchg, new_state, .acquire)) {
                     .unlocked => return,
                     else => {},
                 }
@@ -984,7 +984,7 @@ else if (@import("builtin").os.tag == .linux)
         }
 
         pub fn unlock(self: *Mutex) void {
-            switch (@atomicRmw(State, &self.state, .Xchg, .unlocked, .Release)) {
+            switch (@atomicRmw(State, &self.state, .Xchg, .unlocked, .release)) {
                 .unlocked => unreachable,
                 .locked => {},
                 .waiting => self.unlockSlow(),
@@ -1010,7 +1010,7 @@ else
         }
 
         pub fn tryLock(self: *Mutex) bool {
-            return @atomicRmw(bool, &self.is_locked, .Xchg, true, .Acquire) == false;
+            return @atomicRmw(bool, &self.is_locked, .Xchg, true, .acquire) == false;
         }
 
         pub fn lock(self: *Mutex) void {
@@ -1019,7 +1019,7 @@ else
         }
 
         pub fn unlock(self: *Mutex) void {
-            @atomicStore(bool, &self.is_locked, false, .Release);
+            @atomicStore(bool, &self.is_locked, false, .release);
         }
     };
 
@@ -1043,7 +1043,7 @@ pub const Condvar = if (@import("builtin").os.tag == .windows)
                 @as(system.ULONG, 0),
             );
 
-            std.debug.assert(rc != system.FALSE);
+            bun.assert(rc != system.FALSE);
         }
 
         pub fn signal(self: *Condvar) void {
@@ -1077,29 +1077,29 @@ else if (@import("builtin").link_libc)
 
         pub fn deinit(self: *Condvar) void {
             const safe_rc = switch (@import("builtin").os.tag) {
-                .dragonfly, .netbsd => std.os.EAGAIN,
+                .dragonfly, .netbsd => std.posix.EAGAIN,
                 else => 0,
             };
 
             const rc = std.c.pthread_cond_destroy(&self.cond);
-            std.debug.assert(rc == .SUCCESS or rc == safe_rc);
+            bun.assert(rc == .SUCCESS or rc == safe_rc);
 
             self.* = undefined;
         }
 
         pub fn wait(self: *Condvar, mutex: *Mutex) void {
             const rc = std.c.pthread_cond_wait(&self.cond, &mutex.mutex);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn signal(self: *Condvar) void {
             const rc = std.c.pthread_cond_signal(&self.cond);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
 
         pub fn broadcast(self: *Condvar) void {
             const rc = std.c.pthread_cond_broadcast(&self.cond);
-            std.debug.assert(rc == .SUCCESS);
+            bun.assert(rc == .SUCCESS);
         }
     }
 else
@@ -1168,7 +1168,7 @@ else
             futex: i32 = 0,
 
             fn wait(self: *Event) void {
-                while (@atomicLoad(i32, &self.futex, .Acquire) == 0) {
+                while (@atomicLoad(i32, &self.futex, .acquire) == 0) {
                     if (@hasDecl(Futex, "wait")) {
                         Futex.wait(&self.futex, 0);
                     } else {
@@ -1178,7 +1178,7 @@ else
             }
 
             fn set(self: *Event) void {
-                @atomicStore(i32, &self.futex, 1, .Release);
+                @atomicStore(i32, &self.futex, 1, .release);
 
                 if (@hasDecl(Futex, "wake"))
                     Futex.wake(&self.futex);
@@ -1196,8 +1196,8 @@ const Futex = switch (@import("builtin").os.tag) {
                 null,
             ))) {
                 0 => {},
-                std.os.EINTR => {},
-                std.os.EAGAIN => {},
+                std.posix.EINTR => {},
+                std.posix.EAGAIN => {},
                 else => unreachable,
             }
         }
@@ -1209,7 +1209,7 @@ const Futex = switch (@import("builtin").os.tag) {
                 @as(i32, 1),
             ))) {
                 0 => {},
-                std.os.EFAULT => {},
+                std.posix.EFAULT => {},
                 else => unreachable,
             }
         }

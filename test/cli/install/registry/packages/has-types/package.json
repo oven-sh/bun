@@ -1,0 +1,39 @@
+{
+	"name": "has-types",
+	"versions": {
+		"1.0.0": {
+			"name": "has-types",
+			"version": "1.0.0",
+			"_id": "has-types@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-6J2EQnuCL6Y4xUJkjUToEvrh03pySyJjMcPIjPq2BM5fnF3VRFNRG1dWUvkL3ufbb9egm7KileHHGjGnDnkr5A==",
+				"shasum": "26d2b42d81df2592a58d9bab07018a412a03be3d",
+				"tarball": "http://localhost:4873/has-types/-/has-types-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:09.607Z",
+		"created": "2023-11-01T22:05:09.607Z",
+		"1.0.0": "2023-11-01T22:05:09.607Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-types-1.0.0.tgz": {
+			"shasum": "26d2b42d81df2592a58d9bab07018a412a03be3d",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-45e445e02251628c",
+	"_id": "has-types",
+	"readme": "ERROR: No README data found!"
+}

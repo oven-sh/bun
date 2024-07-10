@@ -7,13 +7,12 @@ const strings = bun.strings;
 const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
-const constStrToU8 = bun.constStrToU8;
 const FeatureFlags = bun.FeatureFlags;
 const C = bun.C;
 const root = @import("root");
 const std = @import("std");
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const options = @import("options.zig");
 const js_parser = bun.js_parser;
 const json_parser = bun.JSON;
@@ -21,92 +20,54 @@ const js_printer = bun.js_printer;
 const js_ast = bun.JSAst;
 const linker = @import("linker.zig");
 const RegularExpression = bun.RegularExpression;
+const builtin = @import("builtin");
+
+const debug = Output.scoped(.CLI, true);
 
 const sync = @import("./sync.zig");
 const Api = @import("api/schema.zig").Api;
 const resolve_path = @import("./resolver/resolve_path.zig");
 const configureTransformOptionsForBun = @import("./bun.js/config.zig").configureTransformOptionsForBun;
-const clap = @import("root").bun.clap;
+const clap = bun.clap;
 const BunJS = @import("./bun_js.zig");
 const Install = @import("./install/install.zig");
 const bundler = bun.bundler;
 const DotEnv = @import("./env_loader.zig");
+const RunCommand_ = @import("./cli/run_command.zig").RunCommand;
+const CreateCommand_ = @import("./cli/create_command.zig").CreateCommand;
+const FilterRun = @import("./cli/filter_run.zig");
 
 const fs = @import("fs.zig");
 const Router = @import("./router.zig");
 
 const MacroMap = @import("./resolver/package_json.zig").MacroMap;
 const TestCommand = @import("./cli/test_command.zig").TestCommand;
-const Reporter = @import("./report.zig");
 pub var start_time: i128 = undefined;
 const Bunfig = @import("./bunfig.zig").Bunfig;
 
 pub const Cli = struct {
+    pub const CompileTarget = @import("./compile_target.zig");
     var wait_group: sync.WaitGroup = undefined;
-    var log_: logger.Log = undefined;
+    pub var log_: logger.Log = undefined;
     pub fn startTransform(_: std.mem.Allocator, _: Api.TransformOptions, _: *logger.Log) anyerror!void {}
-    pub fn start(allocator: std.mem.Allocator, _: anytype, _: anytype, comptime MainPanicHandler: type) void {
+    pub fn start(allocator: std.mem.Allocator) void {
+        is_main_thread = true;
         start_time = std.time.nanoTimestamp();
         log_ = logger.Log.init(allocator);
 
         var log = &log_;
 
-        var panicker = MainPanicHandler.init(log);
-        MainPanicHandler.Singleton = &panicker;
-
+        // var panicker = MainPanicHandler.init(log);
+        // MainPanicHandler.Singleton = &panicker;
         Command.start(allocator, log) catch |err| {
-            switch (err) {
-                error.MissingEntryPoint => {
-                    Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
-                    Output.prettyErrorln(
-                        \\<r><red>error: Missing entrypoints. What would you like to bundle?<r>
-                        \\
-                        \\<b>Usage<r>: <b><green>bun build<r> [flags] [...entrypoints]
-                        \\
-                        \\<b>Common Flags:<r>
-                        \\  <cyan>--outfile<r>            Write the output to a specific file (default: stdout)
-                        \\  <cyan>--outdir<r>             Write the output to a directory (required for splitting)
-                        \\  <cyan>--minify<r>             Enable all minification flags
-                        \\  <cyan>--minify-whitespace<r>  Remove unneeded whitespace
-                        \\  <cyan>--minify-syntax<r>      Transform code to use less syntax
-                        \\  <cyan>--minify-identifiers<r> Shorten variable names
-                        \\  <cyan>--sourcemap<r>          Generate sourcemaps
-                        \\                       ("none", "inline", or "external")
-                        \\  <cyan>--target<r>             The intended execution environment for the bundle.
-                        \\                       ("browser", "bun" or "node")
-                        \\  <cyan>--splitting<r>          Enable code splitting (requires --outdir)
-                        \\
-                        \\<b>Examples:<r>
-                        \\  <d>Frontend web apps:<r>
-                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
-                        \\  <b><green>bun build<r> <cyan>--minify<r> <cyan>--splitting<r> <cyan>--outdir=out<r> <blue>./index.jsx ./lib/worker.ts<r>
-                        \\
-                        \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
-                        \\  <b><green>bun build<r> <cyan>--target=bun<r> <blue>./server.ts<r> <cyan>--outfile=server.js<r>
-                        \\
-                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
-                        \\  <b><green>bun build<r> <cyan>--compile<r> <blue>./cli.ts<r> <cyan>--outfile=my-app<r>
-                        \\
-                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
-                        \\
-                    , .{});
-                    Global.exit(1);
-                },
-                else => {
-                    // Always dump the logs
-                    if (Output.enable_ansi_colors_stderr) {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
-                    } else {
-                        log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false) catch {};
-                    }
+            log.printForLogLevel(Output.errorWriter()) catch {};
 
-                    Reporter.globalError(err, @errorReturnTrace());
-                },
-            }
+            bun.crash_handler.handleRootError(err, @errorReturnTrace());
         };
     }
 
     pub var cmd: ?Command.Tag = null;
+    pub threadlocal var is_main_thread: bool = false;
 };
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
@@ -115,11 +76,32 @@ pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver)
 pub const DefineColonList = ColonListType(string, Arguments.noop_resolver);
 fn invalidTarget(diag: *clap.Diagnostic, _target: []const u8) noreturn {
     @setCold(true);
-    diag.name.long = "--target";
+    diag.name.long = "target";
     diag.arg = _target;
     diag.report(Output.errorWriter(), error.InvalidTarget) catch {};
     std.process.exit(1);
 }
+
+pub const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
+pub const AddCommand = @import("./cli/add_command.zig").AddCommand;
+pub const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
+pub const CreateCommandExample = @import("./cli/create_command.zig").Example;
+pub const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
+pub const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
+pub const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
+pub const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
+pub const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
+pub const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
+pub const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
+pub const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
+pub const RunCommand = @import("./cli/run_command.zig").RunCommand;
+pub const ShellCompletions = @import("./cli/shell_completions.zig");
+pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
+pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
+pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
+pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -144,7 +126,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try std.fs.openFileAbsolute(outpath, std.fs.File.OpenFlags{ .mode = .read_only });
+        var file = try bun.openFileZ(&try std.posix.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const size = try file.getEndPos();
         return try file.readToEndAlloc(allocator, size);
@@ -164,119 +146,131 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const shared_public_params = [_]ParamType{
-        clap.parseParam("-h, --help                        Display this help and exit.") catch unreachable,
-        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    const base_params_ = [_]ParamType{
+        clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
-        clap.parseParam("-c, --config <PATH>?              Config file to load bun from (e.g. -c bunfig.toml") catch unreachable,
+        clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
+        clap.parseParam("-h, --help                        Display this menu and exit") catch unreachable,
+        clap.parseParam("<POS>...") catch unreachable,
+    } ++ if (builtin.have_error_return_tracing) [_]ParamType{
+        // This will print more error return traces, as a debug aid
+        clap.parseParam("--verbose-error-trace") catch unreachable,
+    } else [_]ParamType{};
+
+    const transpiler_params_ = [_]ParamType{
+        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
         clap.parseParam("--extension-order <STR>...        Defaults to: .tsx,.ts,.jsx,.js,.json ") catch unreachable,
+        clap.parseParam("--tsconfig-override <STR>         Specify custom tsconfig.json. Default <d>$cwd<r>/tsconfig.json") catch unreachable,
+        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
+        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
+        clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
         clap.parseParam("--jsx-factory <STR>               Changes the function called when compiling JSX elements using the classic JSX runtime") catch unreachable,
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+    };
+    const runtime_params_ = [_]ParamType{
+        clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--hot                             Enable auto reload in the Bun runtime, test runner, or bundler") catch unreachable,
+        clap.parseParam("--no-clear-screen                 Disable clearing the terminal screen on reload when --hot or --watch is enabled") catch unreachable,
+        clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
         clap.parseParam("-r, --preload <STR>...            Import a module before other modules are loaded") catch unreachable,
-        clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
-        clap.parseParam("--no-summary                      Don't print a summary (when generating .bun)") catch unreachable,
+        clap.parseParam("--inspect <STR>?                  Activate Bun's debugger") catch unreachable,
+        clap.parseParam("--inspect-wait <STR>?             Activate Bun's debugger, wait for a connection before executing") catch unreachable,
+        clap.parseParam("--inspect-brk <STR>?              Activate Bun's debugger, set breakpoint on first line of code and wait") catch unreachable,
+        clap.parseParam("--if-present                      Exit without an error if the entrypoint does not exist") catch unreachable,
+        clap.parseParam("--no-install                      Disable auto install in the Bun runtime") catch unreachable,
+        clap.parseParam("--install <STR>                   Configure auto-install behavior. One of \"auto\" (default, auto-installs when no node_modules), \"fallback\" (missing packages only), \"force\" (always).") catch unreachable,
+        clap.parseParam("-i                                Auto-install dependencies during execution. Equivalent to --install=fallback.") catch unreachable,
+        clap.parseParam("-e, --eval <STR>                  Evaluate argument as a script") catch unreachable,
+        clap.parseParam("--print <STR>                     Evaluate argument as a script and print the result") catch unreachable,
+        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in the Bun runtime and resolve from disk") catch unreachable,
+        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in the Bun runtime, always checking npm") catch unreachable,
+        clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
+        clap.parseParam("-u, --origin <STR>") catch unreachable,
+        clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
+    };
+
+    const auto_or_run_params = [_]ParamType{
+        clap.parseParam("--filter <STR>...                 Run a script in all workspace packages matching the pattern") catch unreachable,
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+        clap.parseParam("--shell <STR>                     Control the shell used for package.json scripts. Supports either 'bun' or 'system'") catch unreachable,
+    };
+
+    const auto_only_params = [_]ParamType{
+        // clap.parseParam("--all") catch unreachable,
+        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
-        clap.parseParam("--tsconfig-override <STR>         Load tsconfig from path instead of cwd/tsconfig.json") catch unreachable,
-        clap.parseParam("-d, --define <STR>...             Substitute K:V while parsing, e.g. --define process.env.NODE_ENV:\"development\". Values are parsed as JSON.") catch unreachable,
-        clap.parseParam("-e, --external <STR>...           Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
-        clap.parseParam("-l, --loader <STR>...             Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi") catch unreachable,
-        clap.parseParam("-u, --origin <STR>                Rewrite import URLs to start with --origin. Default: \"\"") catch unreachable,
-        clap.parseParam("-p, --port <STR>                  Port to serve bun's dev server on. Default: \"3000\"") catch unreachable,
-        clap.parseParam("--smol                            Use less memory, but run garbage collection more often") catch unreachable,
-        clap.parseParam("--minify                          Minify (experimental)") catch unreachable,
-        clap.parseParam("--minify-syntax                   Minify syntax and inline data (experimental)") catch unreachable,
-        clap.parseParam("--minify-whitespace               Minify whitespace (experimental)") catch unreachable,
-        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
-        clap.parseParam("--no-macros                       Disable macros from being executed in the bundler, transpiler and runtime") catch unreachable,
-        clap.parseParam("--target <STR>                    The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
-        clap.parseParam("--inspect <STR>?                  Activate Bun's Debugger") catch unreachable,
-        clap.parseParam("--inspect-wait <STR>?             Activate Bun's Debugger, wait for a connection before executing") catch unreachable,
-        clap.parseParam("--inspect-brk <STR>?              Activate Bun's Debugger, set breakpoint on first line of code and wait") catch unreachable,
-        clap.parseParam("<POS>...                          ") catch unreachable,
-    };
+    } ++ auto_or_run_params;
+    pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    // note: we are keeping --port and --origin as it can be reused for bun
-    // build and elsewhere
-    pub const not_bun_dev_flags = [_]ParamType{
-        clap.parseParam("--hot                             Enable auto reload in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("--watch                           Automatically restart bun's JavaScript runtime on file change") catch unreachable,
-        clap.parseParam("--no-install                      Disable auto install in bun's JavaScript runtime") catch unreachable,
-        clap.parseParam("-i                                Automatically install dependencies and use global cache in bun's runtime, equivalent to --install=fallback") catch unreachable,
-        clap.parseParam("--install <STR>                   Install dependencies automatically when no node_modules are present, default: \"auto\". \"force\" to ignore node_modules, fallback to install any missing") catch unreachable,
-        clap.parseParam("--prefer-offline                  Skip staleness checks for packages in bun's JavaScript runtime and resolve from disk") catch unreachable,
-        clap.parseParam("--prefer-latest                   Use the latest matching versions of packages in bun's JavaScript runtime, always checking npm") catch unreachable,
-        clap.parseParam("--silent                          Don't repeat the command for bun run") catch unreachable,
-    };
+    const run_only_params = [_]ParamType{
+        clap.parseParam("--silent                          Don't print the script command") catch unreachable,
+    } ++ auto_or_run_params;
+    pub const run_params = run_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    const public_params = shared_public_params ++ not_bun_dev_flags;
-
-    const debug_params = [_]ParamType{
-        clap.parseParam("--dump-environment-variables    Dump environment variables from .env and process as JSON and quit. Useful for debugging") catch unreachable,
-        clap.parseParam("--dump-limits                   Dump system limits. Useful for debugging") catch unreachable,
-    };
-
-    pub const params = public_params ++ debug_params;
+    const bunx_commands = [_]ParamType{
+        clap.parseParam("-b, --bun                         Force a script or package to use Bun's runtime instead of Node.js (via symlinking node)") catch unreachable,
+    } ++ auto_only_params;
 
     const build_only_params = [_]ParamType{
-        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only esm is supported.") catch unreachable,
+        clap.parseParam("--compile                        Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--watch                          Automatically restart the process on file change") catch unreachable,
+        clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
+        clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
+        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
+        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
-        clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
+        clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
-        clap.parseParam("--compile                       Generate a standalone Bun executable containing your bundled code") catch unreachable,
+        clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
+        clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
+        clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
+        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--dump-environment-variables") catch unreachable,
+        clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
+    pub const build_params = build_only_params ++ transpiler_params_ ++ base_params_;
 
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
+    pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
-    const build_params_public = public_params ++ build_only_params;
-    pub const build_params = build_params_public ++ debug_params;
-    pub const test_params = params ++ test_only_params;
-
-    fn printVersionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    fn printRevisionAndExit() noreturn {
-        @setCold(true);
-        Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
-        Global.exit(0);
-    }
-
-    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = std.fs.File{
-            .handle = std.os.openZ(config_path, std.os.O.RDONLY, 0) catch |err| {
+    pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+        var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
+            .result => |fd| fd.asFile(),
+            .err => |err| {
                 if (auto_loaded) return;
-                Output.prettyErrorln("<r><red>error<r>: {s} opening config \"{s}\"", .{
-                    @errorName(err),
+                Output.prettyErrorln("{}\nwhile opening config \"{s}\"", .{
+                    err,
                     config_path,
                 });
                 Global.exit(1);
             },
         };
+
         defer config_file.close();
-        var contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
+        const contents = config_file.readToEndAlloc(allocator, std.math.maxInt(usize)) catch |err| {
             if (auto_loaded) return;
             Output.prettyErrorln("<r><red>error<r>: {s} reading config \"{s}\"", .{
                 @errorName(err),
@@ -291,7 +285,7 @@ pub const Arguments = struct {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
         }
-        var original_level = ctx.log.level;
+        const original_level = ctx.log.level;
         defer {
             ctx.log.level = original_level;
         }
@@ -299,16 +293,16 @@ pub const Arguments = struct {
         try Bunfig.parse(allocator, logger.Source.initPathString(bun.asByteSlice(config_path), contents), ctx, cmd);
     }
 
-    fn getHomeConfigPath(buf: *[bun.MAX_PATH_BYTES]u8) ?[:0]const u8 {
-        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ("HOME")) |data_dir| {
+    fn getHomeConfigPath(buf: *bun.PathBuffer) ?[:0]const u8 {
+        if (bun.getenvZ("XDG_CONFIG_HOME") orelse bun.getenvZ(bun.DotEnv.home_env)) |data_dir| {
             var paths = [_]string{".bunfig.toml"};
             return resolve_path.joinAbsStringBufZ(data_dir, buf, &paths, .auto);
         }
 
         return null;
     }
-    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: *Command.Context, comptime cmd: Command.Tag) !void {
-        var config_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    pub fn loadConfig(allocator: std.mem.Allocator, user_config_path_: ?string, ctx: Command.Context, comptime cmd: Command.Tag) !void {
+        var config_buf: bun.PathBuffer = undefined;
         if (comptime cmd.readGlobalConfig()) {
             if (!ctx.has_loaded_global_config) {
                 ctx.has_loaded_global_config = true;
@@ -345,10 +339,12 @@ pub const Arguments = struct {
             config_path = config_buf[0..config_path_.len :0];
         } else {
             if (ctx.args.absolute_working_dir == null) {
-                var secondbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                var cwd = std.os.getcwd(&secondbuf) catch return;
+                var secondbuf: bun.PathBuffer = undefined;
+                const cwd = bun.getcwd(&secondbuf) catch return;
+
                 ctx.args.absolute_working_dir = try allocator.dupe(u8, cwd);
             }
+
             var parts = [_]string{ ctx.args.absolute_working_dir.?, config_path_ };
             config_path_ = resolve_path.joinAbsStringBuf(
                 ctx.args.absolute_working_dir.?,
@@ -367,50 +363,70 @@ pub const Arguments = struct {
         comptime cmd: Command.Tag,
         allocator: std.mem.Allocator,
         args: clap.Args(clap.Help, cmd.params()),
-        ctx: *Command.Context,
+        ctx: Command.Context,
     ) !void {
         return try loadConfig(allocator, args.option("--config"), ctx, comptime cmd);
     }
 
-    pub fn parse(allocator: std.mem.Allocator, ctx: *Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
+    pub fn parse(allocator: std.mem.Allocator, ctx: Command.Context, comptime cmd: Command.Tag) !Api.TransformOptions {
         var diag = clap.Diagnostic{};
-        const params_to_use = comptime cmd.params();
+        const params_to_parse = comptime cmd.params();
 
-        var args = clap.parse(clap.Help, params_to_use, .{
+        var args = clap.parse(clap.Help, params_to_parse, .{
             .diagnostic = &diag,
             .allocator = allocator,
-            .stop_after_positional_at = if (cmd == .RunCommand) 2 else if (cmd == .AutoCommand)
-                1
-            else
-                0,
+            .stop_after_positional_at = switch (cmd) {
+                .RunCommand => 2,
+                .AutoCommand, .RunAsNodeCommand => 1,
+                else => 0,
+            },
         }) catch |err| {
             // Report useful error and exit
-            clap.help(Output.errorWriter(), params_to_use) catch {};
-            Output.errorWriter().writeAll("\n") catch {};
             diag.report(Output.errorWriter(), err) catch {};
+            cmd.printHelp(false);
             Global.exit(1);
         };
 
-        if (args.flag("--version")) {
-            printVersionAndExit();
+        const print_help = args.flag("--help");
+        if (print_help) {
+            cmd.printHelp(true);
+            Output.flush();
+            Global.exit(0);
         }
 
-        if (args.flag("--revision")) {
-            printRevisionAndExit();
+        if (cmd == .AutoCommand) {
+            if (args.flag("--version")) {
+                printVersionAndExit();
+            }
+
+            if (args.flag("--revision")) {
+                printRevisionAndExit();
+            }
+        }
+
+        if (builtin.have_error_return_tracing) {
+            if (args.flag("--verbose-error-trace")) {
+                bun.crash_handler.verbose_error_trace = true;
+            }
         }
 
         var cwd: []u8 = undefined;
-        if (args.option("--cwd")) |cwd_| {
+        if (args.option("--cwd")) |cwd_arg| {
             cwd = brk: {
-                var outbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const out = std.os.realpath(cwd_, &outbuf) catch |err| {
-                    Output.prettyErrorln("error resolving --cwd: {s}", .{@errorName(err)});
+                var outbuf: bun.PathBuffer = undefined;
+                const out = bun.path.joinAbs(try bun.getcwd(&outbuf), .loose, cwd_arg);
+                bun.sys.chdir(out).unwrap() catch |err| {
+                    Output.err(err, "Could not change directory to \"{s}\"\n", .{cwd_arg});
                     Global.exit(1);
                 };
                 break :brk try allocator.dupe(u8, out);
             };
         } else {
-            cwd = try std.process.getCwdAlloc(allocator);
+            cwd = try bun.getcwdAlloc(allocator);
+        }
+
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            ctx.filters = args.options("--filter");
         }
 
         if (cmd == .TestCommand) {
@@ -425,6 +441,24 @@ pub const Arguments = struct {
 
             if (!ctx.test_options.coverage.enabled) {
                 ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
+            if (args.options("--coverage-reporter").len > 0) {
+                ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                for (args.options("--coverage-reporter")) |reporter| {
+                    if (bun.strings.eqlComptime(reporter, "text")) {
+                        ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(reporter, "lcov")) {
+                        ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                        Global.exit(1);
+                    }
+                }
+            }
+
+            if (args.option("--coverage-dir")) |dir| {
+                ctx.test_options.coverage.reports_directory = dir;
             }
 
             if (args.option("--bail")) |bail| {
@@ -455,7 +489,7 @@ pub const Arguments = struct {
                     Output.prettyErrorln(
                         "<r><red>error<r>: --test-name-pattern expects a valid regular expression but received {}",
                         .{
-                            strings.QuotedFormatter{
+                            bun.fmt.QuotedFormatter{
                                 .text = namePattern,
                             },
                         },
@@ -478,7 +512,7 @@ pub const Arguments = struct {
 
         var opts: Api.TransformOptions = ctx.args;
 
-        var defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
+        const defines_tuple = try DefineColonList.resolve(allocator, args.options("--define"));
 
         if (defines_tuple.keys.len > 0) {
             opts.define = .{
@@ -487,7 +521,7 @@ pub const Arguments = struct {
             };
         }
 
-        var loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
+        const loader_tuple = try LoaderColonList.resolve(allocator, args.options("--loader"));
 
         if (loader_tuple.keys.len > 0) {
             opts.loaders = .{
@@ -496,38 +530,90 @@ pub const Arguments = struct {
             };
         }
 
-        if (args.options("--external").len > 0) {
-            var externals = try allocator.alloc([]u8, args.options("--external").len);
-            for (args.options("--external"), 0..) |external, i| {
-                externals[i] = constStrToU8(external);
-            }
-            opts.external = externals;
-        }
-
         opts.tsconfig_override = if (args.option("--tsconfig-override")) |ts|
             (Arguments.readFile(allocator, cwd, ts) catch |err| fileReadError(err, Output.errorStream(), ts, "tsconfig.json"))
         else
             null;
 
-        if (args.option("--origin")) |origin| {
-            opts.origin = origin;
-        }
-
-        if (args.option("--port")) |port_str| {
-            opts.port = std.fmt.parseInt(u16, port_str, 10) catch return error.InvalidPort;
-        }
         opts.serve = false; // TODO
         opts.main_fields = args.options("--main-fields");
         // we never actually supported inject.
         // opts.inject = args.options("--inject");
+        opts.env_files = args.options("--env-file");
         opts.extension_order = args.options("--extension-order");
 
         ctx.passthrough = args.remaining();
 
-        opts.no_summary = args.flag("--no-summary");
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .BuildCommand) {
+            if (args.options("--conditions").len > 0) {
+                opts.conditions = args.options("--conditions");
+            }
+        }
 
-        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand) {
+        // runtime commands
+        if (cmd == .AutoCommand or cmd == .RunCommand or cmd == .TestCommand or cmd == .RunAsNodeCommand) {
             const preloads = args.options("--preload");
+
+            if (args.flag("--hot")) {
+                ctx.debug.hot_reload = .hot;
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
+            } else if (args.flag("--watch")) {
+                ctx.debug.hot_reload = .watch;
+
+                // Windows applies this to the watcher child process.
+                // The parent process is unable to re-launch itself
+                if (!bun.Environment.isWindows)
+                    bun.auto_reload_on_crash = true;
+
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
+            }
+
+            if (args.option("--origin")) |origin| {
+                opts.origin = origin;
+            }
+
+            if (args.option("--port")) |port_str| {
+                if (comptime cmd == .RunAsNodeCommand) {
+                    // TODO: prevent `node --port <script>` from working
+                    ctx.runtime_options.eval.script = port_str;
+                    ctx.runtime_options.eval.eval_and_print = true;
+                } else {
+                    opts.port = std.fmt.parseInt(u16, port_str, 10) catch {
+                        Output.errGeneric("Invalid value for --port: \"{s}\". Must be a number\n", .{port_str});
+                        Output.note("To evaluate TypeScript here, use 'bun --print'", .{});
+                        Global.exit(1);
+                    };
+                }
+            }
+
+            ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
+                Bunfig.OfflineMode.offline
+            else if (args.flag("--prefer-latest"))
+                Bunfig.OfflineMode.latest
+            else
+                Bunfig.OfflineMode.online;
+
+            if (args.flag("--no-install")) {
+                ctx.debug.global_cache = .disable;
+            } else if (args.flag("-i")) {
+                ctx.debug.global_cache = .fallback;
+            } else if (args.option("--install")) |enum_value| {
+                // -i=auto --install=force, --install=disable
+                if (options.GlobalCache.Map.get(enum_value)) |result| {
+                    ctx.debug.global_cache = result;
+                    // -i, --install
+                } else if (enum_value.len == 0) {
+                    ctx.debug.global_cache = options.GlobalCache.force;
+                } else {
+                    Output.errGeneric("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
+                    Global.exit(1);
+                }
+            }
+
             if (ctx.preloads.len > 0 and preloads.len > 0) {
                 var all = std.ArrayList(string).initCapacity(ctx.allocator, ctx.preloads.len + preloads.len) catch unreachable;
                 all.appendSliceAssumeCapacity(ctx.preloads);
@@ -537,6 +623,13 @@ pub const Arguments = struct {
                 ctx.preloads = preloads;
             }
 
+            if (args.option("--print")) |script| {
+                ctx.runtime_options.eval.script = script;
+                ctx.runtime_options.eval.eval_and_print = true;
+            } else if (args.option("--eval")) |script| {
+                ctx.runtime_options.eval.script = script;
+            }
+            ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
@@ -545,6 +638,8 @@ pub const Arguments = struct {
                     Command.Debugger{ .enable = .{
                         .path_or_port = inspect_flag,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             } else if (args.option("--inspect-wait")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{
@@ -555,6 +650,8 @@ pub const Arguments = struct {
                         .path_or_port = inspect_flag,
                         .wait_for_connection = true,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             } else if (args.option("--inspect-brk")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{
@@ -567,6 +664,8 @@ pub const Arguments = struct {
                         .wait_for_connection = true,
                         .set_breakpoint_on_first_line = true,
                     } };
+
+                bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
         }
 
@@ -574,28 +673,65 @@ pub const Arguments = struct {
             opts.origin = try std.fmt.allocPrint(allocator, "http://localhost:{d}/", .{opts.port.?});
         }
 
-        const print_help = args.flag("--help");
-        if (print_help) {
-            clap.help(Output.writer(), params_to_use[0..params_to_use.len]) catch {};
-            Output.prettyln("\n-------\n\n", .{});
-            Output.flush();
-            HelpCommand.printWithReason(.explicit);
-            Global.exit(0);
-        }
-
-        ctx.debug.dump_environment_variables = args.flag("--dump-environment-variables");
-        ctx.debug.dump_limits = args.flag("--dump-limits");
-
-        var output_dir: ?string = null;
-        var output_file: ?string = null;
-
-        const minify_flag = args.flag("--minify");
-        ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
-        ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
-        ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+        const output_dir: ?string = null;
+        const output_file: ?string = null;
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
+
+            if (args.option("--public-path")) |public_path| {
+                ctx.bundler_options.public_path = public_path;
+            }
+
+            const minify_flag = args.flag("--minify");
+            ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
+            ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
+            ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
+            if (args.options("--external").len > 0) {
+                var externals = try allocator.alloc([]u8, args.options("--external").len);
+                for (args.options("--external"), 0..) |external, i| {
+                    externals[i] = @constCast(external);
+                }
+                opts.external = externals;
+            }
+
+            const TargetMatcher = strings.ExactSizeMatcher(8);
+            if (args.option("--target")) |_target| brk: {
+                if (comptime cmd == .BuildCommand) {
+                    if (args.flag("--compile")) {
+                        if (_target.len > 4 and strings.hasPrefixComptime(_target, "bun-")) {
+                            ctx.bundler_options.compile_target = Cli.CompileTarget.from(_target[3..]);
+                            if (!ctx.bundler_options.compile_target.isSupported()) {
+                                Output.errGeneric("Unsupported compile target: {}\n", .{ctx.bundler_options.compile_target});
+                                Global.exit(1);
+                            }
+                            opts.target = .bun;
+                            break :brk;
+                        }
+                    }
+                }
+
+                opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
+                    TargetMatcher.case("browser") => Api.Target.browser,
+                    TargetMatcher.case("node") => Api.Target.node,
+                    TargetMatcher.case("macro") => if (cmd == .BuildCommand) Api.Target.bun_macro else Api.Target.bun,
+                    TargetMatcher.case("bun") => Api.Target.bun,
+                    else => invalidTarget(&diag, _target),
+                };
+
+                if (opts.target.? == .bun)
+                    ctx.debug.run_in_bun = opts.target.? == .bun;
+            }
+
+            if (args.flag("--watch")) {
+                ctx.debug.hot_reload = .watch;
+                bun.auto_reload_on_crash = true;
+
+                if (args.flag("--no-clear-screen")) {
+                    bun.DotEnv.Loader.has_no_clear_screen_cli_flag = true;
+                }
+            }
 
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
@@ -636,15 +772,15 @@ pub const Arguments = struct {
             }
 
             if (args.option("--entry-naming")) |entry_naming| {
-                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", entry_naming });
+                ctx.bundler_options.entry_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(entry_naming) });
             }
 
             if (args.option("--chunk-naming")) |chunk_naming| {
-                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", chunk_naming });
+                ctx.bundler_options.chunk_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(chunk_naming) });
             }
 
             if (args.option("--asset-naming")) |asset_naming| {
-                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", asset_naming });
+                ctx.bundler_options.asset_naming = try strings.concat(allocator, &.{ "./", bun.strings.removeLeadingDotSlash(asset_naming) });
             }
 
             if (comptime FeatureFlags.react_server_components) {
@@ -654,12 +790,20 @@ pub const Arguments = struct {
             }
 
             if (args.option("--sourcemap")) |setting| {
-                if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
-                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                if (setting.len == 0) {
+                    // In the future, Bun is going to make this default to .linked
+                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
+                        .linked
+                    else
+                        .@"inline";
+                } else if (strings.eqlComptime(setting, "inline")) {
+                    opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
-                    opts.source_map = Api.SourceMapMode._none;
+                    opts.source_map = .none;
                 } else if (strings.eqlComptime(setting, "external")) {
-                    opts.source_map = Api.SourceMapMode.external;
+                    opts.source_map = .external;
+                } else if (strings.eqlComptime(setting, "linked")) {
+                    opts.source_map = .linked;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
@@ -703,62 +847,32 @@ pub const Arguments = struct {
             opts.entry_points = entry_points;
         }
 
-        var jsx_factory = args.option("--jsx-factory");
-        var jsx_fragment = args.option("--jsx-fragment");
-        var jsx_import_source = args.option("--jsx-import-source");
-        var jsx_runtime = args.option("--jsx-runtime");
+        const jsx_factory = args.option("--jsx-factory");
+        const jsx_fragment = args.option("--jsx-fragment");
+        const jsx_import_source = args.option("--jsx-import-source");
+        const jsx_runtime = args.option("--jsx-runtime");
         const react_fast_refresh = true;
 
-        if (args.flag("--hot")) {
-            ctx.debug.hot_reload = .hot;
-        } else if (args.flag("--watch")) {
-            ctx.debug.hot_reload = .watch;
-            bun.auto_reload_on_crash = true;
-        }
+        if (cmd == .AutoCommand or cmd == .RunCommand) {
+            // "run.silent" in bunfig.toml
+            if (args.flag("--silent")) {
+                ctx.debug.silent = true;
+            }
 
-        ctx.debug.offline_mode_setting = if (args.flag("--prefer-offline"))
-            Bunfig.OfflineMode.offline
-        else if (args.flag("--prefer-latest"))
-            Bunfig.OfflineMode.latest
-        else
-            Bunfig.OfflineMode.online;
-
-        if (args.flag("--no-install")) {
-            ctx.debug.global_cache = .disable;
-        } else if (args.flag("-i")) {
-            ctx.debug.global_cache = .fallback;
-        } else if (args.option("--install")) |enum_value| {
-            // -i=auto --install=force, --install=disable
-            if (options.GlobalCache.Map.get(enum_value)) |result| {
-                ctx.debug.global_cache = result;
-                // -i, --install
-            } else if (enum_value.len == 0) {
-                ctx.debug.global_cache = options.GlobalCache.force;
-            } else {
-                Output.prettyErrorln("Invalid value for --install: \"{s}\". Must be either \"auto\", \"fallback\", \"force\", or \"disable\"\n", .{enum_value});
-                Global.exit(1);
+            if (opts.define) |define| {
+                if (define.keys.len > 0)
+                    bun.JSC.RuntimeTranspilerCache.is_disabled = true;
             }
         }
 
-        ctx.debug.silent = args.flag("--silent");
-
-        opts.resolve = Api.ResolveMode.lazy;
-
-        const TargetMatcher = strings.ExactSizeMatcher(8);
-
-        if (args.option("--target")) |_target| {
-            opts.target = opts.target orelse switch (TargetMatcher.match(_target)) {
-                TargetMatcher.case("browser") => Api.Target.browser,
-                TargetMatcher.case("node") => Api.Target.node,
-                TargetMatcher.case("macro") => if (cmd == .BuildCommand) Api.Target.bun_macro else Api.Target.bun,
-                TargetMatcher.case("bun") => Api.Target.bun,
-                else => invalidTarget(&diag, _target),
-            };
-
-            ctx.debug.run_in_bun = opts.target.? == .bun;
+        if (cmd == .RunCommand or cmd == .AutoCommand or cmd == .BunxCommand) {
+            // "run.bun" in bunfig.toml
+            if (args.flag("--bun")) {
+                ctx.debug.run_in_bun = true;
+            }
         }
 
-        ctx.debug.run_in_bun = args.flag("--bun") or ctx.debug.run_in_bun;
+        opts.resolve = Api.ResolveMode.lazy;
 
         if (jsx_factory != null or
             jsx_fragment != null or
@@ -771,18 +885,18 @@ pub const Arguments = struct {
             var default_import_source = "".*;
             if (opts.jsx == null) {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse &default_factory),
-                    .fragment = constStrToU8(jsx_fragment orelse &default_fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse &default_import_source),
+                    .factory = (jsx_factory orelse &default_factory),
+                    .fragment = (jsx_fragment orelse &default_fragment),
+                    .import_source = (jsx_import_source orelse &default_import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else Api.JsxRuntime.automatic,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
                 };
             } else {
                 opts.jsx = Api.Jsx{
-                    .factory = constStrToU8(jsx_factory orelse opts.jsx.?.factory),
-                    .fragment = constStrToU8(jsx_fragment orelse opts.jsx.?.fragment),
-                    .import_source = constStrToU8(jsx_import_source orelse opts.jsx.?.import_source),
+                    .factory = (jsx_factory orelse opts.jsx.?.factory),
+                    .fragment = (jsx_fragment orelse opts.jsx.?.fragment),
+                    .import_source = (jsx_import_source orelse opts.jsx.?.import_source),
                     .runtime = if (jsx_runtime) |runtime| try resolve_jsx_runtime(runtime) else opts.jsx.?.runtime,
                     .development = false,
                     .react_fast_refresh = react_fast_refresh,
@@ -792,7 +906,13 @@ pub const Arguments = struct {
 
         if (cmd == .BuildCommand) {
             if (opts.entry_points.len == 0 and opts.framework == null) {
-                return error.MissingEntryPoint;
+                Output.prettyErrorln("<r><b>bun build <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>", .{});
+                Output.prettyError("<r><red>error: Missing entrypoints. What would you like to bundle?<r>\n\n", .{});
+                Output.flush();
+                Output.pretty("Usage:\n  <d>$<r> <b><green>bun build<r> \\<entrypoint\\> [...\\<entrypoints\\>] <cyan>[...flags]<r>  \n", .{});
+                Output.pretty("\nTo see full documentation:\n  <d>$<r> <b><green>bun build<r> --help\n", .{});
+                Output.flush();
+                Global.exit(1);
             }
         }
 
@@ -813,6 +933,19 @@ pub const Arguments = struct {
         opts.output_dir = output_dir;
         if (output_file != null)
             ctx.debug.output_file = output_file.?;
+
+        if (cmd == .RunCommand or cmd == .AutoCommand) {
+            if (args.option("--shell")) |shell| {
+                if (strings.eqlComptime(shell, "bun")) {
+                    ctx.debug.use_system_shell = false;
+                } else if (strings.eqlComptime(shell, "system")) {
+                    ctx.debug.use_system_shell = true;
+                } else {
+                    Output.errGeneric("Expected --shell to be one of 'bun' or 'system'. Received: \"{s}\"", .{shell});
+                    Global.exit(1);
+                }
+            }
+        }
 
         return opts;
     }
@@ -882,35 +1015,43 @@ pub const HelpCommand = struct {
         "elysia",
     };
 
-    pub fn printWithReason(comptime reason: Reason) void {
-        // the spacing between commands here is intentional
-        const fmt =
-            \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Run JavaScript with Bun, a package.json script, or a bin
-            \\  <b><magenta>test<r>                           Run unit tests with Bun
-            \\  <b><magenta>x<r>         <d>{s:<16}<r>     Install and execute a package bin <d>(bunx)<r>
-            \\  <b><magenta>repl<r>                           Start a REPL session with Bun
-            \\
-            \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
-            \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
-            \\
-            \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
-            \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
-            \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
-            \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies & save to package.json
-            \\  <b><blue>link<r>                           Link an npm package globally
-            \\  <b><blue>unlink<r>                         Globally unlink an npm package
-            \\  <b>pm<r>                             More commands for managing packages
-            \\
-            \\  <b><green>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
-            \\
-            \\  <b><yellow>upgrade<r>                        Get the latest version of Bun
-            \\  <b>bun --help<r>                     Show all supported flags and commands
-            \\
-            \\  Learn more about Bun:          <magenta>https://bun.sh/docs<r>
-            \\  Join our Discord community:    <blue>https://bun.sh/discord<r>
-            \\
-        ;
+    // the spacing between commands here is intentional
+    pub const cli_helptext_fmt =
+        \\<b>Usage:<r> <b>bun \<command\> <cyan>[...flags]<r> <b>[...args]<r>
+        \\
+        \\<b>Commands:<r>
+        \\  <b><magenta>run<r>       <d>./my-script.ts<r>       Execute a file with Bun
+        \\            <d>lint<r>                 Run a package.json script
+        \\  <b><magenta>test<r>                           Run unit tests with Bun
+        \\  <b><magenta>x<r>         <d>{s:<16}<r>     Execute a package binary (CLI), installing if needed <d>(bunx)<r>
+        \\  <b><magenta>repl<r>                           Start a REPL session with Bun
+        \\  <b><magenta>exec<r>                           Run a shell script directly with Bun
+        \\
+        \\  <b><blue>install<r>                        Install dependencies for a package.json <d>(bun i)<r>
+        \\  <b><blue>add<r>       <d>{s:<16}<r>     Add a dependency to package.json <d>(bun a)<r>
+        \\  <b><blue>remove<r>    <d>{s:<16}<r>     Remove a dependency from package.json <d>(bun rm)<r>
+        \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
+        \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
+        \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>patch <d>\<pkg\><r>                     Prepare a package for patching
+        \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
+        \\
+        \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
+        \\
+        \\  <b><cyan>init<r>                           Start an empty Bun project from a blank template
+        \\  <b><cyan>create<r>    <d>{s:<16}<r>     Create a new project from a template <d>(bun c)<r>
+        \\  <b><cyan>upgrade<r>                        Upgrade to latest version of Bun.
+        \\  <d>\<command\><r> <b><cyan>--help<r>               Print help text for command.
+        \\
+    ;
+    const cli_helptext_footer =
+        \\
+        \\Learn more about Bun:            <magenta>https://bun.sh/docs<r>
+        \\Join our Discord community:      <blue>https://bun.sh/discord<r>
+        \\
+    ;
 
+    pub fn printWithReason(comptime reason: Reason, show_all_flags: bool) void {
         var rand_state = std.rand.DefaultPrng.init(@as(u64, @intCast(@max(std.time.milliTimestamp(), 0))));
         const rand = rand_state.random();
 
@@ -921,39 +1062,54 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_x_filler[package_x_i],
-            packages_to_create_filler[package_create_i],
             packages_to_add_filler[package_add_i],
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
+            packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {
-            .explicit => Output.pretty(
-                "<r><b><magenta>Bun<r>: a fast JavaScript runtime, package manager, bundler and test runner. <d>(" ++ Global.package_json_version ++ ")<r>\n\n" ++ fmt,
-                args,
-            ),
+            .explicit => {
+                Output.pretty(
+                    "<r><b><magenta>Bun<r> is a fast JavaScript runtime, package manager, bundler, and test runner. <d>(" ++
+                        Global.package_json_version_with_revision ++
+                        ")<r>\n\n" ++
+                        cli_helptext_fmt,
+                    args,
+                );
+                if (show_all_flags) {
+                    Output.pretty("\n<b>Flags:<r>", .{});
+
+                    const flags = Arguments.runtime_params_ ++ Arguments.auto_only_params ++ Arguments.base_params_;
+                    clap.simpleHelpBunTopLevel(comptime &flags);
+                    Output.pretty("\n\n(more flags in <b>bun install --help<r>, <b>bun test --help<r>, and <b>bun build --help<r>)\n", .{});
+                }
+                Output.pretty(cli_helptext_footer, .{});
+            },
             .invalid_command => Output.prettyError(
-                "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ fmt,
+                "<r><red>Uh-oh<r> not sure what to do with that command.\n\n" ++ cli_helptext_fmt,
                 args,
             ),
         }
 
         Output.flush();
     }
+
     pub fn execWithReason(_: std.mem.Allocator, comptime reason: Reason) void {
         @setCold(true);
-        printWithReason(reason);
+        printWithReason(reason, false);
 
         if (reason == .invalid_command) {
             std.process.exit(1);
         }
+        std.process.exit(0);
     }
 };
 
 pub const ReservedCommand = struct {
     pub fn exec(_: std.mem.Allocator) !void {
         @setCold(true);
-        const command_name = bun.argv()[1];
+        const command_name = bun.argv[1];
         Output.prettyError(
             \\<r><red>Uh-oh<r>. <b><yellow>bun {s}<r> is a subcommand reserved for future use by Bun.
             \\
@@ -967,8 +1123,19 @@ pub const ReservedCommand = struct {
 
 const AddCompletions = @import("./cli/add_completions.zig");
 
+/// This is set `true` during `Command.which()` if argv0 is "node", in which the CLI is going
+/// to pretend to be node.js by always choosing RunCommand with a relative filepath.
+///
+/// Examples of how this differs from bun alone:
+/// - `node build`               -> `bun run ./build`
+/// - `node scripts/postinstall` -> `bun run ./scripts/postinstall`
+pub var pretend_to_be_node = false;
+
+/// This is set `true` during `Command.which()` if argv0 is "bunx"
+pub var is_bunx_exe = false;
+
 pub const Command = struct {
-    var script_name_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var script_name_buf: bun.PathBuffer = undefined;
 
     pub const DebugOptions = struct {
         dump_environment_variables: bool = false,
@@ -980,6 +1147,8 @@ pub const Command = struct {
         offline_mode_setting: ?Bunfig.OfflineMode = null,
         run_in_bun: bool = false,
         loaded_bunfig: bool = false,
+        /// Disables using bun.shell.Interpreter for `bun run`, instead spawning cmd.exe
+        use_system_shell: bool = !bun.Environment.isWindows,
 
         // technical debt
         macros: MacroOptions = MacroOptions.unspecified,
@@ -1021,9 +1190,25 @@ pub const Command = struct {
     pub const RuntimeOptions = struct {
         smol: bool = false,
         debugger: Debugger = .{ .unspecified = {} },
+        if_present: bool = false,
+        eval: struct {
+            script: []const u8 = "",
+            eval_and_print: bool = false,
+        } = .{},
     };
 
-    pub const Context = struct {
+    var global_cli_ctx: Context = undefined;
+
+    var context_data: ContextData = ContextData{
+        .args = std.mem.zeroes(Api.TransformOptions),
+        .log = undefined,
+        .start_time = 0,
+        .allocator = undefined,
+    };
+
+    pub const init = ContextData.create;
+
+    pub const ContextData = struct {
         start_time: i128,
         args: Api.TransformOptions,
         log: *logger.Log,
@@ -1037,15 +1222,19 @@ pub const Command = struct {
         bundler_options: BundlerOptions = BundlerOptions{},
         runtime_options: RuntimeOptions = RuntimeOptions{},
 
+        filters: []const []const u8 = &[_][]const u8{},
+
         preloads: []const string = &[_]string{},
         has_loaded_global_config: bool = false,
 
         pub const BundlerOptions = struct {
             compile: bool = false,
+            compile_target: Cli.CompileTarget = .{},
 
             outdir: []const u8 = "",
             outfile: []const u8 = "",
             root_dir: []const u8 = "",
+            public_path: []const u8 = "",
             entry_naming: []const u8 = "[dir]/[name].[ext]",
             chunk_naming: []const u8 = "./[name]-[hash].[ext]",
             asset_naming: []const u8 = "./[name]-[hash].[ext]",
@@ -1057,31 +1246,36 @@ pub const Command = struct {
             minify_identifiers: bool = false,
         };
 
-        const _ctx = Command.Context{
-            .args = std.mem.zeroes(Api.TransformOptions),
-            .log = undefined,
-            .start_time = 0,
-            .allocator = undefined,
-        };
-
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
-            var ctx = _ctx;
-            ctx.log = log;
-            ctx.start_time = start_time;
-            ctx.allocator = allocator;
+            global_cli_ctx = &context_data;
+            global_cli_ctx.log = log;
+            global_cli_ctx.start_time = start_time;
+            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
-                ctx.args = try Arguments.parse(allocator, &ctx, command);
+                global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);
             }
 
-            return ctx;
+            if (comptime Environment.isWindows) {
+                if (global_cli_ctx.debug.hot_reload == .watch) {
+                    if (!bun.isWatcherChild()) {
+                        // this is noreturn
+                        bun.becomeWatcherManager(allocator);
+                    } else {
+                        bun.auto_reload_on_crash = true;
+                    }
+                }
+            }
+
+            return global_cli_ctx;
         }
     };
+    pub const Context = *ContextData;
 
     // std.process.args allocates!
     const ArgsIterator = struct {
-        buf: [][*:0]u8 = undefined,
+        buf: [][:0]const u8 = undefined,
         i: u32 = 0,
 
         pub fn next(this: *ArgsIterator) ?[]const u8 {
@@ -1090,7 +1284,7 @@ pub const Command = struct {
             }
             const i = this.i;
             this.i += 1;
-            return std.mem.span(this.buf[i]);
+            return this.buf[i];
         }
 
         pub fn skip(this: *ArgsIterator) bool {
@@ -1098,23 +1292,48 @@ pub const Command = struct {
         }
     };
 
+    pub fn isBunX(argv0: []const u8) bool {
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "bunx.exe") or strings.endsWithComptime(argv0, "bunx");
+        }
+        return strings.endsWithComptime(argv0, "bunx");
+    }
+
+    pub fn isNode(argv0: []const u8) bool {
+        if (Environment.isWindows) {
+            return strings.endsWithComptime(argv0, "node.exe") or strings.endsWithComptime(argv0, "node");
+        }
+        return strings.endsWithComptime(argv0, "node");
+    }
+
     pub fn which() Tag {
-        var args_iter = ArgsIterator{ .buf = bun.argv() };
-        // first one is the executable name
+        var args_iter = ArgsIterator{ .buf = bun.argv };
 
         const argv0 = args_iter.next() orelse return .HelpCommand;
 
-        // symlink is argv[0]
-        if (strings.endsWithComptime(argv0, "bunx"))
-            return .BunxCommand;
+        if (isBunX(argv0)) {
+            // if we are bunx, but NOT a symlink to bun. when we run `<self> install`, we dont
+            // want to recursively run bunx. so this check lets us peek back into bun install.
+            if (args_iter.next()) |next| {
+                if (bun.strings.eqlComptime(next, "add") and
+                    bun.getenvZ("BUN_INTERNAL_BUNX_INSTALL") != null)
+                {
+                    return .AddCommand;
+                }
+            }
 
-        if (comptime Environment.isDebug) {
-            if (strings.endsWithComptime(argv0, "bunx-debug"))
-                return .BunxCommand;
+            is_bunx_exe = true;
+            return .BunxCommand;
+        }
+
+        if (isNode(argv0)) {
+            @import("./deps/zig-clap/clap/streaming.zig").warn_on_unrecognized_flag = false;
+            pretend_to_be_node = true;
+            return .RunAsNodeCommand;
         }
 
         var next_arg = ((args_iter.next()) orelse return .AutoCommand);
-        while (next_arg[0] == '-') {
+        while (next_arg.len > 0 and next_arg[0] == '-' and !(next_arg.len > 1 and next_arg[1] == 'e')) {
             next_arg = ((args_iter.next()) orelse return .AutoCommand);
         }
 
@@ -1137,8 +1356,7 @@ pub const Command = struct {
             RootCommandMatcher.case("install"),
             => brk: {
                 for (args_iter.buf) |arg| {
-                    const span = std.mem.span(arg);
-                    if (span.len > 0 and (strings.eqlComptime(span, "-g") or strings.eqlComptime(span, "--global"))) {
+                    if (arg.len > 0 and (strings.eqlComptime(arg, "-g") or strings.eqlComptime(arg, "--global"))) {
                         break :brk .AddCommand;
                     }
                 }
@@ -1154,6 +1372,8 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
 
             RootCommandMatcher.case("update") => .UpdateCommand,
+            RootCommandMatcher.case("patch") => .PatchCommand,
+            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
 
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
@@ -1163,6 +1383,8 @@ pub const Command = struct {
 
             RootCommandMatcher.case("run") => .RunCommand,
             RootCommandMatcher.case("help") => .HelpCommand,
+
+            RootCommandMatcher.case("exec") => .ExecCommand,
 
             // These are reserved for future use by Bun, so that someone
             // doing `bun deploy` to run a script doesn't accidentally break
@@ -1182,6 +1404,8 @@ pub const Command = struct {
             RootCommandMatcher.case("list") => .ReservedCommand,
             RootCommandMatcher.case("why") => .ReservedCommand,
 
+            RootCommandMatcher.case("-e") => .AutoCommand,
+
             else => .AutoCommand,
         };
     }
@@ -1191,6 +1415,7 @@ pub const Command = struct {
         "install",
         "add",
         "run",
+        "update",
         "link",
         "unlink",
         "remove",
@@ -1198,6 +1423,7 @@ pub const Command = struct {
         "bun",
         "upgrade",
         "discord",
+        "test",
         "pm",
         "x",
         "repl",
@@ -1210,60 +1436,29 @@ pub const Command = struct {
     };
 
     pub fn start(allocator: std.mem.Allocator, log: *logger.Log) !void {
-        const BuildCommand = @import("./cli/build_command.zig").BuildCommand;
-
-        const AddCommand = @import("./cli/add_command.zig").AddCommand;
-        const CreateCommand = @import("./cli/create_command.zig").CreateCommand;
-        const CreateListExamplesCommand = @import("./cli/create_command.zig").CreateListExamplesCommand;
-        const DiscordCommand = @import("./cli/discord_command.zig").DiscordCommand;
-        const InstallCommand = @import("./cli/install_command.zig").InstallCommand;
-        const LinkCommand = @import("./cli/link_command.zig").LinkCommand;
-        const UnlinkCommand = @import("./cli/unlink_command.zig").UnlinkCommand;
-        const InstallCompletionsCommand = @import("./cli/install_completions_command.zig").InstallCompletionsCommand;
-        const PackageManagerCommand = @import("./cli/package_manager_command.zig").PackageManagerCommand;
-        const RemoveCommand = @import("./cli/remove_command.zig").RemoveCommand;
-        const RunCommand = @import("./cli/run_command.zig").RunCommand;
-        const ShellCompletions = @import("./cli/shell_completions.zig");
-        const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
-
-        const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
-        const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
-
-        if (comptime bun.fast_debug_build_mode) {
-            // _ = AddCommand;
-            // _ = BuildCommand;
-            // _ = CreateCommand;
-            _ = CreateListExamplesCommand;
-            // _ = InstallCommand;
-            // _ = LinkCommand;
-            // _ = UnlinkCommand;
-            // _ = InstallCompletionsCommand;
-            // _ = PackageManagerCommand;
-            // _ = RemoveCommand;
-            // _ = RunCommand;
-            // _ = ShellCompletions;
-            // _ = TestCommand;
-            // _ = UpdateCommand;
-            // _ = UpgradeCommand;
-            // _ = BunxCommand;
+        if (comptime Environment.allow_assert) {
+            if (bun.getenvZ("MI_VERBOSE") == null) {
+                bun.Mimalloc.mi_option_set_enabled(.verbose, false);
+            }
         }
 
+        // bun build --compile entry point
         if (try bun.StandaloneModuleGraph.fromExecutable(bun.default_allocator)) |graph| {
-            var ctx = Command.Context{
+            context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
                 .log = log,
                 .start_time = start_time,
                 .allocator = bun.default_allocator,
             };
+            global_cli_ctx = &context_data;
+            var ctx = global_cli_ctx;
 
             ctx.args.target = Api.Target.bun;
-            var argv = try bun.default_allocator.alloc(string, bun.argv().len -| 1);
-            if (bun.argv().len > 1) {
-                for (argv, bun.argv()[1..]) |*dest, src| {
-                    dest.* = bun.span(src);
-                }
+            if (bun.argv.len > 1) {
+                ctx.passthrough = bun.argv[1..];
+            } else {
+                ctx.passthrough = &[_]string{};
             }
-            ctx.passthrough = argv;
 
             try @import("./bun_js.zig").Run.bootStandalone(
                 ctx,
@@ -1273,21 +1468,18 @@ pub const Command = struct {
             return;
         }
 
+        debug("argv: [{s}]", .{bun.fmt.fmtSlice(bun.argv, ", ")});
+
         const tag = which();
 
         switch (tag) {
             .DiscordCommand => return try DiscordCommand.exec(allocator),
             .HelpCommand => return try HelpCommand.exec(allocator),
-            .InitCommand => return try InitCommand.exec(allocator, bun.argv()),
             .ReservedCommand => return try ReservedCommand.exec(allocator),
-            else => {},
-        }
-
-        switch (tag) {
+            .InitCommand => return try InitCommand.exec(allocator, bun.argv),
             .BuildCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BuildCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BuildCommand);
-
+                const ctx = try Command.init(allocator, log, .BuildCommand);
                 try BuildCommand.exec(ctx);
             },
             .InstallCompletionsCommand => {
@@ -1297,80 +1489,94 @@ pub const Command = struct {
             },
             .InstallCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .InstallCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .InstallCommand);
+                const ctx = try Command.init(allocator, log, .InstallCommand);
 
                 try InstallCommand.exec(ctx);
                 return;
             },
             .AddCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AddCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .AddCommand);
+                const ctx = try Command.init(allocator, log, .AddCommand);
 
                 try AddCommand.exec(ctx);
                 return;
             },
             .UpdateCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpdateCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpdateCommand);
+                const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
                 return;
             },
+            .PatchCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommand);
+
+                try PatchCommand.exec(ctx);
+                return;
+            },
+            .PatchCommitCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommitCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommitCommand);
+
+                try PatchCommitCommand.exec(ctx);
+                return;
+            },
             .BunxCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                const ctx = try Command.init(allocator, log, .BunxCommand);
 
-                try BunxCommand.exec(ctx, bun.argv()[1..]);
+                try BunxCommand.exec(ctx, bun.argv[if (is_bunx_exe) 0 else 1..]);
                 return;
             },
             .ReplCommand => {
                 // TODO: Put this in native code.
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .BunxCommand) unreachable;
-                var ctx = try Command.Context.create(allocator, log, .BunxCommand);
+                var ctx = try Command.init(allocator, log, .BunxCommand);
                 ctx.debug.run_in_bun = true; // force the same version of bun used. fixes bun-debug for example
-                var args = bun.argv()[1..];
-                args[0] = @constCast("bun-repl");
+                var args = bun.argv[0..];
+                args[1] = "bun-repl";
                 try BunxCommand.exec(ctx, args);
                 return;
             },
             .RemoveCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RemoveCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RemoveCommand);
+                const ctx = try Command.init(allocator, log, .RemoveCommand);
 
                 try RemoveCommand.exec(ctx);
                 return;
             },
             .LinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .LinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .LinkCommand);
+                const ctx = try Command.init(allocator, log, .LinkCommand);
 
                 try LinkCommand.exec(ctx);
                 return;
             },
             .UnlinkCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UnlinkCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UnlinkCommand);
+                const ctx = try Command.init(allocator, log, .UnlinkCommand);
 
                 try UnlinkCommand.exec(ctx);
                 return;
             },
             .PackageManagerCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PackageManagerCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .PackageManagerCommand);
+                const ctx = try Command.init(allocator, log, .PackageManagerCommand);
 
                 try PackageManagerCommand.exec(ctx);
                 return;
             },
             .TestCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .TestCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .TestCommand);
+                const ctx = try Command.init(allocator, log, .TestCommand);
 
                 try TestCommand.exec(ctx);
                 return;
             },
             .GetCompletionsCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .GetCompletionsCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .GetCompletionsCommand);
+                const ctx = try Command.init(allocator, log, .GetCompletionsCommand);
                 var filter = ctx.positionals;
 
                 for (filter, 0..) |item, i| {
@@ -1466,58 +1672,110 @@ pub const Command = struct {
                 });
 
                 // Create command wraps bunx
-                const ctx = try Command.Context.create(allocator, log, .CreateCommand);
+                const ctx = try Command.init(allocator, log, .CreateCommand);
 
                 var args = try std.process.argsAlloc(allocator);
 
                 if (args.len <= 2) {
+                    Command.Tag.printHelp(.CreateCommand, false);
+                    Global.exit(1);
+                    return;
+                }
+
+                var template_name_start: usize = 0;
+                var positionals: [2]string = .{ "", "" };
+                var positional_i: usize = 0;
+
+                var dash_dash_bun = false;
+                var print_help = false;
+                if (args.len > 2) {
+                    const remainder = args[1..];
+                    var remainder_i: usize = 0;
+                    while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
+                        const slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n");
+                        if (slice.len > 0) {
+                            if (!strings.hasPrefixComptime(slice, "--")) {
+                                if (positional_i == 1) {
+                                    template_name_start = remainder_i + 2;
+                                }
+                                positionals[positional_i] = slice;
+                                positional_i += 1;
+                            }
+                            if (slice[0] == '-') {
+                                if (strings.eqlComptime(slice, "--bun")) {
+                                    dash_dash_bun = true;
+                                } else if (strings.eqlComptime(slice, "--help") or strings.eqlComptime(slice, "-h")) {
+                                    print_help = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if (print_help or
+                    // "bun create --"
+                    // "bun create -abc --"
+                    positional_i == 0 or
+                    positionals[1].len == 0)
+                {
+                    Command.Tag.printHelp(.CreateCommand, true);
+                    Global.exit(0);
+                    return;
+                }
+
+                const template_name = positionals[1];
+
+                // if template_name is "react"
+                // print message telling user to use "bun create vite" instead
+                if (strings.eqlComptime(template_name, "react")) {
                     Output.prettyErrorln(
-                        \\<b><cyan>bun create<r>: create a new project from a template
+                        \\The "react" template has been deprecated.
+                        \\It is recommended to use "react-app" or "vite" instead.
                         \\
-                        \\<b>Usage<r>: <b><cyan>bun create<r> [template] [...args]
-                        \\       <b><cyan>bun create<r> [username/repo] [name]
+                        \\To create a project using Create React App, run
                         \\
-                        \\If given a GitHub repository name, Bun will download it and use it as a template,
-                        \\otherwise it will run <b><magenta>bunx create-[template]<r> with the given arguments.
+                        \\  <d>bun create react-app<r>
                         \\
-                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/templates<r>
+                        \\To create a React project using Vite, run
+                        \\
+                        \\  <d>bun create vite<r>
+                        \\
+                        \\Then select "React" from the list of frameworks.
                         \\
                     , .{});
                     Global.exit(1);
                     return;
                 }
 
-                var template_name_start: usize = 0;
-                var positionals: [2]string = undefined;
-
-                var positional_i: usize = 0;
-
-                if (args.len > 2) {
-                    var remainder = args[2..];
-                    var remainder_i: usize = 0;
-                    while (remainder_i < remainder.len and positional_i < positionals.len) : (remainder_i += 1) {
-                        var slice = std.mem.trim(u8, bun.asByteSlice(remainder[remainder_i]), " \t\n;");
-                        if (slice.len > 0 and !strings.hasPrefixComptime(slice, "--")) {
-                            if (positional_i == 0) {
-                                template_name_start = remainder_i + 2;
-                            }
-                            positionals[positional_i] = slice;
-                            positional_i += 1;
-                        }
-                    }
+                // if template_name is "next"
+                // print message telling user to use "bun create next-app" instead
+                if (strings.eqlComptime(template_name, "next")) {
+                    Output.prettyErrorln(
+                        \\<yellow>warn: No template <b>create-next<r> found.
+                        \\To create a project with the official Next.js scaffolding tool, run
+                        \\  <b>bun create next-app <cyan>[destination]<r>
+                    , .{});
+                    Global.exit(1);
+                    return;
                 }
-                var positionals_ = positionals[0..positional_i];
 
-                const template_name = positionals[0];
+                const create_command_info = try CreateCommand.extractInfo(ctx);
+                const template = create_command_info.template;
+                const example_tag = create_command_info.example_tag;
 
                 const use_bunx = !HardcodedNonBunXList.has(template_name) and
                     (!strings.containsComptime(template_name, "/") or
-                    strings.startsWithChar(template_name, '@'));
+                    strings.startsWithChar(template_name, '@')) and
+                    example_tag != CreateCommandExample.Tag.local_folder;
 
                 if (use_bunx) {
-                    const bunx_args = try allocator.alloc([*:0]const u8, args.len - template_name_start);
-                    bunx_args[0] = try BunxCommand.addCreatePrefix(allocator, template_name);
-                    for (bunx_args[1..], args[template_name_start + 1 ..]) |*dest, src| {
+                    const bunx_args = try allocator.alloc([:0]const u8, 2 + args.len - template_name_start + @intFromBool(dash_dash_bun));
+                    bunx_args[0] = "bunx";
+                    if (dash_dash_bun) {
+                        bunx_args[1] = "--bun";
+                    }
+                    bunx_args[1 + @as(usize, @intFromBool(dash_dash_bun))] = try BunxCommand.addCreatePrefix(allocator, template_name);
+                    for (bunx_args[2 + @as(usize, @intFromBool(dash_dash_bun)) ..], args[template_name_start..]) |*dest, src| {
                         dest.* = src;
                     }
 
@@ -1525,29 +1783,44 @@ pub const Command = struct {
                     return;
                 }
 
-                try CreateCommand.exec(ctx, positionals_);
+                try CreateCommand.exec(ctx, example_tag, template);
                 return;
             },
             .RunCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .RunCommand);
+                const ctx = try Command.init(allocator, log, .RunCommand);
+
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
                 if (ctx.positionals.len > 0) {
-                    if (try RunCommand.exec(ctx, false, true)) {
+                    if (try RunCommand.exec(ctx, false, true, false)) {
                         return;
                     }
 
                     Global.exit(1);
                 }
             },
+            .RunAsNodeCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .RunAsNodeCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .RunAsNodeCommand);
+                bun.assert(pretend_to_be_node);
+                try RunCommand.execAsIfNode(ctx);
+            },
             .UpgradeCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .UpgradeCommand) unreachable;
-                const ctx = try Command.Context.create(allocator, log, .UpgradeCommand);
+                const ctx = try Command.init(allocator, log, .UpgradeCommand);
                 try UpgradeCommand.exec(ctx);
                 return;
             },
             .AutoCommand => {
                 if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .AutoCommand) unreachable;
-                var ctx = Command.Context.create(allocator, log, .AutoCommand) catch |e| {
+
+                const ctx = Command.init(allocator, log, .AutoCommand) catch |e| {
                     switch (e) {
                         error.MissingEntryPoint => {
                             HelpCommand.execWithReason(allocator, .explicit);
@@ -1559,6 +1832,22 @@ pub const Command = struct {
                     }
                 };
 
+                if (ctx.filters.len > 0) {
+                    FilterRun.runScriptsWithFilter(ctx) catch |err| {
+                        Output.prettyErrorln("<r><red>error<r>: {s}", .{@errorName(err)});
+                        Global.exit(1);
+                    };
+                }
+
+                if (ctx.runtime_options.eval.script.len > 0) {
+                    const trigger = bun.pathLiteral("/[eval]");
+                    var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
+                    const cwd = try std.posix.getcwd(&entry_point_buf);
+                    @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
+                    try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
+                    return;
+                }
+
                 const extension: []const u8 = if (ctx.args.entry_points.len > 0)
                     std.fs.path.extension(ctx.args.entry_points[0])
                 else
@@ -1566,8 +1855,8 @@ pub const Command = struct {
                 // KEYWORDS: open file argv argv0
                 if (ctx.args.entry_points.len == 1) {
                     if (strings.eqlComptime(extension, ".lockb")) {
-                        for (bun.argv()) |arg| {
-                            if (strings.eqlComptime(std.mem.span(arg), "--hash")) {
+                        for (bun.argv) |arg| {
+                            if (strings.eqlComptime(arg, "--hash")) {
                                 try PackageManagerCommand.printHash(ctx, ctx.args.entry_points[0]);
                                 return;
                             }
@@ -1600,8 +1889,12 @@ pub const Command = struct {
                     }
 
                     if (extension.len > 0) {
+                        if (strings.endsWithComptime(ctx.args.entry_points[0], ".sh")) {
+                            break :brk options.Loader.bunsh;
+                        }
+
                         if (!ctx.debug.loaded_bunfig) {
-                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", &ctx, .RunCommand);
+                            try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
                         }
 
                         if (ctx.preloads.len > 0)
@@ -1616,7 +1909,7 @@ pub const Command = struct {
                 if (default_loader) |loader| {
                     if (loader.canBeRunByBun()) {
                         was_js_like = true;
-                        if (maybeOpenWithBunJS(&ctx)) {
+                        if (maybeOpenWithBunJS(ctx)) {
                             return;
                         }
                         did_check = true;
@@ -1624,99 +1917,137 @@ pub const Command = struct {
                 }
 
                 if (force_using_bun and !did_check) {
-                    if (maybeOpenWithBunJS(&ctx)) {
+                    if (maybeOpenWithBunJS(ctx)) {
                         return;
                     }
                 }
 
                 if (ctx.positionals.len > 0 and extension.len == 0) {
-                    if (try RunCommand.exec(ctx, true, false)) {
+                    if (ctx.filters.len > 0) {
+                        Output.prettyln("<r><yellow>warn<r>: Filters are ignored for auto command", .{});
+                    }
+                    if (try RunCommand.exec(ctx, true, false, true)) {
                         return;
                     }
 
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> script not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Script not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
 
                     Global.exit(1);
                 }
 
+                if (ctx.runtime_options.if_present) {
+                    return;
+                }
+
                 if (was_js_like) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> module not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>Module not found \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 } else if (ctx.positionals.len > 0) {
-                    Output.prettyErrorln("<r><red>error<r><d>:<r> file not found \"<b>{s}<r>\"", .{
+                    Output.prettyErrorln("<r><red>error<r><d>:<r> <b>File not found: \"{s}\"<r>", .{
                         ctx.positionals[0],
                     });
                     Global.exit(1);
                 }
 
+                // if we get here, the command was not parsed
+                // or the user just ran `bun` with no arguments
+                if (ctx.positionals.len > 0) {
+                    Output.warn("failed to parse command\n", .{});
+                }
+                Output.flush();
                 try HelpCommand.exec(allocator);
             },
-            else => unreachable,
+            .ExecCommand => {
+                const ctx = try Command.init(allocator, log, .RunCommand);
+
+                if (ctx.positionals.len > 1) {
+                    try ExecCommand.exec(ctx);
+                } else Tag.printHelp(.ExecCommand, true);
+            },
         }
     }
 
-    fn maybeOpenWithBunJS(ctx: *Command.Context) bool {
+    fn maybeOpenWithBunJS(ctx: Command.Context) bool {
         if (ctx.args.entry_points.len == 0)
             return false;
 
         const script_name_to_search = ctx.args.entry_points[0];
 
+        var absolute_script_path: ?string = null;
+
+        // TODO: optimize this pass for Windows. we can make better use of system apis available
         var file_path = script_name_to_search;
-        const file_: std.fs.File.OpenError!std.fs.File = brk: {
-            if (script_name_to_search[0] == std.fs.path.sep) {
-                break :brk std.fs.openFileAbsolute(script_name_to_search, .{ .mode = .read_only });
-            } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
-                const file_pathZ = brk2: {
-                    if (!strings.hasPrefix(file_path, "./")) {
-                        script_name_buf[0..2].* = "./".*;
-                        @memcpy(script_name_buf[2..][0..file_path.len], file_path);
-                        script_name_buf[file_path.len + 2] = 0;
-                        break :brk2 script_name_buf[0 .. file_path.len + 2 :0];
-                    } else {
+        {
+            const file = bun.toLibUVOwnedFD(((brk: {
+                if (std.fs.path.isAbsolute(script_name_to_search)) {
+                    var win_resolver = resolve_path.PosixToWinNormalizer{};
+                    var resolved = win_resolver.resolveCWD(script_name_to_search) catch @panic("Could not resolve path");
+                    if (comptime Environment.isWindows) {
+                        resolved = resolve_path.normalizeString(resolved, false, .windows);
+                    }
+                    break :brk bun.openFile(
+                        resolved,
+                        .{ .mode = .read_only },
+                    );
+                } else if (!strings.hasPrefix(script_name_to_search, "..") and script_name_to_search[0] != '~') {
+                    const file_pathZ = brk2: {
                         @memcpy(script_name_buf[0..file_path.len], file_path);
                         script_name_buf[file_path.len] = 0;
                         break :brk2 script_name_buf[0..file_path.len :0];
-                    }
-                };
+                    };
 
-                break :brk std.fs.cwd().openFileZ(file_pathZ, .{ .mode = .read_only });
-            } else {
-                var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-                const cwd = std.os.getcwd(&path_buf) catch return false;
-                path_buf[cwd.len] = std.fs.path.sep;
-                var parts = [_]string{script_name_to_search};
-                file_path = resolve_path.joinAbsStringBuf(
-                    path_buf[0 .. cwd.len + 1],
-                    &script_name_buf,
-                    &parts,
-                    .auto,
-                );
-                if (file_path.len == 0) return false;
-                script_name_buf[file_path.len] = 0;
-                var file_pathZ = script_name_buf[0..file_path.len :0];
-                break :brk std.fs.openFileAbsoluteZ(file_pathZ, .{ .mode = .read_only });
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                } else {
+                    var path_buf: bun.PathBuffer = undefined;
+                    const cwd = bun.getcwd(&path_buf) catch return false;
+                    path_buf[cwd.len] = std.fs.path.sep;
+                    var parts = [_]string{script_name_to_search};
+                    file_path = resolve_path.joinAbsStringBuf(
+                        path_buf[0 .. cwd.len + 1],
+                        &script_name_buf,
+                        &parts,
+                        .auto,
+                    );
+                    if (file_path.len == 0) return false;
+                    script_name_buf[file_path.len] = 0;
+                    const file_pathZ = script_name_buf[0..file_path.len :0];
+                    break :brk bun.openFileZ(file_pathZ, .{ .mode = .read_only });
+                }
+            }) catch return false).handle) catch return false;
+            defer _ = bun.sys.close(file);
+
+            switch (bun.sys.fstat(file)) {
+                .result => |stat| {
+                    // directories cannot be run. if only there was a faster way to check this
+                    if (bun.S.ISDIR(@intCast(stat.mode))) return false;
+                },
+                .err => return false,
             }
-        };
 
-        const file = file_ catch return false;
+            Global.configureAllocator(.{ .long_running = true });
 
-        Global.configureAllocator(.{ .long_running = true });
+            absolute_script_path = brk: {
+                if (comptime !Environment.isWindows) break :brk bun.getFdPath(file, &script_name_buf) catch return false;
 
-        // the case where this doesn't work is if the script name on disk doesn't end with a known JS-like file extension
-        var absolute_script_path = bun.getFdPath(file.handle, &script_name_buf) catch return false;
+                var fd_path_buf: bun.PathBuffer = undefined;
+                break :brk bun.getFdPath(file, &fd_path_buf) catch return false;
+            };
+        }
 
         if (!ctx.debug.loaded_bunfig) {
             bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand) catch {};
         }
 
         BunJS.Run.boot(
-            ctx.*,
-            absolute_script_path,
+            ctx,
+            absolute_script_path.?,
         ) catch |err| {
+            bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
             if (Output.enable_ansi_colors) {
                 ctx.log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true) catch {};
             } else {
@@ -1748,31 +2079,296 @@ pub const Command = struct {
         PackageManagerCommand,
         RemoveCommand,
         RunCommand,
+        RunAsNodeCommand, // arg0 == 'node'
         TestCommand,
         UnlinkCommand,
         UpdateCommand,
         UpgradeCommand,
         ReplCommand,
         ReservedCommand,
+        ExecCommand,
+        PatchCommand,
+        PatchCommitCommand,
+
+        /// Used by crash reports.
+        ///
+        /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
+        pub fn char(this: Tag) u8 {
+            return switch (this) {
+                .AddCommand => 'I',
+                .AutoCommand => 'a',
+                .BuildCommand => 'b',
+                .BunxCommand => 'B',
+                .CreateCommand => 'c',
+                .DiscordCommand => 'D',
+                .GetCompletionsCommand => 'g',
+                .HelpCommand => 'h',
+                .InitCommand => 'j',
+                .InstallCommand => 'i',
+                .InstallCompletionsCommand => 'C',
+                .LinkCommand => 'l',
+                .PackageManagerCommand => 'P',
+                .RemoveCommand => 'R',
+                .RunCommand => 'r',
+                .RunAsNodeCommand => 'n',
+                .TestCommand => 't',
+                .UnlinkCommand => 'U',
+                .UpdateCommand => 'u',
+                .UpgradeCommand => 'p',
+                .ReplCommand => 'G',
+                .ReservedCommand => 'w',
+                .ExecCommand => 'e',
+                .PatchCommand => 'x',
+                .PatchCommitCommand => 'z',
+            };
+        }
 
         pub fn params(comptime cmd: Tag) []const Arguments.ParamType {
-            return &comptime switch (cmd) {
-                Command.Tag.BuildCommand => Arguments.build_params,
-                Command.Tag.TestCommand => Arguments.test_params,
-                else => Arguments.params,
+            return comptime &switch (cmd) {
+                .AutoCommand => Arguments.auto_params,
+                .RunCommand, .RunAsNodeCommand => Arguments.run_params,
+                .BuildCommand => Arguments.build_params,
+                .TestCommand => Arguments.test_params,
+                .BunxCommand => Arguments.run_params,
+                else => Arguments.base_params_ ++ Arguments.runtime_params_ ++ Arguments.transpiler_params_,
             };
+        }
+
+        pub fn printHelp(comptime cmd: Tag, show_all_flags: bool) void {
+            switch (cmd) {
+
+                // these commands do not use Context
+                // .DiscordCommand => return try DiscordCommand.exec(allocator),
+                // .HelpCommand => return try HelpCommand.exec(allocator),
+                // .ReservedCommand => return try ReservedCommand.exec(allocator),
+
+                // these commands are implemented in install.zig
+                // Command.Tag.InstallCommand => {},
+                // Command.Tag.AddCommand => {},
+                // Command.Tag.RemoveCommand => {},
+                // Command.Tag.UpdateCommand => {},
+                // Command.Tag.PackageManagerCommand => {},
+                // Command.Tag.LinkCommand => {},
+                // Command.Tag.UnlinkCommand => {},
+
+                // fall back to HelpCommand.printWithReason
+                Command.Tag.AutoCommand => {
+                    HelpCommand.printWithReason(.explicit, show_all_flags);
+                },
+                .RunCommand, .RunAsNodeCommand => {
+                    RunCommand_.printHelp(null);
+                },
+
+                .InitCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun init<r> <cyan>[...flags]<r> <blue>[\<entrypoint\> ...]<r>
+                        \\  Initialize a Bun project in the current directory.
+                        \\  Creates a package.json, tsconfig.json, and bunfig.toml if they don't exist.
+                        \\
+                        \\<b>Flags<r>:
+                        \\      <cyan>--help<r>             Print this menu
+                        \\  <cyan>-y, --yes<r>              Accept all default options
+                        \\
+                        \\<b>Examples:<r>
+                        \\  <b><green>bun init<r>
+                        \\  <b><green>bun init <cyan>--yes<r>
+                    ;
+
+                    Output.pretty(intro_text ++ "\n", .{});
+                    Output.flush();
+                },
+
+                Command.Tag.BunxCommand => {
+                    Output.prettyErrorln(
+                        \\<b>Usage: bunx <r><cyan>[...flags]<r> \<package\><d>[@version] [...flags and arguments]<r>
+                        \\Execute an npm package executable (CLI), automatically installing into a global shared cache if not installed in node_modules.
+                        \\
+                        \\Flags:
+                        \\  <cyan>--bun<r>      Force the command to run with Bun instead of Node.js
+                        \\
+                        \\Examples<d>:<r>
+                        \\  <b>bunx prisma migrate<r>
+                        \\  <b>bunx prettier foo.js<r>
+                        \\  <b>bunx<r> <cyan>--bun<r> <b>vite dev foo.js<r>
+                        \\
+                    , .{});
+                },
+                Command.Tag.BuildCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>:
+                        \\  Transpile and bundle one or more files.
+                        \\  <b><green>bun build<r> <cyan>[...flags]<r> [...entrypoints]
+                    ;
+
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Frontend web apps:<r>
+                        \\  <b><green>bun build<r> <blue>./src/index.ts<r> <cyan>--outfile=bundle.js<r>
+                        \\  <b><green>bun build<r> <blue>./index.jsx ./lib/worker.ts<r> <cyan>--minify --splitting --outdir=out<r>
+                        \\
+                        \\  <d>Bundle code to be run in Bun (reduces server startup time)<r>
+                        \\  <b><green>bun build<r> <blue>./server.ts<r> <cyan>--target=bun --outfile=server.js<r>
+                        \\
+                        \\  <d>Creating a standalone executable (see https://bun.sh/docs/bundler/executables)<r>
+                        \\  <b><green>bun build<r> <blue>./cli.ts<r> <cyan>--compile --outfile=my-app<r>
+                        \\
+                        \\A full list of flags is available at <magenta>https://bun.sh/docs/bundler<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text ++ "\n\n", .{});
+                    Output.flush();
+                    Output.pretty("<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&Arguments.build_only_params);
+                    Output.pretty("\n\n" ++ outro_text, .{});
+                    Output.flush();
+                },
+                Command.Tag.TestCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun test<r> <cyan>[...flags]<r> <blue>[\<pattern\>...]<r>
+                        \\  Run all matching test files and print the results to stdout
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Run all test files <r>
+                        \\  <b><green>bun test<r>
+                        \\
+                        \\  <d>Run all test files with "foo" or "bar" in the file name<r>
+                        \\  <b><green>bun test foo bar<r>
+                        \\
+                        \\  <d>Run all test files, only including tests whose names includes "baz"<r>
+                        \\  <b><green>bun test<r> <cyan>--test-name-pattern<r> baz<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/cli/test<r>
+                        \\
+                    ;
+                    // Output.pretty("\n", .{});
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                    Output.pretty("\n\n<b>Flags:<r>", .{});
+                    Output.flush();
+                    clap.simpleHelp(&Arguments.test_only_params);
+                    Output.pretty("\n\n", .{});
+                    Output.pretty(outro_text, .{});
+                    Output.flush();
+                },
+                Command.Tag.CreateCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>:
+                        \\  <b><green>bun create<r> <blue>\<template\><r> <cyan>[...flags]<r> <blue>[dest]<r>
+                        \\  <b><green>bun create<r> <blue>\<username/repo\><r> <cyan>[...flags]<r> <blue>[dest]<r>
+                        \\
+                        \\<b>Environment variables:<r>
+                        \\  <cyan>GITHUB_TOKEN<r>             <d>Supply a token to download code from GitHub with a higher rate limit<r>
+                        \\  <cyan>GITHUB_API_DOMAIN<r>        <d>Configure custom/enterprise GitHub domain. Default "api.github.com".<r>
+                        \\  <cyan>NPM_CLIENT<r>               <d>Absolute path to the npm client executable<r>
+                    ;
+
+                    const outro_text =
+                        \\If given a GitHub repository name, Bun will download it and use it as a template,
+                        \\otherwise it will run <b><magenta>bunx create-\<template\><r> with the given arguments.
+                        \\
+                        \\Learn more about creating new projects: <magenta>https://bun.sh/docs/cli/bun-create<r>
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.pretty("\n\n", .{});
+                    Output.pretty(outro_text, .{});
+                    Output.flush();
+                },
+                Command.Tag.HelpCommand => {
+                    HelpCommand.printWithReason(.explicit);
+                },
+                Command.Tag.UpgradeCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun upgrade<r> <cyan>[...flags]<r>
+                        \\  Upgrade Bun
+                    ;
+                    const outro_text =
+                        \\<b>Examples:<r>
+                        \\  <d>Install the latest stable version<r>
+                        \\  <b><green>bun upgrade<r>
+                        \\
+                        \\  <d>Install the most recent canary version of Bun<r>
+                        \\  <b><green>bun upgrade --canary<r>
+                        \\
+                        \\Full documentation is available at <magenta>https://bun.sh/docs/installation#upgrading<r>
+                        \\
+                    ;
+                    Output.pretty(intro_text, .{});
+                    Output.pretty("\n\n", .{});
+                    Output.flush();
+                    Output.pretty(outro_text, .{});
+                    Output.flush();
+                },
+                Command.Tag.ReplCommand => {
+                    const intro_text =
+                        \\<b>Usage<r>: <b><green>bun repl<r> <cyan>[...flags]<r>
+                        \\  Open a Bun REPL
+                        \\
+                    ;
+
+                    Output.pretty(intro_text, .{});
+                    Output.flush();
+                },
+
+                Command.Tag.GetCompletionsCommand => {
+                    Output.pretty("<b>Usage<r>: <b><green>bun getcompletes<r>", .{});
+                    Output.flush();
+                },
+                Command.Tag.InstallCompletionsCommand => {
+                    Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
+                    Output.flush();
+                },
+                Command.Tag.PatchCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.patch);
+                },
+                Command.Tag.PatchCommitCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
+                },
+                Command.Tag.ExecCommand => {
+                    Output.pretty(
+                        \\<b>Usage: bun exec <r><cyan>\<script\><r>
+                        \\
+                        \\Execute a shell script directly from Bun.
+                        \\
+                        \\<b><red>Note<r>: If executing this from a shell, make sure to escape the string!
+                        \\
+                        \\<b>Examples<d>:<r>
+                        \\  <b>bunx exec "echo hi"<r>
+                        \\  <b>bunx exec "echo \"hey friends\"!"<r>
+                        \\
+                    , .{});
+                    Output.flush();
+                },
+                else => {
+                    HelpCommand.printWithReason(.explicit);
+                },
+            }
         }
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand,
+                .LinkCommand,
+                .UnlinkCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                => true,
                 else => false,
             };
         }
@@ -1784,10 +2380,13 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
             .RunCommand = true,
+            .RunAsNodeCommand = true,
         });
 
         pub const always_loads_config: std.EnumArray(Tag, bool) = std.EnumArray(Tag, bool).initDefault(false, .{
@@ -1797,6 +2396,8 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -1807,6 +2408,8 @@ pub const Command = struct {
             .AddCommand = false,
             .RemoveCommand = false,
             .UpdateCommand = false,
+            .PatchCommand = false,
+            .PatchCommitCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,
@@ -1814,3 +2417,15 @@ pub const Command = struct {
         });
     };
 };
+
+pub fn printVersionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version ++ "\n") catch {};
+    Global.exit(0);
+}
+
+pub fn printRevisionAndExit() noreturn {
+    @setCold(true);
+    Output.writer().writeAll(Global.package_json_version_with_revision ++ "\n") catch {};
+    Global.exit(0);
+}

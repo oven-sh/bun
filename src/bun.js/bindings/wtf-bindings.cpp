@@ -1,20 +1,19 @@
+#include "root.h"
 #include "wtf-bindings.h"
 
-#include "wtf/StackTrace.h"
-#include "wtf/dtoa.h"
-#include <termios.h>
+#include <wtf/StackTrace.h>
+#include <wtf/dtoa.h>
+#include <atomic>
+
+#include "simdutf.h"
+#if OS(WINDOWS)
+#include <uv.h>
+#endif
+
+#if !OS(WINDOWS)
 #include <stdatomic.h>
 
-extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
-{
-    return WTF::parseDouble(string, length, *position);
-}
-
-extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
-{
-    WTF::StringImpl::copyCharacters(destination, source, length);
-}
-
+#include <termios.h>
 static int orig_termios_fd = -1;
 static struct termios orig_termios;
 static _Atomic int orig_termios_spinlock;
@@ -94,9 +93,13 @@ static void uv__tty_make_raw(struct termios* tio)
 #endif /* #ifdef __sun */
 }
 
-extern "C" int
-Bun__ttySetMode(int fd, int mode)
+#endif
+
+extern "C" void Bun__atexit(void (*func)(void));
+
+extern "C" int Bun__ttySetMode(int fd, int mode)
 {
+#if !OS(WINDOWS)
     struct termios tmp;
     int expected;
     int rc;
@@ -138,7 +141,7 @@ Bun__ttySetMode(int fd, int mode)
         tmp.c_cc[VTIME] = 0;
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atexit([] {
                 uv_tty_reset_mode();
             });
         });
@@ -147,7 +150,7 @@ Bun__ttySetMode(int fd, int mode)
         uv__tty_make_raw(&tmp);
 
         std::call_once(reset_once_flag, [] {
-            atexit([] {
+            Bun__atexit([] {
                 uv_tty_reset_mode();
             });
         });
@@ -160,81 +163,81 @@ Bun__ttySetMode(int fd, int mode)
         current_tty_mode = mode;
 
     return rc;
+#else
+    return 0;
+
+#endif
 }
 
-extern "C" void Bun__crashReportWrite(void* ctx, const char* message, size_t length);
-extern "C" void Bun__crashReportDumpStackTrace(void* ctx)
+extern "C" double WTF__parseDouble(const LChar* string, size_t length, size_t* position)
 {
-    static constexpr int framesToShow = 32;
-    static constexpr int framesToSkip = 2;
-    void* stack[framesToShow + framesToSkip];
-    int frames = framesToShow + framesToSkip;
-    WTFGetBacktrace(stack, &frames);
-    int size = frames - framesToSkip;
-    bool isFirst = true;
-    for (int frameNumber = 0; frameNumber < size; ++frameNumber) {
-        auto demangled = WTF::StackTraceSymbolResolver::demangle(stack[frameNumber]);
-
-        StringPrintStream out;
-        if (isFirst) {
-            isFirst = false;
-            if (demangled)
-                out.printf("\n%-3d %p %s", frameNumber, stack[frameNumber], demangled->demangledName() ? demangled->demangledName() : demangled->mangledName());
-            else
-                out.printf("\n%-3d %p", frameNumber, stack[frameNumber]);
-        } else {
-            if (demangled)
-                out.printf("%-3d ??? %s", frameNumber, demangled->demangledName() ? demangled->demangledName() : demangled->mangledName());
-            else
-                out.printf("%-3d ???", frameNumber);
-        }
-
-        auto str = out.toCString();
-        Bun__crashReportWrite(ctx, str.data(), str.length());
-    }
+    return WTF::parseDouble({ string, length }, *position);
 }
 
-// For whatever reason
-// Doing this in C++/C is 2x faster than doing it in Zig.
-// However, it's still slower than it should be.
-static constexpr size_t encodeMapSize = 64;
-static constexpr char base64URLEncMap[encodeMapSize] = {
-    0x41, 0x42, 0x43, 0x44, 0x45, 0x46, 0x47, 0x48, 0x49, 0x4A, 0x4B,
-    0x4C, 0x4D, 0x4E, 0x4F, 0x50, 0x51, 0x52, 0x53, 0x54, 0x55, 0x56,
-    0x57, 0x58, 0x59, 0x5A, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66, 0x67,
-    0x68, 0x69, 0x6A, 0x6B, 0x6C, 0x6D, 0x6E, 0x6F, 0x70, 0x71, 0x72,
-    0x73, 0x74, 0x75, 0x76, 0x77, 0x78, 0x79, 0x7A, 0x30, 0x31, 0x32,
-    0x33, 0x34, 0x35, 0x36, 0x37, 0x38, 0x39, 0x2D, 0x5F
-};
+extern "C" void WTF__copyLCharsFromUCharSource(LChar* destination, const UChar* source, size_t length)
+{
+    WTF::StringImpl::copyCharacters(destination, { source, length });
+}
 
-extern "C" size_t WTF__base64URLEncode(const unsigned char* __restrict inputDataBuffer, size_t inputDataBufferSize,
-    unsigned char* __restrict destinationDataBuffer,
+extern "C" size_t WTF__base64URLEncode(const char* __restrict inputDataBuffer, size_t inputDataBufferSize,
+    char* __restrict destinationDataBuffer,
     size_t destinationDataBufferSize)
 {
-    size_t sidx = 0;
-    size_t didx = 0;
+    UNUSED_PARAM(destinationDataBufferSize);
+    return simdutf::binary_to_base64(inputDataBuffer, inputDataBufferSize, destinationDataBuffer, simdutf::base64_url);
+}
 
-    if (inputDataBufferSize > 1) {
-        while (sidx < inputDataBufferSize - 2) {
-            destinationDataBuffer[didx++] = base64URLEncMap[(inputDataBuffer[sidx] >> 2) & 077];
-            destinationDataBuffer[didx++] = base64URLEncMap[((inputDataBuffer[sidx + 1] >> 4) & 017) | ((inputDataBuffer[sidx] << 4) & 077)];
-            destinationDataBuffer[didx++] = base64URLEncMap[((inputDataBuffer[sidx + 2] >> 6) & 003) | ((inputDataBuffer[sidx + 1] << 2) & 077)];
-            destinationDataBuffer[didx++] = base64URLEncMap[inputDataBuffer[sidx + 2] & 077];
-            sidx += 3;
-        }
+namespace Bun {
+String base64URLEncodeToString(Vector<uint8_t> data)
+{
+    auto size = data.size();
+    size_t encodedLength = ((size * 4) + 2) / 3;
+    if (!encodedLength)
+        return String();
+
+    LChar* ptr;
+    auto result = String::createUninitialized(encodedLength, ptr);
+    if (UNLIKELY(!ptr)) {
+        RELEASE_ASSERT_NOT_REACHED();
+        return String();
     }
-
-    if (sidx < inputDataBufferSize) {
-        destinationDataBuffer[didx++] = base64URLEncMap[(inputDataBuffer[sidx] >> 2) & 077];
-        if (sidx < inputDataBufferSize - 1) {
-            destinationDataBuffer[didx++] = base64URLEncMap[((inputDataBuffer[sidx + 1] >> 4) & 017) | ((inputDataBuffer[sidx] << 4) & 077)];
-            destinationDataBuffer[didx++] = base64URLEncMap[(inputDataBuffer[sidx + 1] << 2) & 077];
-        } else
-            destinationDataBuffer[didx++] = base64URLEncMap[(inputDataBuffer[sidx] << 4) & 077];
+    encodedLength = WTF__base64URLEncode(reinterpret_cast<const char*>(data.data()), data.size(), reinterpret_cast<char*>(ptr), encodedLength);
+    if (result.length() != encodedLength) {
+        return result.substringSharingImpl(0, encodedLength);
     }
+    return result;
+}
 
-    while (didx < destinationDataBufferSize)
-        destinationDataBuffer[didx++] = '=';
+// https://github.com/oven-sh/WebKit/blob/b7bc2ba65db9774d201018f2e1a0a891d6365c13/Source/JavaScriptCore/runtime/DatePrototype.cpp#L323-L345
+size_t toISOString(JSC::VM& vm, double date, char in[64])
+{
+    if (!std::isfinite(date))
+        return 0;
 
-    return destinationDataBufferSize;
+    GregorianDateTime gregorianDateTime;
+    vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
+
+    // Maximum amount of space we need in buffer: 7 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
+    // 6 for formatting and one for null termination = 28. We add one extra character to allow us to force null termination.
+    char buffer[28];
+    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
+    int ms = static_cast<int>(fmod(date, msPerSecond));
+    if (ms < 0)
+        ms += msPerSecond;
+
+    int charactersWritten;
+    if (gregorianDateTime.year() > 9999 || gregorianDateTime.year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
+    else
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime.year(), gregorianDateTime.month() + 1, gregorianDateTime.monthDay(), gregorianDateTime.hour(), gregorianDateTime.minute(), gregorianDateTime.second(), ms);
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
+
+    memcpy(in, buffer, charactersWritten + 1);
+    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
+        return 0;
+
+    return charactersWritten;
+}
+
 }

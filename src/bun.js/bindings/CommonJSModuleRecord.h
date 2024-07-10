@@ -1,6 +1,8 @@
 #pragma once
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "headers-handwritten.h"
+#include "wtf/NakedPtr.h"
 
 namespace Zig {
 class GlobalObject;
@@ -17,45 +19,56 @@ namespace Bun {
 JSC_DECLARE_HOST_FUNCTION(jsFunctionCreateCommonJSModule);
 JSC_DECLARE_HOST_FUNCTION(jsFunctionLoadModule);
 
+void populateESMExports(
+    JSC::JSGlobalObject* globalObject,
+    JSC::JSValue result,
+    WTF::Vector<JSC::Identifier, 4>& exportNames,
+    JSC::MarkedArgumentBuffer& exportValues,
+    bool ignoreESModuleAnnotation);
+
 class JSCommonJSModule final : public JSC::JSDestructibleObject {
 public:
     using Base = JSC::JSDestructibleObject;
-    static constexpr unsigned StructureFlags = Base::StructureFlags | JSC::OverridesPut;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
 
-    mutable JSC::WriteBarrier<JSC::JSString> m_id;
-    mutable JSC::WriteBarrier<JSC::Unknown> m_filename;
-    mutable JSC::WriteBarrier<JSC::JSString> m_dirname;
+    mutable JSC::WriteBarrier<JSString> m_id;
+    mutable JSC::WriteBarrier<Unknown> m_filename;
+    mutable JSC::WriteBarrier<JSString> m_dirname;
     mutable JSC::WriteBarrier<Unknown> m_paths;
-    mutable JSC::WriteBarrier<JSC::JSSourceCode> sourceCode;
+    mutable JSC::WriteBarrier<Unknown> m_parent;
     bool ignoreESModuleAnnotation { false };
+    JSC::SourceCode sourceCode = JSC::SourceCode();
+
+    void setSourceCode(JSC::SourceCode&& sourceCode);
 
     static void destroy(JSC::JSCell*);
     ~JSCommonJSModule();
 
+    void clearSourceCode() { sourceCode = JSC::SourceCode(); }
+
     void finishCreation(JSC::VM& vm,
         JSC::JSString* id, JSValue filename,
-        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
 
     static JSC::Structure* createStructure(JSC::JSGlobalObject* globalObject);
 
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource, bool isBuiltIn);
-    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource resolvedSource)
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource, bool isBuiltIn);
+    inline bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& sourceURL, ResolvedSource& resolvedSource)
     {
         return evaluate(globalObject, sourceURL, resolvedSource, false);
     }
     bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const SyntheticSourceProvider::SyntheticSourceGenerator& generator);
-    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, JSSourceCode* sourceCode);
+    bool evaluate(Zig::GlobalObject* globalObject, const WTF::String& key, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(JSC::VM& vm, JSC::Structure* structure,
         JSC::JSString* id,
         JSValue filename,
-        JSC::JSString* dirname, JSC::JSSourceCode* sourceCode);
+        JSC::JSString* dirname, const JSC::SourceCode& sourceCode);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
         const WTF::String& key,
-        JSValue exportsObject,
-        bool hasEvaluated = false);
+        JSValue exportsObject, bool hasEvaluated, JSValue parent);
 
     static JSCommonJSModule* create(
         Zig::GlobalObject* globalObject,
@@ -65,22 +78,32 @@ public:
     static JSObject* createBoundRequireFunction(VM& vm, JSGlobalObject* lexicalGlobalObject, const WTF::String& pathString);
 
     void toSyntheticSource(JSC::JSGlobalObject* globalObject,
-        JSC::Identifier moduleKey,
+        const JSC::Identifier& moduleKey,
         Vector<JSC::Identifier, 4>& exportNames,
         JSC::MarkedArgumentBuffer& exportValues);
 
     JSValue exportsObject();
     JSValue id();
 
-    DECLARE_VISIT_CHILDREN;
-
-    static bool put(JSC::JSCell* cell, JSC::JSGlobalObject* globalObject,
-        JSC::PropertyName propertyName, JSC::JSValue value,
-        JSC::PutPropertySlot& slot);
+    bool load(JSC::VM& vm, Zig::GlobalObject* globalObject, WTF::NakedPtr<JSC::Exception>&);
 
     DECLARE_INFO;
+    DECLARE_VISIT_CHILDREN;
+
+    static void analyzeHeap(JSCell*, JSC::HeapAnalyzer&);
+
     template<typename, SubspaceAccess mode>
-    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm);
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<JSCommonJSModule, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForCommonJSModuleRecord.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForCommonJSModuleRecord = std::forward<decltype(space)>(space); });
+    }
 
     bool hasEvaluated = false;
 
@@ -90,31 +113,29 @@ public:
     }
 };
 
-JSCommonJSModule* createCommonJSModuleWithoutRunning(
-    Zig::GlobalObject* globalObject,
-    Ref<Zig::SourceProvider> sourceProvider,
-    const WTF::String& sourceURL,
-    ResolvedSource source);
-
 JSC::Structure* createCommonJSModuleStructure(
     Zig::GlobalObject* globalObject);
 
 std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source,
+    JSC::JSValue specifierValue,
+    ResolvedSource& source,
     bool isBuiltIn);
 
 inline std::optional<JSC::SourceCode> createCommonJSModule(
     Zig::GlobalObject* globalObject,
-    ResolvedSource source)
+    JSC::JSValue specifierValue,
+    ResolvedSource& source)
 {
-    return createCommonJSModule(globalObject, source, false);
+    return createCommonJSModule(globalObject, specifierValue, source, false);
 }
 
 class RequireResolveFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireResolveFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
     DECLARE_INFO;
 
@@ -128,6 +149,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireResolveFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
@@ -137,7 +159,11 @@ public:
 class RequireFunctionPrototype final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+
     static RequireFunctionPrototype* create(JSC::JSGlobalObject* globalObject);
+    static Structure* createStructure(VM& vm, JSC::JSGlobalObject* globalObject);
+
+    DECLARE_INFO;
 
     RequireFunctionPrototype(
         JSC::VM& vm,
@@ -149,12 +175,11 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(RequireFunctionPrototype, Base);
         return &vm.plainObjectSpace();
     }
 
-    DECLARE_INFO;
-
-    void finishCreation(JSC::VM& vm);
+    void finishCreation(JSC::VM&);
 };
 
 } // namespace Bun

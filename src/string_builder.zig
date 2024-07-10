@@ -4,7 +4,7 @@ const bun = @import("root").bun;
 const Environment = bun.Environment;
 const string = @import("string_types.zig").string;
 const StringBuilder = @This();
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const DebugHashTable = if (Environment.allow_assert) std.AutoHashMapUnmanaged(u64, void) else void;
 
@@ -23,12 +23,16 @@ pub fn initCapacity(
     };
 }
 
+pub fn countZ(this: *StringBuilder, slice: string) void {
+    this.cap += slice.len + 1;
+}
+
 pub fn count(this: *StringBuilder, slice: string) void {
     this.cap += slice.len;
 }
 
 pub fn allocate(this: *StringBuilder, allocator: Allocator) !void {
-    var slice = try allocator.alloc(u8, this.cap);
+    const slice = try allocator.alloc(u8, this.cap);
     this.ptr = slice.ptr;
     this.len = 0;
 }
@@ -38,16 +42,51 @@ pub fn deinit(this: *StringBuilder, allocator: Allocator) void {
     allocator.free(this.ptr.?[0..this.cap]);
 }
 
-pub fn append16(this: *StringBuilder, slice: []const u16) ?[:0]u8 {
+pub fn count16(this: *StringBuilder, slice: []const u16) void {
+    const result = bun.simdutf.length.utf8.from.utf16.le(slice);
+    this.cap += result;
+}
+
+pub fn count16Z(this: *StringBuilder, slice: [:0]const u16) void {
+    const result = bun.strings.elementLengthUTF16IntoUTF8([:0]const u16, slice);
+    this.cap += result + 1;
+}
+
+pub fn append16(this: *StringBuilder, slice: []const u16, fallback_allocator: std.mem.Allocator) ?[:0]u8 {
     var buf = this.writable();
+    if (slice.len == 0) {
+        buf[0] = 0;
+        this.len += 1;
+        return buf[0..0 :0];
+    }
+
     const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(slice, buf);
     if (result.status == .success) {
         this.len += result.count + 1;
         buf[result.count] = 0;
         return buf[0..result.count :0];
+    } else {
+        var list = std.ArrayList(u8).init(fallback_allocator);
+        var out = bun.strings.toUTF8ListWithTypeBun(&list, []const u16, slice) catch return null;
+        out.append(0) catch return null;
+        return list.items[0 .. list.items.len - 1 :0];
+    }
+}
+
+pub fn appendZ(this: *StringBuilder, slice: string) [:0]const u8 {
+    if (comptime Environment.allow_assert) {
+        assert(this.len + 1 <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
     }
 
-    return null;
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    this.ptr.?[this.len + slice.len] = 0;
+    const result = this.ptr.?[this.len..this.cap][0..slice.len :0];
+    this.len += slice.len + 1;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return result;
 }
 
 pub fn append(this: *StringBuilder, slice: string) string {
@@ -101,7 +140,7 @@ pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
         assert(this.ptr != null); // must call allocate first
     }
 
-    var buf = this.ptr.?[this.len..this.cap];
+    const buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     this.len += out.len;
 
@@ -116,7 +155,7 @@ pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype)
         assert(this.ptr != null); // must call allocate first
     }
 
-    var buf = this.ptr.?[this.len..this.cap];
+    const buf = this.ptr.?[this.len..this.cap];
     const out = std.fmt.bufPrint(buf, str, args) catch unreachable;
     const off = this.len;
     this.len += out.len;

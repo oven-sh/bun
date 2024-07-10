@@ -1,15 +1,15 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
-const errno = os.errno;
+const errno = posix.errno;
 const zeroes = mem.zeroes;
-
+const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -142,7 +142,7 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {
     //     pub const struct_fstore = extern struct {
     //     fst_flags: c_uint,
     //     fst_posmode: c_int,
@@ -288,13 +288,14 @@ pub const SystemErrno = enum(u8) {
     pub const max = 107;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
     pub fn label(this: SystemErrno) ?[]const u8 {
@@ -491,7 +492,7 @@ pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "hw.memsize",
         &memory_,
         &size,
@@ -511,7 +512,7 @@ pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "kern.boottime",
         &uptime_,
         &size,
@@ -532,7 +533,7 @@ pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "vm.loadavg",
         &loadavg_,
         &size,
@@ -544,10 +545,10 @@ pub fn getSystemLoadavg() [3]f64 {
 
     const loadavg = loadavg_[0];
     const scale = @as(f64, @floatFromInt(loadavg.fscale));
-    return [3]f64{
-        @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
+    return .{
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
     };
 }
 
@@ -566,8 +567,8 @@ pub const PROCESSOR_INFO_MAX = 1024;
 
 pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t, out_processor_count: *std.c.natural_t, out_processor_info: *processor_info_array_t, out_processor_infoCnt: *std.c.mach_msg_type_number_t) std.c.E;
 
-pub extern fn getuid(...) std.os.uid_t;
-pub extern fn getgid(...) std.os.gid_t;
+pub extern fn getuid(...) std.posix.uid_t;
+pub extern fn getgid(...) std.posix.gid_t;
 
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
@@ -616,11 +617,11 @@ const IO_CTL_RELATED = struct {
         return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
     }
     pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hexadecimal));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hexadecimal));
+    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
     pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hexadecimal));
+    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
     pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
         return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
     }
@@ -728,37 +729,14 @@ const IO_CTL_RELATED = struct {
 
 pub usingnamespace IO_CTL_RELATED;
 
-pub const RemoveFileFlags = struct {
-    /// If path is a directory, recurse (depth first traversal)
-    pub const recursive: u32 = (1 << 0);
-    /// Remove contents but not directory itself
-    pub const keep_parent: u32 = (1 << 1);
-    /// 7 pass DoD algorithm
-    pub const secure_7_pass: u32 = (1 << 2);
-    /// 35-pass Gutmann algorithm (overrides REMOVEFILE_SECURE_7_PASS)
-    pub const secure_35_pass: u32 = (1 << 3);
-    /// 1 pass single overwrite),
-    pub const secure_1_pass: u32 = (1 << 4);
-    /// 3 pass overwrite
-    pub const secure_3_pass: u32 = (1 << 5);
-    /// Single-pass overwrite, with 0 instead of random data
-    pub const secure_1_pass_zero: u32 = (1 << 6);
-    /// Cross mountpoints when deleting recursively. << 6),
-    pub const cross_mount: u32 = (1 << 7);
-    /// Paths may be longer than PATH_MAX - requires temporarily changing cwd
-    pub const allow_long_paths: u32 = (1 << 8);
-};
-pub const removefile_state_t = opaque {};
-pub extern fn removefileat(fd: c_int, path: [*c]const u8, state: ?*removefile_state_t, flags: u32) c_int;
-
 // As of Zig v0.11.0-dev.1393+38eebf3c4, ifaddrs.h is not included in the headers
 pub const ifaddrs = extern struct {
     ifa_next: ?*ifaddrs,
     ifa_name: [*:0]u8,
     ifa_flags: c_uint,
-    ifa_addr: ?*std.os.sockaddr,
-    ifa_netmask: ?*std.os.sockaddr,
-    ifa_dstaddr: ?*std.os.sockaddr,
+    ifa_addr: ?*std.posix.sockaddr,
+    ifa_netmask: ?*std.posix.sockaddr,
+    ifa_dstaddr: ?*std.posix.sockaddr,
     ifa_data: *anyopaque,
 };
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
@@ -788,15 +766,57 @@ pub const sockaddr_dl = extern struct {
 
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
+    @cInclude("sys/fcntl.h");
+    @cInclude("sys/socket.h");
 });
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
+    pub const DUPFD = This.F_DUPFD;
+};
 
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
 
-pub const Mode = std.os.mode_t;
+pub const Mode = std.posix.mode_t;
 
-pub const E = std.os.E;
+pub const E = std.posix.E;
+pub const S = std.posix.S;
+
 pub fn getErrno(rc: anytype) E {
-    return std.c.getErrno(rc);
+    if (rc == -1) {
+        return @enumFromInt(std.c._errno().*);
+    } else {
+        return .SUCCESS;
+    }
 }
+
+pub extern "c" fn umask(Mode) Mode;
+
+// #define RENAME_SECLUDE                  0x00000001
+// #define RENAME_SWAP                     0x00000002
+// #define RENAME_EXCL                     0x00000004
+// #define RENAME_RESERVED1                0x00000008
+// #define RENAME_NOFOLLOW_ANY             0x00000010
+pub const RENAME_SECLUDE = 0x00000001;
+pub const RENAME_SWAP = 0x00000002;
+pub const RENAME_EXCL = 0x00000004;
+pub const RENAME_RESERVED1 = 0x00000008;
+pub const RENAME_NOFOLLOW_ANY = 0x00000010;
+
+// int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags);
+pub extern "c" fn renameatx_np(fromfd: c_int, from: ?[*:0]const u8, tofd: c_int, to: ?[*:0]const u8, flags: c_uint) c_int;
+
+pub const CLOCK_REALTIME = 0;
+pub const CLOCK_MONOTONIC = 6;
+pub const CLOCK_MONOTONIC_RAW = 4;
+pub const CLOCK_MONOTONIC_RAW_APPROX = 5;
+pub const CLOCK_UPTIME_RAW = 8;
+pub const CLOCK_UPTIME_RAW_APPROX = 9;
+pub const CLOCK_PROCESS_CPUTIME_ID = 12;
+pub const CLOCK_THREAD_CPUTIME_ID = 1;
+
+pub const netdb = @cImport({
+    @cInclude("netdb.h");
+});

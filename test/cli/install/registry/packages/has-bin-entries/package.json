@@ -1,0 +1,107 @@
+{
+	"name": "has-bin-entries",
+	"versions": {
+		"1.0.0": {
+			"name": "has-bin-entries",
+			"version": "1.0.0",
+			"bin": {
+				"has-bin-entries": "bin.js",
+				"has-bin-entries-with-exit-code": "bin-with-exit-code.js",
+				"has-bin-entries-with-require": "bin-with-require.js",
+				"has-bin-entries-with-relative-require": "bin-with-relative-require.js",
+				"has-bin-entries-get-pwd": "bin-get-pwd.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "has-bin-entries@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-kB8BCyiyAtpp7hfZZhu9a17JhaUNDDp80eYKPUJz+5RFEQWpobdpi+iary6CFJTMowsFiWPNYvkjaPTEYKKXow==",
+				"shasum": "76bf221826314543733340e1829715498ba77887",
+				"tarball": "http://localhost:4873/has-bin-entries/-/has-bin-entries-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"2.0.0": {
+			"name": "has-bin-entries",
+			"version": "2.0.0",
+			"bin": {
+				"has-bin-entries": "bin.js",
+				"has-bin-entries-with-exit-code": "bin-with-exit-code.js",
+				"has-bin-entries-with-require": "bin-with-require.js",
+				"has-bin-entries-with-relative-require": "bin-with-relative-require.js",
+				"has-bin-entries-get-pwd": "bin-get-pwd.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"_id": "has-bin-entries@2.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Dom33SMBjp97qRnrXxJuIPFL6lRDI7MaRRvZbIx4LHLcyJWA+5zEBQCSlCKqskyvdnA9OKnVgJdbceUmR7uAAw==",
+				"shasum": "55474ba0b4b5836147508385db02ab0a7ff3098c",
+				"tarball": "http://localhost:4873/has-bin-entries/-/has-bin-entries-2.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.5.0": {
+			"name": "has-bin-entries",
+			"version": "1.5.0",
+			"bin": {
+				"has-bin-entries": "bin.js",
+				"has-bin-entries-with-exit-code": "bin-with-exit-code.js",
+				"has-bin-entries-with-require": "bin-with-require.js",
+				"has-bin-entries-with-relative-require": "bin-with-relative-require.js",
+				"has-bin-entries-get-pwd": "bin-get-pwd.js"
+			},
+			"dependencies": {
+				"no-deps": "1.0.0"
+			},
+			"gitHead": "e0a78fdc023bcc2f4d739c6ba9d5c026a1b586ae",
+			"_id": "has-bin-entries@1.5.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-J5M3LZLqJT6wpMDfCEF/Jv/JOLr0BdDggkNp33d/TpNSEGyXolETM6LOERM8eGJIfCV+JwdVkkxdy1kA5HDUJg==",
+				"shasum": "bed673adef0afa8887fa43b3c9b9ab7822718e55",
+				"tarball": "http://localhost:4873/has-bin-entries/-/has-bin-entries-1.5.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-15T01:31:41.560Z",
+		"created": "2023-11-01T22:05:08.739Z",
+		"1.0.0": "2023-11-01T22:05:08.739Z",
+		"2.0.0": "2023-11-01T22:05:09.035Z",
+		"1.5.0": "2023-11-15T01:31:41.560Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.5.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"has-bin-entries-1.0.0.tgz": {
+			"shasum": "76bf221826314543733340e1829715498ba77887",
+			"version": "1.0.0"
+		},
+		"has-bin-entries-2.0.0.tgz": {
+			"shasum": "55474ba0b4b5836147508385db02ab0a7ff3098c",
+			"version": "2.0.0"
+		},
+		"has-bin-entries-1.5.0.tgz": {
+			"shasum": "bed673adef0afa8887fa43b3c9b9ab7822718e55",
+			"version": "1.5.0"
+		}
+	},
+	"_rev": "6-f0548770ac2daf43",
+	"_id": "has-bin-entries",
+	"readme": "ERROR: No README data found!"
+}

@@ -50,7 +50,7 @@ export default jsx(
 To override the default loader specified in the `new Bun.Transpiler()` constructor, pass a second argument to `.transformSync()`.
 
 ```ts
-await transpiler.transform("<div>hi!</div>", "tsx");
+transpiler.transformSync("<div>hi!</div>", "tsx");
 ```
 
 {% details summary="Nitty gritty" %}
@@ -76,7 +76,7 @@ await transpiler.transform("<div>hi!</div>", "tsx");
 ```
 
 {% details summary="Nitty gritty" %}
-The `.tranform()` method runs the transpiler in Bun's worker threadpool, so if you run it 100 times, it will run it across `Math.floor($cpu_count * 0.8)` threads, without blocking the main JavaScript thread.
+The `.transform()` method runs the transpiler in Bun's worker threadpool, so if you run it 100 times, it will run it across `Math.floor($cpu_count * 0.8)` threads, without blocking the main JavaScript thread.
 
 If your code uses a macro, it will potentially spawn a new copy of Bun's JavaScript runtime environment in that new thread.
 {% /details %}

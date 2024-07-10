@@ -1,7 +1,6 @@
-import assert from "assert";
-import dedent from "dedent";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { join } from "node:path";
+import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("edgecase/EmptyFile", {
@@ -36,7 +35,7 @@ describe("bundler", () => {
     },
     target: "bun",
     run: {
-      stdout: "a/b",
+      stdout: join("a", "b"),
     },
   });
   itBundled("edgecase/ImportStarFunction", {
@@ -380,13 +379,13 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/RequireUnknownExtension", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         require('./x.aaaa')
       `,
       "/x.aaaa": `x`,
     },
+    outdir: "/out",
   });
   itBundled("edgecase/PackageJSONDefaultConditionRequire", {
     files: {
@@ -573,7 +572,7 @@ describe("bundler", () => {
             break;
         }
         console.log(a);
-    
+
         var x = 123, y = 45;
         switch (console) {
           case 456:
@@ -581,14 +580,14 @@ describe("bundler", () => {
         }
         var y = 67;
         console.log(x, y);
-    
+
         var z = 123;
         switch (console) {
           default:
             var z = typeof z;
         }
         console.log(z);
-    
+
         var A = 1, B = 2;
         switch (A) {
           case A:
@@ -659,7 +658,6 @@ describe("bundler", () => {
     },
   });
   itBundled("edgecase/AbsolutePathShouldNotResolveAsRelative", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         console.log(1);
@@ -1038,4 +1036,287 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/UsingWithSixImports", {
+    files: {
+      "/entry.js": /* js */ `
+        import { Database } from 'bun:sqlite';
+
+        import 'bun';
+        import 'bun:ffi';
+        import 'bun:jsc';
+        import 'node:assert';
+        import 'bun:test';
+
+        using a = new Database();
+
+        export { a };
+      `,
+    },
+    target: "bun",
+  });
+  itBundled("edgecase/EmitInvalidSourceMap1", {
+    files: {
+      "/src/index.ts": /* ts */ `
+        const y = await import("./second.mts");
+        import * as z from "./third.mts";
+        const v = await import("./third.mts");
+        console.log(z, v, y);
+      `,
+      "/src/second.mts": /* ts */ `
+        export default "swag";
+      `,
+      "/src/third.mts": /* ts */ `
+        export default "bun";
+      `,
+    },
+    outdir: "/out",
+    target: "bun",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    splitting: true,
+  });
+  // chunk-concat weaved mappings together incorrectly causing the `console`
+  // token to be -2, thus breaking the rest of the mappings in the file
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        import * as react from "react";
+        console.log(react);
+      `,
+      "/node_modules/react/index.js": `
+        var _ = module;
+        sideEffect(() =>   {});
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../node_modules/react/index.js", "../entry.js"],
+        mappingsExactMatch: "uYACA,WAAW,IAAQ,EAAE,ICDrB,eACA,QAAQ,IAAI,CAAK",
+      },
+    },
+  });
+  // chunk-concat forgets to de-duplicate source indicies
+  // chunk-concat ignores all but the first instance of a chunk
+  itBundled("edgecase/EmitInvalidSourceMap2", {
+    files: {
+      "/entry.js": `
+        const a = new TextEncoder();
+        console.log('hey!')
+        const d = new TextEncoder();
+
+        const b = { hello: 'world' };
+
+        const c = new Set([
+        ]);
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+        console.log('hey!')
+      `,
+    },
+    outdir: "/out",
+    sourceMap: "external",
+    minifySyntax: true,
+    minifyIdentifiers: true,
+    minifyWhitespace: true,
+    snapshotSourceMap: {
+      "entry.js.map": {
+        files: ["../entry.js"],
+        mappingsExactMatch:
+          "AACQ,QAAQ,IAAI,MAAM,EAOlB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM,EAClB,QAAQ,IAAI,MAAM",
+      },
+    },
+  });
+  itBundled("edgecase/NoUselessConstructorTS", {
+    files: {
+      "/entry.ts": `
+        class A {
+          constructor(...args) {
+            console.log(JSON.stringify({ args, self: this }));
+          }
+          field = 1;
+        }
+        class B extends A {}
+        class C extends A { field = 2 }
+        class D extends A { public field = 3 }
+        class E extends A { constructor(public y: number, a) { super(a); }; public field = 4 }
+        new A("arg1", "arg2");
+        new B("arg1", "arg2");
+        new C("arg1", "arg2");
+        new D("arg1", "arg2");
+        new E("arg1", "arg2");
+      `,
+    },
+    run: {
+      stdout: `
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg1","arg2"],"self":{"field":1}}
+        {"args":["arg2"],"self":{"field":1}}
+      `,
+    },
+    onAfterBundle(api) {
+      const content = api.readFile("out.js");
+      const count = content.split("constructor").length - 1;
+      expect(count, "should only emit two constructors: " + content).toBe(2);
+    },
+  });
+  itBundled("edgecase/EnumInliningRopeStringPoison", {
+    files: {
+      "/entry.ts": `
+        const enum A1 {
+          B = "1" + "2",
+          C = "3" + B,
+        };
+        console.log(A1.B, A1.C);
+
+        const enum A2 {
+          B = "1" + "2",
+          C = ("3" + B) + "4",
+        };
+        console.log(A2.B, A2.C);
+      `,
+    },
+    run: {
+      stdout: "12 312\n12 3124",
+    },
+  });
+  itBundled("edgecase/ProtoNullProtoInlining", {
+    files: {
+      "/entry.ts": `
+        console.log({ __proto__: null }.__proto__ !== void 0)
+      `,
+    },
+    run: {
+      stdout: "false",
+    },
+  });
+  itBundled("edgecase/ConstantFoldingShiftOperations", {
+    files: {
+      "/entry.ts": `
+        capture(421 >> -542)
+        capture(421 >>> -542)
+        capture(1 << 32)
+        capture(1 >> 32)
+        capture(1 >>> 32)
+        capture(47849312 << 34)
+        capture(-9 >> 1)
+        capture(-5 >> 1)
+      `,
+    },
+    minifySyntax: true,
+    capture: ["105", "105", "1", "1", "1", "191397248", "-5", "-3"],
+  });
+  itBundled("edgecase/ConstantFoldingBitwiseCoersion", {
+    files: {
+      "/entry.ts": `
+        capture(0 | 0)
+        capture(12582912 | 0)
+        capture(0xc00000 | 0)
+        capture(Infinity | 0)
+        capture(-Infinity | 0)
+        capture(NaN | 0)
+        // u32 limits
+        capture(-4294967295 | 0)
+        capture(-4294967296 | 0)
+        capture(-4294967297 | 0)
+        capture(4294967295 | 0)
+        capture(4294967296 | 0)
+        capture(4294967297 | 0)
+        // i32 limits
+        capture(-2147483647 | 0)
+        capture(-2147483648 | 0)
+        capture(-2147483649 | 0)
+        capture(2147483647 | 0)
+        capture(2147483648 | 0)
+        capture(2147483649 | 0)
+        capture(0.5 | 0)
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "0",
+      "12582912",
+      "12582912",
+      "0",
+      "0",
+      "0",
+      "1",
+      "0",
+      "-1",
+      "-1",
+      "0",
+      "1",
+      "-2147483647",
+      "-2147483648",
+      "2147483647",
+      "2147483647",
+      "-2147483648",
+      "-2147483647",
+      "0",
+    ],
+  });
+  itBundled("edgecase/EnumInliningNanBoxedEncoding", {
+    files: {
+      "/main.ts": `
+        import { Enum } from './other.ts';
+        capture(Enum.a);
+        capture(Enum.b);
+        capture(Enum.c);
+        capture(Enum.d);
+        capture(Enum.e);
+        capture(Enum.f);
+        capture(Enum.g);
+      `,
+      "/other.ts": `
+        export const enum Enum {
+          a = 0,
+          b = NaN,
+          c = (0 / 0) + 1,
+          d = Infinity,
+          e = -Infinity,
+          f = 3e450,
+          // https://float.exposed/0xffefffffffffffff
+          g = -1.79769313486231570815e+308,
+        }
+      `,
+    },
+    minifySyntax: true,
+    capture: [
+      "0 /* a */",
+      "NaN /* b */",
+      "NaN /* c */",
+      "1 / 0 /* d */",
+      "-1 / 0 /* e */",
+      "1 / 0 /* f */",
+      // should probably fix this
+      "-179769313486231570000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000 /* g */",
+    ],
+  });
+  // Stack overflow possibility
+  itBundled("edgecase/AwsCdkLib", {
+    files: {
+      "entry.js": `import * as aws from ${JSON.stringify(require.resolve("aws-cdk-lib"))}; aws;`,
+    },
+    target: "bun",
+    run: true,
+  });
+
+  // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
+  const requireTranspilationListESM = [
+    // input, output:bun, output:node
+    ["require", "import.meta.require", "__require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+    ["typeof require", "import.meta.require", "typeof __require"],
+  ];
+
+  // itBundled('edgecase/RequireTranspilation')
 });

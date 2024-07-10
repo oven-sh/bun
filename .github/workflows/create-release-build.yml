@@ -1,0 +1,183 @@
+name: Create Release Build
+run-name: Compile Bun v${{ inputs.version }} by ${{ github.actor }}
+
+concurrency:
+  group: release
+  cancel-in-progress: true
+
+permissions:
+  contents: write
+  actions: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        type: string
+        required: true
+        description: "Release version. Example: 1.1.4. Exclude the 'v' prefix."
+      tag:
+        type: string
+        required: true
+        description: "GitHub tag to use"
+      clobber:
+        type: boolean
+        required: false
+        default: false
+        description: "Overwrite existing release artifacts?"
+  release:
+    types:
+      - created
+
+jobs:
+  notify-start:
+    if: ${{ github.repository_owner == 'oven-sh' }}
+    name: Notify Start
+    runs-on: ubuntu-latest
+    steps:
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK_PUBLIC }}
+          nodetail: true
+          color: "#1F6FEB"
+          title: "Bun v${{ inputs.version }} is compiling"
+          description: |
+            ### @${{ github.actor }} started compiling Bun v${{inputs.version}}
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.BUN_DISCORD_GITHUB_CHANNEL_WEBHOOK }}
+          nodetail: true
+          color: "#1F6FEB"
+          title: "Bun v${{ inputs.version }} is compiling"
+          description: |
+            ### @${{ github.actor }} started compiling Bun v${{inputs.version}}
+
+            **[View logs](https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }})**
+  linux-x64:
+    name: Build linux-x64
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      tag: linux-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  linux-x64-baseline:
+    name: Build linux-x64-baseline
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-linux-x64' || 'ubuntu-latest' }}
+      tag: linux-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+  linux-aarch64:
+    name: Build linux-aarch64
+    uses: ./.github/workflows/build-linux.yml
+    secrets: inherit
+    with:
+      runs-on: namespace-profile-bun-ci-linux-aarch64
+      tag: linux-aarch64
+      arch: aarch64
+      cpu: native
+      canary: false
+  darwin-x64:
+    name: Build darwin-x64
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      tag: darwin-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  darwin-x64-baseline:
+    name: Build darwin-x64-baseline
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-12-large' || 'macos-12' }}
+      tag: darwin-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+  darwin-aarch64:
+    name: Build darwin-aarch64
+    uses: ./.github/workflows/build-darwin.yml
+    secrets: inherit
+    with:
+      runs-on: ${{ github.repository_owner == 'oven-sh' && 'namespace-profile-bun-ci-darwin-aarch64' || 'macos-12' }}
+      tag: darwin-aarch64
+      arch: aarch64
+      cpu: native
+      canary: false
+  windows-x64:
+    name: Build windows-x64
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+    with:
+      runs-on: windows
+      tag: windows-x64
+      arch: x64
+      cpu: haswell
+      canary: false
+  windows-x64-baseline:
+    name: Build windows-x64-baseline
+    uses: ./.github/workflows/build-windows.yml
+    secrets: inherit
+    with:
+      runs-on: windows
+      tag: windows-x64-baseline
+      arch: x64
+      cpu: nehalem
+      canary: false
+
+  upload-artifacts:
+    needs:
+      - linux-x64
+      - linux-x64-baseline
+      - linux-aarch64
+      - darwin-x64
+      - darwin-x64-baseline
+      - darwin-aarch64
+      - windows-x64
+      - windows-x64-baseline
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: bun-releases
+          pattern: bun-*
+          merge-multiple: true
+          github-token: ${{ github.token }}
+      - name: Check for Artifacts
+        run: |
+          if [ ! -d "bun-releases" ] || [ -z "$(ls -A bun-releases)" ]; then
+            echo "Error: No artifacts were downloaded or 'bun-releases' directory does not exist."
+            exit 1  # Fail the job if the condition is met
+          else
+            echo "Artifacts downloaded successfully."
+          fi
+      - name: Send Message
+        uses: sarisia/actions-status-discord@v1
+        with:
+          webhook: ${{ secrets.DISCORD_WEBHOOK }}
+          nodetail: true
+          color: "#FF0000"
+          title: "Bun v${{ inputs.version }} release artifacts uploaded"
+      - name: "Upload Artifacts"
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          # Unzip one level deep each artifact
+          cd bun-releases
+          for f in *.zip; do
+            unzip -o $f
+          done
+          cd ..
+          gh release upload --repo=${{ github.repository }} ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.tag || github.event.release.id }} ${{ inputs.clobber && '--clobber' || '' }} bun-releases/*.zip

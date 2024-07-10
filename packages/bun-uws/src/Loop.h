@@ -25,6 +25,8 @@
 #include <libusockets.h>
 #include <iostream>
 
+extern "C" int bun_is_exiting();
+
 namespace uWS {
 struct Loop {
 private:
@@ -58,12 +60,6 @@ private:
         for (auto &p : loopData->postHandlers) {
             p.second((Loop *) loop);
         }
-
-        /* After every event loop iteration, we must not hold the cork buffer */
-        if (loopData->corkedSocket) {
-            std::cerr << "Error: Cork buffer must not be held across event loop iterations!" << std::endl;
-            std::terminate();
-        }
     }
 
     Loop() = delete;
@@ -95,14 +91,17 @@ private:
     /* What to do with loops created with existingNativeLoop? */
     struct LoopCleaner {
         ~LoopCleaner() {
-            if(loop && cleanMe) {
+            // There's no need to call this destructor if Bun is in the process of exiting.
+            // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
+            // such as uv_tty_t 
+            if(loop && cleanMe && !bun_is_exiting()) {
                 loop->free();
             }
         }
         Loop *loop = nullptr;
         bool cleanMe = false;
     };
-
+    
     static LoopCleaner &getLazyLoop() {
         static thread_local LoopCleaner lazyLoop;
         return lazyLoop;
@@ -132,7 +131,7 @@ public:
         LoopData *loopData = (LoopData *) us_loop_ext((us_loop_t *) this);
 
         /* Stop and free dateTimer first */
-        us_timer_close(loopData->dateTimer);
+        us_timer_close(loopData->dateTimer, 1);
 
         loopData->~LoopData();
         /* uSockets will track whether this loop is owned by us or a borrowed alien loop */

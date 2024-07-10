@@ -27,6 +27,7 @@ export const enum Loader {
   base64 = 11,
   dataurl = 12,
   text = 13,
+  sqlite = 14,
 }
 export const LoaderKeys: {
   1: "jsx";
@@ -55,6 +56,8 @@ export const LoaderKeys: {
   dataurl: "dataurl";
   13: "text";
   text: "text";
+  14: "sqlite";
+  sqlite: "sqlite";
 };
 export const enum FrameworkEntryPointType {
   client = 1,
@@ -201,6 +204,7 @@ export const enum DotEnvBehavior {
   disable = 1,
   prefix = 2,
   load_all = 3,
+  load_all_without_inlining = 4,
 }
 export const DotEnvBehaviorKeys: {
   1: "disable";
@@ -209,6 +213,8 @@ export const DotEnvBehaviorKeys: {
   prefix: "prefix";
   3: "load_all";
   load_all: "load_all";
+  4: "load_all_without_inlining";
+  load_all_without_inlining: "load_all_without_inlining";
 };
 export const enum SourceMapMode {
   inline_into_file = 1,
@@ -349,14 +355,8 @@ export interface StackFrame {
 }
 
 export interface StackFramePosition {
-  source_offset: int32;
   line: int32;
-  line_start: int32;
-  line_stop: int32;
-  column_start: int32;
-  column_stop: int32;
-  expression_start: int32;
-  expression_stop: int32;
+  column: int32;
 }
 
 export interface SourceLine {
@@ -546,6 +546,7 @@ export interface TransformOptions {
   main_fields?: string[];
   target?: Target;
   serve?: boolean;
+  env_files?: string[];
   extension_order?: string[];
   framework?: FrameworkConfig;
   router?: RouteConfig;
@@ -719,6 +720,7 @@ export interface BunInstall {
   global_bin_dir?: string;
   frozen_lockfile?: boolean;
   exact?: boolean;
+  concurrent_scripts?: uint32;
 }
 
 export interface ClientServerModule {

@@ -1,8 +1,15 @@
-import { expect, test } from "bun:test";
+import { describe, expect, test, it, beforeAll, setDefaultTimeout } from "bun:test";
 import * as dns from "node:dns";
 import * as dns_promises from "node:dns/promises";
 import * as fs from "node:fs";
 import * as os from "node:os";
+import * as util from "node:util";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
+
+const isWindows = process.platform === "win32";
 
 // TODO:
 test("it exists", () => {
@@ -56,131 +63,255 @@ test("it exists", () => {
 });
 
 // //TODO: use a bun.sh SRV for testing
-test("dns.resolveSrv (_test._tcp.test.socketify.dev)", done => {
+test("dns.resolveSrv (_test._tcp.test.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveSrv("_test._tcp.test.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
-    expect(results[0].priority).toBe(50);
-    expect(results[0].weight).toBe(50);
-    expect(results[0].port).toBe(80);
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      expect(results[0].name).toBe("_dc-srv.130c90ab9de1._test._tcp.test.socketify.dev");
+      expect(results[0].priority).toBe(50);
+      expect(results[0].weight).toBe(50);
+      expect(results[0].port).toBe(80);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveSrv (_test._tcp.invalid.localhost)", done => {
+test("dns.resolveSrv (_test._tcp.invalid.localhost)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveSrv("_test._tcp.invalid.localhost", (err, results) => {
-    expect(err).toBeTruthy();
-    expect(results).toBeUndefined(true);
-    done();
+    try {
+      expect(err).toBeTruthy();
+      expect(results).toBeUndefined(true);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveTxt (txt.socketify.dev)", done => {
+test("dns.resolveTxt (txt.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveTxt("txt.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0][0]).toBe("bun_test;test");
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      expect(results[0][0]).toBe("bun_test;test");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveSoa (bun.sh)", done => {
+test("dns.resolveSoa (bun.sh)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveSoa("bun.sh", (err, result) => {
-    expect(err).toBeNull();
-    expect(typeof result.serial).toBe("number");
-    expect(result.refresh).toBe(10000);
-    expect(result.retry).toBe(2400);
-    expect(result.expire).toBe(604800);
+    try {
+      expect(err).toBeNull();
+      expect(typeof result.serial).toBe("number");
+      expect(result.refresh).toBe(10000);
+      expect(result.retry).toBe(2400);
+      expect(result.expire).toBe(604800);
 
-    // Cloudflare might randomly change min TTL
-    expect(result.minttl).toBeNumber();
+      // Cloudflare might randomly change min TTL
+      expect(result.minttl).toBeNumber();
 
-    expect(result.nsname).toBe("hans.ns.cloudflare.com");
-    expect(result.hostmaster).toBe("dns.cloudflare.com");
-    done(err);
+      expect(result.nsname).toBe("hans.ns.cloudflare.com");
+      expect(result.hostmaster).toBe("dns.cloudflare.com");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveNaptr (naptr.socketify.dev)", done => {
+test("dns.resolveSoa (empty string)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  dns.resolveSoa("", (err, result) => {
+    try {
+      expect(err).toBeNull();
+      // one of root server
+      expect(result).not.toBeUndefined();
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
+  });
+  return promise;
+});
+
+test("dns.resolveNaptr (naptr.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveNaptr("naptr.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0].flags).toBe("S");
-    expect(results[0].service).toBe("test");
-    expect(results[0].regexp).toBe("");
-    expect(results[0].replacement).toBe("");
-    expect(results[0].order).toBe(1);
-    expect(results[0].preference).toBe(12);
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      expect(results[0].flags).toBe("S");
+      expect(results[0].service).toBe("test");
+      expect(results[0].regexp).toBe("");
+      expect(results[0].replacement).toBe("");
+      expect(results[0].order).toBe(1);
+      expect(results[0].preference).toBe(12);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveCaa (caa.socketify.dev)", done => {
+test("dns.resolveCaa (caa.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveCaa("caa.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0].critical).toBe(0);
-    expect(results[0].issue).toBe("bun.sh");
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      expect(results[0].critical).toBe(0);
+      expect(results[0].issue).toBe("bun.sh");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveMx (bun.sh)", done => {
+test("dns.resolveMx (bun.sh)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveMx("bun.sh", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    const priority = results[0].priority;
-    expect(priority >= 0 && priority < 65535).toBe(true);
-    expect(results[0].exchange.includes(".registrar-servers.com")).toBe(true);
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      const priority = results[0].priority;
+      expect(priority >= 0 && priority < 65535).toBe(true);
+      expect(results[0].exchange.includes("aspmx.l.google.com")).toBe(true);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveNs (bun.sh) ", done => {
+test("dns.resolveNs (bun.sh) ", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveNs("bun.sh", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0].includes(".ns.cloudflare.com")).toBe(true);
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(results instanceof Array).toBe(true);
+      expect(results[0].includes(".ns.cloudflare.com")).toBe(true);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolvePtr (ptr.socketify.dev)", done => {
+test("dns.resolveNs (empty string) ", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
+  dns.resolveNs("", (err, results) => {
+    try {
+      expect(err).toBeNull();
+      console.log("resolveNs:", results);
+
+      expect(results instanceof Array).toBe(true);
+      // root servers
+      expect(results.sort()).toStrictEqual(
+        [
+          "e.root-servers.net",
+          "h.root-servers.net",
+          "l.root-servers.net",
+          "i.root-servers.net",
+          "a.root-servers.net",
+          "d.root-servers.net",
+          "c.root-servers.net",
+          "b.root-servers.net",
+          "j.root-servers.net",
+          "k.root-servers.net",
+          "g.root-servers.net",
+          "m.root-servers.net",
+          "f.root-servers.net",
+        ].sort(),
+      );
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
+  });
+  return promise;
+});
+
+test("dns.resolvePtr (ptr.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolvePtr("ptr.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0]).toBe("bun.sh");
-    done(err);
+    try {
+      expect(err).toBeNull();
+      console.log("resolvePtr:", results);
+      expect(results instanceof Array).toBe(true);
+      expect(results[0]).toBe("bun.sh");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.resolveCname (cname.socketify.dev)", done => {
+test("dns.resolveCname (cname.socketify.dev)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.resolveCname("cname.socketify.dev", (err, results) => {
-    expect(err).toBeNull();
-    expect(results instanceof Array).toBe(true);
-    expect(results[0]).toBe("bun.sh");
-    done(err);
+    try {
+      expect(err).toBeNull();
+      console.log("resolveCname:", results);
+      expect(results instanceof Array).toBe(true);
+      expect(results[0]).toBe("bun.sh");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.lookup (example.com)", done => {
+test("dns.lookup (example.com)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.lookup("example.com", (err, address, family) => {
-    expect(err).toBeNull();
-    expect(typeof address).toBe("string");
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(typeof address).toBe("string");
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.lookup (example.com) with { all: true } #2675", done => {
+test("dns.lookup (example.com) with { all: true } #2675", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.lookup("example.com", { all: true }, (err, address, family) => {
-    expect(err).toBeNull();
-    expect(Array.isArray(address)).toBe(true);
-    done(err);
+    try {
+      expect(err).toBeNull();
+      expect(Array.isArray(address)).toBe(true);
+      resolve();
+    } catch (error) {
+      reject(err || error);
+    }
   });
+  return promise;
 });
 
-test("dns.lookup (localhost)", done => {
+test("dns.lookup (localhost)", () => {
+  const { promise, resolve, reject } = Promise.withResolvers();
   dns.lookup("localhost", (err, address, family) => {
     expect(err).toBeNull();
     if (family === 6) {
@@ -189,13 +320,22 @@ test("dns.lookup (localhost)", done => {
       expect(address).toBe("127.0.0.1");
     }
 
-    done(err);
+    err ? reject(err) : resolve();
   });
+
+  return promise;
 });
 
-test("dns.getServers", done => {
+test("dns.getServers", () => {
   function parseResolvConf() {
-    let servers = [];
+    const servers = [];
+    if (isWindows) {
+      const { stdout } = Bun.spawnSync(["node", "-e", "dns.getServers().forEach(x => console.log(x))"], {
+        stdout: "pipe",
+      });
+      return stdout.toString("utf8").trim().split("\n");
+    }
+
     try {
       const content = fs.readFileSync("/etc/resolv.conf", "utf-8");
       const lines = content.split(os.EOL);
@@ -214,43 +354,30 @@ test("dns.getServers", done => {
 
   const expectServers = parseResolvConf();
   const actualServers = dns.getServers();
-  try {
-    for (const server of expectServers) {
-      expect(actualServers).toContain(server);
-    }
-  } catch (err) {
-    return done(err);
+  for (const server of expectServers) {
+    expect(actualServers).toContain(server);
   }
-  done();
 });
 
-test("dns.reverse", done => {
-  dns.reverse("8.8.8.8", (err, hostnames) => {
-    try {
-      expect(err).toBeNull();
-      expect(hostnames).toContain("dns.google");
-      done();
-    } catch (err) {
-      done(err);
-    }
-  });
-  dns.reverse("1.1.1.1", (err, hostnames) => {
-    try {
-      expect(err).toBeNull();
-      expect(hostnames).toContain("one.one.one.one");
-      done();
-    } catch (err) {
-      done(err);
-    }
-  });
-  dns.reverse("2606:4700:4700::1111", (err, hostnames) => {
-    try {
-      expect(err).toBeNull();
-      expect(hostnames).toContain("one.one.one.one");
-      done();
-    } catch (err) {
-      done(err);
-    }
+describe("dns.reverse", () => {
+  const inputs = [
+    ["8.8.8.8", "dns.google"],
+    ["2606:4700:4700::1111", "one.one.one.one"],
+    ["2606:4700:4700::1001", "one.one.one.one"],
+    ["1.1.1.1", "one.one.one.one"],
+  ];
+  it.each(inputs)("%s", (ip, expected) => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.reverse(ip, (err, hostnames) => {
+      try {
+        expect(err).toBeNull();
+        expect(hostnames).toContain(expected);
+        resolve();
+      } catch (error) {
+        reject(err || error);
+      }
+    });
+    return promise;
   });
 });
 
@@ -267,4 +394,140 @@ test("dns.promises.reverse", async () => {
     let hostnames = await dns.promises.reverse("2606:4700:4700::1111");
     expect(hostnames).toContain("one.one.one.one");
   }
+});
+
+describe("test invalid arguments", () => {
+  it.each([
+    // TODO: dns.resolveAny is not implemented yet
+    ["dns.resolveCname", dns.resolveCname],
+    ["dns.resolveCaa", dns.resolveCaa],
+    ["dns.resolveMx", dns.resolveMx],
+    ["dns.resolveNaptr", dns.resolveNaptr],
+    ["dns.resolveNs", dns.resolveNs],
+    ["dns.resolvePtr", dns.resolvePtr],
+    ["dns.resolveSoa", dns.resolveSoa],
+    ["dns.resolveSrv", dns.resolveSrv],
+    ["dns.resolveTxt", dns.resolveTxt],
+  ])("%s", (_, fn, done) => {
+    fn("a".repeat(2000), (err, results) => {
+      try {
+        expect(err).not.toBeNull();
+        expect(results).toBeUndefined();
+        // Assert we convert our error codes to Node.js error codes
+        expect(err.code).not.toStartWith("DNS_");
+        done();
+      } catch (e) {
+        done(e);
+      }
+    });
+  });
+
+  it("dns.lookupService", async () => {
+    expect(() => {
+      dns.lookupService("", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a non-empty string for 'lookupService'.");
+    expect(() => {
+      dns.lookupService("google.com", 443, (err, hostname, service) => {});
+    }).toThrow("Expected address to be a invalid address for 'lookupService'.");
+  });
+});
+
+describe("dns.lookupService", () => {
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("lookupService(%s, %d)", (address, port, expected) => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookupService(address, port, (err, hostname, service) => {
+      try {
+        expect(err).toBeNull();
+        expect(hostname).toStrictEqual(expected[0]);
+        expect(service).toStrictEqual(expected[1]);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+
+    return promise;
+  });
+
+  it("lookupService(255.255.255.255, 443)", () => {
+    const { promise, resolve, reject } = Promise.withResolvers();
+    dns.lookupService("255.255.255.255", 443, (err, hostname, service) => {
+      if (process.platform == "darwin") {
+        try {
+          expect(err).toBeNull();
+          expect(hostname).toStrictEqual("broadcasthost");
+          expect(service).toStrictEqual("https");
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      } else {
+        try {
+          expect(err).not.toBeNull();
+          expect(hostname).toBeUndefined();
+          expect(service).toBeUndefined();
+          resolve();
+        } catch (err) {
+          reject(err);
+        }
+      }
+    });
+  });
+
+  it.each([
+    ["1.1.1.1", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1111", 53, ["one.one.one.one", "domain"]],
+    ["2606:4700:4700::1001", 53, ["one.one.one.one", "domain"]],
+    ["1.1.1.1", 80, ["one.one.one.one", "http"]],
+    ["1.1.1.1", 443, ["one.one.one.one", "https"]],
+  ])("promises.lookupService(%s, %d)", async (address, port, expected) => {
+    const [hostname, service] = await dns.promises.lookupService(address, port);
+    expect(hostname).toStrictEqual(expected[0]);
+    expect(service).toStrictEqual(expected[1]);
+  });
+});
+
+// Deprecated reference: https://nodejs.org/api/deprecations.html#DEP0118
+describe("lookup deprecated behavior", () => {
+  it.each([undefined, false, null, NaN, ""])("dns.lookup", domain => {
+    dns.lookup(domain, (error, address, family) => {
+      expect(error).toBeNull();
+      expect(address).toBeNull();
+      expect(family).toBe(4);
+    });
+  });
+});
+
+describe("uses `dns.promises` implementations for `util.promisify` factory", () => {
+  it.each([
+    "lookup",
+    "lookupService",
+    "resolve",
+    "reverse",
+    "resolve4",
+    "resolve6",
+    "resolveAny",
+    "resolveCname",
+    "resolveCaa",
+    "resolveMx",
+    "resolveNs",
+    "resolvePtr",
+    "resolveSoa",
+    "resolveSrv",
+    "resolveTxt",
+    "resolveNaptr",
+  ])("%s", method => {
+    expect(dns[method][util.promisify.custom]).toBe(dns_promises[method]);
+    expect(dns.promises[method]).toBe(dns_promises[method]);
+  });
+
+  it("util.promisify(dns.lookup) acts like dns.promises.lookup", async () => {
+    expect(await util.promisify(dns.lookup)("example.com")).toEqual(await dns.promises.lookup("example.com"));
+  });
 });

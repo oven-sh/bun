@@ -25,6 +25,7 @@
 
 #include "config.h"
 #include "CryptoKeyEC.h"
+#include "../wtf-bindings.h"
 
 #if ENABLE(WEB_CRYPTO)
 
@@ -168,7 +169,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPublic(CryptoAlgorithmIdentifi
     auto group = EC_KEY_get0_group(key.get());
     auto point = ECPointPtr(EC_POINT_new(group));
 
-    // Currently we only support elliptic curves over GF(p).   
+    // Currently we only support elliptic curves over GF(p).
     if (EC_POINT_set_affine_coordinates_GFp(group, point.get(), convertToBigNumber(x).get(), convertToBigNumber(y).get(), nullptr) <= 0)
         return nullptr;
 
@@ -194,7 +195,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportJWKPrivate(CryptoAlgorithmIdentif
     auto group = EC_KEY_get0_group(key.get());
     auto point = ECPointPtr(EC_POINT_new(group));
 
-    // Currently we only support elliptic curves over GF(p).   
+    // Currently we only support elliptic curves over GF(p).
     if (EC_POINT_set_affine_coordinates_GFp(group, point.get(), convertToBigNumber(x).get(), convertToBigNumber(y).get(), nullptr) <= 0)
         return nullptr;
 
@@ -287,7 +288,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     value = sk_ASN1_TYPE_value(algorithm.get(), 0);
     if (value->type != V_ASN1_OBJECT)
         return nullptr;
-    
+
     if (!supportedAlgorithmIdentifier(identifier, value->value.object))
         return nullptr;
 
@@ -297,7 +298,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     //  -- specifiedCurve  SpecifiedECDomain
     // }
     //
-    // Only "namedCurve" is supported. 
+    // Only "namedCurve" is supported.
     value = sk_ASN1_TYPE_value(algorithm.get(), 1);
     if (value->type != V_ASN1_OBJECT)
         return nullptr;
@@ -305,7 +306,7 @@ RefPtr<CryptoKeyEC> CryptoKeyEC::platformImportSpki(CryptoAlgorithmIdentifier id
     int curveNID = OBJ_obj2nid(value->value.object);
     if (curveNID != curveIdentifier(curve))
         return nullptr;
-    
+
     // subjectPublicKey must be a BIT STRING.
     value = sk_ASN1_TYPE_value(subjectPublicKeyInfo.get(), 1);
     if (value->type != V_ASN1_BIT_STRING)
@@ -379,17 +380,17 @@ Vector<uint8_t> CryptoKeyEC::platformExportRaw() const
 {
     EC_KEY* key = EVP_PKEY_get0_EC_KEY(platformKey());
     if (!key)
-        return { };
-    
+        return {};
+
     const EC_POINT* point = EC_KEY_get0_public_key(key);
     const EC_GROUP* group = EC_KEY_get0_group(key);
     size_t keyDataSize = EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, nullptr, 0, nullptr);
     if (!keyDataSize)
-        return { };
+        return {};
 
     Vector<uint8_t> keyData(keyDataSize);
     if (EC_POINT_point2oct(group, point, POINT_CONVERSION_UNCOMPRESSED, keyData.data(), keyData.size(), nullptr) != keyDataSize)
-        return { };
+        return {};
 
     return keyData;
 }
@@ -408,15 +409,15 @@ bool CryptoKeyEC::platformAddFieldElements(JsonWebKey& jwk) const
         auto x = BIGNUMPtr(BN_new());
         auto y = BIGNUMPtr(BN_new());
         if (1 == EC_POINT_get_affine_coordinates_GFp(EC_KEY_get0_group(key), publicKey, x.get(), y.get(), ctx.get())) {
-            jwk.x = base64URLEncodeToString(convertToBytesExpand(x.get(), keySizeInBytes));
-            jwk.y = base64URLEncodeToString(convertToBytesExpand(y.get(), keySizeInBytes));
+            jwk.x = Bun::base64URLEncodeToString(convertToBytesExpand(x.get(), keySizeInBytes));
+            jwk.y = Bun::base64URLEncodeToString(convertToBytesExpand(y.get(), keySizeInBytes));
         }
     }
 
     if (type() == Type::Private) {
         const BIGNUM* privateKey = EC_KEY_get0_private_key(key);
         if (privateKey)
-            jwk.d = base64URLEncodeToString(convertToBytes(privateKey));
+            jwk.d = Bun::base64URLEncodeToString(convertToBytes(privateKey));
     }
     return true;
 }
@@ -424,16 +425,16 @@ bool CryptoKeyEC::platformAddFieldElements(JsonWebKey& jwk) const
 Vector<uint8_t> CryptoKeyEC::platformExportSpki() const
 {
     if (type() != CryptoKeyType::Public)
-        return { };
+        return {};
 
     int len = i2d_PUBKEY(platformKey(), nullptr);
     if (len < 0)
-        return { };
+        return {};
 
     Vector<uint8_t> keyData(len);
     auto ptr = keyData.data();
     if (i2d_PUBKEY(platformKey(), &ptr) < 0)
-        return { };
+        return {};
 
     return keyData;
 }
@@ -441,20 +442,20 @@ Vector<uint8_t> CryptoKeyEC::platformExportSpki() const
 Vector<uint8_t> CryptoKeyEC::platformExportPkcs8() const
 {
     if (type() != CryptoKeyType::Private)
-        return { };
+        return {};
 
     auto p8inf = PKCS8PrivKeyInfoPtr(EVP_PKEY2PKCS8(platformKey()));
     if (!p8inf)
-        return { };
+        return {};
 
     int len = i2d_PKCS8_PRIV_KEY_INFO(p8inf.get(), nullptr);
     if (len < 0)
-        return { };
+        return {};
 
     Vector<uint8_t> keyData(len);
     auto ptr = keyData.data();
     if (i2d_PKCS8_PRIV_KEY_INFO(p8inf.get(), &ptr) < 0)
-        return { };
+        return {};
 
     return keyData;
 }

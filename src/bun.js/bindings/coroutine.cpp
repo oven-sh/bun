@@ -1,7 +1,7 @@
 #include "root.h"
 
 // #include "mimalloc.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/VM.h>
 
 // #define MCO_API
 // #define MCO_MALLOC mi_malloc

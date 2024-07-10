@@ -173,7 +173,7 @@ JSValue JSMessagePort::getConstructor(VM& vm, const JSGlobalObject* globalObject
     return getDOMConstructor<JSMessagePortDOMConstructor, DOMConstructorID::MessagePort>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePortConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePortConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -189,7 +189,7 @@ static inline JSValue jsMessagePort_onmessageGetter(JSGlobalObject& lexicalGloba
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::get<jsMessagePort_onmessageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -207,7 +207,7 @@ static inline bool setJSMessagePort_onmessageSetter(JSGlobalObject& lexicalGloba
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessage, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::set<setJSMessagePort_onmessageSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -218,7 +218,7 @@ static inline JSValue jsMessagePort_onmessageerrorGetter(JSGlobalObject& lexical
     return eventHandlerAttribute(thisObject.wrapped(), eventNames().messageerrorEvent, worldForDOMObject(thisObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::get<jsMessagePort_onmessageerrorGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -236,7 +236,7 @@ static inline bool setJSMessagePort_onmessageerrorSetter(JSGlobalObject& lexical
     return true;
 }
 
-JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, EncodedJSValue encodedValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_SETTER(setJSMessagePort_onmessageerror, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue encodedValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessagePort>::set<setJSMessagePort_onmessageerrorSetter>(*lexicalGlobalObject, thisValue, encodedValue, attributeName);
 }
@@ -423,18 +423,18 @@ void JSMessagePort::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSMessagePortOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     auto* jsMessagePort = jsCast<JSMessagePort*>(handle.slot()->asCell());
     auto& wrapped = jsMessagePort->wrapped();
     if (wrapped.hasPendingActivity()) {
         if (UNLIKELY(reason))
-            *reason = "ActiveDOMObject with pending activity";
+            *reason = "ActiveDOMObject with pending activity"_s;
         return true;
     }
     MessagePort* owner = &jsMessagePort->wrapped();
     if (UNLIKELY(reason))
-        *reason = "Reachable from MessagePort";
+        *reason = "Reachable from MessagePort"_s;
 
     return visitor.containsOpaqueRoot(owner);
 }
@@ -464,18 +464,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<MessagePort>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7MessagePort@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11MessagePortE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11MessagePortE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // MessagePort has subclasses. If MessagePort has subclasses that get passed
         // to toJS() we currently require MessagePort you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<MessagePort>(globalObject, WTFMove(impl));

@@ -66,6 +66,7 @@ public:
     // Custom functions
     JSC::JSValue start(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&&);
     JSC::JSValue pull(JSC::JSGlobalObject&, JSC::CallFrame&, Ref<DeferredPromise>&&);
+
 protected:
     JSReadableStreamSource(JSC::Structure*, JSDOMGlobalObject&, Ref<ReadableStreamSource>&&);
 
@@ -74,7 +75,7 @@ protected:
 
 class JSReadableStreamSourceOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 

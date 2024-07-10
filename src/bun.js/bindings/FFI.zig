@@ -20,8 +20,9 @@ pub const EncodedJSValue = union_EncodedJSValue;
 pub export var ValueUndefined: EncodedJSValue = EncodedJSValue{
     .asInt64 = @as(i64, @bitCast(@as(c_longlong, @as(c_int, 2) | @as(c_int, 8)))),
 };
+pub const TrueI64 = @as(i64, @bitCast(@as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1))));
 pub export var ValueTrue: EncodedJSValue = EncodedJSValue{
-    .asInt64 = @as(i64, @bitCast(@as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1)))),
+    .asInt64 = TrueI64,
 };
 pub const JSContext = ?*anyopaque;
 pub inline fn JSVALUE_IS_CELL(arg_val: EncodedJSValue) bool {
@@ -37,7 +38,7 @@ pub inline fn JSVALUE_IS_NUMBER(arg_val: EncodedJSValue) @"bool" {
     return (@as(c_ulonglong, @bitCast(val.asInt64)) & @as(c_ulonglong, 18446181123756130304)) != 0;
 }
 pub inline fn JSVALUE_TO_UINT64(arg_value: EncodedJSValue) u64 {
-    var value = arg_value;
+    const value = arg_value;
     if (JSVALUE_IS_INT32(value)) {
         return @as(u64, @bitCast(@as(c_longlong, JSVALUE_TO_INT32(value))));
     }
@@ -61,7 +62,7 @@ pub extern fn JSVALUE_TO_INT64_SLOW(value: EncodedJSValue) i64;
 pub const UINT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromUInt64NoTruncate;
 pub const INT64_TO_JSVALUE_SLOW = @import("./bindings.zig").JSValue.fromInt64NoTruncate;
 pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) EncodedJSValue {
-    var globalObject = arg_globalObject;
+    const globalObject = arg_globalObject;
     const val = arg_val;
     if (val < @as(c_ulonglong, @bitCast(@as(c_longlong, @as(c_long, 2147483648))))) {
         return INT32_TO_JSVALUE(@as(i32, @bitCast(@as(c_uint, @truncate(val)))));
@@ -72,8 +73,8 @@ pub inline fn UINT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: u64) Enc
     return UINT64_TO_JSVALUE_SLOW(@as(*@import("./bindings.zig").JSGlobalObject, @ptrCast(globalObject.?)), val).asEncoded();
 }
 pub inline fn INT64_TO_JSVALUE(arg_globalObject: ?*anyopaque, arg_val: i64) EncodedJSValue {
-    var globalObject = arg_globalObject;
-    var val = arg_val;
+    const globalObject = arg_globalObject;
+    const val = arg_val;
     if ((val >= @as(c_longlong, @bitCast(@as(c_longlong, -@as(c_long, 2147483648))))) and (val <= @as(c_longlong, @bitCast(@as(c_longlong, @as(c_long, 2147483648)))))) {
         return INT32_TO_JSVALUE(@as(i32, @bitCast(@as(c_int, @truncate(val)))));
     }
@@ -91,31 +92,31 @@ pub inline fn DOUBLE_TO_JSVALUE(arg_val: f64) EncodedJSValue {
     return res;
 }
 pub inline fn FLOAT_TO_JSVALUE(arg_val: f32) EncodedJSValue {
-    var val = arg_val;
+    const val = arg_val;
     return DOUBLE_TO_JSVALUE(@as(f64, @floatCast(val)));
 }
 pub inline fn BOOLEAN_TO_JSVALUE(arg_val: @"bool") EncodedJSValue {
-    var val = arg_val;
+    const val = arg_val;
     var res: EncodedJSValue = undefined;
     res.asInt64 = @as(i64, @bitCast(@as(c_longlong, if (@as(c_int, @intFromBool(val)) != 0) (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1) else (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 0))));
     return res;
 }
 pub inline fn PTR_TO_JSVALUE(arg_ptr: ?*anyopaque) EncodedJSValue {
-    var ptr = arg_ptr;
+    const ptr = arg_ptr;
     var val: EncodedJSValue = undefined;
     val.asInt64 = @as(i64, @intCast(@intFromPtr(ptr))) + (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)));
     return val;
 }
 pub inline fn JSVALUE_TO_PTR(arg_val: EncodedJSValue) ?*anyopaque {
-    var val = arg_val;
+    const val = arg_val;
     return @as(?*anyopaque, @ptrFromInt(val.asInt64 - (@as(c_longlong, 1) << @as(@import("std").math.Log2Int(c_longlong), @intCast(49)))));
 }
 pub inline fn JSVALUE_TO_INT32(arg_val: EncodedJSValue) i32 {
-    var val = arg_val;
+    const val = arg_val;
     return @as(i32, @bitCast(@as(c_int, @truncate(val.asInt64))));
 }
 pub inline fn JSVALUE_TO_FLOAT(arg_val: EncodedJSValue) f32 {
-    var val = arg_val;
+    const val = arg_val;
     return @as(f32, @floatCast(JSVALUE_TO_DOUBLE(val)));
 }
 pub inline fn JSVALUE_TO_DOUBLE(arg_val: EncodedJSValue) f64 {
@@ -124,7 +125,7 @@ pub inline fn JSVALUE_TO_DOUBLE(arg_val: EncodedJSValue) f64 {
     return val.asDouble;
 }
 pub inline fn JSVALUE_TO_BOOL(arg_val: EncodedJSValue) @"bool" {
-    var val = arg_val;
+    const val = arg_val;
     return val.asInt64 == @as(c_longlong, @bitCast(@as(c_longlong, (@as(c_int, 2) | @as(c_int, 4)) | @as(c_int, 1))));
 }
 pub extern fn JSFunctionCall(globalObject: ?*anyopaque, callFrame: ?*anyopaque) ?*anyopaque;
@@ -534,4 +535,4 @@ pub const TagValueNull = OtherTag;
 pub const NotCellMask = NumberTag | OtherTag;
 pub const MAX_INT32 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 2147483648, .decimal);
 pub const MAX_INT52 = @import("std").zig.c_translation.promoteIntLiteral(c_int, 9007199254740991, .decimal);
-pub const NumberTag = @import("std").zig.c_translation.promoteIntLiteral(c_longlong, 0xfffe000000000000, .hexadecimal);
+pub const NumberTag = @import("std").zig.c_translation.promoteIntLiteral(c_longlong, 0xfffe000000000000, .hex);

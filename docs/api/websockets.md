@@ -23,7 +23,7 @@ Bun.serve({
     if (server.upgrade(req)) {
       return; // do not return a Response
     }
-    return new Response("Upgrade failed :(", { status: 500 });
+    return new Response("Upgrade failed", { status: 500 });
   },
   websocket: {}, // handlers
 });
@@ -87,7 +87,7 @@ ws.send(new Uint8Array([1, 2, 3])); // TypedArray | DataView
 
 ### Headers
 
-Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attched to this `Response` in the call to `server.upgrade()`.
+Once the upgrade succeeds, Bun will send a `101 Switching Protocols` response per the [spec](https://developer.mozilla.org/en-US/docs/Web/HTTP/Protocol_upgrade_mechanism). Additional `headers` can be attached to this `Response` in the call to `server.upgrade()`.
 
 ```ts
 Bun.serve({
@@ -161,7 +161,7 @@ socket.addEventListener("message", event => {
 
 ### Pub/Sub
 
-Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic. This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
+Bun's `ServerWebSocket` implementation implements a native publish-subscribe API for topic-based broadcasting. Individual sockets can `.subscribe()` to a topic (specified with a string identifier) and `.publish()` messages to all other subscribers to that topic (excluding itself). This topic-based broadcast API is similar to [MQTT](https://en.wikipedia.org/wiki/MQTT) and [Redis Pub/Sub](https://redis.io/topics/pubsub).
 
 ```ts
 const server = Bun.serve<{ username: string }>({
@@ -182,17 +182,17 @@ const server = Bun.serve<{ username: string }>({
     open(ws) {
       const msg = `${ws.data.username} has entered the chat`;
       ws.subscribe("the-group-chat");
-      ws.publish("the-group-chat", msg);
+      server.publish("the-group-chat", msg);
     },
     message(ws, message) {
       // this is a group chat
       // so the server re-broadcasts incoming message to everyone
-      ws.publish("the-group-chat", `${ws.data.username}: ${message}`);
+      server.publish("the-group-chat", `${ws.data.username}: ${message}`);
     },
     close(ws) {
       const msg = `${ws.data.username} has left the chat`;
       ws.unsubscribe("the-group-chat");
-      ws.publish("the-group-chat", msg);
+      server.publish("the-group-chat", msg);
     },
   },
 });
@@ -200,7 +200,18 @@ const server = Bun.serve<{ username: string }>({
 console.log(`Listening on ${server.hostname}:${server.port}`);
 ```
 
-Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`.
+Calling `.publish(data)` will send the message to all subscribers of a topic _except_ the socket that called `.publish()`. To send a message to all subscribers of a topic, use the `.publish()` method on the `Server` instance.
+
+```ts
+const server = Bun.serve({
+  websocket: {
+    // ...
+  },
+});
+
+// listen for some external event
+server.publish("the-group-chat", "Hello world");
+```
 
 ### Compression
 
@@ -234,11 +245,35 @@ The `.send(message)` method of `ServerWebSocket` returns a `number` indicating t
 
 This gives you better control over backpressure in your server.
 
-## Connect to a `Websocket` server
+### Timeouts and limits
 
-{% callout %}
-**🚧** — The `WebSocket` client still does not pass the full [Autobahn test suite](https://github.com/crossbario/autobahn-testsuite) and should not be considered ready for production.
-{% /callout %}
+By default, Bun will close a WebSocket connection if it is idle for 120 seconds. This can be configured with the `idleTimeout` parameter.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    idleTimeout: 60, // 60 seconds
+
+    // ...
+  },
+});
+```
+
+Bun will also close a WebSocket connection if it receives a message that is larger than 16 MB. This can be configured with the `maxPayloadLength` parameter.
+
+```ts
+Bun.serve({
+  fetch(req, server) {}, // upgrade logic
+  websocket: {
+    maxPayloadLength: 1024 * 1024, // 1 MB
+
+    // ...
+  },
+});
+```
+
+## Connect to a `Websocket` server
 
 Bun implements the `WebSocket` class. To create a WebSocket client that connects to a `ws://` or `wss://` server, create an instance of `WebSocket`, as you would in the browser.
 
@@ -286,9 +321,17 @@ namespace Bun {
         message: string | ArrayBuffer | Uint8Array,
       ) => void;
       open?: (ws: ServerWebSocket) => void;
-      close?: (ws: ServerWebSocket) => void;
+      close?: (ws: ServerWebSocket, code: number, reason: string) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
       drain?: (ws: ServerWebSocket) => void;
+
+      maxPayloadLength?: number; // default: 16 * 1024 * 1024 = 16 MB
+      idleTimeout?: number; // default: 120 (seconds)
+      backpressureLimit?: number; // default: 1024 * 1024 = 1 MB
+      closeOnBackpressureLimit?: boolean; // default: false
+      sendPings?: boolean; // default: true
+      publishToSelf?: boolean; // default: false
+
       perMessageDeflate?:
         | boolean
         | {
@@ -313,7 +356,7 @@ type Compressor =
   | `"256KB"`;
 
 interface Server {
-  pendingWebsockets: number;
+  pendingWebSockets: number;
   publish(
     topic: string,
     data: string | ArrayBufferView | ArrayBuffer,

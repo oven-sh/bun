@@ -108,7 +108,7 @@ template<> FunctionExecutable* JSReadableStreamDefaultReaderDOMConstructor::init
 
 static const HashTableValue JSReadableStreamDefaultReaderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsReadableStreamDefaultReaderConstructor, 0 } },
-    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultReaderClosedCodeGenerator, 0 } },
+    { "closed"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::Accessor | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinAccessorType, readableStreamDefaultReaderClosedCodeGenerator, 0 } },
     { "read"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultReaderReadCodeGenerator, 0 } },
     { "readMany"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultReaderReadManyCodeGenerator, 0 } },
     { "cancel"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::Builtin), NoIntrinsic, { HashTableValue::BuiltinGeneratorType, readableStreamDefaultReaderCancelCodeGenerator, 0 } },
@@ -122,6 +122,8 @@ void JSReadableStreamDefaultReaderPrototype::finishCreation(VM& vm)
     Base::finishCreation(vm);
     reifyStaticProperties(vm, JSReadableStreamDefaultReader::info(), JSReadableStreamDefaultReaderPrototypeTableValues, *this);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
+    // As suggested by https://github.com/tc39/proposal-explicit-resource-management#relation-to-dom-apis
+    // putDirectWithoutTransition(vm, vm.propertyNames->disposeSymbol, get(globalObject(), PropertyName(Identifier::fromString(vm, "releaseLock"_s))), JSC::PropertyAttribute::DontEnum | 0);
 }
 
 const ClassInfo JSReadableStreamDefaultReader::s_info = { "ReadableStreamDefaultReader"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSReadableStreamDefaultReader) };
@@ -139,7 +141,9 @@ void JSReadableStreamDefaultReader::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamDefaultReader::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamDefaultReaderPrototype::create(vm, &globalObject, JSReadableStreamDefaultReaderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamDefaultReaderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamDefaultReaderPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamDefaultReader::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -158,7 +162,7 @@ void JSReadableStreamDefaultReader::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamDefaultReader::~JSReadableStreamDefaultReader();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamDefaultReaderConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

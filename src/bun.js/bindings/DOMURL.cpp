@@ -23,23 +23,50 @@
  * Boston, MA 02110-1301, USA.
  */
 
+#include "config.h"
 #include "DOMURL.h"
 
-// #include "ActiveDOMObject.h"
+#include "ActiveDOMObject.h"
 // #include "Blob.h"
 // #include "BlobURL.h"
 // #include "MemoryCache.h"
 // #include "PublicURLManager.h"
 // #include "ResourceRequest.h"
+#include "ScriptExecutionContext.h"
+// #include "SecurityOrigin.h"
 #include "URLSearchParams.h"
-// #include "wtf/MainThread.h"
+#include <wtf/MainThread.h>
+
+class URLRegistrable {
+public:
+};
+
+class Blob {
+public:
+};
 
 namespace WebCore {
 
-inline DOMURL::DOMURL(URL&& completeURL, const URL& baseURL)
-    : m_baseURL(baseURL)
-    , m_url(WTFMove(completeURL))
+static inline String redact(const String& input)
 {
+    if (input.contains('@'))
+        return "<redacted>"_s;
+
+    return makeString('"', input, '"');
+}
+
+inline DOMURL::DOMURL(URL&& completeURL)
+    : m_url(WTFMove(completeURL))
+{
+    ASSERT(m_url.isValid());
+}
+
+ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url)
+{
+    URL completeURL { url };
+    if (!completeURL.isValid())
+        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+    return adoptRef(*new DOMURL(WTFMove(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
@@ -47,56 +74,75 @@ ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const URL& base)
     ASSERT(base.isValid() || base.isNull());
     URL completeURL { base, url };
     if (!completeURL.isValid())
-        return Exception { TypeError };
-    return adoptRef(*new DOMURL(WTFMove(completeURL), base));
+        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+    return adoptRef(*new DOMURL(WTFMove(completeURL)));
 }
 
 ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const String& base)
 {
-    URL baseURL { URL {}, base };
+    URL baseURL { base };
     if (!base.isNull() && !baseURL.isValid())
-        return Exception { TypeError };
+        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL against "_s, redact(base)) };
     return create(url, baseURL);
-}
-
-ExceptionOr<Ref<DOMURL>> DOMURL::create(const String& url, const DOMURL& base)
-{
-    return create(url, base.href());
 }
 
 DOMURL::~DOMURL() = default;
 
+static URL parseInternal(const String& url, const String& base)
+{
+    URL baseURL { base };
+    if (!base.isNull() && !baseURL.isValid())
+        return {};
+    return { baseURL, url };
+}
+
+RefPtr<DOMURL> DOMURL::parse(const String& url, const String& base)
+{
+    auto completeURL = parseInternal(url, base);
+    if (!completeURL.isValid())
+        return {};
+    return adoptRef(*new DOMURL(WTFMove(completeURL)));
+}
+
+bool DOMURL::canParse(const String& url, const String& base)
+{
+    return parseInternal(url, base).isValid();
+}
+
 ExceptionOr<void> DOMURL::setHref(const String& url)
 {
     URL completeURL { URL {}, url };
-    if (!completeURL.isValid())
-        return Exception { TypeError };
+    if (!completeURL.isValid()) {
+
+        return Exception { TypeError, makeString(redact(url), " cannot be parsed as a URL."_s) };
+    }
     m_url = WTFMove(completeURL);
     if (m_searchParams)
         m_searchParams->updateFromAssociatedURL();
     return {};
 }
 
-void DOMURL::setQuery(const String& query)
+String DOMURL::createObjectURL(ScriptExecutionContext& scriptExecutionContext, Blob& blob)
 {
-    m_url.setQuery(query);
+    UNUSED_PARAM(blob);
+    UNUSED_PARAM(scriptExecutionContext);
+    return String();
+    // return createPublicURL(scriptExecutionContext, blob);
 }
 
-// String DOMURL::createObjectURL(Blob& blob)
-// {
-//     return createPublicURL(scriptExecutionContext, blob);
-// }
+String DOMURL::createPublicURL(ScriptExecutionContext& scriptExecutionContext, URLRegistrable& registrable)
+{
+    // URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.securityOrigin());
+    // if (publicURL.isEmpty())
+    //     return String();
 
-// String DOMURL::createPublicURL(URLRegistrable& registrable)
-// {
-//     URL publicURL = BlobURL::createPublicURL(scriptExecutionContext.securityOrigin());
-//     if (publicURL.isEmpty())
-//         return String();
+    // scriptExecutionContext.publicURLManager().registerURL(publicURL, registrable);
 
-//     scriptExecutionContext.publicURLManager().registerURL(publicURL, registrable);
-
-//     return publicURL.string();
-// }
+    // return publicURL.string();
+    UNUSED_PARAM(scriptExecutionContext);
+    UNUSED_PARAM(registrable);
+    return String();
+}
 
 URLSearchParams& DOMURL::searchParams()
 {
@@ -105,15 +151,17 @@ URLSearchParams& DOMURL::searchParams()
     return *m_searchParams;
 }
 
-// void DOMURL::revokeObjectURL(const String& urlString)
-// {
-//     // URL url(URL(), urlString);
-//     // ResourceRequest request(url);
-//     // request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
+void DOMURL::revokeObjectURL(ScriptExecutionContext& scriptExecutionContext, const String& urlString)
+{
+    // URL url { urlString };
+    // ResourceRequest request(url);
+    // request.setDomainForCachePartition(scriptExecutionContext.domainForCachePartition());
 
-//     // MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
+    // MemoryCache::removeRequestFromSessionCaches(scriptExecutionContext, request);
 
-//     // scriptExecutionContext.publicURLManager().revoke(url);
-// }
+    // scriptExecutionContext.publicURLManager().revoke(url);
+    UNUSED_PARAM(scriptExecutionContext);
+    UNUSED_PARAM(urlString);
+}
 
 } // namespace WebCore

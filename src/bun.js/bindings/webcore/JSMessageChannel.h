@@ -20,8 +20,6 @@
 
 #pragma once
 
-#if ENABLE(CHANNEL_MESSAGING)
-
 #include "JSDOMWrapper.h"
 #include "MessageChannel.h"
 #include <wtf/NeverDestroyed.h>
@@ -72,7 +70,7 @@ protected:
 
 class JSMessageChannelOwner final : public JSC::WeakHandleOwner {
 public:
-    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, const char**) final;
+    bool isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, JSC::AbstractSlotVisitor&, ASCIILiteral*) final;
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final;
 };
 
@@ -98,5 +96,3 @@ template<> struct JSDOMWrapperConverterTraits<MessageChannel> {
 };
 
 } // namespace WebCore
-
-#endif // ENABLE(CHANNEL_MESSAGING)

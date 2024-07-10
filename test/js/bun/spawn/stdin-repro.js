@@ -1,10 +1,13 @@
 var stdout = Bun.stdout.writer();
-console.error("Started");
 var count = 0;
-for await (let chunk of Bun.stdin.stream()) {
-  const str = new Buffer(chunk).toString();
-  stdout.write(str);
-  stdout.flush();
+const file = Bun.stdin;
+
+for await (let chunk of file.stream()) {
+  stdout.write(chunk);
+  await stdout.flush();
   count++;
 }
-console.error("Finished with", count);
+
+if (count < 2) {
+  throw new Error("Expected to receive at least 2 chunks, got " + count);
+}

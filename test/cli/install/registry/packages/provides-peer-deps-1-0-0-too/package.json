@@ -1,0 +1,43 @@
+{
+	"name": "provides-peer-deps-1-0-0-too",
+	"versions": {
+		"1.0.0": {
+			"name": "provides-peer-deps-1-0-0-too",
+			"version": "1.0.0",
+			"dependencies": {
+				"peer-deps": "1.0.0",
+				"no-deps": "1.0.0"
+			},
+			"_id": "provides-peer-deps-1-0-0-too@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-TNzBPF1rhZqIeRfjViqmFJrKKMLIH6QBqN23IQ37Swoy9v00oehcgreJfvN+tITOmn5gcdnl39zuyoy88mVgBw==",
+				"shasum": "246961316dce989f997b403e2e2584bbe9b01982",
+				"tarball": "http://localhost:4873/provides-peer-deps-1-0-0-too/-/provides-peer-deps-1-0-0-too-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:31.259Z",
+		"created": "2023-11-01T22:05:31.259Z",
+		"1.0.0": "2023-11-01T22:05:31.259Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"provides-peer-deps-1-0-0-too-1.0.0.tgz": {
+			"shasum": "246961316dce989f997b403e2e2584bbe9b01982",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-d014c1aa0f23fbd1",
+	"_id": "provides-peer-deps-1-0-0-too",
+	"readme": "ERROR: No README data found!"
+}

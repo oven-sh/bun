@@ -26,9 +26,9 @@
 
 #pragma once
 
-#include "JavaScriptCore/ArrayBuffer.h"
-#include "JavaScriptCore/ArrayBufferView.h"
-#include "wtf/RefPtr.h"
+#include <JavaScriptCore/ArrayBuffer.h>
+#include <JavaScriptCore/ArrayBufferView.h>
+#include <wtf/RefPtr.h>
 #include <variant>
 
 namespace WebCore {
@@ -103,12 +103,12 @@ std::optional<BufferSource> BufferSource::decode(Decoder& decoder)
     const uint8_t* data = decoder.decodeFixedLengthReference(dataSize, alignof(uint8_t));
     if (!data)
         return std::nullopt;
-    return BufferSource(JSC::ArrayBuffer::tryCreate(static_cast<const void*>(data), dataSize.value()));
+    return BufferSource(JSC::ArrayBuffer::tryCreate({ static_cast<const uint8_t*>(data), dataSize.value() }));
 }
 
 inline BufferSource toBufferSource(const uint8_t* data, size_t length)
 {
-    return BufferSource(JSC::ArrayBuffer::tryCreate(data, length));
+    return BufferSource(JSC::ArrayBuffer::tryCreate({ data, length }));
 }
 
 } // namespace WebCore

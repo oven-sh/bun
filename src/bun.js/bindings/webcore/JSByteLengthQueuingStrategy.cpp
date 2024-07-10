@@ -136,7 +136,9 @@ void JSByteLengthQueuingStrategy::finishCreation(VM& vm)
 
 JSObject* JSByteLengthQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSByteLengthQueuingStrategyPrototype::create(vm, &globalObject, JSByteLengthQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSByteLengthQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSByteLengthQueuingStrategyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSByteLengthQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -155,7 +157,7 @@ void JSByteLengthQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSByteLengthQueuingStrategy::~JSByteLengthQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsByteLengthQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

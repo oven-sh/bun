@@ -9,7 +9,7 @@ The `bun` CLI contains a Node.js-compatible package manager designed to be a dra
 {% /callout %}
 
 {% details summary="For Linux users" %}
-The minimum Linux Kernel version is 5.1. If you're on Linux kernel 5.1 - 5.5, `bun install` should still work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
+The recommended minimum Linux Kernel version is 5.6. If you're on Linux kernel 5.1 - 5.5, `bun install` will work, but HTTP requests will be slow due to a lack of support for io_uring's `connect()` operation.
 
 If you're using Ubuntu 20.04, here's how to install a [newer kernel](https://wiki.ubuntu.com/Kernel/LTSEnablementStack):
 
@@ -23,43 +23,19 @@ sudo apt install --install-recommends linux-generic-hwe-20.04
 
 {% /details %}
 
-## Manage dependencies
-
-### `bun install`
-
 To install all dependencies of a project:
 
 ```bash
 $ bun install
 ```
 
-On Linux, `bun install` tends to install packages 20-100x faster than `npm install`. On macOS, it's more like 4-80x.
-
-![package install benchmark](https://user-images.githubusercontent.com/709451/147004342-571b6123-17a9-49a2-8bfd-dcfc5204047e.png)
-
 Running `bun install` will:
 
-- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun does not install `peerDependencies` by default.
+- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` and `{pre|post}prepare` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
-To install in production mode (i.e. without `devDependencies`):
-
-```bash
-$ bun install --production
-```
-
-To install with reproducible dependencies, use `--frozen-lockfile`. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. This is useful for production builds and CI environments.
-
-```bash
-$ bun install --frozen-lockfile
-```
-
-To perform a dry run (i.e. don't actually install anything):
-
-```bash
-$ bun install --dry-run
-```
+## Logging
 
 To modify logging verbosity:
 
@@ -68,86 +44,65 @@ $ bun install --verbose # debug logging
 $ bun install --silent  # no logging
 ```
 
-{% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+## Lifecycle scripts
 
-```toml
-[install]
+Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts like `postinstall` for installed dependencies. Executing arbitrary scripts represents a potential security risk.
 
-# whether to install optionalDependencies
-optional = true
+To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
 
-# whether to install devDependencies
-dev = true
-
-# whether to install peerDependencies
-peer = false
-
-# equivalent to `--production` flag
-production = false
-
-# equivalent to `--frozen-lockfile` flag
-frozenLockfile = false
-
-# equivalent to `--dry-run` flag
-dryRun = false
+```json-diff
+  {
+    "name": "my-app",
+    "version": "1.0.0",
++   "trustedDependencies": ["my-trusted-package"]
+  }
 ```
 
-{% /details %}
+Then re-install the package. Bun will read this field and run lifecycle scripts for `my-trusted-package`.
 
-### `bun add`
-
-To add a particular package:
+Lifecycle scripts will run in parallel during installation. To adjust the maximum number of concurrent scripts, use the `--concurrent-scripts` flag. The default is two times the reported cpu count or GOMAXPROCS.
 
 ```bash
-$ bun add preact
+$ bun install --concurrent-scripts 5
 ```
 
-To specify a version, version range, or tag:
+## Workspaces
 
-```bash
-$ bun add zod@3.20.0
-$ bun add zod@^3.0.0
-$ bun add zod@latest
-```
+Bun supports `"workspaces"` in package.json. For complete documentation refer to [Package manager > Workspaces](/docs/install/workspaces).
 
-To add a package as a dev dependency (`"devDependencies"`):
-
-```bash
-$ bun add --dev @types/react
-$ bun add -d @types/react
-```
-
-To add a package as an optional dependency (`"optionalDependencies"`):
-
-```bash
-$ bun add --optional lodash
-```
-
-To add a package and pin to the resolved version, use `--exact`. This will resolve the version of the package and add it to your `package.json` with an exact version number instead of a version range.
-
-```bash
-$ bun add react --exact
-```
-
-This will add the following to your `package.json`:
-
-```jsonc
+```json#package.json
 {
+  "name": "my-app",
+  "version": "1.0.0",
+  "workspaces": ["packages/*"],
   "dependencies": {
-    // without --exact
-    "react": "^18.2.0", // this matches >= 18.2.0 < 19.0.0
-
-    // with --exact
-    "react": "18.2.0" // this matches only 18.2.0 exactly
+    "preact": "^10.5.13"
   }
 }
 ```
 
-To install a package globally:
+## Overrides and resolutions
+
+Bun supports npm's `"overrides"` and Yarn's `"resolutions"` in `package.json`. These are mechanisms for specifying a version range for _metadependencies_—the dependencies of your dependencies. Refer to [Package manager > Overrides and resolutions](/docs/install/overrides) for complete documentation.
+
+```json-diff#package.json
+  {
+    "name": "my-app",
+    "dependencies": {
+      "foo": "^2.0.0"
+    },
++   "overrides": {
++     "bar": "~4.4.0"
++   }
+  }
+```
+
+## Global packages
+
+To install a package globally, use the `-g`/`--global` flag. Typically this is used for installing command-line tools.
 
 ```bash
-$ bun add --global cowsay # or `bun add -g cowsay`
+$ bun install --global cowsay # or `bun install -g cowsay`
 $ cowsay "Bun!"
  ______
 < Bun! >
@@ -159,149 +114,78 @@ $ cowsay "Bun!"
                 ||     ||
 ```
 
-{% details summary="Configuring global installation behavior" %}
+## Production mode
 
-```toml
-[install]
-# where `bun install --global` installs packages
-globalDir = "~/.bun/install/global"
-
-# where globally-installed package bins are linked
-globalBinDir = "~/.bun/bin"
-```
-
-{% /details %}
-To view a complete list of options for a given command:
+To install in production mode (i.e. without `devDependencies` or `optionalDependencies`):
 
 ```bash
-$ bun add --help
+$ bun install --production
 ```
 
-### `bun remove`
-
-To remove a dependency:
+For reproducible installs, use `--frozen-lockfile`. This will install the exact versions of each package specified in the lockfile. If your `package.json` disagrees with `bun.lockb`, Bun will exit with an error. The lockfile will not be updated.
 
 ```bash
-$ bun remove preact
+$ bun install --frozen-lockfile
 ```
 
-## Local packages (`bun link`)
+For more information on Bun's binary lockfile `bun.lockb`, refer to [Package manager > Lockfile](/docs/install/lockfile).
 
-Use `bun link` in a local directory to register the current package as a "linkable" package.
+## Dry run
+
+To perform a dry run (i.e. don't actually install anything):
 
 ```bash
-$ cd /path/to/cool-pkg
-$ cat package.json
-{
-  "name": "cool-pkg",
-  "version": "1.0.0"
-}
-$ bun link
-bun link v1.x (7416672e)
-Success! Registered "cool-pkg"
-
-To use cool-pkg in a project, run:
-  bun link cool-pkg
-
-Or add it in dependencies in your package.json file:
-  "cool-pkg": "link:cool-pkg"
+$ bun install --dry-run
 ```
 
-This package can now be "linked" into other projects using `bun link cool-pkg`. This will create a symlink in the `node_modules` directory of the target project, pointing to the local directory.
+## Non-npm dependencies
 
-```bash
-$ cd /path/to/my-app
-$ bun link cool-pkg
-```
+Bun supports installing dependencies from Git, GitHub, and local or remotely-hosted tarballs. For complete documentation refer to [Package manager > Git, GitHub, and tarball dependencies](/docs/cli/add).
 
-In addition, the `--save` flag can be used to add `cool-pkg` to the `dependencies` field of your app's package.json with a special version specifier that tells Bun to load from the registered local directory instead of installing from `npm`:
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-    "dependencies": {
-+     "cool-pkg": "link:cool-pkg"
-    }
-  }
-```
-
-## Trusted dependencies
-
-Unlike other npm clients, Bun does not execute arbitrary lifecycle scripts for installed dependencies, such as `postinstall`. These scripts represent a potential security risk, as they can execute arbitrary code on your machine.
-
-<!-- Bun maintains an allow-list of popular packages containing `postinstall` scripts that are known to be safe. To run lifecycle scripts for packages that aren't on this list, add the package to `trustedDependencies` in your package.json. -->
-
-To tell Bun to allow lifecycle scripts for a particular package, add the package to `trustedDependencies` in your package.json.
-
-<!-- ```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-+   "trustedDependencies": {
-+     "my-trusted-package": "*"
-+   }
-  }
-``` -->
-
-```json-diff
-  {
-    "name": "my-app",
-    "version": "1.0.0",
-+   "trustedDependencies": ["my-trusted-package"]
-  }
-```
-
-Bun reads this field and will run lifecycle scripts for `my-trusted-package`.
-
-<!-- If you specify a version range, Bun will only execute lifecycle scripts if the resolved package version matches the range. -->
-<!--
-```json
-{
-  "name": "my-app",
-  "version": "1.0.0",
-  "trustedDependencies": {
-    "my-trusted-package": "^1.0.0"
-  }
-}
-``` -->
-
-## Git dependencies
-
-To add a dependency from a git repository:
-
-```bash
-$ bun install git@github.com:moment/moment.git
-```
-
-Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#github-urls), [`git`](https://docs.npmjs.com/cli/v9/configuring-npm/package-json#git-urls-as-dependencies), `git+ssh`, `git+https`, and many more.
-
-```json
+```json#package.json
 {
   "dependencies": {
     "dayjs": "git+https://github.com/iamkun/dayjs.git",
     "lodash": "git+ssh://github.com/lodash/lodash.git#4.17.21",
     "moment": "git@github.com:moment/moment.git",
-    "zod": "github:colinhacks/zod"
+    "zod": "github:colinhacks/zod",
+    "react": "https://registry.npmjs.org/react/-/react-18.2.0.tgz"
   }
 }
 ```
 
-## Tarball dependencies
+## Configuration
 
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
+The default behavior of `bun install` can be configured in `bunfig.toml`. The default values are shown below.
 
-```json#package.json
-{
-  "dependencies": {
-    "zod": "https://registry.npmjs.org/zod/-/zod-3.21.4.tgz"
-  }
-}
+```toml
+[install]
+
+# whether to install optionalDependencies
+optional = true
+
+# whether to install devDependencies
+dev = true
+
+# whether to install peerDependencies
+peer = true
+
+# equivalent to `--production` flag
+production = false
+
+# equivalent to `--frozen-lockfile` flag
+frozenLockfile = false
+
+# equivalent to `--dry-run` flag
+dryRun = false
+
+# equivalent to `--concurrent-scripts` flag
+concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 ```
 
 ## CI/CD
 
-Looking to speed up your CI? Use the official `oven-sh/setup-bun` action to install `bun` in a GitHub Actions pipeline.
+Looking to speed up your CI? Use the official [`oven-sh/setup-bun`](https://github.com/oven-sh/setup-bun) action to install `bun` in a GitHub Actions pipeline.
 
 ```yaml#.github/workflows/release.yml
 name: bun-types
@@ -311,7 +195,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repo
-        uses: actions/checkout@v3
+        uses: actions/checkout@v4
       - name: Install bun
         uses: oven-sh/setup-bun@v1
       - name: Install dependencies

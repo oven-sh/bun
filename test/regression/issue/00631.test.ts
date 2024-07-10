@@ -1,11 +1,10 @@
 import { expect, it } from "bun:test";
-import { bunExe, bunEnv } from "../../harness.js";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
+import { bunExe, bunEnv, tmpdirSync } from "../../harness.js";
+import { mkdirSync, rmSync, writeFileSync, readFileSync } from "fs";
 import { join } from "path";
 
 it("JSON strings escaped properly", async () => {
-  const testDir = mkdtempSync(join(tmpdir(), "issue631-"));
+  const testDir = tmpdirSync();
 
   // Clean up from prior runs if necessary
   rmSync(testDir, { recursive: true, force: true });
@@ -22,6 +21,9 @@ it("JSON strings escaped properly", async () => {
     env: bunEnv,
     cwd: testDir,
   });
+  if (exitCode !== 0) {
+    console.log(stderr.toString("utf8"));
+  }
   expect(exitCode).toBe(0);
 
   const packageContents = readFileSync(join(testDir, "package.json"), { encoding: "utf8" });

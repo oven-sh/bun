@@ -7,10 +7,21 @@ import { test, expect } from "bun:test";
 
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);
-  expect(Request).toBe(globalThis.Request);
-  expect(Headers).toBe(globalThis.Headers);
+  expect(Request.prototype).toBeInstanceOf(globalThis.Request);
+  expect(Headers.prototype).toBeInstanceOf(globalThis.Headers);
   expect(fetch2.default).toBe(fetch2);
   expect(fetch2.Response).toBe(Response);
+});
+
+test("node-fetch Headers.raw()", () => {
+  const headers = new Headers({ "a": "1" });
+  headers.append("Set-Cookie", "b=1");
+  headers.append("Set-Cookie", "c=1");
+
+  expect(headers.raw()).toEqual({
+    "set-cookie": ["b=1", "c=1"],
+    "a": ["1"],
+  });
 });
 
 for (const [impl, name] of [
@@ -23,7 +34,7 @@ for (const [impl, name] of [
   [vercelFetch.default(fetch), "@vercel/fetch.default"],
 ]) {
   test(name + " fetches", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.stop();
@@ -31,12 +42,11 @@ for (const [impl, name] of [
       },
     });
     expect(await impl("http://" + server.hostname + ":" + server.port)).toBeInstanceOf(globalThis.Response);
-    server.stop(true);
   });
 }
 
 test("node-fetch uses node streams instead of web streams", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req, server) {
       const body = await req.text();
@@ -45,7 +55,7 @@ test("node-fetch uses node streams instead of web streams", async () => {
     },
   });
 
-  try {
+  {
     const result = await fetch2("http://" + server.hostname + ":" + server.port, {
       body: new stream.Readable({
         read() {
@@ -57,12 +67,16 @@ test("node-fetch uses node streams instead of web streams", async () => {
     });
     expect(result.body).toBeInstanceOf(stream.Readable);
     expect(result.body === result.body).toBe(true); // cached lazy getter
+    const headersJSON = result.headers.toJSON();
+    for (const key of Object.keys(headersJSON)) {
+      const value = headersJSON[key];
+      headersJSON[key] = Array.isArray(value) ? value : [value];
+    }
+    expect(result.headers.raw()).toEqual(headersJSON);
     const chunks = [];
     for await (const chunk of result.body) {
       chunks.push(chunk);
     }
     expect(Buffer.concat(chunks).toString()).toBe("hello world");
-  } finally {
-    server.stop(true);
   }
 });

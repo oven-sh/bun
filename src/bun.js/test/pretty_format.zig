@@ -4,7 +4,7 @@ const Output = bun.Output;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const default_allocator = bun.default_allocator;
 const CAPI = JSC.C;
 const ZigString = JSC.ZigString;
@@ -400,7 +400,6 @@ pub const JestPrettyFormat = struct {
                 };
 
                 // Cell is the "unknown" type
-                // if we call JSObjectGetPrivate, it can segfault
                 if (js_type == .Cell) {
                     return .{
                         .tag = .NativeCode,
@@ -414,12 +413,6 @@ pub const JestPrettyFormat = struct {
                         .cell = js_type,
                     };
                 }
-
-                if (CAPI.JSObjectGetPrivate(value.asObjectRef()) != null)
-                    return .{
-                        .tag = .Private,
-                        .cell = js_type,
-                    };
 
                 // If we check an Object has a method table and it does not
                 // it will crash
@@ -653,7 +646,7 @@ pub const JestPrettyFormat = struct {
                 }
 
                 pub inline fn write16Bit(self: *@This(), input: []const u16) void {
-                    strings.formatUTF16Type([]const u16, input, self.ctx) catch {
+                    bun.fmt.formatUTF16Type([]const u16, input, self.ctx) catch {
                         self.failed = true;
                     };
                 }
@@ -755,11 +748,11 @@ pub const JestPrettyFormat = struct {
                         var name_str = ZigString.init("");
 
                         value.getNameProperty(globalThis, &name_str);
-                        if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                        if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                             writer.print("{} ", .{name_str});
                         } else {
                             value.getPrototype(globalThis).getNameProperty(globalThis, &name_str);
-                            if (name_str.len > 0 and !strings.eqlComptime(name_str.slice(), "Object")) {
+                            if (name_str.len > 0 and !name_str.eqlComptime("Object")) {
                                 writer.print("{} ", .{name_str});
                             }
                         }
@@ -771,7 +764,7 @@ pub const JestPrettyFormat = struct {
                     if (this.formatter.indent == 0) this.writer.writeAll("\n") catch {};
                     var classname = ZigString.Empty;
                     value.getClassName(globalThis, &classname);
-                    if (!strings.eqlComptime(classname.slice(), "Object")) {
+                    if (!classname.isEmpty() and !classname.eqlComptime("Object")) {
                         this.writer.print("{} ", .{classname}) catch {};
                     }
 
@@ -786,14 +779,16 @@ pub const JestPrettyFormat = struct {
                     key_: [*c]ZigString,
                     value: JSValue,
                     is_symbol: bool,
+                    is_private_symbol: bool,
                 ) callconv(.C) void {
+                    if (is_private_symbol) return;
+
                     const key = key_.?[0];
                     if (key.eqlComptime("constructor")) return;
-                    if (key.eqlComptime("call")) return;
 
                     var ctx: *@This() = bun.cast(*@This(), ctx_ptr orelse return);
                     var this = ctx.formatter;
-                    var writer_ = ctx.writer;
+                    const writer_ = ctx.writer;
                     var writer = WrappedWriter(Writer){
                         .ctx = writer_,
                         .failed = false,
@@ -919,7 +914,7 @@ pub const JestPrettyFormat = struct {
                     this.map = this.map_node.?.data;
                 }
 
-                var entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
+                const entry = this.map.getOrPut(@intFromEnum(value)) catch unreachable;
                 if (entry.found_existing) {
                     writer.writeAll(comptime Output.prettyFmt("<r><cyan>[Circular]<r>", enable_ansi_colors));
                     return;
@@ -994,7 +989,7 @@ pub const JestPrettyFormat = struct {
                             switch (remaining.charAt(i)) {
                                 '\\' => {
                                     writer.print("{}\\", .{remaining.substringWithLen(0, i)});
-                                    remaining = remaining.substring(i + 1, 0);
+                                    remaining = remaining.substring(i + 1);
                                 },
                                 '\r' => {
                                     if (i + 1 < remaining.len and remaining.charAt(i + 1) == '\n') {
@@ -1003,7 +998,7 @@ pub const JestPrettyFormat = struct {
                                         writer.print("{}\n", .{remaining.substringWithLen(0, i)});
                                     }
 
-                                    remaining = remaining.substring(i + 1, 0);
+                                    remaining = remaining.substring(i + 1);
                                 },
                                 else => unreachable,
                             }
@@ -1027,7 +1022,7 @@ pub const JestPrettyFormat = struct {
                         writer.writeAll(str.slice());
                     } else if (str.len > 0) {
                         // slow path
-                        var buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
+                        const buf = strings.allocateLatin1IntoUTF8(bun.default_allocator, []const u8, str.slice()) catch &[_]u8{};
                         if (buf.len > 0) {
                             defer bun.default_allocator.free(buf);
                             writer.writeAll(buf);
@@ -1057,7 +1052,7 @@ pub const JestPrettyFormat = struct {
                     writer.print(comptime Output.prettyFmt("<r><yellow>{d}<r>", enable_ansi_colors), .{int});
                 },
                 .BigInt => {
-                    var out_str = value.getZigString(this.globalThis).slice();
+                    const out_str = value.getZigString(this.globalThis).slice();
                     this.addForNewLine(out_str.len);
 
                     writer.print(comptime Output.prettyFmt("<r><yellow>{s}n<r>", enable_ansi_colors), .{out_str});
@@ -1106,11 +1101,14 @@ pub const JestPrettyFormat = struct {
                 .Error => {
                     var classname = ZigString.Empty;
                     value.getClassName(this.globalThis, &classname);
-                    var message_string = ZigString.Empty;
-                    if (value.get(this.globalThis, "message")) |message_prop| {
-                        message_prop.toZigString(&message_string, this.globalThis);
+                    var message_string = bun.String.empty;
+                    defer message_string.deref();
+
+                    if (value.fastGet(this.globalThis, .message)) |message_prop| {
+                        message_string = message_prop.toBunString(this.globalThis);
                     }
-                    if (message_string.len == 0) {
+
+                    if (message_string.isEmpty()) {
                         writer.print("[{s}]", .{classname});
                         return;
                     }
@@ -1157,9 +1155,9 @@ pub const JestPrettyFormat = struct {
 
                         this.addForNewLine(2);
 
-                        var ref = value.asObjectRef();
+                        const ref = value.asObjectRef();
 
-                        var prev_quote_strings = this.quote_strings;
+                        const prev_quote_strings = this.quote_strings;
                         this.quote_strings = true;
                         defer this.quote_strings = prev_quote_strings;
 
@@ -1269,42 +1267,7 @@ pub const JestPrettyFormat = struct {
                     } else if (value.as(JSC.ResolveMessage)) |resolve_log| {
                         resolve_log.msg.writeFormat(writer_, enable_ansi_colors) catch {};
                         return;
-                    } else if (value.as(expect.ExpectAnything) != null) {
-                        this.addForNewLine("Anything".len);
-                        writer.writeAll("Anything");
-                        return;
-                    } else if (value.as(expect.ExpectAny) != null) {
-                        const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return;
-
-                        this.addForNewLine("Any<".len);
-                        writer.writeAll("Any<");
-
-                        var class_name = ZigString.init(&name_buf);
-                        constructor_value.getClassName(this.globalThis, &class_name);
-                        this.addForNewLine(class_name.len);
-                        writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
-                        writer.writeAll(">");
-
-                        return;
-                    } else if (value.as(expect.ExpectStringContaining) != null) {
-                        const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringContaining ".len);
-                        writer.writeAll("StringContaining ");
-                        this.printAs(.String, Writer, writer_, substring_value, .String, enable_ansi_colors);
-
-                        return;
-                    } else if (value.as(expect.ExpectStringMatching) != null) {
-                        const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return;
-
-                        this.addForNewLine("StringMatching ".len);
-                        writer.writeAll("StringMatching ");
-
-                        const original_quote_strings = this.quote_strings;
-                        if (test_value.isRegExp()) this.quote_strings = false;
-                        this.printAs(.String, Writer, writer_, test_value, .String, enable_ansi_colors);
-                        this.quote_strings = original_quote_strings;
-
+                    } else if (printAsymmetricMatcher(this, Format, &writer, writer_, name_buf, value, enable_ansi_colors)) {
                         return;
                     } else if (jsType != .DOMWrapper) {
                         if (value.isCallable(this.globalThis.vm())) {
@@ -1424,10 +1387,21 @@ pub const JestPrettyFormat = struct {
                     writer.print("{}", .{str});
                 },
                 .Event => {
-                    const event_type = EventType.map.getWithEql(value.get(this.globalThis, "type").?.getZigString(this.globalThis), ZigString.eqlComptime) orelse EventType.unknown;
-                    if (event_type != .MessageEvent and event_type != .ErrorEvent) {
-                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
-                    }
+                    const event_type_value = brk: {
+                        const value_ = value.get(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                        if (value_.isString()) {
+                            break :brk value_;
+                        }
+
+                        break :brk JSValue.undefined;
+                    };
+
+                    const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                        .MessageEvent, .ErrorEvent => |evt| evt,
+                        else => {
+                            return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                        },
+                    };
 
                     writer.print(
                         comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
@@ -1449,35 +1423,53 @@ pub const JestPrettyFormat = struct {
                                 event_type.label(),
                             },
                         );
-                        this.writeIndent(Writer, writer_) catch unreachable;
+
+                        if (value.fastGet(this.globalThis, .message)) |message_value| {
+                            if (message_value.isString()) {
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                                writer.print(
+                                    comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                    .{},
+                                );
+
+                                const tag = Tag.get(message_value, this.globalThis);
+                                this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                writer.writeAll(", \n");
+                            }
+                        }
 
                         switch (event_type) {
                             .MessageEvent => {
+                                this.writeIndent(Writer, writer_) catch unreachable;
                                 writer.print(
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = value.get(this.globalThis, "data").?;
+                                const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
                                 const tag = Tag.get(data, this.globalThis);
+
                                 if (tag.cell.isStringLike()) {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                 } else {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                 }
+                                writer.writeAll(", \n");
                             },
                             .ErrorEvent => {
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
-                                    .{},
-                                );
+                                if (value.fastGet(this.globalThis, .@"error")) |data| {
+                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
 
-                                const data = value.get(this.globalThis, "error").?;
-                                const tag = Tag.get(data, this.globalThis);
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    const tag = Tag.get(data, this.globalThis);
+                                    this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    writer.writeAll("\n");
+                                }
                             },
                             else => unreachable,
                         }
-                        writer.writeAll("\n");
                     }
 
                     this.writeIndent(Writer, writer_) catch unreachable;
@@ -1552,10 +1544,10 @@ pub const JestPrettyFormat = struct {
                             .skip_empty_name = true,
 
                             .include_value = true,
-                        }).init(this.globalThis, props.asObjectRef());
+                        }).init(this.globalThis, props);
                         defer props_iter.deinit();
 
-                        var children_prop = props.get(this.globalThis, "children");
+                        const children_prop = props.get(this.globalThis, "children");
                         if (props_iter.len > 0) {
                             {
                                 this.indent += 1;
@@ -1566,7 +1558,7 @@ pub const JestPrettyFormat = struct {
                                     if (prop.eqlComptime("children"))
                                         continue;
 
-                                    var property_value = props_iter.value;
+                                    const property_value = props_iter.value;
                                     const tag = Tag.get(property_value, this.globalThis);
 
                                     if (tag.cell.isHidden()) continue;
@@ -1624,7 +1616,7 @@ pub const JestPrettyFormat = struct {
                                     print_children: {
                                         switch (tag.tag) {
                                             .String => {
-                                                var children_string = children.getZigString(this.globalThis);
+                                                const children_string = children.getZigString(this.globalThis);
                                                 if (children_string.len == 0) break :print_children;
                                                 if (comptime enable_ansi_colors) writer.writeAll(comptime Output.prettyFmt("<r>", true));
 
@@ -1744,7 +1736,7 @@ pub const JestPrettyFormat = struct {
                         var object_name = ZigString.Empty;
                         value.getClassName(this.globalThis, &object_name);
 
-                        if (!strings.eqlComptime(object_name.slice(), "Object")) {
+                        if (!object_name.eqlComptime("Object")) {
                             writer.print("{s} {{}}", .{object_name});
                         } else {
                             // don't write "Object"
@@ -1919,7 +1911,7 @@ pub const JestPrettyFormat = struct {
 
                             // Uint8Array, Uint8ClampedArray, DataView, ArrayBuffer
                             else => {
-                                var slice_with_type: []align(std.meta.alignment([]u8)) u8 = @alignCast(std.mem.bytesAsSlice(u8, slice));
+                                const slice_with_type: []align(std.meta.alignment([]u8)) u8 = @alignCast(std.mem.bytesAsSlice(u8, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {
@@ -1950,7 +1942,7 @@ pub const JestPrettyFormat = struct {
             if (comptime is_bindgen) {
                 return;
             }
-            var prevGlobalThis = this.globalThis;
+            const prevGlobalThis = this.globalThis;
             defer this.globalThis = prevGlobalThis;
             this.globalThis = globalThis;
 
@@ -1986,4 +1978,142 @@ pub const JestPrettyFormat = struct {
             };
         }
     };
+
+    fn printAsymmetricMatcherPromisePrefix(flags: expect.Expect.Flags, matcher: anytype, writer: anytype) void {
+        if (flags.promise != .none) {
+            switch (flags.promise) {
+                .resolves => {
+                    matcher.addForNewLine("promise resolved to ".len);
+                    writer.writeAll("promise resolved to ");
+                },
+                .rejects => {
+                    matcher.addForNewLine("promise rejected to ".len);
+                    writer.writeAll("promise rejected to ");
+                },
+                else => {},
+            }
+        }
+    }
+
+    pub fn printAsymmetricMatcher(
+        // the Formatter instance
+        this: anytype,
+        comptime Format: anytype,
+        /// The WrappedWriter
+        writer: anytype,
+        /// The raw writer
+        writer_: anytype,
+        /// Buf used to print strings
+        name_buf: [512]u8,
+        value: JSValue,
+        comptime enable_ansi_colors: bool,
+    ) bool {
+        _ = Format;
+
+        if (value.as(expect.ExpectAnything)) |matcher| {
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NotAnything".len);
+                writer.writeAll("NotAnything");
+            } else {
+                this.addForNewLine("Anything".len);
+                writer.writeAll("Anything");
+            }
+        } else if (value.as(expect.ExpectAny)) |matcher| {
+            const constructor_value = expect.ExpectAny.constructorValueGetCached(value) orelse return true;
+
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NotAny<".len);
+                writer.writeAll("NotAny<");
+            } else {
+                this.addForNewLine("Any<".len);
+                writer.writeAll("Any<");
+            }
+
+            var class_name = ZigString.init(&name_buf);
+            constructor_value.getClassName(this.globalThis, &class_name);
+            this.addForNewLine(class_name.len);
+            writer.print(comptime Output.prettyFmt("<cyan>{}<r>", enable_ansi_colors), .{class_name});
+            this.addForNewLine(1);
+            writer.writeAll(">");
+        } else if (value.as(expect.ExpectCloseTo)) |matcher| {
+            const number_value = expect.ExpectCloseTo.numberValueGetCached(value) orelse return true;
+            const digits_value = expect.ExpectCloseTo.digitsValueGetCached(value) orelse return true;
+
+            const number = number_value.toInt32();
+            const digits = digits_value.toInt32();
+
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("NumberNotCloseTo".len);
+                writer.writeAll("NumberNotCloseTo");
+            } else {
+                this.addForNewLine("NumberCloseTo ".len);
+                writer.writeAll("NumberCloseTo ");
+            }
+            writer.print("{d} ({d} digit{s})", .{ number, digits, if (digits == 1) "" else "s" });
+        } else if (value.as(expect.ExpectObjectContaining)) |matcher| {
+            const object_value = expect.ExpectObjectContaining.objectValueGetCached(value) orelse return true;
+
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("ObjectNotContaining ".len);
+                writer.writeAll("ObjectNotContaining ");
+            } else {
+                this.addForNewLine("ObjectContaining ".len);
+                writer.writeAll("ObjectContaining ");
+            }
+            this.printAs(.Object, @TypeOf(writer_), writer_, object_value, .Object, enable_ansi_colors);
+        } else if (value.as(expect.ExpectStringContaining)) |matcher| {
+            const substring_value = expect.ExpectStringContaining.stringValueGetCached(value) orelse return true;
+
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("StringNotContaining ".len);
+                writer.writeAll("StringNotContaining ");
+            } else {
+                this.addForNewLine("StringContaining ".len);
+                writer.writeAll("StringContaining ");
+            }
+            this.printAs(.String, @TypeOf(writer_), writer_, substring_value, .String, enable_ansi_colors);
+        } else if (value.as(expect.ExpectStringMatching)) |matcher| {
+            const test_value = expect.ExpectStringMatching.testValueGetCached(value) orelse return true;
+
+            printAsymmetricMatcherPromisePrefix(matcher.flags, this, writer);
+            if (matcher.flags.not) {
+                this.addForNewLine("StringNotMatching ".len);
+                writer.writeAll("StringNotMatching ");
+            } else {
+                this.addForNewLine("StringMatching ".len);
+                writer.writeAll("StringMatching ");
+            }
+
+            const original_quote_strings = this.quote_strings;
+            if (test_value.isRegExp()) this.quote_strings = false;
+            this.printAs(.String, @TypeOf(writer_), writer_, test_value, .String, enable_ansi_colors);
+            this.quote_strings = original_quote_strings;
+        } else if (value.as(expect.ExpectCustomAsymmetricMatcher)) |instance| {
+            const printed = instance.customPrint(value, this.globalThis, writer_, true) catch unreachable;
+            if (!printed) { // default print (non-overridden by user)
+                const flags = instance.flags;
+                const args_value = expect.ExpectCustomAsymmetricMatcher.capturedArgsGetCached(value) orelse return true;
+                const matcher_fn = expect.ExpectCustomAsymmetricMatcher.matcherFnGetCached(value) orelse return true;
+                const matcher_name = matcher_fn.getName(this.globalThis);
+
+                printAsymmetricMatcherPromisePrefix(flags, this, writer);
+                if (flags.not) {
+                    this.addForNewLine("not ".len);
+                    writer.writeAll("not ");
+                }
+                this.addForNewLine(matcher_name.length() + 1);
+                writer.print("{s}", .{matcher_name});
+                writer.writeAll(" ");
+                this.printAs(.Array, @TypeOf(writer_), writer_, args_value, .Array, enable_ansi_colors);
+            }
+        } else {
+            return false;
+        }
+        return true;
+    }
 };

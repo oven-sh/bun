@@ -28,18 +28,30 @@
 #include "root.h"
 #include "ZigGlobalObject.h"
 
-#include "JavaScriptCore/JSFunction.h"
-#include "JavaScriptCore/VM.h"
+#include <JavaScriptCore/JSFunction.h>
+#include <JavaScriptCore/VM.h>
 
 #include "headers-handwritten.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallFrame.h"
+#include <JavaScriptCore/CallFrame.h>
 
+#ifndef LAZY_LOAD_SQLITE_DEFAULT_SETTING
 #if defined(__APPLE__)
-#define LAZY_LOAD_SQLITE 1
+#define LAZY_LOAD_SQLITE_DEFAULT_SETTING 1
+#endif
 #endif
 
-#ifdef LAZY_LOAD_SQLITE
+#ifndef LAZY_LOAD_SQLITE
+#ifdef LAZY_LOAD_SQLITE_DEFAULT_SETTING
+#define LAZY_LOAD_SQLITE LAZY_LOAD_SQLITE_DEFAULT_SETTING
+#endif
+#endif
+
+#ifndef LAZY_LOAD_SQLITE
+#define LAZY_LOAD_SQLITE 0
+#endif
+
+#if LAZY_LOAD_SQLITE
 #include "sqlite3.h"
 #else
 #include "sqlite3_local.h"
@@ -50,25 +62,15 @@ namespace WebCore {
 class JSSQLStatementConstructor final : public JSC::JSFunction {
 public:
     using Base = JSC::JSFunction;
+    static constexpr unsigned StructureFlags = Base::StructureFlags;
+
     static JSSQLStatementConstructor* create(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::Structure* structure);
 
     DECLARE_INFO;
-    template<typename, SubspaceAccess mode> static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
-    {
-        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
-            return nullptr;
-        return WebCore::subspaceForImpl<JSSQLStatementConstructor, WebCore::UseCustomHeapCellType::No>(
-            vm,
-            [](auto& spaces) { return spaces.m_clientSubspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForJSSQLStatementConstructor = std::forward<decltype(space)>(space); },
-            [](auto& spaces) { return spaces.m_subspaceForJSSQLStatementConstructor.get(); },
-            [](auto& spaces, auto&& space) { spaces.m_subspaceForJSSQLStatementConstructor = std::forward<decltype(space)>(space); });
-    }
 
-    static void destroy(JSC::JSCell*);
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)
     {
-        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSC::ObjectType, StructureFlags), info());
+        return JSC::Structure::create(vm, globalObject, prototype, JSC::TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
 private:
@@ -79,5 +81,9 @@ private:
 
     void finishCreation(JSC::VM&);
 };
+static_assert(sizeof(JSSQLStatementConstructor) == sizeof(JSFunction), "Allocate JSSQLStatementConstructor in JSFunction IsoSubspace");
+Structure* createJSSQLStatementStructure(JSGlobalObject* globalObject);
 
-}
+JSValue createJSSQLStatementConstructor(Zig::GlobalObject* globalObject);
+
+} // namespace WebCore

@@ -25,7 +25,7 @@
 
 #include "URLDecomposition.h"
 
-#include "wtf/text/StringToIntegerConversion.h"
+#include <wtf/text/StringToIntegerConversion.h>
 
 namespace WebCore {
 
@@ -35,7 +35,14 @@ String URLDecomposition::origin() const
 
     if (fullURL.protocolIsInHTTPFamily() or fullURL.protocolIsInFTPFamily() or fullURL.protocolIs("ws"_s) or fullURL.protocolIs("wss"_s))
         return fullURL.protocolHostAndPort();
-
+    if (fullURL.protocolIsBlob()) {
+        const String& path = fullURL.path().toString();
+        const URL subUrl { URL {}, path };
+        if (subUrl.isValid()) {
+            if (subUrl.protocolIsInHTTPFamily() or subUrl.protocolIsInFTPFamily() or subUrl.protocolIs("ws"_s) or subUrl.protocolIs("wss"_s) or subUrl.protocolIsFile())
+                return subUrl.protocolHostAndPort();
+        }
+    }
     return "null"_s;
 }
 

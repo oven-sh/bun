@@ -1,3 +1,4 @@
+// clang-format off
 /*
  * Authored by Alex Hultman, 2018-2020.
  * Intellectual property of third-party.
@@ -64,6 +65,33 @@ private:
 
     /* Init the HttpContext by registering libusockets event handlers */
     HttpContext<SSL> *init() {
+        
+        if(SSL) {
+            // if we are SSL we need to handle the handshake properly
+            us_socket_context_on_handshake(SSL, getSocketContext(), [](us_socket_t *s, int success,  struct us_bun_verify_error_t verify_error, void* custom_data) {
+                // if we are closing or already closed, we don't need to do anything
+                if (!us_socket_is_closed(SSL, s) && !us_socket_is_shut_down(SSL, s)) {        
+                    HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+                    
+                    if(httpContextData->rejectUnauthorized) {
+                        if(!success || verify_error.error != 0) {
+                            // we failed to handshake, close the socket
+                            us_socket_close(SSL, s, 0, nullptr);
+                            return;
+                        }
+                    }
+
+                    /* Any connected socket should timeout until it has a request */
+                    us_socket_timeout(SSL, s, HTTP_IDLE_TIMEOUT_S);
+
+                    /* Call filter */
+                    for (auto &f : httpContextData->filterHandlers) {
+                        f((HttpResponse<SSL> *) s, 1);
+                    }
+                }
+            }, nullptr);
+        }
+            
         /* Handle socket connections */
         us_socket_context_on_open(SSL, getSocketContext(), [](us_socket_t *s, int /*is_client*/, char */*ip*/, int /*ip_length*/) {
             /* Any connected socket should timeout until it has a request */
@@ -72,10 +100,12 @@ private:
             /* Init socket ext */
             new (us_socket_ext(SSL, s)) HttpResponseData<SSL>;
 
-            /* Call filter */
-            HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
-            for (auto &f : httpContextData->filterHandlers) {
-                f((HttpResponse<SSL> *) s, 1);
+            if(!SSL) {
+                /* Call filter */
+                HttpContextData<SSL> *httpContextData = getSocketContextDataS(s);
+                for (auto &f : httpContextData->filterHandlers) {
+                    f((HttpResponse<SSL> *) s, 1);
+                }
             }
 
             return s;
@@ -105,6 +135,8 @@ private:
 
         /* Handle HTTP data streams */
         us_socket_context_on_data(SSL, getSocketContext(), [](us_socket_t *s, char *data, int length) {
+            // ref the socket to make sure we process it entirely before it is closed
+            us_socket_ref(s);
 
             // total overhead is about 210k down to 180k
             // ~210k req/sec is the original perf with write in data
@@ -264,6 +296,10 @@ private:
 
             /* We need to uncork in all cases, except for nullptr (closed socket, or upgraded socket) */
             if (returnedSocket != nullptr) {
+                us_socket_t* returnedSocketPtr = (us_socket_t*) returnedSocket; 
+                /* We don't want open sockets to keep the event loop alive between HTTP requests */
+                us_socket_unref(returnedSocketPtr);
+
                 /* Timeout on uncork failure */
                 auto [written, failed] = ((AsyncSocket<SSL> *) returnedSocket)->uncork();
                 if (failed) {
@@ -283,8 +319,7 @@ private:
                         }
                     }
                 }
-
-                return (us_socket_t *) returnedSocket;
+                return returnedSocketPtr;
             }
 
             /* If we upgraded, check here (differ between nullptr close and nullptr upgrade) */
@@ -339,9 +374,7 @@ private:
                     return s;
                 }
 
-                /* We don't want to fall through since we don't want to mess with timeout.
-                 * It makes little sense to drain any backpressure when the user has registered onWritable. */
-                return s;
+                /* We need to drain any remaining buffered data if success == true*/    
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */
@@ -396,9 +429,13 @@ public:
         if (!httpContext) {
             return nullptr;
         }
-
+        // for servers this is only valid when request cert is enabled
+        
         /* Init socket context data */
-        new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
+        auto* httpContextData = new ((HttpContextData<SSL> *) us_socket_context_ext(SSL, (us_socket_context_t *) httpContext)) HttpContextData<SSL>();
+        if(options.request_cert && options.reject_unauthorized) {
+            httpContextData->rejectUnauthorized = true;
+        }
         return httpContext->init();
     }
 
@@ -459,12 +496,23 @@ public:
 
     /* Listen to port using this HttpContext */
     us_listen_socket_t *listen(const char *host, int port, int options) {
-        return us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>));
+        auto socket = us_socket_context_listen(SSL, getSocketContext(), host, port, options, sizeof(HttpResponseData<SSL>));
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+          us_socket_unref(&socket->s);
+        } 
+        return socket;
     }
 
     /* Listen to unix domain socket using this HttpContext */
-    us_listen_socket_t *listen(const char *path, int options) {
-        return us_socket_context_listen_unix(SSL, getSocketContext(), path, options, sizeof(HttpResponseData<SSL>));
+    us_listen_socket_t *listen_unix(const char *path, size_t pathlen, int options) {
+        auto* socket =  us_socket_context_listen_unix(SSL, getSocketContext(), path, pathlen, options, sizeof(HttpResponseData<SSL>));
+        // we dont depend on libuv ref for keeping it alive
+        if (socket) {
+            us_socket_unref(&socket->s);
+        }
+
+        return socket;
     }
 };
 

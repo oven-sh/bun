@@ -4,43 +4,43 @@ import { DebugAdapter, UnixSignal } from "../../../bun-debug-adapter-protocol";
 import { DebugSession } from "@vscode/debugadapter";
 import { tmpdir } from "node:os";
 
-const debugConfiguration: vscode.DebugConfiguration = {
+export const DEBUG_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
+  internalConsoleOptions: "neverOpen",
   request: "launch",
   name: "Debug File",
   program: "${file}",
   cwd: "${workspaceFolder}",
   stopOnEntry: false,
   watchMode: false,
-  internalConsoleOptions: "neverOpen",
 };
 
-const runConfiguration: vscode.DebugConfiguration = {
+export const RUN_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
+  internalConsoleOptions: "neverOpen",
   request: "launch",
   name: "Run File",
   program: "${file}",
   cwd: "${workspaceFolder}",
   noDebug: true,
   watchMode: false,
-  internalConsoleOptions: "neverOpen",
 };
 
-const attachConfiguration: vscode.DebugConfiguration = {
+const ATTACH_CONFIGURATION: vscode.DebugConfiguration = {
   type: "bun",
+  internalConsoleOptions: "neverOpen",
   request: "attach",
   name: "Attach Bun",
   url: "ws://localhost:6499/",
   stopOnEntry: false,
-  internalConsoleOptions: "neverOpen",
 };
 
 const adapters = new Map<string, FileDebugSession>();
 
-export default function (context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
+export function registerDebugger(context: vscode.ExtensionContext, factory?: vscode.DebugAdapterDescriptorFactory) {
   context.subscriptions.push(
-    vscode.commands.registerCommand("extension.bun.runFile", RunFileCommand),
-    vscode.commands.registerCommand("extension.bun.debugFile", DebugFileCommand),
+    vscode.commands.registerCommand("extension.bun.runFile", runFileCommand),
+    vscode.commands.registerCommand("extension.bun.debugFile", debugFileCommand),
     vscode.debug.registerDebugConfigurationProvider(
       "bun",
       new DebugConfigurationProvider(),
@@ -52,15 +52,15 @@ export default function (context: vscode.ExtensionContext, factory?: vscode.Debu
       vscode.DebugConfigurationProviderTriggerKind.Dynamic,
     ),
     vscode.debug.registerDebugAdapterDescriptorFactory("bun", factory ?? new InlineDebugAdapterFactory()),
-    vscode.window.onDidOpenTerminal(InjectDebugTerminal),
+    vscode.window.onDidOpenTerminal(injectDebugTerminal),
   );
 }
 
-function RunFileCommand(resource?: vscode.Uri): void {
+function runFileCommand(resource?: vscode.Uri): void {
   const path = getActivePath(resource);
   if (path) {
     vscode.debug.startDebugging(undefined, {
-      ...runConfiguration,
+      ...RUN_CONFIGURATION,
       noDebug: true,
       program: path,
       runtime: getRuntime(resource),
@@ -68,22 +68,21 @@ function RunFileCommand(resource?: vscode.Uri): void {
   }
 }
 
-function DebugFileCommand(resource?: vscode.Uri): void {
-  const path = getActivePath(resource);
-  if (path) {
-    vscode.debug.startDebugging(undefined, {
-      ...debugConfiguration,
-      program: path,
-      runtime: getRuntime(resource),
-    });
-  }
+export function debugCommand(command: string) {
+  vscode.debug.startDebugging(undefined, {
+    ...DEBUG_CONFIGURATION,
+    program: command,
+    runtime: getRuntime(),
+  });
 }
 
-function InjectDebugTerminal(terminal: vscode.Terminal): void {
-  const enabled = getConfig("debugTerminal.enabled");
-  if (enabled === false) {
-    return;
-  }
+function debugFileCommand(resource?: vscode.Uri) {
+  const path = getActivePath(resource);
+  if (path) debugCommand(path);
+}
+
+function injectDebugTerminal(terminal: vscode.Terminal): void {
+  if (!getConfig("debugTerminal.enabled")) return;
 
   const { name, creationOptions } = terminal;
   if (name !== "JavaScript Debug Terminal") {
@@ -118,16 +117,9 @@ function InjectDebugTerminal(terminal: vscode.Terminal): void {
   setTimeout(() => terminal.dispose(), 100);
 }
 
-class TerminalProfileProvider implements vscode.TerminalProfileProvider {
-  provideTerminalProfile(token: vscode.CancellationToken): vscode.ProviderResult<vscode.TerminalProfile> {
-    const { terminalProfile } = new TerminalDebugSession();
-    return terminalProfile;
-  }
-}
-
 class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
   provideDebugConfigurations(folder?: vscode.WorkspaceFolder): vscode.ProviderResult<vscode.DebugConfiguration[]> {
-    return [debugConfiguration, runConfiguration, attachConfiguration];
+    return [DEBUG_CONFIGURATION, RUN_CONFIGURATION, ATTACH_CONFIGURATION];
   }
 
   resolveDebugConfiguration(
@@ -139,9 +131,9 @@ class DebugConfigurationProvider implements vscode.DebugConfigurationProvider {
 
     const { request } = config;
     if (request === "attach") {
-      target = attachConfiguration;
+      target = ATTACH_CONFIGURATION;
     } else {
-      target = debugConfiguration;
+      target = DEBUG_CONFIGURATION;
     }
 
     // If the configuration is missing a default property, copy it from the template.
@@ -219,7 +211,7 @@ class TerminalDebugSession extends FileDebugSession {
     this.signal = new UnixSignal();
     this.signal.on("Signal.received", () => {
       vscode.debug.startDebugging(undefined, {
-        ...attachConfiguration,
+        ...ATTACH_CONFIGURATION,
         url: this.adapter.url,
       });
     });
@@ -238,34 +230,18 @@ class TerminalDebugSession extends FileDebugSession {
   }
 }
 
-function getActiveDocument(): vscode.TextDocument | undefined {
-  return vscode.window.activeTextEditor?.document;
-}
-
 function getActivePath(target?: vscode.Uri): string | undefined {
-  if (!target) {
-    target = getActiveDocument()?.uri;
-  }
-  return target?.fsPath;
-}
-
-function isJavaScript(languageId?: string): boolean {
-  return (
-    languageId === "javascript" ||
-    languageId === "javascriptreact" ||
-    languageId === "typescript" ||
-    languageId === "typescriptreact"
-  );
+  return target?.fsPath ?? vscode.window.activeTextEditor?.document?.uri.fsPath;
 }
 
 function getRuntime(scope?: vscode.ConfigurationScope): string {
-  const value = getConfig("runtime", scope);
+  const value = getConfig<string>("runtime", scope);
   if (typeof value === "string" && value.trim().length > 0) {
     return value;
   }
   return "bun";
 }
 
-function getConfig<T>(path: string, scope?: vscode.ConfigurationScope): unknown {
-  return vscode.workspace.getConfiguration("bun", scope).get(path);
+function getConfig<T>(path: string, scope?: vscode.ConfigurationScope) {
+  return vscode.workspace.getConfiguration("bun", scope).get<T>(path);
 }

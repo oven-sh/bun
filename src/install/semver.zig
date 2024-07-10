@@ -10,6 +10,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
+const JSC = bun.JSC;
 const IdentityContext = @import("../identity_context.zig").IdentityContext;
 
 /// String type that stores either an offset/length into an external buffer or a string inline directly
@@ -46,40 +47,6 @@ pub const String = extern struct {
         };
     }
 
-    pub inline fn assertDefined(_: *const String) void {
-        // if (comptime !Environment.allow_assert)
-        //     return;
-
-        // if (this.isUndefined()) {
-        //     @breakpoint();
-        //     @panic("String is undefined");
-        // }
-    }
-
-    pub inline fn init(
-        buf: string,
-        in: string,
-    ) String {
-        if (comptime Environment.allow_assert) {
-            const out = realInit(buf, in);
-            if (out.isInline()) {
-                out.assertDefined();
-            } else {
-                std.debug.assert(@as(u64, @bitCast(out.slice(buf)[0..8].*)) != undefined);
-            }
-
-            return out;
-        } else {
-            return realInit(buf, in);
-        }
-    }
-
-    pub fn isUndefined(this: *const String) bool {
-        var num: u64 = undefined;
-        var bytes = @as(u64, @bitCast(this.bytes));
-        return @as(u63, @truncate(bytes)) == @as(u63, @truncate(num));
-    }
-
     pub const Formatter = struct {
         str: *const String,
         buf: string,
@@ -89,6 +56,16 @@ pub const String = extern struct {
             try writer.writeAll(str.slice(formatter.buf));
         }
     };
+
+    pub fn Sorter(comptime direction: enum { asc, desc }) type {
+        return struct {
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+            pub fn lessThan(this: @This(), lhs: String, rhs: String) bool {
+                return lhs.order(&rhs, this.lhs_buf, this.rhs_buf) == if (comptime direction == .asc) .lt else .gt;
+            }
+        };
+    }
 
     pub inline fn order(
         lhs: *const String,
@@ -157,7 +134,7 @@ pub const String = extern struct {
         }
     };
 
-    fn realInit(
+    pub fn init(
         buf: string,
         in: string,
     ) String {
@@ -260,7 +237,9 @@ pub const String = extern struct {
             buf: string,
             in: string,
         ) Pointer {
-            std.debug.assert(bun.isSliceInBuffer(in, buf));
+            if (Environment.allow_assert) {
+                assert(bun.isSliceInBuffer(in, buf));
+            }
 
             return Pointer{
                 .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -275,8 +254,6 @@ pub const String = extern struct {
 
     // String must be a pointer because we reference it as a slice. It will become a dead pointer if it is copied.
     pub fn slice(this: *const String, buf: string) string {
-        this.assertDefined();
-
         switch (this.bytes[max_inline_len - 1] & 128) {
             0 => {
                 // Edgecase: string that starts with a 0 byte will be considered empty.
@@ -311,7 +288,7 @@ pub const String = extern struct {
         pub const StringPool = std.HashMap(u64, String, IdentityContext(u64), 80);
 
         pub inline fn stringHash(buf: []const u8) u64 {
-            return bun.Wyhash.hash(0, buf);
+            return bun.Wyhash11.hash(0, buf);
         }
 
         pub inline fn count(this: *Builder, slice_: string) void {
@@ -333,12 +310,12 @@ pub const String = extern struct {
                 &[_]u8{};
         }
         pub fn allocate(this: *Builder, allocator: Allocator) !void {
-            var ptr_ = try allocator.alloc(u8, this.cap);
+            const ptr_ = try allocator.alloc(u8, this.cap);
             this.ptr = ptr_.ptr;
         }
 
         pub fn append(this: *Builder, comptime Type: type, slice_: string) Type {
-            return @call(.always_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
+            return @call(bun.callmod_inline, appendWithHash, .{ this, Type, slice_, stringHash(slice_) });
         }
 
         pub fn appendUTF8WithoutPool(this: *Builder, comptime Type: type, slice_: string, hash: u64) Type {
@@ -357,15 +334,15 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -392,15 +369,15 @@ pub const String = extern struct {
                 }
             }
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
             bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
             const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
             this.len += slice_.len;
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -427,11 +404,11 @@ pub const String = extern struct {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap); // didn't count everything
-                std.debug.assert(this.ptr != null); // must call allocate first
+                assert(this.len <= this.cap); // didn't count everything
+                assert(this.ptr != null); // must call allocate first
             }
 
-            var string_entry = this.string_pool.getOrPut(hash) catch unreachable;
+            const string_entry = this.string_pool.getOrPut(hash) catch unreachable;
             if (!string_entry.found_existing) {
                 bun.copy(u8, this.ptr.?[this.len..this.cap], slice_);
                 const final_slice = this.ptr.?[this.len..this.cap][0..slice_.len];
@@ -440,7 +417,7 @@ pub const String = extern struct {
                 string_entry.value_ptr.* = String.init(this.allocatedSlice(), final_slice);
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(this.len <= this.cap);
+            if (comptime Environment.allow_assert) assert(this.len <= this.cap);
 
             switch (Type) {
                 String => {
@@ -467,7 +444,7 @@ pub const String = extern struct {
 test "String works" {
     {
         var buf: string = "hello world";
-        var world: string = buf[6..];
+        const world: string = buf[6..];
         var str = String.init(
             buf,
             world,
@@ -476,8 +453,8 @@ test "String works" {
     }
 
     {
-        var buf: string = "hello";
-        var world: string = buf;
+        const buf: string = "hello";
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -487,8 +464,8 @@ test "String works" {
     }
 
     {
-        var buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
-        var world: string = buf;
+        const buf: string = &[8]u8{ 'h', 'e', 'l', 'l', 'o', 'k', 'k', 129 };
+        const world: string = buf;
         var str = String.init(
             buf,
             world,
@@ -557,7 +534,7 @@ pub const BigExternalString = extern struct {
     }
 
     pub inline fn init(buf: string, in: string, hash: u64) BigExternalString {
-        std.debug.assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
+        assert(@intFromPtr(buf.ptr) <= @intFromPtr(in.ptr) and ((@intFromPtr(in.ptr) + in.len) <= (@intFromPtr(buf.ptr) + buf.len)));
 
         return BigExternalString{
             .off = @as(u32, @truncate(@intFromPtr(in.ptr) - @intFromPtr(buf.ptr))),
@@ -576,23 +553,36 @@ pub const SlicedString = struct {
     slice: string,
 
     pub inline fn init(buf: string, slice: string) SlicedString {
+        if (Environment.allow_assert and !@inComptime()) {
+            if (@intFromPtr(buf.ptr) > @intFromPtr(slice.ptr)) {
+                @panic("SlicedString.init buf is not in front of slice");
+            }
+        }
         return SlicedString{ .buf = buf, .slice = slice };
     }
 
     pub inline fn external(this: SlicedString) ExternalString {
-        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) {
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+        }
 
-        return ExternalString.init(this.buf, this.slice, bun.Wyhash.hash(0, this.slice));
+        return ExternalString.init(this.buf, this.slice, bun.Wyhash11.hash(0, this.slice));
     }
 
     pub inline fn value(this: SlicedString) String {
-        if (comptime Environment.allow_assert) std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+        if (comptime Environment.allow_assert) {
+            assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.slice.ptr) and ((@intFromPtr(this.slice.ptr) + this.slice.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+        }
 
         return String.init(this.buf, this.slice);
     }
 
     pub inline fn sub(this: SlicedString, input: string) SlicedString {
-        std.debug.assert(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.buf.ptr) and ((@intFromPtr(input.ptr) + input.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)));
+        if (Environment.allow_assert) {
+            if (!(@intFromPtr(this.buf.ptr) <= @intFromPtr(this.buf.ptr) and ((@intFromPtr(input.ptr) + input.len) <= (@intFromPtr(this.buf.ptr) + this.buf.len)))) {
+                @panic("SlicedString.sub input is not a substring of the slice");
+            }
+        }
         return SlicedString{ .buf = this.buf, .slice = input };
     }
 };
@@ -613,6 +603,10 @@ pub const Version = extern struct {
 
     pub fn orderFn(ctx: []const u8, lhs: Version, rhs: Version) std.math.Order {
         return lhs.order(rhs, ctx, ctx);
+    }
+
+    pub fn isZero(this: Version) bool {
+        return this.patch == 0 and this.minor == 0 and this.major == 0;
     }
 
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
@@ -637,7 +631,7 @@ pub const Version = extern struct {
         if (this.tag.hasBuild() and !this.tag.build.isInline()) builder.count(this.tag.build.slice(buf));
     }
 
-    pub fn clone(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
+    pub fn append(this: *const Version, buf: []const u8, comptime StringBuilder: type, builder: StringBuilder) Version {
         var that = this.*;
 
         if (this.tag.hasPre() and !this.tag.pre.isInline()) that.tag.pre = builder.append(ExternalString, this.tag.pre.slice(buf));
@@ -652,11 +646,20 @@ pub const Version = extern struct {
         patch: ?u32 = null,
         tag: Tag = .{},
 
-        pub fn fill(this: Partial) Version {
+        pub fn min(this: Partial) Version {
             return .{
                 .major = this.major orelse 0,
                 .minor = this.minor orelse 0,
                 .patch = this.patch orelse 0,
+                .tag = this.tag,
+            };
+        }
+
+        pub fn max(this: Partial) Version {
+            return .{
+                .major = this.major orelse std.math.maxInt(u32),
+                .minor = this.minor orelse std.math.maxInt(u32),
+                .patch = this.patch orelse std.math.maxInt(u32),
                 .tag = this.tag,
             };
         }
@@ -718,6 +721,170 @@ pub const Version = extern struct {
         }
     };
 
+    pub const PinnedVersion = enum {
+        major, // ^
+        minor, // ~
+        patch, // =
+    };
+
+    /// Modified version of pnpm's `whichVersionIsPinned`
+    /// https://github.com/pnpm/pnpm/blob/bc0618cf192a9cafd0ab171a3673e23ed0869bbd/packages/which-version-is-pinned/src/index.ts#L9
+    ///
+    /// Differences:
+    /// - It's not used for workspaces
+    /// - `npm:` is assumed already removed from aliased versions
+    /// - Invalid input is considered major pinned (important because these strings are coming
+    ///    from package.json)
+    ///
+    /// The goal of this function is to avoid a complete parse of semver that's unused
+    pub fn whichVersionIsPinned(input: string) PinnedVersion {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        var i: usize = 0;
+
+        const pinned: PinnedVersion = pinned: {
+            for (0..version.len) |j| {
+                switch (version[j]) {
+                    // newlines & whitespace
+                    ' ',
+                    '\t',
+                    '\n',
+                    '\r',
+                    std.ascii.control_code.vt,
+                    std.ascii.control_code.ff,
+
+                    // version separators
+                    'v',
+                    '=',
+                    => {},
+
+                    else => |c| {
+                        i = j;
+
+                        switch (c) {
+                            '~', '^' => {
+                                i += 1;
+
+                                for (i..version.len) |k| {
+                                    switch (version[k]) {
+                                        ' ',
+                                        '\t',
+                                        '\n',
+                                        '\r',
+                                        std.ascii.control_code.vt,
+                                        std.ascii.control_code.ff,
+                                        => {
+                                            // `v` and `=` not included.
+                                            // `~v==1` would update to `^1.1.0` if versions `1.0.0`, `1.0.1`, `1.1.0`, and `2.0.0` are available
+                                            // note that `~` changes to `^`
+                                        },
+
+                                        else => {
+                                            i = k;
+                                            break :pinned if (c == '~') .minor else .major;
+                                        },
+                                    }
+                                }
+
+                                // entire version after `~` is whitespace. invalid
+                                return .major;
+                            },
+
+                            '0'...'9' => break :pinned .patch,
+
+                            // could be invalid, could also be valid range syntax (>=, ...)
+                            // either way, pin major
+                            else => return .major,
+                        }
+                    },
+                }
+            }
+
+            // entire semver is whitespace, `v`, and `=`. Invalid
+            return .major;
+        };
+
+        // `pinned` is `.major`, `.minor`, or `.patch`. Check for each version core number:
+        // - if major is missing, return `if (pinned == .patch) .major else pinned`
+        // - if minor is missing, return `if (pinned == .patch) .minor else pinned`
+        // - if patch is missing, return `pinned`
+        // - if there's whitespace or non-digit characters between core numbers, return `.major`
+        // - if the end is reached, return `pinned`
+
+        // major
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        var d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .major else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // minor
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+            if (i >= version.len) return if (pinned == .patch) .minor else pinned;
+            d = version[i];
+        }
+
+        if (d != '.') return .major;
+
+        // patch
+        i += 1;
+        if (i >= version.len or !std.ascii.isDigit(version[i])) return .major;
+        d = version[i];
+        while (std.ascii.isDigit(d)) {
+            i += 1;
+
+            // patch is done and at input end, valid
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // Skip remaining valid pre/build tag characters and whitespace.
+        // Does not validate whitespace used inside pre/build tags.
+        if (!validPreOrBuildTagCharacter(d) or std.ascii.isWhitespace(d)) return .major;
+        i += 1;
+
+        // at this point the semver is valid so we can return true if it ends
+        if (i >= version.len) return pinned;
+        d = version[i];
+        while (validPreOrBuildTagCharacter(d) and !std.ascii.isWhitespace(d)) {
+            i += 1;
+            if (i >= version.len) return pinned;
+            d = version[i];
+        }
+
+        // We've come across a character that is not valid for tags or is whitespace.
+        // Trailing whitespace was trimmed so we can assume there's another range
+        return .major;
+    }
+
+    fn validPreOrBuildTagCharacter(c: u8) bool {
+        return switch (c) {
+            '-', '+', '.', 'A'...'Z', 'a'...'z', '0'...'9' => true,
+            else => false,
+        };
+    }
+
+    pub fn isTaggedVersionOnly(input: []const u8) bool {
+        const version = strings.trim(input, &strings.whitespace_chars);
+
+        // first needs to be a-z
+        if (version.len == 0 or !std.ascii.isAlphabetic(version[0])) return false;
+
+        for (1..version.len) |i| {
+            if (!std.ascii.isAlphanumeric(version[i])) return false;
+        }
+
+        return true;
+    }
+
     pub fn orderWithoutTag(
         lhs: Version,
         rhs: Version,
@@ -750,15 +917,101 @@ pub const Version = extern struct {
         return lhs.tag.order(rhs.tag, lhs_buf, rhs_buf);
     }
 
+    pub fn orderWithoutBuild(
+        lhs: Version,
+        rhs: Version,
+        lhs_buf: []const u8,
+        rhs_buf: []const u8,
+    ) std.math.Order {
+        const order_without_tag = orderWithoutTag(lhs, rhs);
+        if (order_without_tag != .eq) return order_without_tag;
+
+        return lhs.tag.orderWithoutBuild(rhs.tag, lhs_buf, rhs_buf);
+    }
+
     pub const Tag = extern struct {
         pre: ExternalString = ExternalString{},
         build: ExternalString = ExternalString{},
 
-        pub fn order(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+        pub fn orderPre(lhs: Tag, rhs: Tag, lhs_buf: []const u8, rhs_buf: []const u8) std.math.Order {
+            const lhs_str = lhs.pre.slice(lhs_buf);
+            const rhs_str = rhs.pre.slice(rhs_buf);
+
+            // 1. split each by '.', iterating through each one looking for integers
+            // 2. compare as integers, or if not possible compare as string
+            // 3. whichever is greater is the greater one
+            //
+            // 1.0.0-canary.0.0.0.0.0.0 < 1.0.0-canary.0.0.0.0.0.1
+
+            var lhs_itr = strings.split(lhs_str, ".");
+            var rhs_itr = strings.split(rhs_str, ".");
+
+            while (true) {
+                const lhs_part = lhs_itr.next();
+                const rhs_part = rhs_itr.next();
+
+                if (lhs_part == null and rhs_part == null) return .eq;
+
+                // if right is null, left is greater than.
+                if (rhs_part == null) return .gt;
+
+                // if left is null, left is less than.
+                if (lhs_part == null) return .lt;
+
+                const lhs_uint: ?u32 = std.fmt.parseUnsigned(u32, lhs_part.?, 10) catch null;
+                const rhs_uint: ?u32 = std.fmt.parseUnsigned(u32, rhs_part.?, 10) catch null;
+
+                // a part that doesn't parse as an integer is greater than a part that does
+                // https://github.com/npm/node-semver/blob/816c7b2cbfcb1986958a290f941eddfd0441139e/internal/identifiers.js#L12
+                if (lhs_uint != null and rhs_uint == null) return .lt;
+                if (lhs_uint == null and rhs_uint != null) return .gt;
+
+                if (lhs_uint == null and rhs_uint == null) {
+                    switch (strings.order(lhs_part.?, rhs_part.?)) {
+                        .eq => {
+                            // continue to the next part
+                            continue;
+                        },
+                        else => |not_equal| return not_equal,
+                    }
+                }
+
+                switch (std.math.order(lhs_uint.?, rhs_uint.?)) {
+                    .eq => continue,
+                    else => |not_equal| return not_equal,
+                }
+            }
+
+            unreachable;
+        }
+
+        pub fn order(
+            lhs: Tag,
+            rhs: Tag,
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+        ) std.math.Order {
+            if (!lhs.pre.isEmpty() and !rhs.pre.isEmpty()) {
+                return lhs.orderPre(rhs, lhs_buf, rhs_buf);
+            }
+
             const pre_order = lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
             if (pre_order != .eq) return pre_order;
 
             return lhs.build.order(&rhs.build, lhs_buf, rhs_buf);
+        }
+
+        pub fn orderWithoutBuild(
+            lhs: Tag,
+            rhs: Tag,
+            lhs_buf: []const u8,
+            rhs_buf: []const u8,
+        ) std.math.Order {
+            if (!lhs.pre.isEmpty() and !rhs.pre.isEmpty()) {
+                return lhs.orderPre(rhs, lhs_buf, rhs_buf);
+            }
+
+            return lhs.pre.order(&rhs.pre, lhs_buf, rhs_buf);
         }
 
         pub fn cloneInto(this: Tag, slice: []const u8, buf: *[]u8) Tag {
@@ -854,34 +1107,10 @@ pub const Version = extern struct {
             while (i < input.len) : (i += 1) {
                 const c = input[i];
                 switch (c) {
-                    ' ' => {
-                        switch (state) {
-                            .none => {},
-                            .pre => {
-                                result.tag.pre = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                            .build => {
-                                result.tag.build = sliced_string.sub(input[start..i]).external();
-                                if (comptime Environment.isDebug) {
-                                    std.debug.assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
-                                }
-                                state = State.none;
-                            },
-                        }
-                        result.len = @as(u32, @truncate(i));
-                        break;
-                    },
                     '+' => {
                         // qualifier  ::= ( '-' pre )? ( '+' build )?
                         if (state == .pre or state == .none and initial_pre_count > 0) {
                             result.tag.pre = sliced_string.sub(input[start..i]).external();
-                            if (comptime Environment.isDebug) {
-                                std.debug.assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
-                            }
                         }
 
                         if (state != .build) {
@@ -895,7 +1124,32 @@ pub const Version = extern struct {
                             start = i + 1;
                         }
                     },
-                    else => {},
+
+                    // only continue if character is a valid pre/build tag character
+                    // https://semver.org/#spec-item-9
+                    'a'...'z', 'A'...'Z', '0'...'9', '.' => {},
+
+                    else => {
+                        switch (state) {
+                            .none => {},
+                            .pre => {
+                                result.tag.pre = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.pre.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                            .build => {
+                                result.tag.build = sliced_string.sub(input[start..i]).external();
+                                if (comptime Environment.isDebug) {
+                                    assert(!strings.containsChar(result.tag.build.slice(sliced_string.buf), '-'));
+                                }
+                                state = State.none;
+                            },
+                        }
+                        result.len = @truncate(i);
+                        break;
+                    },
                 }
             }
 
@@ -929,7 +1183,7 @@ pub const Version = extern struct {
         wildcard: Query.Token.Wildcard = .none,
         valid: bool = true,
         version: Version.Partial = .{},
-        stopped_at: u32 = 0,
+        len: u32 = 0,
     };
 
     pub fn parse(sliced_string: SlicedString) ParseResult {
@@ -945,9 +1199,34 @@ pub const Version = extern struct {
             return result;
         }
         var is_done = false;
-        var stopped_at: i32 = 0;
 
         var i: usize = 0;
+
+        for (0..input.len) |c| {
+            switch (input[c]) {
+                // newlines & whitespace
+                ' ',
+                '\t',
+                '\n',
+                '\r',
+                std.ascii.control_code.vt,
+                std.ascii.control_code.ff,
+
+                // version separators
+                'v',
+                '=',
+                => {},
+                else => {
+                    i = c;
+                    break;
+                },
+            }
+        }
+
+        if (i == input.len) {
+            result.valid = false;
+            return result;
+        }
 
         // two passes :(
         while (i < input.len) {
@@ -955,7 +1234,6 @@ pub const Version = extern struct {
                 break;
             }
 
-            stopped_at = @as(i32, @intCast(i));
             switch (input[i]) {
                 ' ' => {
                     is_done = true;
@@ -963,7 +1241,9 @@ pub const Version = extern struct {
                 },
                 '|', '^', '#', '&', '%', '!' => {
                     is_done = true;
-                    stopped_at -= 1;
+                    if (i > 0) {
+                        i -= 1;
+                    }
                     break;
                 },
                 '0'...'9' => {
@@ -996,7 +1276,8 @@ pub const Version = extern struct {
                     }
 
                     if (i < input.len and switch (input[i]) {
-                        '.' => true,
+                        // `.` is expected only if there are remaining core version numbers
+                        '.' => part_i != 3,
                         else => false,
                     }) {
                         i += 1;
@@ -1009,15 +1290,13 @@ pub const Version = extern struct {
                 },
                 '-', '+' => {
                     // Just a plain tag with no version is invalid.
-
-                    if (part_i < 2) {
+                    if (part_i < 2 and result.wildcard == .none) {
                         result.valid = false;
                         is_done = true;
                         break;
                     }
 
                     part_start_i = i;
-                    i += 1;
                     while (i < input.len and switch (input[i]) {
                         ' ' => true,
                         else => false,
@@ -1072,7 +1351,7 @@ pub const Version = extern struct {
                     // Some weirdo npm packages in the wild have a version like "1.0.0rc.1"
                     // npm just expects that to work...even though it has no "-" qualifier.
                     if (result.wildcard == .none and part_i >= 2 and switch (c) {
-                        'a'...'z', 'A'...'Z', '_' => true,
+                        'a'...'z', 'A'...'Z' => true,
                         else => false,
                     }) {
                         part_start_i = i;
@@ -1107,7 +1386,7 @@ pub const Version = extern struct {
             }
         }
 
-        result.stopped_at = @as(u32, @intCast(i));
+        result.len = @as(u32, @intCast(i));
 
         if (comptime RawType != void) {
             result.version.raw = sliced_string.sub(input[0..i]).external();
@@ -1116,19 +1395,19 @@ pub const Version = extern struct {
         return result;
     }
 
-    fn parseVersionNumber(input: string) u32 {
+    fn parseVersionNumber(input: string) ?u32 {
         // max decimal u32 is 4294967295
         var bytes: [10]u8 = undefined;
         var byte_i: u8 = 0;
 
-        std.debug.assert(input[0] != '.');
+        assert(input[0] != '.');
 
         for (input) |char| {
             switch (char) {
-                'X', 'x', '*' => return 0,
+                'X', 'x', '*' => return null,
                 '0'...'9' => {
                     // out of bounds
-                    if (byte_i + 1 > bytes.len) return 0;
+                    if (byte_i + 1 > bytes.len) return null;
                     bytes[byte_i] = char;
                     byte_i += 1;
                 },
@@ -1138,8 +1417,8 @@ pub const Version = extern struct {
             }
         }
 
-        // If there are no numbers, it's 0.
-        if (byte_i == 0) return 0;
+        // If there are no numbers
+        if (byte_i == 0) return null;
 
         if (comptime Environment.isDebug) {
             return std.fmt.parseInt(u32, bytes[0..byte_i], 10) catch |err| {
@@ -1168,6 +1447,18 @@ pub const Range = struct {
 
     left: Comparator = .{},
     right: Comparator = .{},
+
+    pub fn format(this: Range, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        if (this.left.op == .unset and this.right.op == .unset) {
+            return;
+        }
+
+        if (this.right.op == .unset) {
+            try std.fmt.format(writer, "{}", .{this.left});
+        } else {
+            try std.fmt.format(writer, "{} {}", .{ this.left, this.right });
+        }
+    }
 
     /// *
     /// >= 0.0.0
@@ -1259,6 +1550,27 @@ pub const Range = struct {
         return lhs.left.eql(rhs.left) and lhs.right.eql(rhs.right);
     }
 
+    pub const Formatter = struct {
+        buffer: []const u8,
+        range: *const Range,
+
+        pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            if (this.range.left.op == Op.unset and this.range.right.op == Op.unset) {
+                return;
+            }
+
+            if (this.range.right.op == .unset) {
+                try std.fmt.format(writer, "{}", .{this.range.left.fmt(this.buffer)});
+            } else {
+                try std.fmt.format(writer, "{} {}", .{ this.range.left.fmt(this.buffer), this.range.right.fmt(this.buffer) });
+            }
+        }
+    };
+
+    pub fn fmt(this: *const Range, buf: []const u8) @This().Formatter {
+        return .{ .buffer = buf, .range = this };
+    }
+
     pub const Comparator = struct {
         op: Op = .unset,
         version: Version = .{},
@@ -1267,67 +1579,105 @@ pub const Range = struct {
             return lhs.op == rhs.op and lhs.version.eql(rhs.version);
         }
 
-        pub fn satisfies(this: Comparator, version: Version, include_pre: bool) bool {
-            const order = version.orderWithoutTag(this.version);
+        pub const Formatter = struct {
+            buffer: []const u8,
+            comparator: *const Comparator,
+
+            pub fn format(this: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                if (this.comparator.op == Op.unset) {
+                    return;
+                }
+
+                switch (this.comparator.op) {
+                    .unset => unreachable, // see above,
+                    .eql => try writer.writeAll("=="),
+                    .lt => try writer.writeAll("<"),
+                    .lte => try writer.writeAll("<="),
+                    .gt => try writer.writeAll(">"),
+                    .gte => try writer.writeAll(">="),
+                }
+
+                try std.fmt.format(writer, "{}", .{this.comparator.version.fmt(this.buffer)});
+            }
+        };
+
+        pub fn fmt(this: *const Comparator, buf: []const u8) @This().Formatter {
+            return .{ .buffer = buf, .comparator = this };
+        }
+
+        pub fn satisfies(
+            comparator: Comparator,
+            version: Version,
+            comparator_buf: string,
+            version_buf: string,
+        ) bool {
+            const order = version.orderWithoutBuild(comparator.version, version_buf, comparator_buf);
 
             return switch (order) {
-                .eq => switch (this.op) {
+                .eq => switch (comparator.op) {
                     .lte, .gte, .eql => true,
                     else => false,
                 },
-                .gt => switch (this.op) {
-                    .gt, .gte => if (!include_pre) false else true,
+                .gt => switch (comparator.op) {
+                    .gt, .gte => true,
                     else => false,
                 },
-                .lt => switch (this.op) {
-                    .lt, .lte => if (!include_pre) false else true,
+                .lt => switch (comparator.op) {
+                    .lt, .lte => true,
                     else => false,
                 },
             };
         }
     };
 
-    pub fn satisfies(this: Range, version: Version) bool {
-        const has_left = this.hasLeft();
-        const has_right = this.hasRight();
+    pub fn satisfies(range: Range, version: Version, range_buf: string, version_buf: string) bool {
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
 
         if (!has_left) {
             return true;
         }
 
-        // When the boundaries of a range do not include a pre-release tag on either side,
-        // we should not consider that '7.0.0-rc2' < "7.0.0"
-        // ```
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0")
-        // false
-        // > semver.satisfies("7.0.0-rc2", "<=7.0.0-rc2")
-        // true
-        // > semver.satisfies("7.0.0-rc2", ">=7.0.0-rc2")
-        // true
-        // ```
-        //
-        // - https://github.com/npm/node-semver#prerelease-tags
-        // - https://github.com/npm/node-semver/blob/cce61804ba6f997225a1267135c06676fe0524d2/classes/range.js#L505-L539
-        var include_pre = true;
-        if (version.tag.hasPre()) {
-            if (!has_right) {
-                if (!this.left.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            } else {
-                if (!this.left.version.tag.hasPre() and !this.right.version.tag.hasPre()) {
-                    include_pre = false;
-                }
-            }
-        }
-
-        if (!this.left.satisfies(version, include_pre)) {
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
-        if (has_right and !this.right.satisfies(version, include_pre)) {
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        return true;
+    }
+
+    pub fn satisfiesPre(range: Range, version: Version, range_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        const has_left = range.hasLeft();
+        const has_right = range.hasRight();
+
+        if (!has_left) {
+            return true;
+        }
+
+        // If left has prerelease check if major,minor,patch matches with left. If
+        // not, check the same with right if right exists and has prerelease.
+        pre_matched.* = pre_matched.* or
+            (range.left.version.tag.hasPre() and
+            version.patch == range.left.version.patch and
+            version.minor == range.left.version.minor and
+            version.major == range.left.version.major) or
+            (has_right and
+            range.right.version.tag.hasPre() and
+            version.patch == range.right.version.patch and
+            version.minor == range.right.version.minor and
+            version.major == range.right.version.major);
+
+        if (!range.left.satisfies(version, range_buf, version_buf)) {
+            return false;
+        }
+
+        if (has_right and !range.right.satisfies(version, range_buf, version_buf)) {
             return false;
         }
 
@@ -1351,6 +1701,27 @@ pub const Query = struct {
     // AND
     next: ?*Query = null,
 
+    const Formatter = struct {
+        query: *const Query,
+        buffer: []const u8,
+        pub fn format(formatter: Formatter, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+            const this = formatter.query;
+
+            if (this.next) |ptr| {
+                if (ptr.range.hasLeft() or ptr.range.hasRight()) {
+                    try std.fmt.format(writer, "{} && {}", .{ this.range.fmt(formatter.buffer), ptr.range.fmt(formatter.buffer) });
+                    return;
+                }
+            }
+
+            try std.fmt.format(writer, "{}", .{this.range.fmt(formatter.buffer)});
+        }
+    };
+
+    pub fn fmt(this: *const Query, buf: []const u8) @This().Formatter {
+        return .{ .query = this, .buffer = buf };
+    }
+
     /// Linked-list of Queries OR'd together
     /// "^1 || ^2"
     /// ----|-----
@@ -1362,15 +1733,64 @@ pub const Query = struct {
         // OR
         next: ?*List = null,
 
-        pub fn satisfies(this: *const List, version: Version) bool {
-            return this.head.satisfies(version) or (this.next orelse return false).satisfies(version);
+        const Formatter = struct {
+            list: *const List,
+            buffer: []const u8,
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.list;
+
+                if (this.next) |ptr| {
+                    try std.fmt.format(writer, "{} || {}", .{ this.head.fmt(formatter.buffer), ptr.fmt(formatter.buffer) });
+                } else {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buffer)});
+                }
+            }
+        };
+
+        pub fn fmt(this: *const List, buf: []const u8) @This().Formatter {
+            return .{ .list = this, .buffer = buf };
+        }
+
+        pub fn satisfies(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            return list.head.satisfies(
+                version,
+                list_buf,
+                version_buf,
+            ) or (list.next orelse return false).satisfies(
+                version,
+                list_buf,
+                version_buf,
+            );
+        }
+
+        pub fn satisfiesPre(list: *const List, version: Version, list_buf: string, version_buf: string) bool {
+            if (comptime Environment.allow_assert) {
+                assert(version.tag.hasPre());
+            }
+
+            // `version` has a prerelease tag:
+            // - needs to satisfy each comparator in the query (<comparator> AND <comparator> AND ...) like normal comparison
+            // - if it does, also needs to match major, minor, patch with at least one of the other versions
+            //   with a prerelease
+            // https://github.com/npm/node-semver/blob/ac9b35769ab0ddfefd5a3af4a3ecaf3da2012352/classes/range.js#L505
+            var pre_matched = false;
+            return (list.head.satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+                &pre_matched,
+            ) and pre_matched) or (list.next orelse return false).satisfiesPre(
+                version,
+                list_buf,
+                version_buf,
+            );
         }
 
         pub fn eql(lhs: *const List, rhs: *const List) bool {
             if (!lhs.head.eql(&rhs.head)) return false;
 
-            var lhs_next = lhs.next orelse return rhs.next == null;
-            var rhs_next = rhs.next orelse return false;
+            const lhs_next = lhs.next orelse return rhs.next == null;
+            const rhs_next = rhs.next orelse return false;
 
             return lhs_next.eql(rhs_next);
         }
@@ -1405,6 +1825,45 @@ pub const Query = struct {
             pub const build = 0;
         };
 
+        const Formatter = struct {
+            group: *const Group,
+            buf: string,
+
+            pub fn format(formatter: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                const this = formatter.group;
+
+                if (this.tail == null and this.head.tail == null and !this.head.head.range.hasLeft()) {
+                    return;
+                }
+
+                if (this.tail == null and this.head.tail == null) {
+                    try std.fmt.format(writer, "{}", .{this.head.fmt(formatter.buf)});
+                    return;
+                }
+
+                var list = &this.head;
+                while (list.next) |next| {
+                    try std.fmt.format(writer, "{} && ", .{list.fmt(formatter.buf)});
+                    list = next;
+                }
+
+                try std.fmt.format(writer, "{}", .{list.fmt(formatter.buf)});
+            }
+        };
+
+        pub fn fmt(this: *const Group, buf: string) @This().Formatter {
+            return .{
+                .group = this,
+                .buf = buf,
+            };
+        }
+
+        pub fn jsonStringify(this: *const Group, writer: anytype) !void {
+            const temp = try std.fmt.allocPrint(bun.default_allocator, "{}", .{this.fmt()});
+            defer bun.default_allocator.free(temp);
+            try std.json.encodeJsonString(temp, .{}, writer);
+        }
+
         pub fn deinit(this: *Group) void {
             var list = this.head;
             var allocator = this.allocator;
@@ -1418,6 +1877,23 @@ pub const Query = struct {
                 allocator.destroy(next);
                 list = next.*;
             }
+        }
+
+        pub fn getExactVersion(this: *const Group) ?Version {
+            const range = this.head.head.range;
+            if (this.head.next == null and
+                this.head.head.next == null and
+                range.hasLeft() and
+                range.left.op == .eql and
+                !range.hasRight())
+            {
+                if (comptime Environment.allow_assert) {
+                    assert(this.tail == null);
+                }
+                return range.left.version;
+            }
+
+            return null;
         }
 
         pub fn from(version: Version) Group {
@@ -1442,12 +1918,22 @@ pub const Query = struct {
             return this.head.next == null and this.head.head.next == null and !this.head.head.range.hasRight() and this.head.head.range.left.op == .eql;
         }
 
+        pub fn @"is *"(this: *const Group) bool {
+            const left = this.head.head.range.left;
+            return this.head.head.range.right.op == .unset and
+                left.op == .gte and
+                this.head.next == null and
+                this.head.head.next == null and
+                left.version.isZero() and
+                !this.flags.isSet(Flags.build);
+        }
+
         pub inline fn eql(lhs: Group, rhs: Group) bool {
             return lhs.head.eql(&rhs.head);
         }
 
         pub fn toVersion(this: Group) Version {
-            std.debug.assert(this.isExact() or this.head.head.range.left.op == .unset);
+            assert(this.isExact() or this.head.head.range.left.op == .unset);
             return this.head.head.range.left.version;
         }
 
@@ -1488,8 +1974,16 @@ pub const Query = struct {
             self.tail = new_tail;
         }
 
-        pub inline fn satisfies(this: *const Group, version: Version) bool {
-            return this.head.satisfies(version);
+        pub inline fn satisfies(
+            group: *const Group,
+            version: Version,
+            group_buf: string,
+            version_buf: string,
+        ) bool {
+            return if (version.tag.hasPre())
+                group.head.satisfiesPre(version, group_buf, version_buf)
+            else
+                group.head.satisfies(version, group_buf, version_buf);
         }
     };
 
@@ -1502,8 +1996,33 @@ pub const Query = struct {
         return lhs_next.eql(rhs_next);
     }
 
-    pub fn satisfies(this: *const Query, version: Version) bool {
-        return this.range.satisfies(version) and (this.next orelse return true).satisfies(version);
+    pub fn satisfies(query: *const Query, version: Version, query_buf: string, version_buf: string) bool {
+        return query.range.satisfies(
+            version,
+            query_buf,
+            version_buf,
+        ) and (query.next orelse return true).satisfies(
+            version,
+            query_buf,
+            version_buf,
+        );
+    }
+
+    pub fn satisfiesPre(query: *const Query, version: Version, query_buf: string, version_buf: string, pre_matched: *bool) bool {
+        if (comptime Environment.allow_assert) {
+            assert(version.tag.hasPre());
+        }
+        return query.range.satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        ) and (query.next orelse return true).satisfiesPre(
+            version,
+            query_buf,
+            version_buf,
+            pre_matched,
+        );
     }
 
     const Token = struct {
@@ -1578,17 +2097,17 @@ pub const Query = struct {
                 .none => unreachable,
                 .version => {
                     if (this.wildcard != Wildcard.none) {
-                        return Range.initWildcard(version.fill(), this.wildcard);
+                        return Range.initWildcard(version.min(), this.wildcard);
                     }
 
-                    return .{ .left = .{ .op = .eql, .version = version.fill() } };
+                    return .{ .left = .{ .op = .eql, .version = version.min() } };
                 },
                 else => {},
             }
 
             return switch (this.wildcard) {
                 .major => .{
-                    .left = .{ .op = .gte, .version = version.fill() },
+                    .left = .{ .op = .gte, .version = version.min() },
                     .right = .{
                         .op = .lte,
                         .version = .{
@@ -1697,7 +2216,7 @@ pub const Query = struct {
                             .lte => .lte,
                             else => unreachable,
                         },
-                        .version = version.fill(),
+                        .version = version.min(),
                     },
                 },
             };
@@ -1810,35 +2329,42 @@ pub const Query = struct {
                 else => {
                     i += 1;
                     token.tag = Token.Tag.none;
+
+                    // skip tagged versions
+                    // we are assuming this is the beginning of a tagged version like "boop"
+                    // "1.0.0 || boop"
+                    while (i < input.len and input[i] != ' ' and input[i] != '|') : (i += 1) {}
                     skip_round = true;
                 },
             }
 
             if (!skip_round) {
                 const parse_result = Version.parse(sliced.sub(input[i..]));
-                const version = parse_result.version.fill();
+                const version = parse_result.version.min();
                 if (version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                 if (version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
 
                 token.wildcard = parse_result.wildcard;
 
-                i += parse_result.stopped_at;
+                i += parse_result.len;
                 const rollback = i;
 
-                const had_space = i < input.len and input[i] == ' ';
+                const maybe_hyphenate = i < input.len and (input[i] == ' ' or input[i] == '-');
 
                 // TODO: can we do this without rolling back?
-                const hyphenate: bool = had_space and possibly_hyphenate: {
-                    i += 1;
-                    while (i < input.len and input[i] == ' ') : (i += 1) {}
+                const hyphenate: bool = maybe_hyphenate and possibly_hyphenate: {
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
                     if (!(i < input.len and input[i] == '-')) break :possibly_hyphenate false;
                     i += 1;
-                    if (!(i < input.len and input[i] == ' ')) break :possibly_hyphenate false;
-                    i += 1;
-                    while (i < input.len and switch (input[i]) {
-                        ' ', 'v', '=' => true,
-                        else => false,
-                    }) : (i += 1) {}
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
+                    if (i == input.len) break :possibly_hyphenate false;
+                    if (input[i] == 'v' or input[i] == '=') {
+                        i += 1;
+                    }
+                    if (i == input.len) break :possibly_hyphenate false;
+                    i += strings.lengthOfLeadingWhitespaceASCII(input[i..]);
+                    if (i == input.len) break :possibly_hyphenate false;
+
                     if (!(i < input.len and switch (input[i]) {
                         '0'...'9', 'X', 'x', '*' => true,
                         else => false,
@@ -1852,19 +2378,19 @@ pub const Query = struct {
 
                 if (hyphenate) {
                     const second_parsed = Version.parse(sliced.sub(input[i..]));
-                    var second_version = second_parsed.version.fill();
+                    var second_version = second_parsed.version.min();
                     if (second_version.tag.hasBuild()) list.flags.setValue(Group.Flags.build, true);
                     if (second_version.tag.hasPre()) list.flags.setValue(Group.Flags.pre, true);
                     const range: Range = brk: {
                         switch (second_parsed.wildcard) {
                             .major => {
-                                second_version.major +|= 1;
+                                // "1.0.0 - x" --> ">=1.0.0"
                                 break :brk Range{
                                     .left = .{ .op = .gte, .version = version },
-                                    .right = .{ .op = .lte, .version = second_version },
                                 };
                             },
                             .minor => {
+                                // "1.0.0 - 1.x" --> ">=1.0.0 < 2.0.0"
                                 second_version.major +|= 1;
                                 second_version.minor = 0;
                                 second_version.patch = 0;
@@ -1875,6 +2401,7 @@ pub const Query = struct {
                                 };
                             },
                             .patch => {
+                                // "1.0.0 - 1.0.x" --> ">=1.0.0 <1.1.0"
                                 second_version.minor +|= 1;
                                 second_version.patch = 0;
 
@@ -1898,7 +2425,7 @@ pub const Query = struct {
                         try list.andRange(range);
                     }
 
-                    i += second_parsed.stopped_at + 1;
+                    i += second_parsed.len + 1;
                 } else if (count == 0 and token.tag == .version) {
                     switch (parse_result.wildcard) {
                         .none => {
@@ -1936,381 +2463,139 @@ pub const Query = struct {
     }
 };
 
-const expect = if (Environment.isTest) struct {
-    pub var counter: usize = 0;
-    pub fn isRangeMatch(input: string, version_str: string) bool {
-        var parsed = Version.parse(SlicedString.init(version_str, version_str));
-        std.debug.assert(parsed.valid);
-        // std.debug.assert(strings.eql(parsed.version.raw.slice(version_str), version_str));
+pub const SemverObject = struct {
+    pub fn create(globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        const object = JSC.JSValue.createEmptyObject(globalThis, 2);
 
-        var list = Query.parse(
-            default_allocator,
-            input,
-            SlicedString.init(input, input),
-        ) catch |err| Output.panic("Test fail due to error {s}", .{@errorName(err)});
+        object.put(
+            globalThis,
+            JSC.ZigString.static("satisfies"),
+            JSC.NewFunction(
+                globalThis,
+                JSC.ZigString.static("satisfies"),
+                2,
+                SemverObject.satisfies,
+                false,
+            ),
+        );
 
-        return list.satisfies(parsed.version.fill());
+        object.put(
+            globalThis,
+            JSC.ZigString.static("order"),
+            JSC.NewFunction(
+                globalThis,
+                JSC.ZigString.static("order"),
+                2,
+                SemverObject.order,
+                false,
+            ),
+        );
+
+        return object;
     }
 
-    pub fn range(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (!isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> to match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
+    pub fn order(
+        globalThis: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) JSC.JSValue {
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback = std.heap.stackFallback(512, arena.allocator());
+        const allocator = stack_fallback.get();
+
+        const arguments = callFrame.arguments(2).slice();
+        if (arguments.len < 2) {
+            globalThis.throw("Expected two arguments", .{});
+            return .zero;
         }
-    }
-    pub fn notRange(input: string, version_str: string, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        if (isRangeMatch(input, version_str)) {
-            Output.panic("<r><red>Fail<r> Expected range <b>\"{s}\"<r> NOT match <b>\"{s}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                version_str,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
+
+        const left_arg = arguments[0];
+        const right_arg = arguments[1];
+
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return JSC.jsNumber(0);
+
+        const left = left_string.toSlice(globalThis, allocator);
+        defer left.deinit();
+        const right = right_string.toSlice(globalThis, allocator);
+        defer right.deinit();
+
+        if (!strings.isAllASCII(left.slice())) return JSC.jsNumber(0);
+        if (!strings.isAllASCII(right.slice())) return JSC.jsNumber(0);
+
+        const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
+        const right_result = Version.parse(SlicedString.init(right.slice(), right.slice()));
+
+        if (!left_result.valid) {
+            globalThis.throw("Invalid SemVer: {s}\n", .{left.slice()});
+            return .zero;
         }
-    }
 
-    pub fn done(src: std.builtin.SourceLocation) void {
-        Output.prettyErrorln("<r><green>{d} passed expectations <d>in {s}<r>", .{ counter, src.fn_name });
-        Output.flush();
-        counter = 0;
-    }
-
-    pub fn version(input: string, v: [3]?u32, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
-        const result = Version.parse(SlicedString.init(input, input));
-        std.debug.assert(result.valid);
-
-        if (v[0] != result.version.major or v[1] != result.version.minor or v[2] != result.version.patch) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v[0],
-                v[1],
-                v[2],
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
+        if (!right_result.valid) {
+            globalThis.throw("Invalid SemVer: {s}\n", .{right.slice()});
+            return .zero;
         }
-    }
 
-    pub fn versionT(input: string, v: Version, src: std.builtin.SourceLocation) void {
-        Output.initTest();
-        defer counter += 1;
+        const left_version = left_result.version.max();
+        const right_version = right_result.version.max();
 
-        var result = Version.parse(SlicedString.init(input, input));
-        if (!v.eql(result.version.fill())) {
-            Output.panic("<r><red>Fail<r> Expected version <b>\"{s}\"<r> to match <b>\"{?d}.{?d}.{?d}\" but received <red>\"{?d}.{?d}.{?d}\"<r>\nAt: <blue><b>{s}:{d}:{d}<r><d> in {s}<r>", .{
-                input,
-                v.major,
-                v.minor,
-                v.patch,
-                result.version.major,
-                result.version.minor,
-                result.version.patch,
-                src.file,
-                src.line,
-                src.column,
-                src.fn_name,
-            });
-        }
-    }
-} else {};
-
-test "Version parsing" {
-    defer expect.done(@src());
-    const X: ?u32 = null;
-
-    expect.version("1.0.0", .{ 1, 0, 0 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("1.1.1", .{ 1, 1, 1 }, @src());
-    expect.version("1.1.0", .{ 1, 1, 0 }, @src());
-    expect.version("0.1.1", .{ 0, 1, 1 }, @src());
-    expect.version("0.0.1", .{ 0, 0, 1 }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("*", .{ X, X, X }, @src());
-    expect.version("x", .{ X, X, X }, @src());
-    expect.version("0", .{ 0, X, X }, @src());
-    expect.version("0.0", .{ 0, 0, X }, @src());
-    expect.version("0.0.0", .{ 0, 0, 0 }, @src());
-
-    expect.version("1.x", .{ 1, X, X }, @src());
-    expect.version("2.2.x", .{ 2, 2, X }, @src());
-    expect.version("2.x.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.X", .{ 1, X, X }, @src());
-    expect.version("2.2.X", .{ 2, 2, X }, @src());
-    expect.version("2.X.2", .{ 2, X, 2 }, @src());
-
-    expect.version("1.*", .{ 1, X, X }, @src());
-    expect.version("2.2.*", .{ 2, 2, X }, @src());
-    expect.version("2.*.2", .{ 2, X, 2 }, @src());
-    expect.version("3", .{ 3, X, X }, @src());
-    expect.version("3.x", .{ 3, X, X }, @src());
-    expect.version("3.x.x", .{ 3, X, X }, @src());
-    expect.version("3.*.*", .{ 3, X, X }, @src());
-    expect.version("3.X.x", .{ 3, X, X }, @src());
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
+        return switch (left_version.orderWithoutBuild(right_version, left.slice(), right.slice())) {
+            .eq => JSC.jsNumber(0),
+            .gt => JSC.jsNumber(1),
+            .lt => JSC.jsNumber(-1),
         };
-        var input: string = "1.0.0-beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
     }
 
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0beta";
-        v.tag.pre = SlicedString.init(input, input["1.0.0".len..]).external();
-        expect.versionT(input, v, @src());
-    }
+    pub fn satisfies(
+        globalThis: *JSC.JSGlobalObject,
+        callFrame: *JSC.CallFrame,
+    ) JSC.JSValue {
+        var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
+        defer arena.deinit();
+        var stack_fallback = std.heap.stackFallback(512, arena.allocator());
+        const allocator = stack_fallback.get();
 
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-build101";
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 0,
-            .minor = 21,
-            .patch = 0,
-        };
-        var input: string = "0.21.0-beta-96ca8d915-20211115";
-        v.tag.pre = SlicedString.init(input, input["0.21.0-".len..]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    {
-        var v = Version{
-            .major = 1,
-            .minor = 0,
-            .patch = 0,
-        };
-        var input: string = "1.0.0-beta+build101";
-        v.tag.build = SlicedString.init(input, input["1.0.0-beta+".len..]).external();
-        v.tag.pre = SlicedString.init(input, input["1.0.0-".len..][0..4]).external();
-        expect.versionT(input, v, @src());
-    }
-
-    var buf: [1024]u8 = undefined;
-
-    var triplet = [3]?u32{ null, null, null };
-    var x: u32 = 0;
-    var y: u32 = 0;
-    var z: u32 = 0;
-
-    while (x < 32) : (x += 1) {
-        while (y < 32) : (y += 1) {
-            while (z < 32) : (z += 1) {
-                triplet[0] = x;
-                triplet[1] = y;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ x, y, z }), triplet, @src());
-                triplet[0] = z;
-                triplet[1] = x;
-                triplet[2] = y;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ z, x, y }), triplet, @src());
-
-                triplet[0] = y;
-                triplet[1] = x;
-                triplet[2] = z;
-                expect.version(try std.fmt.bufPrint(&buf, "{d}.{d}.{d}", .{ y, x, z }), triplet, @src());
-            }
-        }
-    }
-}
-
-test "Range parsing" {
-    defer expect.done(@src());
-
-    expect.range("~1.2.3", "1.2.3", @src());
-    expect.range("~1.2", "1.2.0", @src());
-    expect.range("~1", "1.0.0", @src());
-    expect.range("~1", "1.2.0", @src());
-    expect.range("~1", "1.2.999", @src());
-    expect.range("~0.2.3", "0.2.3", @src());
-    expect.range("~0.2", "0.2.0", @src());
-    expect.range("~0.2", "0.2.1", @src());
-
-    expect.range("~0 ", "0.0.0", @src());
-
-    expect.notRange("~1.2.3", "1.3.0", @src());
-    expect.notRange("~1.2", "1.3.0", @src());
-    expect.notRange("~1", "2.0.0", @src());
-    expect.notRange("~0.2.3", "0.3.0", @src());
-    expect.notRange("~0.2.3", "1.0.0", @src());
-    expect.notRange("~0 ", "1.0.0", @src());
-    expect.notRange("~0.2", "0.1.0", @src());
-    expect.notRange("~0.2", "0.3.0", @src());
-
-    expect.notRange("~3.0.5", "3.3.0", @src());
-
-    expect.range("^1.1.4", "1.1.4", @src());
-
-    expect.range(">=3", "3.5.0", @src());
-    expect.notRange(">=3", "2.999.999", @src());
-    expect.range(">=3", "3.5.1", @src());
-    expect.range(">=3", "4", @src());
-
-    expect.range("<6 >= 5", "5.0.0", @src());
-    expect.notRange("<6 >= 5", "4.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.0", @src());
-    expect.notRange("<6 >= 5", "6.0.1", @src());
-
-    expect.range(">2", "3", @src());
-    expect.notRange(">2", "2.1", @src());
-    expect.notRange(">2", "2", @src());
-    expect.notRange(">2", "1.0", @src());
-    expect.notRange(">1.3", "1.3.1", @src());
-    expect.range(">1.3", "2.0.0", @src());
-    expect.range(">2.1.0", "2.2.0", @src());
-    expect.range("<=2.2.99999", "2.2.0", @src());
-    expect.range(">=2.1.99999", "2.2.0", @src());
-    expect.range("<2.2.99999", "2.2.0", @src());
-    expect.range(">2.1.99999", "2.2.0", @src());
-    expect.range(">1.0.0", "2.0.0", @src());
-    expect.range("1.0.0", "1.0.0", @src());
-    expect.notRange("1.0.0", "2.0.0", @src());
-
-    expect.range("1.0.0 || 2.0.0", "1.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "1.0.0", @src());
-    expect.range("1.0.0 || 2.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || 1.0.0", "2.0.0", @src());
-    expect.range("2.0.0 || >1.0.0", "2.0.0", @src());
-
-    expect.range(">1.0.0 <2.0.0 <2.0.1 >1.0.1", "1.0.2", @src());
-
-    expect.range("2.x", "2.0.0", @src());
-    expect.range("2.x", "2.1.0", @src());
-    expect.range("2.x", "2.2.0", @src());
-    expect.range("2.x", "2.3.0", @src());
-    expect.range("2.x", "2.1.1", @src());
-    expect.range("2.x", "2.2.2", @src());
-    expect.range("2.x", "2.3.3", @src());
-
-    expect.range("<2.0.1 >1.0.0", "2.0.0", @src());
-    expect.range("<=2.0.1 >=1.0.0", "2.0.0", @src());
-
-    expect.range("^2", "2.0.0", @src());
-    expect.range("^2", "2.9.9", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
-    expect.range("~2.2", "2.2.1", @src());
-
-    {
-        const passing = [_]string{ "2.4.0", "2.4.1", "3.0.0", "3.0.1", "3.1.0", "3.2.0", "3.3.0", "3.3.1", "3.4.0", "3.5.0", "3.6.0", "3.7.0", "2.4.2", "3.8.0", "3.9.0", "3.9.1", "3.9.2", "3.9.3", "3.10.0", "3.10.1", "4.0.0", "4.0.1", "4.1.0", "4.2.0", "4.2.1", "4.3.0", "4.4.0", "4.5.0", "4.5.1", "4.6.0", "4.6.1", "4.7.0", "4.8.0", "4.8.1", "4.8.2", "4.9.0", "4.10.0", "4.11.0", "4.11.1", "4.11.2", "4.12.0", "4.13.0", "4.13.1", "4.14.0", "4.14.1", "4.14.2", "4.15.0", "4.16.0", "4.16.1", "4.16.2", "4.16.3", "4.16.4", "4.16.5", "4.16.6", "4.17.0", "4.17.1", "4.17.2", "4.17.3", "4.17.4", "4.17.5", "4.17.9", "4.17.10", "4.17.11", "2.0.0", "2.1.0" };
-
-        for (passing) |item| {
-            expect.range("^2 <2.2 || > 2.3", item, @src());
-            expect.range("> 2.3 || ^2 <2.2", item, @src());
+        const arguments = callFrame.arguments(2).slice();
+        if (arguments.len < 2) {
+            globalThis.throw("Expected two arguments", .{});
+            return .zero;
         }
 
-        const not_passing = [_]string{
-            "0.1.0",
-            "0.10.0",
-            "0.2.0",
-            "0.2.1",
-            "0.2.2",
-            "0.3.0",
-            "0.3.1",
-            "0.3.2",
-            "0.4.0",
-            "0.4.1",
-            "0.4.2",
-            "0.5.0",
-            // "0.5.0-rc.1",
-            "0.5.1",
-            "0.5.2",
-            "0.6.0",
-            "0.6.1",
-            "0.7.0",
-            "0.8.0",
-            "0.8.1",
-            "0.8.2",
-            "0.9.0",
-            "0.9.1",
-            "0.9.2",
-            "1.0.0",
-            "1.0.1",
-            "1.0.2",
-            "1.1.0",
-            "1.1.1",
-            "1.2.0",
-            "1.2.1",
-            "1.3.0",
-            "1.3.1",
-            "2.2.0",
-            "2.2.1",
-            "2.3.0",
-            // "1.0.0-rc.1",
-            // "1.0.0-rc.2",
-            // "1.0.0-rc.3",
-        };
+        const left_arg = arguments[0];
+        const right_arg = arguments[1];
 
-        for (not_passing) |item| {
-            expect.notRange("^2 <2.2 || > 2.3", item, @src());
-            expect.notRange("> 2.3 || ^2 <2.2", item, @src());
+        const left_string = left_arg.toStringOrNull(globalThis) orelse return .false;
+        const right_string = right_arg.toStringOrNull(globalThis) orelse return .false;
+
+        const left = left_string.toSlice(globalThis, allocator);
+        defer left.deinit();
+        const right = right_string.toSlice(globalThis, allocator);
+        defer right.deinit();
+
+        if (!strings.isAllASCII(left.slice())) return .false;
+        if (!strings.isAllASCII(right.slice())) return .false;
+
+        const left_result = Version.parse(SlicedString.init(left.slice(), left.slice()));
+        if (left_result.wildcard != .none) {
+            return .false;
         }
+
+        const left_version = left_result.version.min();
+
+        const right_group = Query.parse(
+            allocator,
+            right.slice(),
+            SlicedString.init(right.slice(), right.slice()),
+        ) catch return .false;
+
+        const right_version = right_group.getExactVersion();
+
+        if (right_version != null) {
+            return JSC.jsBoolean(left_version.eql(right_version.?));
+        }
+
+        return JSC.jsBoolean(right_group.satisfies(left_version, right.slice(), left.slice()));
     }
-    expect.range("2.1.0 || > 2.2 || >3", "2.1.0", @src());
-    expect.range(" > 2.2 || >3 || 2.1.0", "2.1.0", @src());
-    expect.range(" > 2.2 || 2.1.0 || >3", "2.1.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.1", @src());
-    expect.notRange("> 2.2 || 2.1.0 || >3", "2.2.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "2.3.0", @src());
-    expect.range("> 2.2 || 2.1.0 || >3", "3.0.1", @src());
-    expect.range("~2", "2.0.0", @src());
-    expect.range("~2", "2.1.0", @src());
+};
 
-    expect.range("1.2.0 - 1.3.0", "1.2.2", @src());
-    expect.range("1.2 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.2.2", @src());
-    expect.range("1 - 1.3", "1.3.0", @src());
-    expect.range("1.2 - 1.3", "1.3.1", @src());
-    expect.notRange("1.2 - 1.3", "1.4.0", @src());
-    expect.range("1 - 1.3", "1.3.1", @src());
-
-    expect.notRange("1.2 - 1.3 || 5.0", "6.4.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "1.2.1", @src());
-    expect.range("5.0 || 1.2 - 1.3", "1.2.1", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("1.2 - 1.3 || 5.0", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3", "5.0.2", @src());
-    expect.range("5.0 || 1.2 - 1.3 || >8", "9.0.2", @src());
-}
+const assert = bun.assert;

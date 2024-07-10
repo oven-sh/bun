@@ -1,0 +1,39 @@
+{
+	"name": "@private/package",
+	"versions": {
+		"1.0.0": {
+			"name": "@private/package",
+			"version": "1.0.0",
+			"_id": "@private/package@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-BFIWYSRDeIH1ff8Ze9rFSkDQhICgCf8L5vIBivawydO55zmOFir0OD/J8EqMd6Gbx926R6Sh4RJ5ZPmRyaYlow==",
+				"shasum": "13f8ff76f9b736fd7db4f9fa425810a0a4fdc5ee",
+				"tarball": "http://localhost:4873/@private/package/-/@private/package-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:04:57.339Z",
+		"created": "2023-11-01T22:04:57.339Z",
+		"1.0.0": "2023-11-01T22:04:57.339Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"package-1.0.0.tgz": {
+			"shasum": "13f8ff76f9b736fd7db4f9fa425810a0a4fdc5ee",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-47a1889294994642",
+	"_id": "@private/package",
+	"readme": "ERROR: No README data found!"
+}

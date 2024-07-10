@@ -70,6 +70,7 @@ pub fn ComptimeClap(
             var stream = clap.StreamingClap(usize, @typeInfo(@TypeOf(iter)).Pointer.child){
                 .params = converted_params,
                 .iter = iter,
+                .diagnostic = opt.diagnostic,
             };
 
             while (try stream.next()) |arg| {

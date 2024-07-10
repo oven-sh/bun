@@ -119,7 +119,7 @@ export function returnFalse() {
 }
 ```
 
-...then bundling the following file will produce an empty bundle.
+...then bundling the following file will produce an empty bundle, provided that the minify syntax option is enabled.
 
 ```ts
 import {returnFalse} from './returnFalse.ts' with { type: 'macro' };
@@ -129,7 +129,7 @@ if (returnFalse()) {
 }
 ```
 
-## Serializablility
+## Serializability
 
 Bun's transpiler needs to be able to serialize the result of the macro so it can be inlined into the AST. All JSON-compatible data structures are supported:
 

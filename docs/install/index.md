@@ -39,7 +39,7 @@ On Linux, `bun install` tends to install packages 20-100x faster than `npm insta
 
 Running `bun install` will:
 
-- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun does not install `peerDependencies` by default.
+- **Install** all `dependencies`, `devDependencies`, and `optionalDependencies`. Bun will install `peerDependencies` by default.
 - **Run** your project's `{pre|post}install` scripts at the appropriate time. For security reasons Bun _does not execute_ lifecycle scripts of installed dependencies.
 - **Write** a `bun.lockb` lockfile to the project root.
 
@@ -69,7 +69,7 @@ $ bun install --silent  # no logging
 ```
 
 {% details summary="Configuring behavior" %}
-The default behavior of `bun install` can be configured in `bun.toml`:
+The default behavior of `bun install` can be configured in `bunfig.toml`:
 
 ```toml
 [install]
@@ -81,7 +81,7 @@ optional = true
 dev = true
 
 # whether to install peerDependencies
-peer = false
+peer = true
 
 # equivalent to `--production` flag
 production = false
@@ -91,6 +91,9 @@ frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
+
+# equivalent to `--concurrent-scripts` flag
+concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 ```
 
 {% /details %}
@@ -188,7 +191,7 @@ Bun supports a variety of protocols, including [`github`](https://docs.npmjs.com
 
 ## Tarball dependencies
 
-A package name can correspond to a publically hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
+A package name can correspond to a publicly hosted `.tgz` file. During `bun install`, Bun will download and install the package from the specified tarball URL, rather than from the package registry.
 
 ```json#package.json
 {

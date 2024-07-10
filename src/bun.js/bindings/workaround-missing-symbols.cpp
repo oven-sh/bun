@@ -1,5 +1,53 @@
+
+#if defined(WIN32)
+
+#include <cstdint>
+#include <algorithm>
+#include <sys/stat.h>
+#include <uv.h>
+#include <fcntl.h>
+#include <windows.h>
+#include <string.h>
+#include <cstdlib>
+
+#undef _environ
+#undef environ
+
+// Some libraries need these symbols. Windows makes it
+extern "C" char** environ = nullptr;
+extern "C" char** _environ = nullptr;
+
+extern "C" int strncasecmp(const char* s1, const char* s2, size_t n)
+{
+    return _strnicmp(s1, s2, n);
+}
+
+extern "C" int fstat64(
+    _In_ int _FileHandle,
+    _Out_ struct _stat64* _Stat)
+{
+
+    return _fstat64(_FileHandle, _Stat);
+}
+
+extern "C" int stat64(
+    _In_z_ char const* _FileName,
+    _Out_ struct _stat64* _Stat)
+{
+    return _stat64(_FileName, _Stat);
+}
+
+extern "C" int kill(int pid, int sig)
+{
+    return uv_kill(pid, sig);
+}
+
+#endif
+
+#if !defined(WIN32)
 #ifndef UNLIKELY
 #define UNLIKELY(x) __builtin_expect(!!(x), 0)
+#endif
 #endif
 
 // if linux
@@ -41,6 +89,7 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
 typedef double (*MathFunction)(double);
+typedef double (*MathFunction2)(double, double);
 
 static inline double __real_exp(double x)
 {
@@ -74,6 +123,17 @@ static inline double __real_log2(double x)
     }
 
     return function(x);
+}
+static inline double __real_fmod(double x, double y)
+{
+    static MathFunction2 function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x, y);
 }
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
@@ -115,6 +175,26 @@ extern "C" double __wrap_log(double x)
 extern "C" double __wrap_log2(double x)
 {
     return __real_log2(x);
+}
+
+extern "C" double __wrap_fmod(double x, double y)
+{
+    return __real_fmod(x, y);
+}
+
+static inline float __real_expf(float arg)
+{
+    static void* ptr = nullptr;
+    if (UNLIKELY(ptr == nullptr)) {
+        ptr = dlsym(RTLD_DEFAULT, "expf");
+    }
+
+    return ((float (*)(float))ptr)(arg);
+}
+
+extern "C" float __wrap_expf(float arg)
+{
+    return __real_expf(arg);
 }
 
 #ifndef _MKNOD_VER
@@ -277,3 +357,10 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
 }
 
 #endif
+
+#include <unicode/uchar.h>
+
+extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
+{
+    return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
+}

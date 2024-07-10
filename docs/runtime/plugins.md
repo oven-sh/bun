@@ -15,9 +15,11 @@ const myPlugin: BunPlugin = {
     // implementation
   },
 };
+
+plugin(myPlugin);
 ```
 
-Plugins have to be registered before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/configuration). Bun automatically loads the files/modules specified in `preload` before running a file.
+Plugins have to be loaded before any other code runs! To achieve this, use the `preload` option in your [`bunfig.toml`](/docs/runtime/bunfig). Bun automatically loads the files/modules specified in `preload` before running a file.
 
 ```toml
 preload = ["./myPlugin.ts"]
@@ -45,7 +47,7 @@ plugin(
 );
 ```
 
-Bun's plugin API is based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
+Bun's plugin API is loosely based on [esbuild](https://esbuild.github.io/plugins). Only [a subset](/docs/bundler/vs-esbuild#plugin-api) of the esbuild API is implemented, but some esbuild plugins "just work" in Bun, like the official [MDX loader](https://mdxjs.com/packages/esbuild/):
 
 ```jsx
 import { plugin } from "bun";
@@ -61,17 +63,16 @@ Plugins are primarily used to extend Bun with loaders for additional file types.
 ```ts#yamlPlugin.ts
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "YAML",
   async setup(build) {
     const { load } = await import("js-yaml");
-    const { readFileSync } = await import("fs");
 
     // when a .yaml file is imported...
-    build.onLoad({ filter: /\.(yaml|yml)$/ }, (args) => {
+    build.onLoad({ filter: /\.(yaml|yml)$/ }, async (args) => {
 
       // read and parse the file
-      const text = readFileSync(args.path, "utf8");
+      const text = await Bun.file(args.path).text();
       const exports = load(text) as Record<string, any>;
 
       // and returns it as a module
@@ -84,15 +85,20 @@ plugin({
 });
 ```
 
-With this plugin, data can be directly imported from `.yaml` files.
+Register this file in `preload`:
+
+```toml#bunfig.toml
+preload = ["./yamlPlugin.ts"]
+```
+
+Once the plugin is registered, `.yaml` and `.yml` files can be directly imported.
 
 {% codetabs %}
 
 ```ts#index.ts
-import "./yamlPlugin.ts"
-import {name, releaseYear} from "./data.yml"
+import data from "./data.yml"
 
-console.log(name, releaseYear);
+console.log(data);
 ```
 
 ```yaml#data.yml
@@ -127,7 +133,7 @@ In this case we're using `"object"`—a built-in loader (intended for use by plu
 ---
 
 - `ts`
-- `.ts` `.mts` `cts`
+- `.ts` `.mts` `.cts`
 - Transform TypeScript then transpile
 
 ---
@@ -173,17 +179,16 @@ Loading a YAML file is useful, but plugins support more than just data loading. 
 ```ts#sveltePlugin.ts
 import { plugin } from "bun";
 
-plugin({
+await plugin({
   name: "svelte loader",
   async setup(build) {
     const { compile } = await import("svelte/compiler");
-    const { readFileSync } = await import("fs");
 
     // when a .svelte file is imported...
-    build.onLoad({ filter: /\.svelte$/ }, ({ path }) => {
+    build.onLoad({ filter: /\.svelte$/ }, async ({ path }) => {
 
       // read and compile it with the Svelte compiler
-      const file = readFileSync(path, "utf8");
+      const file = await Bun.file(path).text();
       const contents = compile(file, {
         filename: path,
         generate: "ssr",
@@ -209,7 +214,92 @@ With this plugin, Svelte components can now be directly imported and consumed.
 import "./sveltePlugin.ts";
 import MySvelteComponent from "./component.svelte";
 
-console.log(mySvelteComponent.render());
+console.log(MySvelteComponent.render());
+```
+
+## Virtual Modules
+
+{% note %}
+
+This feature is currently only available at runtime with `Bun.plugin` and not yet supported in the bundler, but you can mimic the behavior using `onResolve` and `onLoad`.
+
+{% /note %}
+
+To create virtual modules at runtime, use `builder.module(specifier, callback)` in the `setup` function of a `Bun.plugin`.
+
+For example:
+
+```js
+import { plugin } from "bun";
+
+plugin({
+  name: "my-virtual-module",
+
+  setup(build) {
+    build.module(
+      // The specifier, which can be any string - except a built-in, such as "buffer"
+      "my-transpiled-virtual-module",
+      // The callback to run when the module is imported or required for the first time
+      () => {
+        return {
+          contents: "console.log('hello world!')",
+          loader: "js",
+        };
+      },
+    );
+
+    build.module("my-object-virtual-module", () => {
+      return {
+        exports: {
+          foo: "bar",
+        },
+        loader: "object",
+      };
+    });
+  },
+});
+
+// Sometime later
+// All of these work
+import "my-transpiled-virtual-module";
+require("my-transpiled-virtual-module");
+await import("my-transpiled-virtual-module");
+require.resolve("my-transpiled-virtual-module");
+
+import { foo } from "my-object-virtual-module";
+const object = require("my-object-virtual-module");
+await import("my-object-virtual-module");
+require.resolve("my-object-virtual-module");
+```
+
+### Overriding existing modules
+
+You can also override existing modules with `build.module`.
+
+```js
+import { plugin } from "bun";
+build.module("my-object-virtual-module", () => {
+  return {
+    exports: {
+      foo: "bar",
+    },
+    loader: "object",
+  };
+});
+
+require("my-object-virtual-module"); // { foo: "bar" }
+await import("my-object-virtual-module"); // { foo: "bar" }
+
+build.module("my-object-virtual-module", () => {
+  return {
+    exports: {
+      baz: "quix",
+    },
+    loader: "object",
+  };
+});
+require("my-object-virtual-module"); // { baz: "quix" }
+await import("my-object-virtual-module"); // { baz: "quix" }
 ```
 
 ## Reading the config

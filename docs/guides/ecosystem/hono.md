@@ -18,7 +18,7 @@ export default app;
 Use `create-hono` to get started with one of Hono's project templates. Select `bun` when prompted for a template.
 
 ```bash
-$ bunx create-hono myapp
+$ bun create hono myapp
 ✔ Which template do you want to use? › bun
 cloned honojs/starter#main to /path/to/myapp
 ✔ Copied project files

@@ -21,7 +21,7 @@ Configuring with `bunfig.toml` is optional. Bun tries to be zero configuration i
 
 # Scope name      The value can be a URL string or an object
 "@mybigcompany" = { token = "123456", url = "https://registry.mybigcompany.com" }
-# URL is optional and fallsback to the default registry
+# URL is optional and falls back to the default registry
 
 # The "@" in the scope is optional
 mybigcompany2 = { token = "123456" }
@@ -47,7 +47,7 @@ registry = "https://registry.yarnpkg.com/"
 # Install for production? This is the equivalent to the "--production" CLI argument
 production = false
 
-# Disallow changes to lockfile? This is the equivalent to the "--fozen-lockfile" CLI argument
+# Disallow changes to lockfile? This is the equivalent to the "--frozen-lockfile" CLI argument
 frozenLockfile = false
 
 # Don't actually install
@@ -59,8 +59,11 @@ optional = true
 # Install local devDependencies (default: true)
 dev = true
 
-# Install peerDependencies (default: false)
-peer = false
+# Install peerDependencies (default: true)
+peer = true
+
+# Max number of concurrent lifecycle scripts (default: (cpu count or GOMAXPROCS) x2)
+concurrentScripts = 16
 
 # When using `bun install -g`, install packages here
 globalDir = "~/.bun/install/global"
@@ -88,12 +91,6 @@ disableManifest = false
 # Print a yarn v1 lockfile
 # Note: it does not load the lockfile, it just converts bun.lockb into a yarn.lock
 print = "yarn"
-
-# Path to read bun.lockb from
-path = "bun.lockb"
-
-# Path to save bun.lockb to
-savePath = "bun.lockb"
 
 # Save the lockfile to disk
 save = true
@@ -142,8 +139,6 @@ export interface Cache {
 
 export interface Lockfile {
   print?: "yarn";
-  path: string;
-  savePath: string;
   save: boolean;
 }
 ```
@@ -156,7 +151,6 @@ Environment variables have a higher priority than `bunfig.toml`.
 | -------------------------------- | ------------------------------------------------------------- |
 | BUN_CONFIG_REGISTRY              | Set an npm registry (default: <https://registry.npmjs.org>)   |
 | BUN_CONFIG_TOKEN                 | Set an auth token (currently does nothing)                    |
-| BUN_CONFIG_LOCKFILE_SAVE_PATH    | File path to save the lockfile to (default: bun.lockb)        |
 | BUN_CONFIG_YARN_LOCKFILE         | Save a Yarn v1-style yarn.lock                                |
 | BUN_CONFIG_LINK_NATIVE_BINS      | Point `bin` in package.json to a platform-specific dependency |
 | BUN_CONFIG_SKIP_SAVE_LOCKFILE    | Don’t save a lockfile                                         |
@@ -179,7 +173,7 @@ bun stores normalized `cpu` and `os` values from npm in the lockfile, along with
 
 ## Peer dependencies?
 
-Peer dependencies are handled similarly to yarn. `bun install` does not automatically install peer dependencies and will try to choose an existing dependency.
+Peer dependencies are handled similarly to yarn. `bun install` will automatically install peer dependencies. If the dependency is marked optional in `peerDependenciesMeta`, an existing dependency will be chosen if possible.
 
 ## Lockfile
 

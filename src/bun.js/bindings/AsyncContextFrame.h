@@ -2,7 +2,7 @@
 
 #include "root.h"
 #include "BunClientData.h"
-#include "JavaScriptCore/CallData.h"
+#include <JavaScriptCore/CallData.h>
 
 class AsyncContextFrame : public JSC::JSNonFinalObject {
 public:

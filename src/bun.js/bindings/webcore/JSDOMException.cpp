@@ -36,15 +36,15 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
-#include "JavaScriptCore/FunctionPrototype.h"
-#include "JavaScriptCore/HeapAnalyzer.h"
+#include <JavaScriptCore/FunctionPrototype.h>
+#include <JavaScriptCore/HeapAnalyzer.h>
 
-#include "JavaScriptCore/JSDestructibleObjectHeapCellType.h"
-#include "JavaScriptCore/SlotVisitorMacros.h"
-#include "JavaScriptCore/SubspaceInlines.h"
-#include "wtf/GetPtr.h"
-#include "wtf/PointerPreparations.h"
-#include "wtf/URL.h"
+#include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
+#include <JavaScriptCore/SlotVisitorMacros.h>
+#include <JavaScriptCore/SubspaceInlines.h>
+#include <wtf/GetPtr.h>
+#include <wtf/PointerPreparations.h>
+#include <wtf/URL.h>
 
 namespace WebCore {
 using namespace JSC;
@@ -120,7 +120,7 @@ static const HashTableValue JSDOMExceptionConstructorTableValues[] = {
     { "DATA_CLONE_ERR"_s, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::ConstantInteger, NoIntrinsic, { HashTableValue::ConstantType, 25 } },
 };
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSDOMExceptionDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -242,7 +242,7 @@ void JSDOMException::destroy(JSC::JSCell* cell)
     thisObject->JSDOMException::~JSDOMException();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMExceptionConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -260,7 +260,7 @@ static inline JSValue jsDOMException_codeGetter(JSGlobalObject& lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedShort>(lexicalGlobalObject, throwScope, impl.legacyCode())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMException_code, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMException_code, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMException>::get<jsDOMException_codeGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -273,7 +273,7 @@ static inline JSValue jsDOMException_nameGetter(JSGlobalObject& lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.name())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMException_name, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMException_name, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMException>::get<jsDOMException_nameGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -286,7 +286,7 @@ static inline JSValue jsDOMException_messageGetter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLDOMString>(lexicalGlobalObject, throwScope, impl.message())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsDOMException_message, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSDOMException>::get<jsDOMException_messageGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -306,11 +306,11 @@ void JSDOMException::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSDOMException*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSDOMExceptionOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSDOMExceptionOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -343,18 +343,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     // if constexpr (std::is_polymorphic_v<DOMException>) {
     // #if ENABLE(BINDING_INTEGRITY)
-    //         const void* actualVTablePointer = getVTablePointer(impl.ptr());
+    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
     // #if PLATFORM(WIN)
     //         void* expectedVTablePointer = __identifier("??_7DOMException@WebCore@@6B@");
     // #else
-    //         void* expectedVTablePointer = &_ZTVN7WebCore12DOMExceptionE[2];
+    //         // void* expectedVTablePointer = &_ZTVN7WebCore12DOMExceptionE[2];
     // #endif
 
     //         // If you hit this assertion you either have a use after free bug, or
     //         // DOMException has subclasses. If DOMException has subclasses that get passed
     //         // to toJS() we currently require DOMException you to opt out of binding hardening
     //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
     return createWrapper<DOMException>(globalObject, WTFMove(impl));

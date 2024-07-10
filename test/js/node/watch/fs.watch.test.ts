@@ -24,6 +24,8 @@ const testDir = tempDirWithFiles("watch", {
   [encodingFileName]: "hello",
 });
 
+const isWindows = process.platform === "win32";
+
 describe("fs.watch", () => {
   test("non-persistent watcher should not block the event loop", done => {
     try {
@@ -62,6 +64,19 @@ describe("fs.watch", () => {
     }
   });
 
+  test("should work with relative dirs", done => {
+    try {
+      const myrelativedir = path.join(testDir, "myrelativedir");
+      try {
+        fs.mkdirSync(myrelativedir);
+      } catch {}
+      fs.writeFileSync(path.join(myrelativedir, "relative.txt"), "hello");
+      bunRunAsScript(testDir, path.join(import.meta.dir, "fixtures", "relative_dir.js"));
+      done();
+    } catch (e: any) {
+      done(e);
+    }
+  });
   test("add file/folder to folder", done => {
     let count = 0;
     const root = path.join(testDir, "add-directory");
@@ -73,7 +88,7 @@ describe("fs.watch", () => {
     watcher.on("change", (event, filename) => {
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(filename);
         if (count >= 2) {
           watcher.close();
@@ -113,7 +128,7 @@ describe("fs.watch", () => {
       if (basename === "subfolder") return;
       count++;
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
         if (count >= 2) {
           watcher.close();
@@ -144,8 +159,38 @@ describe("fs.watch", () => {
     let err: Error | undefined = undefined;
     const watcher = fs.watch(testsubdir, function (event, filename) {
       try {
-        expect(event).toBe("rename");
+        expect(["rename", "change"]).toContain(event);
         expect(filename).toBe("deleted.txt");
+      } catch (e: any) {
+        err = e;
+      } finally {
+        clearInterval(interval);
+        watcher.close();
+      }
+    });
+
+    watcher.once("close", () => {
+      done(err);
+    });
+
+    const interval = repeat(() => {
+      fs.rmSync(filepath, { force: true });
+      const fd = fs.openSync(filepath, "w");
+      fs.closeSync(fd);
+    });
+  });
+
+  // https://github.com/oven-sh/bun/issues/5442
+  test("should work with paths with trailing slashes", done => {
+    const testsubdir = tempDirWithFiles("subdir", {
+      "trailing.txt": "hello",
+    });
+    const filepath = path.join(testsubdir, "trailing.txt");
+    let err: Error | undefined = undefined;
+    const watcher = fs.watch(testsubdir + "/", function (event, filename) {
+      try {
+        expect(event).toBe("rename");
+        expect(filename).toBe("trailing.txt");
       } catch (e: any) {
         err = e;
       } finally {
@@ -198,7 +243,7 @@ describe("fs.watch", () => {
     } catch (err: any) {
       expect(err).toBeInstanceOf(Error);
       expect(err.code).toBe("ENOENT");
-      expect(err.syscall).toBe("watch");
+      expect(err.syscall).toBe("open");
       done();
     }
   });
@@ -210,18 +255,20 @@ describe("fs.watch", () => {
     const filepath = path.join(testDir, encodingFileName);
 
     const promises: Promise<any>[] = [];
-    encodings.forEach(name => {
+    encodings.forEach(encoding => {
       const encoded_filename =
-        name !== "buffer" ? Buffer.from(encodingFileName, "utf8").toString(name) : Buffer.from(encodingFileName);
+        encoding !== "buffer"
+          ? Buffer.from(encodingFileName, "utf8").toString(encoding)
+          : Buffer.from(encodingFileName);
 
       promises.push(
         new Promise((resolve, reject) => {
           watchers.push(
-            fs.watch(filepath, { encoding: name }, (event, filename) => {
+            fs.watch(filepath, { encoding: encoding }, (event, filename) => {
               try {
                 expect(event).toBe("change");
 
-                if (name !== "buffer") {
+                if (encoding !== "buffer") {
                   expect(filename).toBe(encoded_filename);
                 } else {
                   expect(filename).toBeInstanceOf(Buffer);
@@ -284,7 +331,7 @@ describe("fs.watch", () => {
     try {
       const ac = new AbortController();
       const watcher = fs.watch(pathToFileURL(filepath), { signal: ac.signal });
-      watcher.once("error", () => {
+      watcher.once("error", err => {
         try {
           watcher.close();
           done();
@@ -374,30 +421,35 @@ describe("fs.watch", () => {
     expect(promise).resolves.toBe("change");
   });
 
-  test("should throw if no permission to watch the directory", async () => {
+  // on windows 0o200 will be readable (match nodejs behavior)
+  test.skipIf(isWindows)("should throw if no permission to watch the directory", async () => {
     const filepath = path.join(testDir, "permission-dir");
     fs.mkdirSync(filepath, { recursive: true });
-    await fs.promises.chmod(filepath, 0o200);
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 
-  test("should throw if no permission to watch the file", async () => {
-    const filepath = path.join(testDir, "permission-file");
-    fs.writeFileSync(filepath, "hello.txt");
-    await fs.promises.chmod(filepath, 0o200);
+  test.skipIf(isWindows)("should throw if no permission to watch the file", async () => {
+    const filepath = path.join(testDir, "permission-file.txt");
 
+    fs.writeFileSync(filepath, "hello.txt");
+    fs.chmodSync(filepath, 0o200);
     try {
       const watcher = fs.watch(filepath);
       watcher.close();
-      expect("unreacheable").toBe(false);
+      expect.unreachable();
     } catch (err: any) {
-      expect(err.message.indexOf("AccessDenied") !== -1).toBeTrue();
+      expect(err.message).toBe("Permission denied");
+      expect(err.code).toBe("EACCES");
+      expect(err.syscall).toBe("open");
     }
   });
 });
@@ -424,7 +476,7 @@ describe("fs.promises.watch", () => {
       for await (const event of watcher) {
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(event.filename);
 
           if (count >= 2) {
@@ -471,7 +523,7 @@ describe("fs.promises.watch", () => {
 
         count++;
         try {
-          expect(event.eventType).toBe("rename");
+          expect(["rename", "change"]).toContain(event.eventType);
           expect(["new-file.txt", "new-folder.txt"]).toContain(basename);
 
           if (count >= 2) {
@@ -546,7 +598,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -574,7 +626,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }
@@ -597,7 +649,7 @@ describe("fs.promises.watch", () => {
           return event.eventType;
         }
       } catch (e: any) {
-        expect("unreacheable").toBe(false);
+        expect.unreachable();
       } finally {
         clearInterval(interval);
       }

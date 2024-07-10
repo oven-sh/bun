@@ -1,0 +1,38 @@
+{
+  "name": "%40url%2fencoding.3",
+  "versions": {
+    "1.0.1": {
+      "name": "@url/encoding.3",
+      "version": "1.0.1",
+      "_id": "@url/encoding.3@1.0.1",
+      "_nodeVersion": "22.2.0",
+      "_npmVersion": "10.8.1",
+      "dist": {
+        "integrity": "sha512-LkuYnUyQgbhee/Sz/QL+WSMzvRElhJqzdYCs6oZFcAlZwEMcmyE10X0LfN6UcQ8zX7z0vjSezs+WinFafTlDSw==",
+        "shasum": "34a69650f7a471f29578381144110db7319c6992",
+        "tarball": "http://localhost:4873/@url/encoding.3/-/@url/encoding.3-1.0.1.tgz"
+      },
+      "contributors": []
+    }
+  },
+  "time": {
+    "modified": "2024-06-03T00:01:16.079Z",
+    "created": "2024-06-03T00:01:16.079Z",
+    "1.0.1": "2024-06-03T00:01:16.079Z"
+  },
+  "users": {},
+  "dist-tags": {
+    "latest": "1.0.1"
+  },
+  "_uplinks": {},
+  "_distfiles": {},
+  "_attachments": {
+    "encoding.3-1.0.1.tgz": {
+      "shasum": "34a69650f7a471f29578381144110db7319c6992",
+      "version": "1.0.1"
+    }
+  },
+  "_rev": "",
+  "_id": "@url/encoding.3",
+  "readme": "ERROR: No README data found!"
+}

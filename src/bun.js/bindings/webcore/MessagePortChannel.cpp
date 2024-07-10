@@ -75,7 +75,7 @@ void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& po
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
 
-    LOG(MessagePorts, "MessagePortChannel %s (%p) entangling port %s (that port has %zu messages available)", logString().utf8().data(), this, port.logString().utf8().data(), m_pendingMessages[i].size());
+    // LOG(MessagePorts, "MessagePortChannel %s (%p) entangling port %s (that port has %zu messages available)", logString().utf8().data(), this, port.logString().utf8().data(), m_pendingMessages[i].size());
 
     ASSERT(!m_processes[i] || *m_processes[i] == process);
     m_processes[i] = process;
@@ -85,7 +85,7 @@ void MessagePortChannel::entanglePortWithProcess(const MessagePortIdentifier& po
 
 void MessagePortChannel::disentanglePort(const MessagePortIdentifier& port)
 {
-    LOG(MessagePorts, "MessagePortChannel %s (%p) disentangling port %s", logString().utf8().data(), this, port.logString().utf8().data());
+    // LOG(MessagePorts, "MessagePortChannel %s (%p) disentangling port %s", logString().utf8().data(), this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
@@ -123,7 +123,7 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
     size_t i = remoteTarget == m_ports[0] ? 0 : 1;
 
     m_pendingMessages[i].append(WTFMove(message));
-    LOG(MessagePorts, "MessagePortChannel %s (%p) now has %zu messages pending on port %s", logString().utf8().data(), this, m_pendingMessages[i].size(), remoteTarget.logString().utf8().data());
+    // LOG(MessagePorts, "MessagePortChannel %s (%p) now has %zu messages pending on port %s", logString().utf8().data(), this, m_pendingMessages[i].size(), remoteTarget.logString().utf8().data());
 
     if (m_pendingMessages[i].size() == 1) {
         m_pendingMessageProtectors[i] = this;
@@ -136,7 +136,7 @@ bool MessagePortChannel::postMessageToRemote(MessageWithMessagePorts&& message, 
 
 void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& port, CompletionHandler<void(Vector<MessageWithMessagePorts>&&, CompletionHandler<void()>&&)>&& callback)
 {
-    LOG(MessagePorts, "MessagePortChannel %p taking all messages for port %s", this, port.logString().utf8().data());
+    // LOG(MessagePorts, "MessagePortChannel %p taking all messages for port %s", this, port.logString().utf8().data());
 
     ASSERT(port == m_ports[0] || port == m_ports[1]);
     size_t i = port == m_ports[0] ? 0 : 1;
@@ -153,16 +153,12 @@ void MessagePortChannel::takeAllMessagesForPort(const MessagePortIdentifier& por
 
     ++m_messageBatchesInFlight;
 
-    LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
+    // LOG(MessagePorts, "There are %zu messages to take for port %s. Taking them now, messages in flight is now %" PRIu64, result.size(), port.logString().utf8().data(), m_messageBatchesInFlight);
 
-    auto size = result.size();
-    callback(WTFMove(result), [size, this, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
+    callback(WTFMove(result), [this, port, protectedThis = WTFMove(m_pendingMessageProtectors[i])] {
         UNUSED_PARAM(port);
-#if LOG_DISABLED
-        UNUSED_PARAM(size);
-#endif
         --m_messageBatchesInFlight;
-        LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
+        // LOG(MessagePorts, "Message port channel %s was notified that a batch of %zu message port messages targeted for port %s just completed dispatch, in flight is now %" PRIu64, logString().utf8().data(), size, port.logString().utf8().data(), m_messageBatchesInFlight);
     });
 }
 

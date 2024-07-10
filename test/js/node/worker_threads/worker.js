@@ -1,8 +1,14 @@
-const wt = require("worker_threads");
+import { isMainThread, parentPort, workerData } from "worker_threads";
 
-wt.parentPort.on("message", e => {
-  let sharedBufferView = new Int32Array(e.sharedBuffer);
-  wt.workerData.postMessage("done!");
+if (parentPort === null) throw new Error("worker_threads.parentPort is null");
+
+if (isMainThread) throw new Error("worker_threads.isMainThread is wrong");
+
+parentPort.on("message", m => {
+  let sharedBufferView = new Int32Array(m.sharedBuffer);
+  if (workerData instanceof MessagePort) {
+    workerData.postMessage("done!");
+  }
   Atomics.add(sharedBufferView, 0, 1);
   Atomics.notify(sharedBufferView, 0, Infinity);
 });

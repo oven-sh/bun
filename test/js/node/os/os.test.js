@@ -1,6 +1,7 @@
-import { it, expect } from "bun:test";
+import { it, expect, describe } from "bun:test";
 import * as os from "node:os";
 import { realpathSync } from "fs";
+import { isWindows } from "harness";
 
 it("arch", () => {
   expect(["x64", "x86", "arm64"].some(arch => os.arch() === arch)).toBe(true);
@@ -19,15 +20,24 @@ it("totalmem", () => {
 });
 
 it("getPriority", () => {
-  expect(os.getPriority()).toBe(0);
-  expect(os.getPriority(0)).toBe(0);
+  var prio = os.getPriority();
+  expect(-20 <= prio && prio <= 20).toBe(true);
+  prio = os.getPriority(0);
+  expect(-20 <= prio && prio <= 20).toBe(true);
 });
 
 it("setPriority", () => {
-  expect(os.setPriority(0, 2)).toBe(undefined);
-  expect(os.getPriority()).toBe(2);
-  expect(os.setPriority(5)).toBe(undefined);
-  expect(os.getPriority()).toBe(5);
+  if (isWindows) {
+    expect(os.setPriority(0, 10)).toBe(undefined);
+    expect(os.getPriority()).toBe(10);
+    expect(os.setPriority(0)).toBe(undefined);
+    expect(os.getPriority()).toBe(0);
+  } else {
+    expect(os.setPriority(0, 2)).toBe(undefined);
+    expect(os.getPriority()).toBe(2);
+    expect(os.setPriority(5)).toBe(undefined);
+    expect(os.getPriority()).toBe(5);
+  }
 });
 
 it("loadavg", () => {
@@ -39,9 +49,14 @@ it("homedir", () => {
 });
 
 it("tmpdir", () => {
-  if (process.platform === "win32") {
-    expect(os.tmpdir()).toBe(process.env.TEMP || process.env.TMP);
-    expect(os.tmpdir()).toBe(`${process.env.SystemRoot || process.env.windir}\\temp`);
+  if (isWindows) {
+    expect(
+      [
+        process.env.TEMP,
+        `${process.env.SystemRoot || process.env.windir}\\Temp`,
+        `${process.env.LOCALAPPDATA}\\Temp`,
+      ].includes(os.tmpdir()),
+    ).toBeTrue();
   } else {
     const originalEnv = process.env.TMPDIR;
     let dir = process.env.TMPDIR || process.env.TMP || process.env.TEMP || "/tmp";
@@ -78,6 +93,10 @@ it("uptime", () => {
 
 it("version", () => {
   expect(typeof os.version() === "string").toBe(true);
+  if (isWindows) {
+    expect(os.version()).toInclude("Win");
+    console.log(os.version());
+  }
 });
 
 it("userInfo", () => {
@@ -146,11 +165,60 @@ it("machine", () => {
 });
 
 it("EOL", () => {
-  if (process.platform === "win32") expect(os.EOL).toBe("\\r\\n");
+  if (isWindows) expect(os.EOL).toBe("\r\n");
   else expect(os.EOL).toBe("\n");
 });
 
 it("devNull", () => {
-  if (process.platform === "win32") expect(os.devNull).toBe("\\\\.\\nul");
+  if (isWindows) expect(os.devNull).toBe("\\\\.\\nul");
   else expect(os.devNull).toBe("/dev/null");
+});
+
+it("availableParallelism", () => {
+  expect(os.availableParallelism()).toBeGreaterThan(0);
+});
+
+it("loadavg", () => {
+  const loadavg = os.loadavg();
+  expect(loadavg.length).toBe(3);
+  expect(loadavg.every(avg => typeof avg === "number")).toBeTrue();
+});
+
+// https://github.com/oven-sh/bun/issues/10259
+describe("toString works like node", () => {
+  const exportsWithStrings = [
+    "arch",
+    "availableParallelism",
+    "endianness",
+    "freemem",
+    "homedir",
+    "hostname",
+    "platform",
+    "release",
+    "tmpdir",
+    "totalmem",
+    "type",
+    "uptime",
+    "version",
+    "machine",
+  ];
+  for (const key of exportsWithStrings) {
+    // node implements Symbol.toPrimitive, not toString!
+    it(`${key}.toString()`, () => {
+      expect(os[key].toString()).toStartWith("function");
+    });
+
+    it(`${key} + ''`, () => {
+      const left = os[key] + "";
+      const right = os[key]() + "";
+      if (left !== right) {
+        // uptime, totalmem, and a few others might differ slightly on each call
+        // we just want to check we're not getting NaN, Infinity, or -Infinity
+        expect(Number.isFinite(Math.trunc(parseFloat(left)))).toBeTrue();
+        expect(Number.isFinite(Math.trunc(parseFloat(right)))).toBeTrue();
+      } else {
+        expect(left).toBe(right);
+      }
+    });
+  }
 });

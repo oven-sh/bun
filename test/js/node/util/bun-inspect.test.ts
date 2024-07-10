@@ -1,6 +1,16 @@
 import { describe, it, expect } from "bun:test";
 
 describe("Bun.inspect", () => {
+  it("reports error instead of [native code]", () => {
+    expect(
+      Bun.inspect({
+        [Symbol.for("nodejs.util.inspect.custom")]() {
+          throw new Error("custom inspect");
+        },
+      }),
+    ).toBe("[custom formatter threw an exception]");
+  });
+
   it("depth < 0 throws", () => {
     expect(() => Bun.inspect({}, { depth: -1 })).toThrow();
     expect(() => Bun.inspect({}, { depth: -13210 })).toThrow();
@@ -18,6 +28,6 @@ describe("Bun.inspect", () => {
     expect(Bun.inspect(obj, { depth: 0x0fff0000 })).toContain("hi");
   });
   it("depth = 0", () => {
-    expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...]\n}");
+    expect(Bun.inspect({ a: { b: { c: { d: 1 } } } }, { depth: 0 })).toEqual("{\n  a: [Object ...],\n}");
   });
 });

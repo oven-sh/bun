@@ -1,6 +1,15 @@
 import { beforeEach, describe, expect, test } from "bun:test";
 import { bunEnv, bunExe } from "harness";
 
+test("non-ascii regexp literals", () => {
+  var str = "🔴11 54 / 10,000";
+  expect(str.replace(/[🔵🔴,]+/g, "")).toBe("11 54 / 10000");
+});
+
+test("ascii regex with escapes", () => {
+  expect(/^[-#!$@£%^&*()_+|~=`{}\[\]:";'<>?,.\/ ]$/).toBeInstanceOf(RegExp);
+});
+
 describe("// @bun", () => {
   beforeEach(() => {
     delete require.cache[require.resolve("./async-transpiler-entry")];
@@ -25,6 +34,7 @@ describe("// @bun", () => {
       cwd: import.meta.dir,
       env: bunEnv,
       stderr: "inherit",
+      stdout: "pipe",
     });
     expect(stdout.toString()).toBe("Hello world!\n");
     expect(exitCode).toBe(0);
@@ -158,5 +168,20 @@ describe("json imports", () => {
   test("should handle duplicate keys", async () => {
     // @ts-ignore
     expect((await import("./runtime-transpiler-fixture-duplicate-keys.json")).a).toBe("4");
+  });
+});
+
+describe("with statement", () => {
+  test("works", () => {
+    const { exitCode } = Bun.spawnSync({
+      cmd: [bunExe(), require.resolve("./with-statement-works.js")],
+      cwd: import.meta.dir,
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "inherit",
+      stdin: "inherit",
+    });
+
+    expect(exitCode).toBe(0);
   });
 });

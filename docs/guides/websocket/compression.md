@@ -24,7 +24,7 @@ Bun.serve({
   websocket: {
     async message(ws, message) {
       // send a compressed message
-      ws.send("Hello world!", true);
+      ws.send(message, true);
     },
   },
 });

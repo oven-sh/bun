@@ -638,7 +638,7 @@ export namespace DAP {
    */
   export type BreakpointLocationsRequest = {
     /**
-     * The source location of the breakpoints; either `source.path` or `source.reference` must be specified.
+     * The source location of the breakpoints; either `source.path` or `source.sourceReference` must be specified.
      */
     source: Source;
     /**
@@ -1139,6 +1139,12 @@ export namespace DAP {
      * The value should be less than or equal to 2147483647 (2^31-1).
      */
     indexedVariables?: number;
+    /**
+     * A memory reference to a location appropriate for this result.
+     * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     */
+    memoryReference?: string;
   };
   /**
    * Arguments for `source` request.
@@ -1286,7 +1292,7 @@ export namespace DAP {
     /**
      * A memory reference to a location appropriate for this result.
      * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
-     * This attribute should be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
      */
     memoryReference?: string;
   };
@@ -1344,6 +1350,12 @@ export namespace DAP {
      * The value should be less than or equal to 2147483647 (2^31-1).
      */
     indexedVariables?: number;
+    /**
+     * A memory reference to a location appropriate for this result.
+     * For pointer type eval results, this is generally a reference to the memory address contained in the pointer.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
+     */
+    memoryReference?: string;
   };
   /**
    * Arguments for `stepInTargets` request.
@@ -2064,8 +2076,10 @@ export namespace DAP {
      */
     indexedVariables?: number;
     /**
-     * The memory reference for the variable if the variable represents executable code, such as a function pointer.
-     * This attribute is only required if the corresponding capability `supportsMemoryReferences` is true.
+     * A memory reference associated with this variable.
+     * For pointer type variables, this is generally a reference to the memory address contained in the pointer.
+     * For executable data, this reference may later be used in a `disassemble` request.
+     * This attribute may be returned by a debug adapter if corresponding capability `supportsMemoryReferences` is true.
      */
     memoryReference?: string;
   };
@@ -2201,7 +2215,7 @@ export namespace DAP {
      */
     instructionReference: string;
     /**
-     * The offset from the instruction reference.
+     * The offset from the instruction reference in bytes.
      * This can be negative.
      */
     offset?: number;
@@ -2264,6 +2278,13 @@ export namespace DAP {
      * This can be negative.
      */
     offset?: number;
+    /**
+     * A machine-readable explanation of why a breakpoint may not be verified. If a breakpoint is verified or a specific reason is not known, the adapter should omit this property. Possible values include:
+     *
+     * - `pending`: Indicates a breakpoint might be verified in the future, but the adapter cannot verify it in the current state.
+     * - `failed`: Indicates a breakpoint was not able to be verified, and the adapter does not believe it can be verified without intervention.
+     */
+    reason?: "pending" | "failed";
   };
   /**
    * The granularity of one 'step' in the stepping requests `next`, `stepIn`, `stepOut`, and `stepBack`.
@@ -2573,6 +2594,12 @@ export namespace DAP {
      * The end column of the range that corresponds to this instruction, if any.
      */
     endColumn?: number;
+    /**
+     * A hint for how to present the instruction in the UI.
+     *
+     * A value of `invalid` may be used to indicate this instruction is 'filler' and cannot be reached by the program. For example, unreadable memory addresses may be presented is 'invalid.'
+     */
+    presentationHint?: "normal" | "invalid";
   };
   /**
    * Logical areas that can be invalidated by the `invalidated` event.

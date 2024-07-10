@@ -24,7 +24,6 @@ Ref<EventEmitter> EventEmitter::create(ScriptExecutionContext& context)
 
 bool EventEmitter::addListener(const Identifier& eventType, Ref<EventListener>&& listener, bool once, bool prepend)
 {
-    bool listenerCreatedFromScript = is<JSEventListener>(listener) && !downcast<JSEventListener>(listener.get()).wasCreatedFromMarkup();
 
     if (prepend) {
         if (!ensureEventEmitterData().eventListenerMap.prepend(eventType, listener.copyRef(), once))
@@ -184,8 +183,18 @@ void EventEmitter::fireEventListeners(const Identifier& eventType, const MarkedA
         return;
 
     auto* listenersVector = data->eventListenerMap.find(eventType);
-    if (UNLIKELY(!listenersVector))
+    if (UNLIKELY(!listenersVector)) {
+        if (eventType == scriptExecutionContext()->vm().propertyNames->error && arguments.size() > 0) {
+            Ref<EventEmitter> protectedThis(*this);
+            auto* thisObject = protectedThis->m_thisObject.get();
+            if (!thisObject)
+                return;
+
+            Bun__reportUnhandledError(thisObject->globalObject(), JSValue::encode(arguments.at(0)));
+            return;
+        }
         return;
+    }
 
     bool prevFiringEventListeners = data->isFiringEventListeners;
     data->isFiringEventListeners = true;
@@ -209,8 +218,10 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
     JSC::JSValue thisValue = thisObject ? JSC::JSValue(thisObject) : JSC::jsUndefined();
 
     for (auto& registeredListener : listeners) {
-        if (UNLIKELY(registeredListener->wasRemoved()))
-            continue;
+        // The below code used to be in here, but it's WRONG. Even if a listener is removed,
+        // if we're in the middle of firing listeners, we still need to call it.
+        // if (UNLIKELY(registeredListener->wasRemoved()))
+        //     continue;
 
         auto& callback = registeredListener->callback();
 

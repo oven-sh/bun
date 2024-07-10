@@ -20,8 +20,6 @@
 
 #include "config.h"
 
-#if ENABLE(CHANNEL_MESSAGING)
-
 #include "JSMessageChannel.h"
 
 #include "ActiveDOMObject.h"
@@ -91,7 +89,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSMessageChannelPrototype, JSMessageChannelP
 
 using JSMessageChannelDOMConstructor = JSDOMConstructor<JSMessageChannel>;
 
-template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
     VM& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -99,7 +97,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSMessageChannelDOMConstructo
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "MessageChannel"_s);
     auto object = MessageChannel::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -179,7 +177,7 @@ void JSMessageChannel::destroy(JSC::JSCell* cell)
     thisObject->JSMessageChannel::~JSMessageChannel();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannelConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -197,7 +195,7 @@ static inline JSValue jsMessageChannel_port1Getter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<MessagePort>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.port1())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port1, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port1, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageChannel>::get<jsMessageChannel_port1Getter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -210,7 +208,7 @@ static inline JSValue jsMessageChannel_port2Getter(JSGlobalObject& lexicalGlobal
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<MessagePort>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.port2())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsMessageChannel_port2, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSMessageChannel>::get<jsMessageChannel_port2Getter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -256,7 +254,7 @@ void JSMessageChannel::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSMessageChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSMessageChannelOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -289,18 +287,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<MessageChannel>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7MessageChannel@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore14MessageChannelE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore14MessageChannelE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // MessageChannel has subclasses. If MessageChannel has subclasses that get passed
         // to toJS() we currently require MessageChannel you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<MessageChannel>(globalObject, WTFMove(impl));
@@ -319,5 +317,3 @@ MessageChannel* JSMessageChannel::toWrapped(JSC::VM&, JSC::JSValue value)
 }
 
 }
-
-#endif // ENABLE(CHANNEL_MESSAGING)

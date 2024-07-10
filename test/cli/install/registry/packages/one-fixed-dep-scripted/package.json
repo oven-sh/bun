@@ -1,0 +1,47 @@
+{
+	"name": "one-fixed-dep-scripted",
+	"versions": {
+		"1.0.0": {
+			"name": "one-fixed-dep-scripted",
+			"version": "1.0.0",
+			"scripts": {
+				"preinstall": "echo preinstall >> log",
+				"install": "echo install >> log",
+				"postinstall": "echo postinstall >> log"
+			},
+			"dependencies": {
+				"no-deps-scripted": "1.0.0"
+			},
+			"_id": "one-fixed-dep-scripted@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-iFCphQjYcRxyS8xwv1Gr2+9jj2RmxEqLJSAncKlpldMjx+S13D1rviivLIyBd7ps2gsdxqXRyTkoYPAtZmyY/A==",
+				"shasum": "da38522716cc095727fb9e7f3d7f2bddf9572882",
+				"tarball": "http://localhost:4873/one-fixed-dep-scripted/-/one-fixed-dep-scripted-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:25.815Z",
+		"created": "2023-11-01T22:05:25.815Z",
+		"1.0.0": "2023-11-01T22:05:25.815Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-fixed-dep-scripted-1.0.0.tgz": {
+			"shasum": "da38522716cc095727fb9e7f3d7f2bddf9572882",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-e90a329f94909798",
+	"_id": "one-fixed-dep-scripted",
+	"readme": "ERROR: No README data found!"
+}

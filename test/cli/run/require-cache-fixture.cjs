@@ -8,6 +8,11 @@ if (require.main !== module) {
   throw new Error("require.main !== module");
 }
 
+if (module.parent !== null) {
+  console.error(module.parent);
+  throw new Error("module.parent !== null");
+}
+
 if (process.mainModule !== module) {
   console.error(__filename, module.id);
   throw new Error("process.mainModule !== module");
@@ -24,6 +29,11 @@ if (__dirname !== resolve(module.filename, "../")) {
 }
 
 const foo = require("./require-cache-fixture-b.cjs");
+
+if (foo.x !== module) {
+  console.error(__filename, foo);
+  throw new Error("foo !== module");
+}
 
 exports.foo = foo;
 

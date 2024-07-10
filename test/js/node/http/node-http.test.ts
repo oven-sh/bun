@@ -1,5 +1,5 @@
 // @ts-nocheck
-import {
+import http, {
   createServer,
   request,
   get,
@@ -8,23 +8,39 @@ import {
   Server,
   validateHeaderName,
   validateHeaderValue,
+  ServerResponse,
+  IncomingMessage,
+  OutgoingMessage,
 } from "node:http";
+import https, { createServer as createHttpsServer } from "node:https";
+import { EventEmitter } from "node:events";
+import { createServer as createHttpsServer } from "node:https";
 import { createTest } from "node-harness";
 import url from "node:url";
 import { tmpdir } from "node:os";
 import { spawnSync } from "node:child_process";
-const { describe, expect, it, beforeAll, afterAll, createDoneDotAll } = createTest(import.meta.path);
+import nodefs from "node:fs";
+import * as path from "node:path";
+import { unlinkSync } from "node:fs";
+import { PassThrough } from "node:stream";
+const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
+import { bunExe } from "bun:harness";
+import { bunEnv, disableAggressiveGCScope, tmpdirSync } from "harness";
+import * as stream from "node:stream";
+import * as zlib from "node:zlib";
 
-function listen(server: Server): Promise<URL> {
+function listen(server: Server, protocol: string = "http"): Promise<URL> {
   return new Promise((resolve, reject) => {
+    const timeout = setTimeout(() => reject("Timed out"), 5000).unref();
     server.listen({ port: 0 }, (err, hostname, port) => {
+      clearTimeout(timeout);
+
       if (err) {
         reject(err);
       } else {
-        resolve(new URL(`http://${hostname}:${port}`));
+        resolve(new URL(`${protocol}://${hostname}:${port}`));
       }
     });
-    setTimeout(() => reject("Timed out"), 5000);
   });
 }
 
@@ -46,7 +62,22 @@ describe("node:http", () => {
         server.close();
       }
     });
-
+    it("is not marked encrypted (#5867)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.connection.encrypted).toBe(undefined);
+          res.writeHead(200, { "Content-Type": "text/plain" });
+          res.end("Hello World");
+        });
+        const url = await listen(server);
+        const res = await fetch(new URL("", url));
+        expect(await res.text()).toBe("Hello World");
+      } catch (e) {
+        throw e;
+      } finally {
+        server.close();
+      }
+    });
     it("request & response body streaming (large)", async () => {
       try {
         const bodyBlob = new Blob(["hello world", "hello world".repeat(9000)]);
@@ -111,12 +142,64 @@ describe("node:http", () => {
       expect(listenResponse).toBe(server);
       listenResponse.close();
     });
+
+    it("listen callback should be bound to server", async () => {
+      const server = createServer();
+      const { resolve, reject, promise } = Promise.withResolvers();
+      server.listen(0, function () {
+        try {
+          expect(this === server).toBeTrue();
+          resolve();
+        } catch (e) {
+          reject();
+        }
+      });
+      await promise;
+      server.close();
+    });
+
+    it("option method should be uppercase (#7250)", async () => {
+      try {
+        var server = createServer((req, res) => {
+          expect(req.method).toBe("OPTIONS");
+          res.writeHead(204, {});
+          res.end();
+        });
+        const url = await listen(server);
+        const res = await fetch(url, {
+          method: "OPTIONS",
+        });
+        expect(res.status).toBe(204);
+      } finally {
+        server.close();
+      }
+    });
+  });
+
+  describe("response", () => {
+    test("set-cookie works with getHeader", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      expect(res.getHeader("Set-Cookie")).toEqual(["swag=true", "yolo=true"]);
+    });
+    test("set-cookie works with getHeaders", () => {
+      const res = new ServerResponse({});
+      res.setHeader("Set-Cookie", ["swag=true", "yolo=true"]);
+      res.setHeader("test", "test");
+      expect(res.getHeaders()).toEqual({
+        "set-cookie": ["swag=true", "yolo=true"],
+        "test": "test",
+      });
+    });
   });
 
   describe("request", () => {
     function runTest(done: Function, callback: (server: Server, port: number, done: (err?: Error) => void) => void) {
-      var timer;
-      var server = createServer((req, res) => {
+      let timer;
+      const server = createServer((req, res) => {
+        if (req.headers.__proto__ !== {}.__proto__) {
+          throw new Error("Headers should inherit from Object.prototype");
+        }
         const reqUrl = new URL(req.url!, `http://${req.headers.host}`);
         if (reqUrl.pathname) {
           if (reqUrl.pathname === "/redirect") {
@@ -125,6 +208,21 @@ describe("node:http", () => {
               Location: `http://localhost:${server.port}/redirected`,
             });
             res.end("Got redirect!\n");
+            return;
+          }
+          if (reqUrl.pathname === "/multi-chunk-response") {
+            res.writeHead(200, { "Content-Type": "text/plain" });
+            const toWrite = "a".repeat(512);
+            for (let i = 0; i < 4; i++) {
+              res.write(toWrite);
+            }
+            res.end();
+            return;
+          }
+          if (reqUrl.pathname === "/multiple-set-cookie") {
+            expect(req.headers.cookie).toBe("foo=bar; bar=baz");
+            res.setHeader("Set-Cookie", ["foo=bar", "bar=baz"]);
+            res.end("OK");
             return;
           }
           if (reqUrl.pathname === "/redirected") {
@@ -241,6 +339,46 @@ describe("node:http", () => {
     //   });
     // });
 
+    it("should not insert extraneous accept-encoding header", async done => {
+      try {
+        let headers;
+        var server = createServer((req, res) => {
+          headers = req.headers;
+          req.on("data", () => {});
+          req.on("end", () => {
+            res.end();
+          });
+        });
+        const url = await listen(server);
+        await fetch(url, { decompress: false });
+        expect(headers["accept-encoding"]).toBeFalsy();
+        done();
+      } catch (e) {
+        done(e);
+      } finally {
+        server.close();
+      }
+    });
+
+    it("multiple Set-Cookie headers works #6810", done => {
+      runTest(done, (server, port, done) => {
+        const req = request(`http://localhost:${port}/multiple-set-cookie`, res => {
+          let data = "";
+          res.setEncoding("utf8");
+          res.on("data", chunk => {
+            data += chunk;
+          });
+          res.on("end", () => {
+            expect(res.headers["set-cookie"]).toEqual(["foo=bar", "bar=baz"]);
+            done();
+          });
+          res.on("error", err => done(err));
+        });
+        req.setHeader("Cookie", ["foo=bar; bar=baz"]);
+        req.end();
+      });
+    });
+
     it("should make a standard GET request when passed string as first arg", done => {
       runTest(done, (server, port, done) => {
         const req = request(`http://localhost:${port}`, res => {
@@ -318,7 +456,8 @@ describe("node:http", () => {
         req.setSocketKeepAlive(true, 1000);
         req.end();
         expect(true).toBe(true);
-        done();
+        // Neglecting to close this will cause a future test to fail.
+        req.on("close", () => done());
       });
     });
 
@@ -545,6 +684,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("reassign writeHead method, issue#3585", done => {
       runTest(done, (server, serverPort, done) => {
         const req = request(`http://localhost:${serverPort}/customWriteHead`, res => {
@@ -555,6 +695,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("uploading file by 'formdata/multipart', issue#3116", done => {
       runTest(done, (server, serverPort, done) => {
         const boundary = "----FormBoundary" + Date.now();
@@ -598,6 +739,7 @@ describe("node:http", () => {
         req.end();
       });
     });
+
     it("request via http proxy, issue#4295", done => {
       const proxyServer = createServer(function (req, res) {
         let option = url.parse(req.url);
@@ -655,10 +797,94 @@ describe("node:http", () => {
         req.end();
       });
     });
+
+    it("should correctly stream a multi-chunk response #5320", async done => {
+      runTest(done, (server, serverPort, done) => {
+        const req = request({ host: "localhost", port: `${serverPort}`, path: "/multi-chunk-response", method: "GET" });
+
+        req.on("error", err => done(err));
+
+        req.on("response", async res => {
+          const body = res.pipe(new PassThrough({ highWaterMark: 512 }));
+          const response = new Response(body);
+          const text = await response.text();
+
+          expect(text.length).toBe(2048);
+          done();
+        });
+
+        req.end();
+      });
+    });
+
+    it("should emit a socket event when connecting", async done => {
+      runTest(done, async (server, serverPort, done) => {
+        const req = request(`http://localhost:${serverPort}`, {});
+        req.on("socket", function onRequestSocket(socket) {
+          req.destroy();
+          done();
+        });
+        req.end();
+      });
+    });
+  });
+
+  describe("https.request with custom tls options", () => {
+    const createServer = () =>
+      new Promise(resolve => {
+        const server = createHttpsServer(
+          {
+            key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+            cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+            rejectUnauthorized: true,
+          },
+          (req, res) => {
+            res.writeHead(200);
+            res.end("hello world");
+          },
+        );
+
+        listen(server, "https").then(url => {
+          resolve({
+            server,
+            close: () => server.close(),
+            url,
+          });
+        });
+      });
+
+    it("supports custom tls args", async done => {
+      const { url, close } = await createServer();
+      try {
+        const options: https.RequestOptions = {
+          method: "GET",
+          url,
+          port: url.port,
+          ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
+        };
+        const req = https.request(options, res => {
+          res.on("data", () => null);
+          res.on("end", () => {
+            close();
+            done();
+          });
+        });
+
+        req.on("error", error => {
+          close();
+          done(error);
+        });
+
+        req.end();
+      } catch (e) {
+        close();
+        throw e;
+      }
+    });
   });
 
   describe("signal", () => {
-    it.skip("should abort and close the server", done => {
+    it("should abort and close the server", done => {
       const server = createServer((req, res) => {
         res.writeHead(200, { "Content-Type": "text/plain" });
         res.end("Hello World");
@@ -716,6 +942,13 @@ describe("node:http", () => {
       expect(Agent instanceof Function).toBe(true);
     });
 
+    it("can be constructed with new", () => {
+      expect(new Agent().protocol).toBe("http:");
+    });
+    it("can be constructed with apply", () => {
+      expect(Agent.apply({}).protocol).toBe("http:");
+    });
+
     it("should have a default maxSockets of Infinity", () => {
       expect(dummyAgent.maxSockets).toBe(Infinity);
     });
@@ -744,22 +977,24 @@ describe("node:http", () => {
   });
 
   describe("ClientRequest.signal", () => {
-    it("should attempt to make a standard GET request and abort", done => {
+    it("should attempt to make a standard GET request and abort", async () => {
       let server_port;
       let server_host;
+      const {
+        resolve: resolveClientAbort,
+        reject: rejectClientAbort,
+        promise: promiseClientAbort,
+      } = Promise.withResolvers();
 
-      const server = createServer((req, res) => {
-        Bun.sleep(10).then(() => {
-          res.writeHead(200, { "Content-Type": "text/plain" });
-          res.end("Hello World");
-          server.close();
-        });
-      });
+      const server = createServer((req, res) => {});
+
       server.listen({ port: 0 }, (_err, host, port) => {
         server_port = port;
         server_host = host;
 
-        get(`http://${server_host}:${server_port}`, { signal: AbortSignal.timeout(5) }, res => {
+        const signal = AbortSignal.timeout(5);
+
+        get(`http://${server_host}:${server_port}`, { signal }, res => {
           let data = "";
           res.setEncoding("utf8");
           res.on("data", chunk => {
@@ -767,18 +1002,14 @@ describe("node:http", () => {
           });
           res.on("end", () => {
             server.close();
-            done();
           });
-          res.on("error", _ => {
-            server.close();
-            done();
-          });
-        }).on("error", err => {
-          expect(err?.name).toBe("AbortError");
-          server.close();
-          done();
+        }).once("abort", () => {
+          resolveClientAbort();
         });
       });
+
+      await promiseClientAbort;
+      server.close();
     });
   });
 
@@ -807,24 +1038,6 @@ describe("node:http", () => {
         done();
       } catch (error) {
         done(error);
-      } finally {
-        server.close();
-      }
-    });
-  });
-
-  test("test server internal error, issue#4298", done => {
-    const server = createServer((req, res) => {
-      throw Error("throw an error here.");
-    });
-    server.listen({ port: 0 }, async (_err, host, port) => {
-      try {
-        await fetch(`http://${host}:${port}`).then(res => {
-          expect(res.status).toBe(500);
-          done();
-        });
-      } catch (err) {
-        done(err);
       } finally {
         server.close();
       }
@@ -887,4 +1100,1100 @@ describe("node:http", () => {
       }
     });
   });
+
+  test("error event not fired, issue#4651", async () => {
+    const { promise, resolve } = Promise.withResolvers();
+    const server = createServer((req, res) => {
+      res.end();
+    });
+    server.listen({ port: 42069 }, () => {
+      const server2 = createServer((_, res) => {
+        res.end();
+      });
+      server2.on("error", err => {
+        resolve(err);
+      });
+      server2.listen({ port: 42069 }, () => {});
+    });
+    const err = await promise;
+    expect(err.code).toBe("EADDRINUSE");
+  });
+});
+describe("node https server", async () => {
+  const httpsOptions = {
+    key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.key")),
+    cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "cert.pem")),
+  };
+  const createServer = onRequest => {
+    return new Promise(resolve => {
+      const server = createHttpsServer(httpsOptions, (req, res) => {
+        onRequest(req, res);
+      });
+      listen(server, "https").then(url => {
+        resolve({
+          server,
+          done: () => server.close(),
+          url,
+        });
+      });
+    });
+  };
+  it("is marked encrypted (#5867)", async () => {
+    const { server, url, done } = await createServer(async (req, res) => {
+      expect(req.connection.encrypted).toBe(true);
+      res.end();
+    });
+    try {
+      await fetch(url, { tls: { rejectUnauthorized: false } });
+    } catch (e) {
+      throw e;
+    } finally {
+      done();
+    }
+  });
+});
+
+describe("server.address should be valid IP", () => {
+  it("should return null before listening", done => {
+    const server = createServer((req, res) => {});
+    try {
+      expect(server.address()).toBeNull();
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  it("should return null after close", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        expect(server.address()).not.toBeNull();
+        server.close();
+        expect(server.address()).toBeNull();
+        done();
+      } catch (err) {
+        done(err);
+      }
+    });
+  });
+  it("test default hostname, issue#5850", done => {
+    const server = createServer((req, res) => {});
+    server.listen(0, async (_err, host, port) => {
+      try {
+        const { address, family, port } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["::", "0.0.0.0"]).toContain(address);
+        if (address === "0.0.0.0") {
+          expect(family).toStrictEqual("IPv4");
+        } else {
+          expect(family).toStrictEqual("IPv6");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it.each([["localhost"], ["127.0.0.1"]])("test %s", (hostname, done) => {
+    const server = createServer((req, res) => {});
+    server.listen(0, hostname, async (_err, host, port) => {
+      try {
+        const { address, family } = server.address();
+        expect(port).toBeInteger();
+        expect(port).toBeGreaterThan(0);
+        expect(port).toBeLessThan(65536);
+        expect(["IPv4", "IPv6"]).toContain(family);
+        if (family === "IPv4") {
+          expect(address).toStrictEqual("127.0.0.1");
+        } else {
+          expect(address).toStrictEqual("::1");
+        }
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+      }
+    });
+  });
+  it("test unix socket, issue#6413", done => {
+    const socketPath = `${tmpdir()}/bun-server-${Math.random().toString(32)}.sock`;
+    const server = createServer((req, res) => {});
+    server.listen(socketPath, async (_err, host, port) => {
+      try {
+        expect(server.address()).toStrictEqual(socketPath);
+        done();
+      } catch (err) {
+        done(err);
+      } finally {
+        server.close();
+        unlinkSync(socketPath);
+      }
+    });
+  });
+  test("ServerResponse init", done => {
+    try {
+      const req = {};
+      const res = new ServerResponse(req);
+      expect(res.req).toBe(req);
+      done();
+    } catch (err) {
+      done(err);
+    }
+  });
+  test("ServerResponse reply", done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    try {
+      const req = {};
+      const sendedText = "Bun\n";
+      const res = new ServerResponse(req, async (res: Response) => {
+        expect(await res.text()).toBe(sendedText);
+        doneRequest();
+      });
+      res.write(sendedText);
+      res.end();
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
+  test("ServerResponse instanceof OutgoingMessage", () => {
+    expect(new ServerResponse({}) instanceof OutgoingMessage).toBe(true);
+  });
+  test("ServerResponse assign assignSocket", async done => {
+    const createDone = createDoneDotAll(done);
+    const doneRequest = createDone();
+    const waitSocket = createDone();
+    const doneSocket = createDone();
+    try {
+      const socket = new EventEmitter();
+      const res = new ServerResponse({});
+      res.once("socket", socket => {
+        expect(socket).toBe(socket);
+        waitSocket();
+      });
+      res.once("close", () => {
+        doneRequest();
+      });
+      res.assignSocket(socket);
+      await Bun.sleep(10);
+
+      expect(res.socket).toBe(socket);
+      expect(socket._httpMessage).toBe(res);
+      expect(() => res.assignSocket(socket)).toThrow("ServerResponse has an already assigned socket");
+      socket.emit("close");
+      doneSocket();
+    } catch (err) {
+      doneRequest(err);
+    }
+  });
+});
+
+it("should not accept untrusted certificates", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "127.0.0.1");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    if (address.family === "IPv6") {
+      url_address = `[${url_address}]`;
+    }
+    const res = await fetch(`https://${url_address}:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("UNABLE_TO_VERIFY_LEAF_SIGNATURE");
+    expect(err.message).toBe("unable to verify the first certificate");
+  }
+
+  server.close();
+});
+
+it("IncomingMessage with a RequestLike object", () => {
+  const rawHeadersMap = {
+    "x-test": "test",
+    "Real-Header": "test",
+    "content-type": "text/plain",
+    "User-Agent": "Bun",
+  };
+
+  // To excercise the case where inline capacity cannot be used
+  for (let i = 0; i < 64; i++) {
+    rawHeadersMap[`header-${i}`] = `value-${i}`;
+  }
+
+  const headers = new Headers(rawHeadersMap);
+  headers.append("set-cookie", "foo=bar");
+  headers.append("set-cookie", "bar=baz");
+
+  const request = new Request("https://example.com/hello/hi", {
+    headers,
+  });
+
+  const incomingMessageFromRequest = new IncomingMessage(request);
+  const incomingMessageFromRequestLike1 = new IncomingMessage({
+    url: "/hello/hi",
+    headers: headers,
+    method: request.method,
+  });
+  const incomingMessageFromRequestLike2 = new IncomingMessage({
+    url: "/hello/hi",
+    headers: headers.toJSON(),
+    method: request.method,
+  });
+  for (let incomingMessageFromRequestLike of [
+    incomingMessageFromRequestLike1,
+    incomingMessageFromRequestLike2,
+    incomingMessageFromRequest,
+  ]) {
+    expect(incomingMessageFromRequestLike.headers).toEqual(incomingMessageFromRequest.headers);
+    expect(incomingMessageFromRequestLike.method).toEqual(incomingMessageFromRequest.method);
+    expect(incomingMessageFromRequestLike.url).toEqual(incomingMessageFromRequest.url);
+    expect(incomingMessageFromRequestLike.headers).toEqual({
+      "x-test": "test",
+      "real-header": "test",
+      "content-type": "text/plain",
+      "user-agent": "Bun",
+      "set-cookie": ["foo=bar", "bar=baz"],
+      "header-0": "value-0",
+      "header-1": "value-1",
+      "header-10": "value-10",
+      "header-11": "value-11",
+      "header-12": "value-12",
+      "header-13": "value-13",
+      "header-14": "value-14",
+      "header-15": "value-15",
+      "header-16": "value-16",
+      "header-17": "value-17",
+      "header-18": "value-18",
+      "header-19": "value-19",
+      "header-2": "value-2",
+      "header-20": "value-20",
+      "header-21": "value-21",
+      "header-22": "value-22",
+      "header-23": "value-23",
+      "header-24": "value-24",
+      "header-25": "value-25",
+      "header-26": "value-26",
+      "header-27": "value-27",
+      "header-28": "value-28",
+      "header-29": "value-29",
+      "header-3": "value-3",
+      "header-30": "value-30",
+      "header-31": "value-31",
+      "header-32": "value-32",
+      "header-33": "value-33",
+      "header-34": "value-34",
+      "header-35": "value-35",
+      "header-36": "value-36",
+      "header-37": "value-37",
+      "header-38": "value-38",
+      "header-39": "value-39",
+      "header-4": "value-4",
+      "header-40": "value-40",
+      "header-41": "value-41",
+      "header-42": "value-42",
+      "header-43": "value-43",
+      "header-44": "value-44",
+      "header-45": "value-45",
+      "header-46": "value-46",
+      "header-47": "value-47",
+      "header-48": "value-48",
+      "header-49": "value-49",
+      "header-5": "value-5",
+      "header-50": "value-50",
+      "header-51": "value-51",
+      "header-52": "value-52",
+      "header-53": "value-53",
+      "header-54": "value-54",
+      "header-55": "value-55",
+      "header-56": "value-56",
+      "header-57": "value-57",
+      "header-58": "value-58",
+      "header-59": "value-59",
+      "header-6": "value-6",
+      "header-60": "value-60",
+      "header-61": "value-61",
+      "header-62": "value-62",
+      "header-63": "value-63",
+      "header-7": "value-7",
+      "header-8": "value-8",
+      "header-9": "value-9",
+    });
+  }
+
+  // this one preserves the original case
+  expect(incomingMessageFromRequestLike1.rawHeaders).toEqual([
+    "content-type",
+    "text/plain",
+    "user-agent",
+    "Bun",
+    "set-cookie",
+    "foo=bar",
+    "set-cookie",
+    "bar=baz",
+    "x-test",
+    "test",
+    "Real-Header",
+    "test",
+    "header-0",
+    "value-0",
+    "header-1",
+    "value-1",
+    "header-2",
+    "value-2",
+    "header-3",
+    "value-3",
+    "header-4",
+    "value-4",
+    "header-5",
+    "value-5",
+    "header-6",
+    "value-6",
+    "header-7",
+    "value-7",
+    "header-8",
+    "value-8",
+    "header-9",
+    "value-9",
+    "header-10",
+    "value-10",
+    "header-11",
+    "value-11",
+    "header-12",
+    "value-12",
+    "header-13",
+    "value-13",
+    "header-14",
+    "value-14",
+    "header-15",
+    "value-15",
+    "header-16",
+    "value-16",
+    "header-17",
+    "value-17",
+    "header-18",
+    "value-18",
+    "header-19",
+    "value-19",
+    "header-20",
+    "value-20",
+    "header-21",
+    "value-21",
+    "header-22",
+    "value-22",
+    "header-23",
+    "value-23",
+    "header-24",
+    "value-24",
+    "header-25",
+    "value-25",
+    "header-26",
+    "value-26",
+    "header-27",
+    "value-27",
+    "header-28",
+    "value-28",
+    "header-29",
+    "value-29",
+    "header-30",
+    "value-30",
+    "header-31",
+    "value-31",
+    "header-32",
+    "value-32",
+    "header-33",
+    "value-33",
+    "header-34",
+    "value-34",
+    "header-35",
+    "value-35",
+    "header-36",
+    "value-36",
+    "header-37",
+    "value-37",
+    "header-38",
+    "value-38",
+    "header-39",
+    "value-39",
+    "header-40",
+    "value-40",
+    "header-41",
+    "value-41",
+    "header-42",
+    "value-42",
+    "header-43",
+    "value-43",
+    "header-44",
+    "value-44",
+    "header-45",
+    "value-45",
+    "header-46",
+    "value-46",
+    "header-47",
+    "value-47",
+    "header-48",
+    "value-48",
+    "header-49",
+    "value-49",
+    "header-50",
+    "value-50",
+    "header-51",
+    "value-51",
+    "header-52",
+    "value-52",
+    "header-53",
+    "value-53",
+    "header-54",
+    "value-54",
+    "header-55",
+    "value-55",
+    "header-56",
+    "value-56",
+    "header-57",
+    "value-57",
+    "header-58",
+    "value-58",
+    "header-59",
+    "value-59",
+    "header-60",
+    "value-60",
+    "header-61",
+    "value-61",
+    "header-62",
+    "value-62",
+    "header-63",
+    "value-63",
+  ]);
+
+  // this one does not preserve the original case
+  expect(incomingMessageFromRequestLike2.rawHeaders).toEqual([
+    "content-type",
+    "text/plain",
+    "user-agent",
+    "Bun",
+    "set-cookie",
+    "foo=bar",
+    "set-cookie",
+    "bar=baz",
+    "x-test",
+    "test",
+    "real-header",
+    "test",
+    "header-0",
+    "value-0",
+    "header-1",
+    "value-1",
+    "header-2",
+    "value-2",
+    "header-3",
+    "value-3",
+    "header-4",
+    "value-4",
+    "header-5",
+    "value-5",
+    "header-6",
+    "value-6",
+    "header-7",
+    "value-7",
+    "header-8",
+    "value-8",
+    "header-9",
+    "value-9",
+    "header-10",
+    "value-10",
+    "header-11",
+    "value-11",
+    "header-12",
+    "value-12",
+    "header-13",
+    "value-13",
+    "header-14",
+    "value-14",
+    "header-15",
+    "value-15",
+    "header-16",
+    "value-16",
+    "header-17",
+    "value-17",
+    "header-18",
+    "value-18",
+    "header-19",
+    "value-19",
+    "header-20",
+    "value-20",
+    "header-21",
+    "value-21",
+    "header-22",
+    "value-22",
+    "header-23",
+    "value-23",
+    "header-24",
+    "value-24",
+    "header-25",
+    "value-25",
+    "header-26",
+    "value-26",
+    "header-27",
+    "value-27",
+    "header-28",
+    "value-28",
+    "header-29",
+    "value-29",
+    "header-30",
+    "value-30",
+    "header-31",
+    "value-31",
+    "header-32",
+    "value-32",
+    "header-33",
+    "value-33",
+    "header-34",
+    "value-34",
+    "header-35",
+    "value-35",
+    "header-36",
+    "value-36",
+    "header-37",
+    "value-37",
+    "header-38",
+    "value-38",
+    "header-39",
+    "value-39",
+    "header-40",
+    "value-40",
+    "header-41",
+    "value-41",
+    "header-42",
+    "value-42",
+    "header-43",
+    "value-43",
+    "header-44",
+    "value-44",
+    "header-45",
+    "value-45",
+    "header-46",
+    "value-46",
+    "header-47",
+    "value-47",
+    "header-48",
+    "value-48",
+    "header-49",
+    "value-49",
+    "header-50",
+    "value-50",
+    "header-51",
+    "value-51",
+    "header-52",
+    "value-52",
+    "header-53",
+    "value-53",
+    "header-54",
+    "value-54",
+    "header-55",
+    "value-55",
+    "header-56",
+    "value-56",
+    "header-57",
+    "value-57",
+    "header-58",
+    "value-58",
+    "header-59",
+    "value-59",
+    "header-60",
+    "value-60",
+    "header-61",
+    "value-61",
+    "header-62",
+    "value-62",
+    "header-63",
+    "value-63",
+  ]);
+});
+
+it("#6892", () => {
+  const totallyValid = ["*", "/", "/foo", "/foo/bar"];
+  for (const url of totallyValid) {
+    const req = new IncomingMessage({ url });
+    expect(req.url).toBe(url);
+    expect(req.method).toBeNull();
+  }
+});
+
+it("#4415.1 ServerResponse es6", () => {
+  class Response extends ServerResponse {
+    constructor(req) {
+      super(req);
+    }
+  }
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.2 ServerResponse es5", () => {
+  function Response(req) {
+    ServerResponse.call(this, req);
+  }
+  Response.prototype = Object.create(ServerResponse.prototype);
+  const req = {};
+  const res = new Response(req);
+  expect(res.req).toBe(req);
+});
+
+it("#4415.3 Server es5", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`);
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("#4415.4 IncomingMessage es5", () => {
+  const im = Object.create(IncomingMessage.prototype);
+  IncomingMessage.call(im, { url: "/foo" });
+  expect(im.url).toBe("/foo");
+});
+
+it("#9242.1 Server has constructor", () => {
+  const s = new Server();
+  expect(s.constructor).toBe(Server);
+});
+it("#9242.2 IncomingMessage has constructor", () => {
+  const im = new IncomingMessage("http://localhost");
+  expect(im.constructor).toBe(IncomingMessage);
+});
+it("#9242.3 OutgoingMessage has constructor", () => {
+  const om = new OutgoingMessage();
+  expect(om.constructor).toBe(OutgoingMessage);
+});
+it("#9242.4 ServerResponse has constructor", () => {
+  const sr = new ServerResponse({});
+  expect(sr.constructor).toBe(ServerResponse);
+});
+
+// Windows doesnt support SIGUSR1
+if (process.platform !== "win32") {
+  // By not timing out, this test passes.
+  test(".unref() works", async () => {
+    expect([path.join(import.meta.dir, "node-http-ref-fixture.js")]).toRun();
+  });
+}
+
+it("#10177 response.write with non-ascii latin1 should not cause duplicated character or segfault", done => {
+  // x = ascii
+  // á = latin1 supplementary character
+  // 📙 = emoji
+  // 👍🏽 = its a grapheme of 👍 🟤
+  // "\u{1F600}" = utf16
+  const chars = ["x", "á", "📙", "👍🏽", "\u{1F600}"];
+
+  // 128 = small than waterMark, 256 = waterMark, 1024 = large than waterMark
+  // 8Kb = small than cork buffer
+  // 16Kb = cork buffer
+  // 32Kb = large than cork buffer
+  const start_size = 128;
+  const increment_step = 1024;
+  const end_size = 32 * 1024;
+  let expected = "";
+
+  function finish(err) {
+    server.closeAllConnections();
+    Bun.gc(true);
+    done(err);
+  }
+  const server = require("http")
+    .createServer((_, response) => {
+      response.write(expected);
+      response.write("");
+      response.end();
+    })
+    .listen(0, "localhost", async (err, hostname, port) => {
+      expect(err).toBeFalsy();
+      expect(port).toBeGreaterThan(0);
+
+      for (const char of chars) {
+        for (let size = start_size; size <= end_size; size += increment_step) {
+          expected = char + Buffer.alloc(size, "-").toString("utf8") + "x";
+
+          try {
+            const url = `http://${hostname}:${port}`;
+            const count = 20;
+            const all = [];
+            const batchSize = 20;
+            while (all.length < count) {
+              const batch = Array.from({ length: batchSize }, () => fetch(url).then(a => a.text()));
+
+              all.push(...(await Promise.all(batch)));
+            }
+
+            using _ = disableAggressiveGCScope();
+            for (const result of all) {
+              expect(result).toBe(expected);
+            }
+          } catch (err) {
+            return finish(err);
+          }
+        }
+
+        // still always run GC at the end here.
+        Bun.gc(true);
+      }
+      finish();
+    });
+}, 20_000);
+
+it("#11425 http no payload limit", done => {
+  const server = Server((req, res) => {
+    res.end();
+  });
+  server.listen(0, async (_err, host, port) => {
+    try {
+      const res = await fetch(`http://localhost:${port}`, {
+        method: "POST",
+        body: new Uint8Array(1024 * 1024 * 200),
+      });
+      expect(res.status).toBe(200);
+      done();
+    } catch (err) {
+      done(err);
+    } finally {
+      server.close();
+    }
+  });
+});
+
+it("should emit events in the right order", async () => {
+  const { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "fixtures/log-events.mjs")],
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: bunEnv,
+  });
+  const err = await new Response(stderr).text();
+  expect(err).toBeEmpty();
+  const out = await new Response(stdout).text();
+  // TODO prefinish and socket are not emitted in the right order
+  expect(out.split("\n")).toEqual([
+    `[ "req", "prefinish" ]`,
+    `[ "req", "socket" ]`,
+    `[ "req", "finish" ]`,
+    `[ "req", "response" ]`,
+    "STATUS: 200",
+    // `[ "res", "resume" ]`,
+    // `[ "res", "readable" ]`,
+    // `[ "res", "end" ]`,
+    `[ "req", "close" ]`,
+    `[ "res", Symbol(kConstruct) ]`,
+    // `[ "res", "close" ]`,
+    "",
+  ]);
+});
+
+it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.from("X".repeat(16 * 1024));
+
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      let running = true;
+      req.signal.onabort = () => (running = false);
+      return new Response(async function* () {
+        while (running) {
+          yield payload;
+          await Bun.sleep(10);
+        }
+      });
+    },
+  });
+  {
+    let chunks = 0;
+
+    const { promise, resolve } = Promise.withResolvers();
+    const req = request(server.url, res => {
+      res.on("data", () => {
+        process.nextTick(resolve);
+        chunks++;
+      });
+    });
+    req.end();
+    // wait for the first chunk
+    await promise;
+    // should stop the download
+    req.destroy();
+    await Bun.sleep(200);
+    expect(chunks).toBeLessThanOrEqual(3);
+  }
+});
+
+it("can send brotli from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send gzip from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "gzip");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createGzip()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send deflate from Server and receive with fetch", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "deflate");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      inputStream.pipe(zlib.createDeflate()).pipe(res);
+    });
+    const url = await listen(server);
+    const res = await fetch(new URL("/hello", url));
+    expect(await res.text()).toBe("Hello World");
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("can send brotli from Server and receive with Client", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.setHeader("content-encoding", "br");
+
+      const inputStream = new stream.Readable();
+      inputStream.push("Hello World");
+      inputStream.push(null);
+
+      const passthrough = new stream.PassThrough();
+      passthrough.on("data", data => res.write(data));
+      passthrough.on("end", () => res.end());
+
+      inputStream.pipe(zlib.createBrotliCompress()).pipe(passthrough);
+    });
+
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      let rawData = "";
+      const passthrough = stream.PassThrough();
+      passthrough.on("data", chunk => {
+        rawData += chunk;
+      });
+      passthrough.on("end", () => {
+        try {
+          expect(Buffer.from(rawData)).toEqual(Buffer.from("Hello World"));
+          resolve();
+        } catch (e) {
+          reject(e);
+        }
+      });
+      res.pipe(zlib.createBrotliDecompress()).pipe(passthrough);
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("ServerResponse ClientRequest field exposes agent getter", async () => {
+  try {
+    var server = createServer((req, res) => {
+      expect(req.url).toBe("/hello");
+      res.writeHead(200);
+      res.end("world");
+    });
+    const url = await listen(server);
+    const { resolve, reject, promise } = Promise.withResolvers();
+    http.get(new URL("/hello", url), res => {
+      try {
+        expect(res.req.agent.protocol).toBe("http:");
+        resolve();
+      } catch (e) {
+        reject(e);
+      }
+    });
+    await promise;
+  } catch (e) {
+    throw e;
+  } finally {
+    server.close();
+  }
+});
+
+it("should accept custom certs when provided", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "localhost");
+  const address = server.address();
+
+  let url_address = address.address;
+  const res = await fetch(`https://localhost:${address.port}`, {
+    tls: {
+      rejectUnauthorized: true,
+      ca: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost_ca.pem")),
+    },
+  });
+  const t = await res.text();
+  expect(t).toEqual("Hello from https server");
+
+  server.close();
+});
+it("should error with faulty args", async () => {
+  const server = https.createServer(
+    {
+      key: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.key")),
+      cert: nodefs.readFileSync(path.join(import.meta.dir, "fixtures", "openssl_localhost.crt")),
+      passphrase: "123123123",
+    },
+    (req, res) => {
+      res.write("Hello from https server");
+      res.end();
+    },
+  );
+  server.listen(0, "localhost");
+  const address = server.address();
+
+  try {
+    let url_address = address.address;
+    const res = await fetch(`https://localhost:${address.port}`, {
+      tls: {
+        rejectUnauthorized: true,
+        ca: "some invalid value for a ca",
+      },
+    });
+    await res.text();
+    expect(true).toBe("unreacheable");
+  } catch (err) {
+    expect(err.code).toBe("FailedToOpenSocket");
+    expect(err.message).toBe("Was there a typo in the url or port?");
+  }
+  server.close();
+});
+
+it("should mark complete true", async () => {
+  const { promise: serve, resolve: resolveServe } = Promise.withResolvers();
+  const server = createServer(async (req, res) => {
+    let count = 0;
+    let data = "";
+    req.on("data", chunk => {
+      data += chunk.toString();
+    });
+    while (!req.complete) {
+      await Bun.sleep(100);
+      count++;
+      if (count > 10) {
+        res.writeHead(500, { "Content-Type": "text/plain" });
+        res.end("Request timeout");
+        return;
+      }
+    }
+    res.writeHead(200, { "Content-Type": "text/plain" });
+    res.end(data);
+  });
+
+  server.listen(0, () => {
+    resolveServe(`http://localhost:${server.address().port}`);
+  });
+
+  const url = await serve;
+  try {
+    const response = await fetch(url, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify({
+        name: "Hotel 1",
+        price: 100,
+      }),
+    });
+
+    expect(response.status).toBe(200);
+    expect(await response.text()).toBe('{"name":"Hotel 1","price":100}');
+  } finally {
+    server.close();
+  }
 });

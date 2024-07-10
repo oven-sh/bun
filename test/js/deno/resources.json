@@ -1,5 +1,5 @@
 {
-  "baseUrl": "https://raw.githubusercontent.com/denoland/deno/main/",
+  "baseUrl": "https://raw.githubusercontent.com/denoland/deno/a68eb3fcc3997fce8680f87edce46f6450e79635/",
   "imports": {
     "test_util.ts": "deno:harness",
     "test_util/std/bytes/concat.ts": "deno:harness",

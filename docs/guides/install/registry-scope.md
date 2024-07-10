@@ -11,7 +11,11 @@ Bun does not read `.npmrc` files; instead private registries are configured via 
 
 # as an object with username/password
 # you can reference environment variables
-"@myorg2" = { username = "myusername", password = "$npm_pass", url = "https://registry.myorg.com/" }
+"@myorg2" = {
+  username = "myusername",
+  password = "$npm_pass",
+  url = "https://registry.myorg.com/"
+}
 
 # as an object with token
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
@@ -20,7 +24,7 @@ Bun does not read `.npmrc` files; instead private registries are configured via 
 
 ---
 
-Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](/docs/cli/run#environment-variables) for more information.
+Your `bunfig.toml` can reference environment variables. Bun automatically loads environment variables from `.env.local`, `.env.[NODE_ENV]`, and `.env`. See [Docs > Environment variables](/docs/runtime/env) for more information.
 
 ```toml#bunfig.toml
 [install.scopes]

@@ -30,7 +30,7 @@
 
 #include "config.h"
 #include "DOMFormData.h"
-#include "wtf/URLParser.h"
+#include <wtf/URLParser.h>
 
 namespace WebCore {
 
@@ -44,7 +44,7 @@ Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
     return adoptRef(*new DOMFormData(context));
 }
 
-Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
+Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)
 {
     auto newFormData = adoptRef(*new DOMFormData(context));
     for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {

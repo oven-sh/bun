@@ -6,6 +6,6 @@ test("assert as a function does not throw", () => assert(true));
 test("assert as a function does throw", () => {
   try {
     assert(false);
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (e) {}
 });

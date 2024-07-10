@@ -10,6 +10,13 @@ const buf = await Bun.readableStreamToArrayBuffer(stream);
 const uint8 = new Uint8Array(buf);
 ```
 
+Additionally, there is a convenience method to convert to `Uint8Array` directly.
+
+```ts
+const stream = new ReadableStream();
+const uint8 = await Bun.readableStreamToBytes(stream);
+```
+
 ---
 
 See [Docs > API > Utils](/docs/api/utils#bun-readablestreamto) for documentation on Bun's other `ReadableStream` conversion functions.

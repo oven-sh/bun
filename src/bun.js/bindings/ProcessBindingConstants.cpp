@@ -1,7 +1,7 @@
 // Modelled off of https://github.com/nodejs/node/blob/main/src/node_constants.cc
 // Note that if you change any of this code, you probably also have to change NodeConstantsModule.h
 #include "ProcessBindingConstants.h"
-#include "JavaScriptCore/ObjectConstructor.h"
+#include <JavaScriptCore/ObjectConstructor.h>
 
 // These headers may not all be needed, but they are the ones node references.
 // Most of the constants are defined with #if checks on existing #defines, instead of platform-checks
@@ -23,7 +23,8 @@
 #include <unistd.h>
 #endif
 
-#if defined(_WIN32)
+#if OS(WINDOWS)
+
 #include <io.h> // _S_IREAD _S_IWRITE
 #ifndef S_IRUSR
 #define S_IRUSR _S_IREAD
@@ -31,7 +32,10 @@
 #ifndef S_IWUSR
 #define S_IWUSR _S_IWRITE
 #endif // S_IWUSR
-#else
+
+#include <uv.h>
+
+#else // OS(WINDOWS)
 #include <dlfcn.h>
 #endif
 
@@ -671,8 +675,11 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 #ifdef O_EXCL
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
 #endif
+#if OS(WINDOWS)
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(536870912));
+#else
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "UV_FS_O_FILEMAP"_s)), jsNumber(0));
-
+#endif
 #ifdef O_NOCTTY
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOCTTY"_s)), jsNumber(O_NOCTTY));
 #endif
@@ -684,9 +691,6 @@ static JSValue processBindingConstantsGetFs(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef O_DIRECTORY
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_DIRECTORY"_s)), jsNumber(O_DIRECTORY));
-#endif
-#ifdef O_EXCL
-    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_EXCL"_s)), jsNumber(O_EXCL));
 #endif
 #ifdef O_NOATIME
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "O_NOATIME"_s)), jsNumber(O_NOATIME));
@@ -903,18 +907,26 @@ static JSValue processBindingConstantsGetCrypto(VM& vm, JSObject* bindingObject)
 #endif
 #ifdef RSA_X931_PADDING
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), jsNumber(RSA_X931_PADDING));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_X931_PADDING"_s)), jsNumber(5));
 #endif
 #ifdef RSA_PKCS1_PSS_PADDING
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PKCS1_PSS_PADDING"_s)), jsNumber(RSA_PKCS1_PSS_PADDING));
 #endif
 #ifdef RSA_PSS_SALTLEN_DIGEST
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), jsNumber(RSA_PSS_SALTLEN_DIGEST));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_DIGEST"_s)), jsNumber(-1));
 #endif
 #ifdef RSA_PSS_SALTLEN_MAX_SIGN
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), jsNumber(RSA_PSS_SALTLEN_MAX_SIGN));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_MAX_SIGN"_s)), jsNumber(-2));
 #endif
 #ifdef RSA_PSS_SALTLEN_AUTO
     object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), jsNumber(RSA_PSS_SALTLEN_AUTO));
+#else
+    object->putDirect(vm, PropertyName(Identifier::fromString(vm, "RSA_PSS_SALTLEN_AUTO"_s)), jsNumber(-2));
 #endif
     auto cipherList = String("TLS_AES_256_GCM_SHA384:"
                              "TLS_CHACHA20_POLY1305_SHA256:"
@@ -1082,15 +1094,18 @@ static JSValue processBindingConstantsGetZlib(VM& vm, JSObject* bindingObject)
     return object;
 }
 
-static const HashTableValue ProcessBindingConstantsValues[] = {
-    { "os"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetOs } },
-    { "fs"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetFs } },
-    { "crypto"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetCrypto } },
-    { "zlib"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetZlib } },
-    { "trace"_s, static_cast<unsigned>(PropertyAttribute::PropertyCallback), NoIntrinsic, { HashTableValue::LazyPropertyType, processBindingConstantsGetTrace } },
-};
+/* Source for ProcessBindingConstants.lut.h
+@begin processBindingConstantsTable
+    os             processBindingConstantsGetOs                PropertyCallback
+    fs             processBindingConstantsGetFs                PropertyCallback
+    crypto         processBindingConstantsGetCrypto            PropertyCallback
+    zlib           processBindingConstantsGetZlib              PropertyCallback
+    trace          processBindingConstantsGetTrace             PropertyCallback
+@end
+*/
+#include "ProcessBindingConstants.lut.h"
 
-const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, Base::info(), nullptr, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
+const ClassInfo ProcessBindingConstants::s_info = { "ProcessBindingConstants"_s, &Base::s_info, &processBindingConstantsTable, nullptr, CREATE_METHOD_TABLE(ProcessBindingConstants) };
 
 ProcessBindingConstants* ProcessBindingConstants::create(VM& vm, Structure* structure)
 {
@@ -1107,8 +1122,7 @@ Structure* ProcessBindingConstants::createStructure(VM& vm, JSGlobalObject* glob
 void ProcessBindingConstants::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
-    reifyStaticProperties(vm, ProcessBindingConstants::info(), ProcessBindingConstantsValues, *this);
-    ASSERT(inherits(vm, info()));
+    ASSERT(inherits(info()));
 }
 
 template<typename Visitor>

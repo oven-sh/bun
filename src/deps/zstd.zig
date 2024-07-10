@@ -161,15 +161,15 @@ pub const ZSTD_VERSION_RELEASE = @as(c_int, 5);
 pub const ZSTD_VERSION_NUMBER = (((ZSTD_VERSION_MAJOR * @as(c_int, 100)) * @as(c_int, 100)) + (ZSTD_VERSION_MINOR * @as(c_int, 100))) + ZSTD_VERSION_RELEASE;
 pub const ZSTD_LIB_VERSION = ZSTD_VERSION_MAJOR.ZSTD_VERSION_MINOR.ZSTD_VERSION_RELEASE;
 pub const ZSTD_CLEVEL_DEFAULT = @as(c_int, 3);
-pub const ZSTD_MAGICNUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFD2FB528, .hexadecimal);
-pub const ZSTD_MAGIC_DICTIONARY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xEC30A437, .hexadecimal);
-pub const ZSTD_MAGIC_SKIPPABLE_START = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x184D2A50, .hexadecimal);
-pub const ZSTD_MAGIC_SKIPPABLE_MASK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFFFFFFF0, .hexadecimal);
+pub const ZSTD_MAGICNUMBER = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFD2FB528, .hex);
+pub const ZSTD_MAGIC_DICTIONARY = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xEC30A437, .hex);
+pub const ZSTD_MAGIC_SKIPPABLE_START = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x184D2A50, .hex);
+pub const ZSTD_MAGIC_SKIPPABLE_MASK = @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xFFFFFFF0, .hex);
 pub const ZSTD_BLOCKSIZELOG_MAX = @as(c_int, 17);
 pub const ZSTD_BLOCKSIZE_MAX = @as(c_int, 1) << ZSTD_BLOCKSIZELOG_MAX;
 pub const ZSTD_CONTENTSIZE_UNKNOWN = @as(c_ulonglong, 0) - @as(c_int, 1);
 pub const ZSTD_CONTENTSIZE_ERROR = @as(c_ulonglong, 0) - @as(c_int, 2);
-pub const ZSTD_MAX_INPUT_SIZE = if (@import("std").zig.c_translation.sizeof(usize) == @as(c_int, 8)) @as(c_ulonglong, 0xFF00FF00FF00FF00) else @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0xFF00FF00, .hexadecimal);
+pub const ZSTD_MAX_INPUT_SIZE = if (@import("std").zig.c_translation.sizeof(usize) == @as(c_int, 8)) @as(c_ulonglong, 0xFF00FF00FF00FF00) else @import("std").zig.c_translation.promoteIntLiteral(c_uint, 0xFF00FF00, .hex);
 pub inline fn ZSTD_COMPRESSBOUND(srcSize: anytype) @TypeOf(if (@import("std").zig.c_translation.cast(usize, srcSize) >= ZSTD_MAX_INPUT_SIZE) @as(c_int, 0) else (srcSize + (srcSize >> @as(c_int, 8))) + (if (srcSize < (@as(c_int, 128) << @as(c_int, 10))) ((@as(c_int, 128) << @as(c_int, 10)) - srcSize) >> @as(c_int, 11) else @as(c_int, 0))) {
     return if (@import("std").zig.c_translation.cast(usize, srcSize) >= ZSTD_MAX_INPUT_SIZE) @as(c_int, 0) else (srcSize + (srcSize >> @as(c_int, 8))) + (if (srcSize < (@as(c_int, 128) << @as(c_int, 10))) ((@as(c_int, 128) << @as(c_int, 10)) - srcSize) >> @as(c_int, 11) else @as(c_int, 0));
 }

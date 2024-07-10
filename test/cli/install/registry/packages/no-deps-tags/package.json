@@ -1,0 +1,66 @@
+{
+	"name": "no-deps-tags",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-tags",
+			"version": "1.0.0",
+			"dist-tags": {
+				"latest": "1.0.0",
+				"rc": "1.0.0-rc.1"
+			},
+			"_id": "no-deps-tags@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-kSFK8dmJFmrqjoQr3+fwmGhdS7IO+YHW6KhYnAwrnD5NRvT+ORZsCCeJtqJ3/U/ytqvxKmVXr7tKYx4L+Bo6kQ==",
+				"shasum": "ba0f3f1c8bc25954293f9b0c0d81685f3af15072",
+				"tarball": "http://localhost:4873/no-deps-tags/-/no-deps-tags-1.0.0.tgz"
+			},
+			"contributors": []
+		},
+		"1.0.0-rc.1": {
+			"name": "no-deps-tags",
+			"version": "1.0.0-rc.1",
+			"dist-tags": {
+				"latest": "1.0.0",
+				"rc": "1.0.0-rc.1"
+			},
+			"_id": "no-deps-tags@1.0.0-rc.1",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Tl85Ojc5FwJHn9BGBTp+OgHM57ZxMq7yAGt1xEESFHKuoOmINwtq1+D6ckOKV0BYNuJ+qXn7GHefcbStXcb46Q==",
+				"shasum": "78bddd416026be18c563d4d03d1e61a7d588a1fa",
+				"tarball": "http://localhost:4873/no-deps-tags/-/no-deps-tags-1.0.0-rc.1.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:22.074Z",
+		"created": "2023-11-01T22:05:21.807Z",
+		"1.0.0": "2023-11-01T22:05:21.807Z",
+		"1.0.0-rc.1": "2023-11-01T22:05:22.074Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0-rc.1"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-tags-1.0.0.tgz": {
+			"shasum": "ba0f3f1c8bc25954293f9b0c0d81685f3af15072",
+			"version": "1.0.0"
+		},
+		"no-deps-tags-1.0.0-rc.1.tgz": {
+			"shasum": "78bddd416026be18c563d4d03d1e61a7d588a1fa",
+			"version": "1.0.0-rc.1"
+		}
+	},
+	"_rev": "6-499b62441cd78080",
+	"_id": "no-deps-tags",
+	"readme": "ERROR: No README data found!"
+}

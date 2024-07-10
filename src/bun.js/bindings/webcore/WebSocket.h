@@ -61,6 +61,7 @@ public:
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const String& protocol);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols);
     static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext&, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&&);
+    static ExceptionOr<Ref<WebSocket>> create(ScriptExecutionContext& context, const String& url, const Vector<String>& protocols, std::optional<FetchHeaders::Init>&& headers, bool rejectUnauthorized);
     ~WebSocket();
 
     enum State {
@@ -130,12 +131,22 @@ public:
 
     void didReceiveMessage(String&& message);
     void didReceiveData(const char* data, size_t length);
-    void didReceiveBinaryData(const AtomString& eventName, Vector<uint8_t>&& binaryData);
+    void didReceiveBinaryData(const AtomString& eventName, const std::span<const uint8_t> binaryData);
 
     void updateHasPendingActivity();
     bool hasPendingActivity() const
     {
         return m_hasPendingActivity.load();
+    }
+
+    void setRejectUnauthorized(bool rejectUnauthorized)
+    {
+        m_rejectUnauthorized = rejectUnauthorized;
+    }
+
+    bool rejectUnauthorized() const
+    {
+        return m_rejectUnauthorized;
     }
 
     void incPendingActivityCount()
@@ -168,27 +179,17 @@ private:
     explicit WebSocket(ScriptExecutionContext&);
     explicit WebSocket(ScriptExecutionContext&, const String& url);
 
-    void dispatchErrorEventIfNeeded();
-
-    // void contextDestroyed() final;
-    // void suspend(ReasonForSuspension) final;
-    // void resume() final;
-    // void stop() final;
-    // const char* activeDOMObjectName() const final;
-
     EventTargetInterface eventTargetInterface() const final;
 
     void refEventTarget() final { ref(); }
     void derefEventTarget() final { deref(); }
 
-    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason);
+    void didReceiveClose(CleanStatus wasClean, unsigned short code, WTF::String reason, bool isConnectionError = false);
     void didUpdateBufferedAmount(unsigned bufferedAmount);
     void didStartClosingHandshake();
 
     void sendWebSocketString(const String& message, const Opcode opcode);
     void sendWebSocketData(const char* data, size_t length, const Opcode opcode);
-
-    void failAsynchronously();
 
     enum class BinaryType { Blob,
         ArrayBuffer,
@@ -209,6 +210,7 @@ private:
     String m_extensions;
     void* m_upgradeClient { nullptr };
     bool m_isSecure { false };
+    bool m_rejectUnauthorized { false };
     AnyWebSocket m_connectedWebSocket { nullptr };
     ConnectedWebSocketKind m_connectedWebSocketKind { ConnectedWebSocketKind::None };
     size_t m_pendingActivityCount { 0 };

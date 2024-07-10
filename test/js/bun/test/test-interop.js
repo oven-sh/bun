@@ -1,4 +1,4 @@
-module.exports = () => {
+export default /** @returns {Promise<import('bun:test') & { isBun: Boolean, bunTest: string|null }>} */ async () => {
   if (globalThis.Bun) {
     /** @type {import('bun:jsc')} */
     const jsc = require("bun:jsc");
@@ -21,28 +21,30 @@ module.exports = () => {
       spyOn: bunTest.spyOn,
     };
   } else if (process.env.VITEST) {
-    const vi = require("vitest");
-
+    // vitest doesn't work with require()
+    const vitest = await import("vitest");
+    const { default: jestExtended } = await import("jest-extended");
+    vitest.expect.extend(jestExtended);
     return {
       isBun: false,
       bunTest: null,
-      test: vi.test,
-      describe: vi.describe,
-      it: vi.it,
-      expect: vi.expect,
-      beforeEach: vi.beforeEach,
-      afterEach: vi.afterEach,
-      beforeAll: vi.beforeAll,
-      afterAll: vi.afterAll,
-      jest: { fn: vi.fn },
+      test: vitest.test,
+      describe: vitest.describe,
+      it: vitest.it,
+      expect: vitest.expect,
+      beforeEach: vitest.beforeEach,
+      afterEach: vitest.afterEach,
+      beforeAll: vitest.beforeAll,
+      afterAll: vitest.afterAll,
+      jest: { fn: vitest.vi.fn },
       mock: null,
-      vi,
-      spyOn: vi.spyOn,
+      vi: vitest.vi,
+      spyOn: vitest.vi.spyOn,
     };
   } else {
-    const globals = require("@jest/globals");
-    const extended = require("jest-extended");
-    globals.expect.extend(extended);
+    const globals = await import("@jest/globals");
+    const { default: jestExtended } = await import("jest-extended");
+    globals.expect.extend(jestExtended);
     globals.test.todo = globals.test;
     return {
       isBun: false,

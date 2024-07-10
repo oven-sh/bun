@@ -1,0 +1,40 @@
+{
+	"name": "no-deps-esm",
+	"versions": {
+		"1.0.0": {
+			"name": "no-deps-esm",
+			"version": "1.0.0",
+			"type": "module",
+			"_id": "no-deps-esm@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-dSB23CwKtuBpYFy8ytI+brcrLOpwWmP83Uu7o+nr/C0ZcGkLiUGICdICohimxopVxyh2DntOWNknQTSYPvWiYA==",
+				"shasum": "91258e7f49053f7c5a2acad390364f8c387d114b",
+				"tarball": "http://localhost:4873/no-deps-esm/-/no-deps-esm-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:18.844Z",
+		"created": "2023-11-01T22:05:18.844Z",
+		"1.0.0": "2023-11-01T22:05:18.844Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"no-deps-esm-1.0.0.tgz": {
+			"shasum": "91258e7f49053f7c5a2acad390364f8c387d114b",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-aadd07d76fb70785",
+	"_id": "no-deps-esm",
+	"readme": "ERROR: No README data found!"
+}

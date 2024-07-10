@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -9,9 +9,11 @@ export default [
     JSType: "0b11101110",
     estimatedSize: true,
     configurable: false,
+    overridesToJS: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
+      bytes: { fn: "getBytes" },
       body: { getter: "getBody", cache: true },
       arrayBuffer: { fn: "getArrayBuffer" },
       formData: { fn: "getFormData" },
@@ -68,6 +70,7 @@ export default [
     JSType: "0b11101110",
     configurable: false,
     estimatedSize: true,
+    overridesToJS: true,
     klass: {
       json: {
         fn: "constructJSON",
@@ -88,6 +91,7 @@ export default [
 
       text: { fn: "getText" },
       json: { fn: "getJSON" },
+      bytes: { fn: "getBytes" },
       arrayBuffer: { fn: "getArrayBuffer" },
       blob: { fn: "getBlob" },
       clone: { fn: "doClone", length: 1 },
@@ -127,6 +131,8 @@ export default [
     configurable: false,
     structuredClone: { transferable: false, tag: 254 },
     estimatedSize: true,
+    values: ["stream"],
+    overridesToJS: true,
     proto: {
       text: { fn: "getText" },
       json: { fn: "getJSON" },
@@ -136,6 +142,9 @@ export default [
       formData: { fn: "getFormData" },
       exists: { fn: "getExists", length: 0 },
 
+      // Non-standard, but consistent!
+      bytes: { fn: "getBytes" },
+
       type: {
         getter: "getType",
       },
@@ -143,8 +152,10 @@ export default [
       // TODO: Move this to a separate `File` object or BunFile
       // This is *not* spec-compliant.
       name: {
-        getter: "getName",
+        this: true,
         cache: true,
+        getter: "getName",
+        setter: "setName",
       },
 
       // TODO: Move this to a separate `File` object or BunFile

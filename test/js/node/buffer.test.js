@@ -6,6 +6,32 @@ const BufferModule = await import("buffer");
 beforeEach(() => gc());
 afterEach(() => gc());
 
+it("#9120 fill", () => {
+  let abBuf = Buffer.alloc(2, "ab");
+  let x = Buffer.alloc(1);
+  x.fill(abBuf);
+  expect(x.toString()).toBe("a");
+
+  for (let count = 2; count < 10; count += 2) {
+    const full = Buffer.from("a".repeat(count) + "b".repeat(count));
+    const x = Buffer.alloc(count);
+    x.fill(full);
+    expect(x.toString()).toBe("a".repeat(count));
+  }
+});
+
+it("#9120 alloc", () => {
+  let abBuf = Buffer.alloc(2, "ab");
+  let x = Buffer.alloc(1, abBuf);
+  expect(x.toString()).toBe("a");
+
+  for (let count = 2; count < 10; count += 2) {
+    const full = Buffer.from("a".repeat(count) + "b".repeat(count));
+    const x = Buffer.alloc(count, full);
+    expect(x.toString()).toBe("a".repeat(count));
+  }
+});
+
 it("isAscii", () => {
   expect(isAscii(new Buffer("abc"))).toBeTrue();
   expect(isAscii(new Buffer(""))).toBeTrue();
@@ -211,11 +237,29 @@ it("only top level parent propagates from a non-pooled instance", () => {
 });
 
 it("UTF-8 write() & slice()", () => {
-  const testValue = "\u00F6\u65E5\u672C\u8A9E"; // ö日本語
-  const buffer = Buffer.allocUnsafe(32);
-  const size = buffer.write(testValue, 0, "utf8");
-  const slice = buffer.toString("utf8", 0, size);
-  expect(slice).toBe(testValue);
+  {
+    const testValue = "\u00F6\u65E5\u672C\u8A9E"; // ö日本語
+    const buffer = Buffer.allocUnsafe(32);
+    const size = buffer.write(testValue, 0, "utf8");
+    const slice = buffer.toString("utf8", 0, size);
+    expect(slice).toBe(testValue);
+  }
+  {
+    const buffer = Buffer.allocUnsafe(1);
+    buffer.write("\x61");
+    buffer.write("\xFF");
+    expect(buffer).toStrictEqual(Buffer.from([0x61]));
+  }
+  {
+    const buffer = Buffer.alloc(5);
+    buffer.write("\x61\xFF\x62\xFF\x63", "utf8");
+    expect(buffer).toStrictEqual(Buffer.from([0x61, 0xc3, 0xbf, 0x62, 0x00]));
+  }
+  {
+    const buffer = Buffer.alloc(5);
+    buffer.write("\xFF\x61\xFF\x62\xFF", "utf8");
+    expect(buffer).toStrictEqual(Buffer.from([0xc3, 0xbf, 0x61, 0xc3, 0xbf]));
+  }
 });
 
 it("triple slice", () => {
@@ -1327,6 +1371,46 @@ it("Buffer.concat", () => {
   expect(Buffer.concat([array1, array2, array3], 222).length).toBe(222);
   expect(Buffer.concat([array1, array2, array3], 222).subarray(0, 128).join("")).toBe("100".repeat(128));
   expect(Buffer.concat([array1, array2, array3], 222).subarray(129, 222).join("")).toBe("200".repeat(222 - 129));
+  expect(() => {
+    Buffer.concat([array1], -1);
+  }).toThrow(RangeError);
+  expect(() => {
+    Buffer.concat([array1], "1");
+  }).toThrow(TypeError);
+  // issue#6570
+  expect(Buffer.concat([array1, array2, array3], undefined).join("")).toBe(
+    array1.join("") + array2.join("") + array3.join(""),
+  );
+  // issue#3639
+  expect(Buffer.concat([array1, array2, array3], 128 * 4).join("")).toBe(
+    array1.join("") + array2.join("") + array3.join("") + Buffer.alloc(128).join(""),
+  );
+});
+
+it("Buffer.concat huge", () => {
+  // largest page size of any supported platform.
+  const PAGE = 64 * 1024;
+
+  var array1 = Buffer.allocUnsafe(PAGE);
+  array1.fill("a");
+  var array2 = Buffer.allocUnsafe(PAGE);
+  array2.fill("b");
+  var array3 = Buffer.allocUnsafe(PAGE);
+  array3.fill("c");
+
+  const complete = array1.toString("hex") + array2.toString("hex") + array3.toString("hex");
+  const out = Buffer.concat([array1, array2, array3]);
+  expect(out.toString("hex")).toBe(complete);
+
+  const out2 = Buffer.concat([array1, array2, array3], PAGE);
+  expect(out2.toString("hex")).toBe(array1.toString("hex"));
+
+  const out3 = Buffer.concat([array1, array2, array3], PAGE * 1.5);
+  const out3hex = out3.toString("hex");
+  expect(out3hex).toBe(array1.toString("hex") + array2.slice(0, PAGE * 0.5).toString("hex"));
+
+  array1.fill("d");
+  expect(out3.toString("hex")).toBe(out3hex);
 });
 
 it("read", () => {
@@ -1409,6 +1493,25 @@ it("read", () => {
 
   data.setUint8(0, 255, false);
   expect(buf.readUInt8(0)).toBe(255);
+  reset();
+
+  data.setUint32(0, 0x55555555, false);
+  data.setUint16(4, 0x5555, false);
+  expect(buf.readUintBE(0, 5)).toBe(366503875925);
+  expect(buf.readUintBE(0, 6)).toBe(93824992236885);
+  reset();
+
+  data.setUint32(0, 0xaaaaaaaa, false);
+  data.setUint16(4, 0xaaaa, false);
+  expect(buf.readUintBE(0, 5)).toBe(733007751850);
+  expect(buf.readUintBE(0, 6)).toBe(187649984473770);
+  reset();
+
+  // issue#6759
+  data.setUint32(0, 0xffffffff, false);
+  data.setUint16(4, 0xffff, false);
+  expect(buf.readUintBE(0, 5)).toBe(1099511627775);
+  expect(buf.readUintBE(0, 6)).toBe(281474976710655);
   reset();
 });
 
@@ -1640,7 +1743,7 @@ it("Buffer.swap16", () => {
   const buf = Buffer.from("123", "utf-8");
   try {
     buf.swap16();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 16-bits");
   }
@@ -1666,7 +1769,7 @@ it("Buffer.swap32", () => {
   const buf = Buffer.from("12345", "utf-8");
   try {
     buf.swap32();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 32-bits");
   }
@@ -1692,7 +1795,7 @@ it("Buffer.swap64", () => {
   const buf = Buffer.from("123456789", "utf-8");
   try {
     buf.swap64();
-    expect(false).toBe(true);
+    expect.unreachable();
   } catch (exception) {
     expect(exception.message).toBe("Buffer size must be a multiple of 64-bits");
   }
@@ -2571,4 +2674,28 @@ it("construct buffer from UTF16, issue #3914", () => {
 
   const buf = Buffer.from(str, "latin1");
   expect(buf).toStrictEqual(raw);
+});
+
+it("construct buffer from hex, issue #4919", () => {
+  const data = "测试63e9f6c4b04fa8c80f3fb0ee";
+
+  const slice1 = data.substring(0, 2);
+  const slice2 = data.substring(2);
+
+  const buf1 = Buffer.from(slice1, "hex");
+  const buf2 = Buffer.from(slice2, "hex");
+
+  expect(buf1).toStrictEqual(Buffer.from([]));
+  expect(buf2).toStrictEqual(Buffer.from([0x63, 0xe9, 0xf6, 0xc4, 0xb0, 0x4f, 0xa8, 0xc8, 0x0f, 0x3f, 0xb0, 0xee]));
+});
+
+it("new Buffer.alloc()", () => {
+  const buf = new Buffer.alloc(10);
+  expect(buf.length).toBe(10);
+  expect(buf[0]).toBe(0);
+});
+
+it("new Buffer.from()", () => {
+  const buf = new Buffer.from("🥶");
+  expect(buf.length).toBe(4);
 });

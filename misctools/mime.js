@@ -15,18 +15,18 @@ for (let key of Object.keys(json).sort()) {
 }
 
 const withExtensions = [
-  ...new Set([
-    ...Object.keys(json)
+  ...new Set(
+    Object.keys(json)
       .filter(key => {
         return !!json[key]?.extensions?.length;
       })
       .flatMap(mime => {
-        return [...new Set([...json[mime].extensions])].map(ext => {
+        return [...new Set(json[mime].extensions)].map(ext => {
           return [`.{.@"${ext}", all.@"${mime}"}`];
         });
       })
       .sort(),
-  ]),
+  ),
 ];
 
 all += "\n";

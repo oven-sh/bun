@@ -40,6 +40,13 @@ public:
     static constexpr CryptoAlgorithmIdentifier s_identifier = CryptoAlgorithmIdentifier::RSA_PSS;
     static Ref<CryptoAlgorithm> create();
 
+    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&);
+    static ExceptionOr<Vector<uint8_t>> platformSignWithAlgorithm(const CryptoAlgorithmRsaPssParams&, CryptoAlgorithmIdentifier, const CryptoKeyRSA&, const Vector<uint8_t>&);
+
+    static ExceptionOr<bool> platformVerify(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
+    static ExceptionOr<bool> platformVerifyWithAlgorithm(const CryptoAlgorithmRsaPssParams&, CryptoAlgorithmIdentifier, const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
+
+
 private:
     CryptoAlgorithmRSA_PSS() = default;
     CryptoAlgorithmIdentifier identifier() const final;
@@ -50,8 +57,6 @@ private:
     void importKey(CryptoKeyFormat, KeyData&&, const CryptoAlgorithmParameters&, bool extractable, CryptoKeyUsageBitmap, KeyCallback&&, ExceptionCallback&&) final;
     void exportKey(CryptoKeyFormat, Ref<CryptoKey>&&, KeyDataCallback&&, ExceptionCallback&&) final;
 
-    static ExceptionOr<Vector<uint8_t>> platformSign(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&);
-    static ExceptionOr<bool> platformVerify(const CryptoAlgorithmRsaPssParams&, const CryptoKeyRSA&, const Vector<uint8_t>&, const Vector<uint8_t>&);
 };
 
 } // namespace WebCore

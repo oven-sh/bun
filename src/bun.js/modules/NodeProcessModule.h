@@ -1,14 +1,13 @@
 #include "../bindings/ZigGlobalObject.h"
-#include "JavaScriptCore/CustomGetterSetter.h"
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "_NativeModule.h"
+#include <JavaScriptCore/CustomGetterSetter.h>
+#include <JavaScriptCore/JSGlobalObject.h>
 
 namespace Zig {
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessModuleCommonJS,
                          (JSGlobalObject * globalObject,
                           CallFrame *callFrame)) {
-  VM &vm = globalObject->vm();
 
   return JSValue::encode(
       reinterpret_cast<Zig::GlobalObject *>(globalObject)->processObject());
@@ -16,9 +15,8 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionProcessModuleCommonJS,
 
 JSC_DEFINE_CUSTOM_GETTER(jsFunctionProcessModuleCommonJSGetter,
                          (JSGlobalObject * globalObject,
-                          EncodedJSValue thisValue,
+                          JSC::EncodedJSValue thisValue,
                           PropertyName propertyName)) {
-  VM &vm = globalObject->vm();
 
   return JSValue::encode(reinterpret_cast<Zig::GlobalObject *>(globalObject)
                              ->processObject()
@@ -27,7 +25,8 @@ JSC_DEFINE_CUSTOM_GETTER(jsFunctionProcessModuleCommonJSGetter,
 
 JSC_DEFINE_CUSTOM_SETTER(jsFunctionProcessModuleCommonJSSetter,
                          (JSGlobalObject * globalObject,
-                          EncodedJSValue thisValue, EncodedJSValue encodedValue,
+                          JSC::EncodedJSValue thisValue,
+                          JSC::EncodedJSValue encodedValue,
                           PropertyName propertyName)) {
   VM &vm = globalObject->vm();
 

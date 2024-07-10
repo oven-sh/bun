@@ -106,6 +106,10 @@ class JSCallback {
       closeCallback(ctx);
     }
   }
+
+  [Symbol.dispose]() {
+    this.close();
+  }
 }
 
 class CString extends String {
@@ -157,8 +161,24 @@ ffiWrappers[FFIType.uint8_t] = "val<0?0:val>=255?255:val|0";
 ffiWrappers[FFIType.int16_t] = "val<=-32768?-32768:val>=32768?32768:val|0";
 ffiWrappers[FFIType.uint16_t] = "val<=0?0:val>=65536?65536:val|0";
 ffiWrappers[FFIType.int32_t] = "val|0";
-// we never want to return NaN
-ffiWrappers[FFIType.uint32_t] = "val<=0?0:val>=0xffffffff?0xffffffff:+val||0";
+// https://github.com/oven-sh/bun/issues/7007
+// This cast with `|0` looks incorrect as it converts 0xffffffff into -1, but this misinterpretation
+// of the integer is taken advantage of by a second misinterpretation of the bytes in the C binding
+// The bitwise operator | forces a conversion to int32_t, but it will wrap to negative numbers
+// when going above >0x7fffffff.
+//
+// What this |0 operatation also *seems to do* (citation needed) is convert the internal representation
+// of JSC::JSValue to ALWAYS use Int32Tag, which is important as `JSValue::asInt32()` can only handle
+// this encoding to properly deserialize this as an int32.
+//
+// tldr jsc internals: JSValue represents int32 as a tag value, then the int32 bytes.
+//                     and all other integers are as tagged 64-bit floats.
+//
+// The trick to fixing the bug: after using |0 to misinterpret and force the integer into Int32Tag,
+// when passing the value to the C ffi code, misinterpret it again, resulting in the correct uint32_t.
+//
+// To do this in native code, there is a spot in zig where uint32_t just prints int32_t.
+ffiWrappers[FFIType.uint32_t] = "val<0?0:val>0xFFFFFFFF?-1:val|0";
 ffiWrappers[FFIType.i64_fast] = `{
   if (typeof val === "bigint") {
     if (val <= BigInt(Number.MAX_SAFE_INTEGER) && val >= BigInt(-Number.MAX_SAFE_INTEGER)) {
@@ -367,7 +387,6 @@ function FFIBuilder(params, returnType, functionToCall, name) {
       break;
     }
   }
-
   wrap.native = functionToCall;
   wrap.ptr = functionToCall.ptr;
   return wrap;
@@ -381,7 +400,24 @@ const native = {
 };
 
 function dlopen(path, options) {
+  if (typeof path === "string" && path?.startsWith?.("file:")) {
+    // import.meta.url returns a file: URL
+    // https://github.com/oven-sh/bun/issues/10304
+    path = Bun.fileURLToPath(path);
+  } else if (typeof path === "object" && path) {
+    if (path instanceof URL) {
+      // This is mostly for import.meta.resolve()
+      // https://github.com/oven-sh/bun/issues/10304
+      path = Bun.fileURLToPath(path as URL);
+    } else if (path instanceof Blob) {
+      // must be a Bun.file() blob
+      // https://discord.com/channels/876711213126520882/1230114905898614794/1230114905898614794
+      path = path.name;
+    }
+  }
+
   const result = nativeDLOpen(path, options);
+  if (result instanceof Error) throw result;
 
   for (let key in result.symbols) {
     var symbol = result.symbols[key];

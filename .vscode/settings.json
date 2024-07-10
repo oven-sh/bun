@@ -1,58 +1,120 @@
 {
-  "git.autoRepositoryDetection": "openEditors",
+  // Editor
+  "editor.tabSize": 2,
+  "editor.insertSpaces": true,
+  "editor.formatOnSave": true,
+  "editor.formatOnSaveMode": "file",
+
+  // Search
   "search.quickOpen.includeSymbols": false,
   "search.seedWithNearestWord": true,
   "search.smartCase": true,
-  "search.exclude": {},
+  "search.exclude": {
+    "node_modules": true,
+    ".git": true,
+    "src/bun.js/WebKit": true,
+    "src/deps/*/**": true,
+    "test/node.js/upstream": true,
+  },
   "search.followSymlinks": false,
   "search.useIgnoreFiles": true,
-  "zig.buildOnSave": false,
-  // We do this until we upgrade to latest Zig so that zls doesn't break our code.
-  "zig.formattingProvider": "extension",
-  "zig.buildArgs": ["obj", "-Dfor-editor"],
+
+  // Git
+  "git.autoRepositoryDetection": "openEditors",
+  "git.ignoreSubmodules": true,
+  "git.ignoreLimitWarning": true,
+
+  // Zig
+  "zig.initialSetupDone": true,
   "zig.buildOption": "build",
+  "zig.zls.zigLibPath": "${workspaceFolder}/src/deps/zig/lib",
+  "zig.buildArgs": ["-Dgenerated-code=./build/codegen"],
+  "zig.zls.buildOnSaveStep": "check",
+  // "zig.zls.enableBuildOnSave": true,
+  // "zig.buildOnSave": true,
   "zig.buildFilePath": "${workspaceFolder}/build.zig",
+  "zig.path": "${workspaceFolder}/.cache/zig/zig.exe",
+  "zig.formattingProvider": "zls",
+  "zig.zls.enableInlayHints": false,
   "[zig]": {
     "editor.tabSize": 4,
     "editor.useTabStops": false,
     "editor.defaultFormatter": "ziglang.vscode-zig",
-    "editor.formatOnSave": true
   },
-  "[ts]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
-  },
-  "[js]": {
-    "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
-  },
-  "zig.zls.enableInlayHints": false,
 
-  "[jsx]": {
+  // C++
+  "lldb.verboseLogging": false,
+  "cmake.configureOnOpen": false,
+  "C_Cpp.errorSquiggles": "enabled",
+  "[cpp]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+  "[c]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+  "[h]": {
+    "editor.defaultFormatter": "xaver.clang-format",
+  },
+
+  // JavaScript
+  "prettier.enable": true,
+  "prettier.configPath": ".prettierrc",
+  "eslint.workingDirectories": ["${workspaceFolder}/packages/bun-types"],
+  "[javascript]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
   },
-  "[tsx]": {
+  "[javascriptreact]": {
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true
   },
-  "[yaml]": {
-    "editor.formatOnSave": true
+  "prettier.prettierPath": "./node_modules/prettier",
+
+  // TypeScript
+  "typescript.tsdk": "${workspaceFolder}/node_modules/typescript/lib",
+  "[typescript]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
   },
+  "[typescriptreact]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // JSON
+  "[json]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+  "[jsonc]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // Markdown
   "[markdown]": {
-    "editor.unicodeHighlight.ambiguousCharacters": false,
-    "editor.unicodeHighlight.invisibleCharacters": false,
-    "diffEditor.ignoreTrimWhitespace": false,
     "editor.defaultFormatter": "esbenp.prettier-vscode",
-    "editor.formatOnSave": true,
+    "editor.unicodeHighlight.ambiguousCharacters": true,
+    "editor.unicodeHighlight.invisibleCharacters": true,
+    "diffEditor.ignoreTrimWhitespace": false,
     "editor.wordWrap": "on",
     "editor.quickSuggestions": {
       "comments": "off",
       "strings": "off",
-      "other": "off"
-    }
+      "other": "off",
+    },
   },
-  "lldb.verboseLogging": false,
+
+  // TOML
+  "[toml]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // YAML
+  "[yaml]": {
+    "editor.defaultFormatter": "esbenp.prettier-vscode",
+  },
+
+  // Docker
+  "[dockerfile]": {
+    "editor.formatOnSave": false,
+  },
+
+  // Files
   "files.exclude": {
     "**/.git": true,
     "**/.svn": true,
@@ -62,166 +124,32 @@
     "**/Thumbs.db": true,
     "**/*.xcworkspacedata": true,
     "**/*.xcscheme": true,
-    "**/*.pem": true,
     "**/*.xcodeproj": true,
-    "test/snapshots": true,
-    "test/snapshots-no-hmr": true,
-    "src/bun.js/WebKit": true,
-    "src/deps/libarchive": true,
-    "src/deps/mimalloc": true,
-    "src/deps/s2n-tls": true,
-    "src/deps/boringssl": true,
-    "src/deps/openssl": true,
-    "src/deps/uws": true,
-    "src/deps/zlib": true,
-    "src/deps/lol-html": true,
-    "src/deps/c-ares": true,
-    "src/deps/tinycc": true,
-    "src/deps/zstd": true,
-    "test/snippets/package-json-exports/_node_modules_copy": true,
-    "src/js/out": true,
-    "src/packages/bun-uws/fuzzing/seed-corpus/": true
+    "**/*.i": true,
+
+    // uws WebSocket.cpp conflicts with webcore WebSocket.cpp
+    "packages/bun-uws/fuzzing": true,
+  },
+  "files.associations": {
+    "*.idl": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,
-    "src/bun.js/WebKit/JSTests": true,
-    "src/bun.js/WebKit/Tools": true,
-    "src/bun.js/WebKit/WebDriverTests": true,
-    "src/bun.js/WebKit/WebKit.xcworkspace": true,
-    "src/bun.js/WebKit/WebKitLibraries": true,
-    "src/bun.js/WebKit/Websites": true,
-    "src/bun.js/WebKit/resources": true,
-    "src/bun.js/WebKit/LayoutTests": true,
-    "src/bun.js/WebKit/ManualTests": true,
-    "src/bun.js/WebKit/PerformanceTests": true,
-    "src/bun.js/WebKit/WebKitLegacy": true,
-    "src/bun.js/WebKit/WebCore": true,
-    "src/bun.js/WebKit/WebDriver": true,
-    "src/bun.js/WebKit/WebKitBuild": true,
-    "src/bun.js/WebKit/WebInspectorUI": true
+    "WebKit/JSTests": true,
+    "WebKit/Tools": true,
+    "WebKit/WebDriverTests": true,
+    "WebKit/WebKit.xcworkspace": true,
+    "WebKit/WebKitLibraries": true,
+    "WebKit/Websites": true,
+    "WebKit/resources": true,
+    "WebKit/LayoutTests": true,
+    "WebKit/ManualTests": true,
+    "WebKit/PerformanceTests": true,
+    "WebKit/WebKitLegacy": true,
+    "WebKit/WebCore": true,
+    "WebKit/WebDriver": true,
+    "WebKit/WebKitBuild": true,
+    "WebKit/WebInspectorUI": true,
   },
-  "[cpp]": {
-    "editor.defaultFormatter": "xaver.clang-format"
-  },
-  "[h]": {
-    "editor.defaultFormatter": "xaver.clang-format"
-  },
-  "[c]": {
-    "editor.defaultFormatter": "xaver.clang-format"
-  },
-  "files.associations": {
-    "*.lock": "yarnlock",
-    "*.idl": "cpp",
-    "memory": "cpp",
-    "iostream": "cpp",
-    "algorithm": "cpp",
-    "random": "cpp",
-    "ios": "cpp",
-    "filesystem": "cpp",
-    "__locale": "cpp",
-    "type_traits": "cpp",
-    "__mutex_base": "cpp",
-    "__string": "cpp",
-    "string": "cpp",
-    "string_view": "cpp",
-    "typeinfo": "cpp",
-    "__config": "cpp",
-    "__nullptr": "cpp",
-    "exception": "cpp",
-    "__bit_reference": "cpp",
-    "atomic": "cpp",
-    "utility": "cpp",
-    "sstream": "cpp",
-    "__functional_base": "cpp",
-    "new": "cpp",
-    "__debug": "cpp",
-    "__errc": "cpp",
-    "__hash_table": "cpp",
-    "__node_handle": "cpp",
-    "__split_buffer": "cpp",
-    "__threading_support": "cpp",
-    "__tuple": "cpp",
-    "array": "cpp",
-    "bit": "cpp",
-    "bitset": "cpp",
-    "cctype": "cpp",
-    "chrono": "cpp",
-    "clocale": "cpp",
-    "cmath": "cpp",
-    "complex": "cpp",
-    "condition_variable": "cpp",
-    "cstdarg": "cpp",
-    "cstddef": "cpp",
-    "cstdint": "cpp",
-    "cstdio": "cpp",
-    "cstdlib": "cpp",
-    "cstring": "cpp",
-    "ctime": "cpp",
-    "cwchar": "cpp",
-    "cwctype": "cpp",
-    "deque": "cpp",
-    "fstream": "cpp",
-    "functional": "cpp",
-    "initializer_list": "cpp",
-    "iomanip": "cpp",
-    "iosfwd": "cpp",
-    "istream": "cpp",
-    "iterator": "cpp",
-    "limits": "cpp",
-    "locale": "cpp",
-    "mutex": "cpp",
-    "optional": "cpp",
-    "ostream": "cpp",
-    "ratio": "cpp",
-    "stack": "cpp",
-    "stdexcept": "cpp",
-    "streambuf": "cpp",
-    "system_error": "cpp",
-    "thread": "cpp",
-    "tuple": "cpp",
-    "unordered_map": "cpp",
-    "unordered_set": "cpp",
-    "vector": "cpp",
-    "__bits": "cpp",
-    "__tree": "cpp",
-    "map": "cpp",
-    "numeric": "cpp",
-    "set": "cpp",
-    "__memory": "cpp",
-    "memory_resource": "cpp",
-    "resource.h": "c",
-    "sysinfo.h": "c",
-    "*.tcc": "cpp",
-    "list": "cpp",
-    "shared_mutex": "cpp",
-    "cinttypes": "cpp",
-    "variant": "cpp",
-    "sysctl.h": "c",
-    "interface_adresses.h": "c",
-    "interface_addresses.h": "c",
-    "ctype.h": "c",
-    "ethernet.h": "c",
-    "inet.h": "c",
-    "packet.h": "c",
-    "queue": "cpp",
-    "compare": "cpp",
-    "concepts": "cpp",
-    "typeindex": "cpp",
-    "__verbose_abort": "cpp",
-    "__std_stream": "cpp",
-    "any": "cpp",
-    "charconv": "cpp",
-    "csignal": "cpp",
-    "format": "cpp",
-    "forward_list": "cpp",
-    "future": "cpp",
-    "regex": "cpp",
-    "span": "cpp",
-    "valarray": "cpp",
-    "codecvt": "cpp"
-  },
-  "cmake.configureOnOpen": false,
-  "C_Cpp.errorSquiggles": "enabled",
-  "eslint.workingDirectories": ["packages/bun-types"],
-  "typescript.tsdk": "node_modules/typescript/lib"
+  "git.detectSubmodules": false,
 }

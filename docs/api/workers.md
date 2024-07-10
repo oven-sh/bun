@@ -10,11 +10,10 @@ Bun implements a minimal version of the [Web Workers API](https://developer.mozi
 
 Like in browsers, [`Worker`](https://developer.mozilla.org/en-US/docs/Web/API/Worker) is a global. Use it to create a new worker thread.
 
-From the main thread:
+### From the main thread
 
 ```js#Main_thread
-const workerURL = new URL("worker.ts", import.meta.url).href;
-const worker = new Worker(workerURL);
+const worker = new Worker("./worker.ts");
 
 worker.postMessage("hello");
 worker.onmessage = event => {
@@ -22,16 +21,25 @@ worker.onmessage = event => {
 };
 ```
 
-Worker thread:
+### Worker thread
 
 ```ts#worker.ts_(Worker_thread)
+// prevents TS errors
+declare var self: Worker;
+
 self.onmessage = (event: MessageEvent) => {
   console.log(event.data);
   postMessage("world");
 };
 ```
 
-You can use `import`/`export` syntax in your worker code. Unlike in browsers, there's no need to specify `{type: "module"}` to use ES Modules.
+To prevent TypeScript errors when using `self`, add this line to the top of your worker file.
+
+```ts
+declare var self: Worker;
+```
+
+You can use `import` and `export` syntax in your worker code. Unlike in browsers, there's no need to specify `{type: "module"}` to use ES Modules.
 
 To simplify error handling, the initial script to load is resolved at the time `new Worker(url)` is called.
 
@@ -41,6 +49,38 @@ const worker = new Worker("/not-found.js");
 ```
 
 The specifier passed to `Worker` is resolved relative to the project root (like typing `bun ./path/to/file.js`).
+
+### `blob:` URLs
+
+As of Bun v1.1.13, you can also pass a `blob:` URL to `Worker`. This is useful for creating workers from strings or other sources.
+
+```js
+const blob = new Blob(
+  [
+    `
+  self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
+  ],
+  {
+    type: "application/typescript",
+  },
+);
+const url = URL.createObjectURL(blob);
+const worker = new Worker(url);
+```
+
+Like the rest of Bun, workers created from `blob:` URLs support TypeScript, JSX, and other file types out of the box. You can communicate it should be loaded via typescript either via `type` or by passing a `filename` to the `File` constructor.
+
+```js
+const file = new File(
+  [
+    `
+  self.onmessage = (event: MessageEvent) => postMessage(event.data)`,
+  ],
+  "worker.ts",
+);
+const url = URL.createObjectURL(file);
+const worker = new Worker(url);
+```
 
 ### `"open"`
 
@@ -123,14 +163,14 @@ By default, an active `Worker` will keep the main (spawning) process alive, so a
 
 ### `worker.unref()`
 
-To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivlent to what Node.js' `worker_threads` does.
+To stop a running worker from keeping the process alive, call `worker.unref()`. This decouples the lifetime of the worker to the lifetime of the main process, and is equivalent to what Node.js' `worker_threads` does.
 
 ```ts
 const worker = new Worker(new URL("worker.ts", import.meta.url).href);
 worker.unref();
 ```
 
-Note: `worker.unref()` is not available in browers.
+Note: `worker.unref()` is not available in browsers.
 
 ### `worker.ref()`
 
@@ -151,7 +191,7 @@ const worker = new Worker(new URL("worker.ts", import.meta.url).href, {
 });
 ```
 
-Note: `worker.ref()` is not available in browers.
+Note: `worker.ref()` is not available in browsers.
 
 ## Memory usage with `smol`
 

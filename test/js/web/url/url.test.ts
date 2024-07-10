@@ -1,6 +1,19 @@
 import { describe, it, expect } from "bun:test";
 
 describe("url", () => {
+  it("URL throws", () => {
+    expect(() => new URL("")).toThrow('"" cannot be parsed as a URL');
+    expect(() => new URL(" ")).toThrow('" " cannot be parsed as a URL');
+    expect(() => new URL("boop", "http!/example.com")).toThrow(
+      '"boop" cannot be parsed as a URL against "http!/example.com"',
+    );
+
+    // redact
+    expect(() => new URL("boop", "https!!username:password@example.com")).toThrow(
+      '"boop" cannot be parsed as a URL against <redacted>',
+    );
+  });
+
   it("should have correct origin and protocol", () => {
     var url = new URL("https://example.com");
     expect(url.protocol).toBe("https:");
@@ -39,8 +52,7 @@ describe("url", () => {
     expect(url.protocol).toBe("mailto:");
     expect(url.origin).toBe("null");
   });
-  it.skip("should work with blob urls", () => {
-    // TODO
+  it("blob urls", () => {
     var url = new URL("blob:https://example.com/1234-5678");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("https://example.com");
@@ -59,6 +71,9 @@ describe("url", () => {
     url = new URL("blob:ws://example.com");
     expect(url.protocol).toBe("blob:");
     expect(url.origin).toBe("ws://example.com");
+    url = new URL("blob:file:///folder/else/text.txt");
+    expect(url.protocol).toBe("blob:");
+    expect(url.origin).toBe("file://");
   });
   it("prints", () => {
     expect(Bun.inspect(new URL("https://example.com"))).toBe(`URL {
@@ -75,7 +90,7 @@ describe("url", () => {
   search: "",
   searchParams: ${Bun.inspect(new URLSearchParams())},
   toJSON: [Function: toJSON],
-  toString: [Function: toString]
+  toString: [Function: toString],
 }`);
 
     expect(
@@ -94,9 +109,9 @@ describe("url", () => {
   pathname: "/oven-sh/bun/issues/135",
   hash: "",
   search: "?hello%20i%20have%20spaces%20thank%20you%20good%20night",
-  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\"\n  },
+  searchParams: URLSearchParams {\n    \"hello i have spaces thank you good night\": \"\",\n  },
   toJSON: [Function: toJSON],
-  toString: [Function: toString]
+  toString: [Function: toString],
 }`);
   });
   it("works", () => {
@@ -164,5 +179,56 @@ describe("url", () => {
       expect(result.search).toBe(values.search);
       expect(result.username).toBe(values.username);
     }
+  });
+
+  describe("URL.canParse", () => {
+    (
+      [
+        {
+          "url": undefined,
+          "base": undefined,
+          "expected": false,
+        },
+        {
+          "url": "a:b",
+          "base": undefined,
+          "expected": true,
+        },
+        {
+          "url": undefined,
+          "base": "a:b",
+          "expected": false,
+        },
+        {
+          "url": "a:/b",
+          "base": undefined,
+          "expected": true,
+        },
+        {
+          "url": undefined,
+          "base": "a:/b",
+          "expected": true,
+        },
+        {
+          "url": "https://test:test",
+          "base": undefined,
+          "expected": false,
+        },
+        {
+          "url": "a",
+          "base": "https://b/",
+          "expected": true,
+        },
+      ] as const
+    ).forEach(({ url, base, expected }) => {
+      it(`URL.canParse(${url}, ${base})`, () => {
+        // @ts-expect-error
+        expect(URL.canParse(url, base)).toBe(expected);
+      });
+    });
+
+    it("URL.canParse.length should be 1", () => {
+      expect(URL.canParse.length).toBe(1);
+    });
   });
 });

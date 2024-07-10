@@ -1,10 +1,11 @@
+// clang-format off
 #include "_libusockets.h"
-
 #include <bun-uws/src/App.h>
 #include <bun-uws/src/AsyncSocket.h>
-
 #include <bun-usockets/src/internal/internal.h>
 #include <string_view>
+
+extern "C" const char* ares_inet_ntop(int af, const char *src, char *dst, size_t size);
 
 extern "C"
 {
@@ -322,7 +323,7 @@ extern "C"
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -330,7 +331,7 @@ extern "C"
     {
       uWS::App *uwsApp = (uWS::App *)app;
 
-      uwsApp->listen(port, [handler, config,
+      uwsApp->listen(port, [handler, 
                             user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, user_data); });
     }
@@ -364,26 +365,26 @@ extern "C"
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain(int ssl, uws_app_t *app, const char *domain, size_t pathlen, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
       uWS::SSLApp *uwsApp = (uWS::SSLApp *)app;
-      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen(0,[handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
-                     domain);
+                     {domain, pathlen});
     }
     else
     {
       uWS::App *uwsApp = (uWS::App *)app;
-      uwsApp->listen([handler, domain, user_data](struct us_listen_socket_t *listen_socket)
+      uwsApp->listen(0, [handler, domain, user_data](struct us_listen_socket_t *listen_socket)
                      { handler((struct us_listen_socket_t *)listen_socket, domain, 0, user_data); },
-                     domain);
+                     {domain, pathlen});
     }
   }
 
   /* callback, path to unix domain socket */
-  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, int options, uws_listen_domain_handler handler, void *user_data)
+  void uws_app_listen_domain_with_options(int ssl, uws_app_t *app, const char *domain, size_t pathlen, int options, uws_listen_domain_handler handler, void *user_data)
   {
     if (ssl)
     {
@@ -391,7 +392,7 @@ extern "C"
       uwsApp->listen(
           options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
-          domain);
+          {domain, pathlen});
     }
     else
     {
@@ -399,7 +400,7 @@ extern "C"
       uwsApp->listen(
           options, [handler, domain, options, user_data](struct us_listen_socket_t *listen_socket)
           { handler((struct us_listen_socket_t *)listen_socket, domain, options, user_data); },
-          domain);
+          {domain, pathlen});
     }
   }
 
@@ -1040,14 +1041,14 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
       uwsRes->onAborted(nullptr);
-      uwsRes->endWithoutBody(std::nullopt, close_connection);
+      uwsRes->sendTerminatingChunk(close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
       uwsRes->onAborted(nullptr);
-      uwsRes->endWithoutBody(std::nullopt, close_connection);
+      uwsRes->sendTerminatingChunk(close_connection);
     }
   }
 
@@ -1141,21 +1142,46 @@ extern "C"
     }
   }
 
-  void uws_res_end_without_body(int ssl, uws_res_t *res)
+  void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      if (close_connection)
+      {
+        if (!(data->state & uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<true>::HTTP_CONNECTION_CLOSE;
+      }
+      if (!(data->state & uWS::HttpResponseData<true>::HTTP_END_CALLED))
+      {
+        uwsRes->AsyncSocket<true>::write("\r\n", 2);
+      }
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
       us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
     }
     else
     {
-
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto *data = uwsRes->getHttpResponseData();
+      if (close_connection)
+      {
+        if (!(data->state & uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE))
+        {
+          uwsRes->writeHeader("Connection", "close");
+        }
+        data->state |= uWS::HttpResponseData<false>::HTTP_CONNECTION_CLOSE;
+      }
+      if (!(data->state & uWS::HttpResponseData<false>::HTTP_END_CALLED))
+      {
+        // Some HTTP clients require the complete "<header>\r\n\r\n" to be sent.
+        // If not, they may throw a ConnectionError.
+        uwsRes->AsyncSocket<false>::write("\r\n", 2);
+      }
       data->state |= uWS::HttpResponseData<false>::HTTP_END_CALLED;
       data->markDone();
       us_socket_timeout(false, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
@@ -1172,7 +1198,7 @@ extern "C"
     uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
     return uwsRes->write(std::string_view(data, length));
   }
-  uintmax_t uws_res_get_write_offset(int ssl, uws_res_t *res)
+  uint64_t uws_res_get_write_offset(int ssl, uws_res_t *res)
   {
     if (ssl)
     {
@@ -1195,21 +1221,31 @@ extern "C"
   }
 
   void uws_res_on_writable(int ssl, uws_res_t *res,
-                           bool (*handler)(uws_res_t *res, uintmax_t,
+                           bool (*handler)(uws_res_t *res, uint64_t,
                                            void *opcional_data),
                            void *opcional_data)
   {
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uintmax_t a)
+      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
                          { return handler(res, a, opcional_data); });
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uintmax_t a)
+      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
                          { return handler(res, a, opcional_data); });
+    }
+  }
+  
+  void uws_res_clear_on_writable(int ssl, uws_res_t *res) {
+    if (ssl) {
+      uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->clearOnWritable();
+    } else {
+      uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->clearOnWritable();
     }
   }
 
@@ -1466,8 +1502,7 @@ extern "C"
                    LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
   }
 
- 
-  void uws_res_override_write_offset(int ssl, uws_res_t *res, uintmax_t offset)
+  void uws_res_override_write_offset(int ssl, uws_res_t *res, uint64_t offset)
   {
     if (ssl)
     {
@@ -1478,7 +1513,7 @@ extern "C"
       uwsRes->setWriteOffset(offset); //TODO: when updated to master this will bechanged to overrideWriteOffset
     }
   }
-  
+
   void uws_res_cork(int ssl, uws_res_t *res, void *ctx,
                     void (*corker)(void *ctx))
   {
@@ -1576,5 +1611,31 @@ extern "C"
   void us_socket_sendfile_needs_more(us_socket_t *s) {
     s->context->loop->data.last_write_failed = 1;
     us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+  }
+
+  // Gets the remote address and port
+  // Returns 0 if failure / unix socket
+  uint64_t uws_res_get_remote_address_info(uws_res_t *res, const char **dest, int *port, bool *is_ipv6)
+  {
+    // This function is manual inlining + modification of
+    //      us_socket_remote_address
+    //      AsyncSocket::getRemoteAddress
+    //      AsyncSocket::addressAsText
+    // To get { ip, port, is_ipv6 } for Bun.serve().requestIP()
+    static thread_local char b[64];
+    auto length = us_get_remote_address_info(b, (us_socket_t *)res, dest, port, (int*)is_ipv6);
+
+    if (length == 0) return 0;
+    if (length == 4) {
+      ares_inet_ntop(AF_INET, b, &b[4], 64 - 4);
+      *dest = &b[4];
+      *is_ipv6 = false;
+      return strlen(*dest);
+    } else {
+      ares_inet_ntop(AF_INET6, b, &b[16], 64 - 16);
+      *dest = &b[16];
+      *is_ipv6 = true;
+      return strlen(*dest);
+    }
   }
 }

@@ -34,13 +34,12 @@
 
 namespace WebCore {
 
-ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
+static ExceptionOr<Vector<uint8_t>> signWithMD(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data, const EVP_MD* md)
 {
-#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
-    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
-    if (!md)
-        return Exception { NotSupportedError };
-
+    auto padding = parameters.padding;
+    if(padding == 0) {
+        padding = RSA_PKCS1_PSS_PADDING;
+    }
     std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
     if (!digest)
         return Exception { OperationError };
@@ -52,11 +51,13 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAl
     if (EVP_PKEY_sign_init(ctx.get()) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) <= 0)
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
         return Exception { OperationError };
 
-    if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)
-        return Exception { OperationError };
+    if(padding == RSA_PKCS1_PSS_PADDING) {
+        if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)
+            return Exception { OperationError };
+    }
 
     if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
         return Exception { OperationError };
@@ -74,9 +75,78 @@ ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAl
     signature.shrink(signatureLen);
 
     return signature;
+}
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSignWithAlgorithm(const CryptoAlgorithmRsaPssParams& parameters, CryptoAlgorithmIdentifier hash, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
+{
+#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
+    const EVP_MD* md = digestAlgorithm(hash);
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return signWithMD(parameters, key, data, md);
 #else
     return Exception { NotSupportedError };
 #endif
+}
+
+
+ExceptionOr<Vector<uint8_t>> CryptoAlgorithmRSA_PSS::platformSign(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& data)
+{
+#if 1 //  defined(EVP_PKEY_CTX_set_rsa_pss_saltlen) && defined(EVP_PKEY_CTX_set_rsa_mgf1_md)
+    const EVP_MD* md = digestAlgorithm(key.hashAlgorithmIdentifier());
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return signWithMD(parameters, key, data, md);
+#else
+    return Exception { NotSupportedError };
+#endif
+}
+
+static ExceptionOr<bool> verifyWithMD(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data, const EVP_MD* md)
+{
+    auto padding = parameters.padding;
+    if(padding == 0) {
+        padding = RSA_PKCS1_PSS_PADDING;
+    }
+
+    auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
+    if (!ctx)
+        return Exception { OperationError };
+
+    if (EVP_PKEY_verify_init(ctx.get()) <= 0)
+        return Exception { OperationError };
+
+    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), padding) <= 0)
+        return Exception { OperationError };
+
+    if(padding == RSA_PKCS1_PSS_PADDING) {
+        if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)
+            return Exception { OperationError };
+    }
+
+    if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
+        return Exception { OperationError };
+
+    if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
+        return Exception { OperationError };
+
+    std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
+    if (!digest)
+        return Exception { OperationError };
+
+    int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
+
+    return ret == 1;
+}
+ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerifyWithAlgorithm(const CryptoAlgorithmRsaPssParams& parameters, CryptoAlgorithmIdentifier hash, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
+{
+    const EVP_MD* md = digestAlgorithm(hash);
+    if (!md)
+        return Exception { NotSupportedError };
+
+    return verifyWithMD(parameters, key, signature, data, md);
+
 }
 
 ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRsaPssParams& parameters, const CryptoKeyRSA& key, const Vector<uint8_t>& signature, const Vector<uint8_t>& data)
@@ -86,32 +156,7 @@ ExceptionOr<bool> CryptoAlgorithmRSA_PSS::platformVerify(const CryptoAlgorithmRs
     if (!md)
         return Exception { NotSupportedError };
 
-    std::optional<Vector<uint8_t>> digest = calculateDigest(md, data);
-    if (!digest)
-        return Exception { OperationError };
-
-    auto ctx = EvpPKeyCtxPtr(EVP_PKEY_CTX_new(key.platformKey(), nullptr));
-    if (!ctx)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_verify_init(ctx.get()) <= 0)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_CTX_set_rsa_padding(ctx.get(), RSA_PKCS1_PSS_PADDING) <= 0)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_CTX_set_rsa_pss_saltlen(ctx.get(), parameters.saltLength) <= 0)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_CTX_set_signature_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
-
-    if (EVP_PKEY_CTX_set_rsa_mgf1_md(ctx.get(), md) <= 0)
-        return Exception { OperationError };
-
-    int ret = EVP_PKEY_verify(ctx.get(), signature.data(), signature.size(), digest->data(), digest->size());
-
-    return ret == 1;
+    return verifyWithMD(parameters, key, signature, data, md);
 #else
     return Exception { NotSupportedError };
 #endif

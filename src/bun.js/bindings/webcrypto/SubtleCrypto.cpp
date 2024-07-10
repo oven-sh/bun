@@ -58,7 +58,7 @@ using namespace JSC;
 
 SubtleCrypto::SubtleCrypto(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"))
+    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"_s))
 {
 }
 
@@ -493,7 +493,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 return std::nullopt;
             },
             [](auto& bufferSource) -> std::optional<KeyData> {
-                return KeyData { Vector { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() } };
+                return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
             });
     case SubtleCrypto::KeyFormat::Jwk:
         return WTF::switchOn(
@@ -513,7 +513,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
 
 static Vector<uint8_t> copyToVector(BufferSource&& data)
 {
-    return { data.data(), data.length() };
+    return std::span { data.data(), data.length() };
 }
 
 static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifier identifier)
@@ -1072,7 +1072,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTFMove(std::get<JsonWebKey>(key)));
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(jwkUTF8String.data(), jwkUTF8String.length());
+                    bytes.append(std::span { jwkUTF8String.data(), jwkUTF8String.length() });
                 }
                 }
 
@@ -1173,7 +1173,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     auto& vm = state.vm();
                     auto scope = DECLARE_THROW_SCOPE(vm);
 
-                    String jwkString(bytes.data(), bytes.size());
+                    String jwkString(std::span { bytes.data(), bytes.size() });
                     JSLockHolder locker(vm);
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (!jwkObject) {

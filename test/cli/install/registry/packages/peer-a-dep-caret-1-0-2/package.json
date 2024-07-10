@@ -1,0 +1,41 @@
+{
+	"name": "peer-a-dep-caret-1-0-2",
+	"versions": {
+		"1.0.0": {
+			"name": "peer-a-dep-caret-1-0-2",
+			"version": "1.0.0",
+			"peerDependencies": {
+				"a-dep": "^1.0.2"
+			},
+			"_id": "peer-a-dep-caret-1-0-2@1.0.0",
+			"_nodeVersion": "21.1.0",
+			"_npmVersion": "8.19.4",
+			"dist": {
+				"integrity": "sha512-FQ9D1tb8c1KIlep5Hb/hJm+wlj2+JbLSk/dTDXFAttL0uD59phZhc0PwVEiNFsAAvzDWDh62JN6bZpnIVhGCZA==",
+				"shasum": "1ff71f82722427a6db3e8908b6a905f08393285e",
+				"tarball": "http://localhost:4873/peer-a-dep-caret-1-0-2/-/peer-a-dep-caret-1-0-2-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-18T03:14:57.335Z",
+		"created": "2023-11-18T03:14:57.335Z",
+		"1.0.0": "2023-11-18T03:14:57.335Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"peer-a-dep-caret-1-0-2-1.0.0.tgz": {
+			"shasum": "1ff71f82722427a6db3e8908b6a905f08393285e",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "peer-a-dep-caret-1-0-2",
+	"readme": "ERROR: No README data found!"
+}

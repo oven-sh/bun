@@ -216,7 +216,9 @@ describe("TextDecoder", () => {
 
     text += ` ✨ Sparkles 🔥 Fire 😀 😃 😄 😁 😆 😅 😂 🤣 🥲 ☺️ 😊 😇 🙂 🙃 😉 😌 😍 🥰 😘 😗 😙 😚 😋 😛 😝 😜 🤪 🤨 🧐 🤓 😎 🥸 🤩 🥳 😏 😒 😞 😔 😟 😕 🙁 ☹️ 😣 😖 😫 😩 🥺 😢 😭 😤 😠 😡 🤬 🤯 😳 🥵 🥶 😱 😨 😰`;
     gcTrace(true);
-    expect(decoder.decode(encoder.encode(text))).toBe(text);
+    const result = decoder.decode(encoder.encode(text));
+    expect(result).toBe(text);
+    expect(result).toBeUTF16String();
     gcTrace(true);
     const bytes = new Uint8Array(getByteLength(text) * 8);
     gcTrace(true);
@@ -230,7 +232,14 @@ describe("TextDecoder", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true });
     expect(() => {
       decoder.decode(new Uint8Array([0xc0])); // Invalid UTF8
-    }).toThrow(TypeError);
+    }).toThrow(Error);
+    let err;
+    try {
+      decoder.decode(new Uint8Array([0xc0, 0x80])); // Invalid UTF8
+    } catch (e) {
+      err = e;
+    }
+    expect(err.code).toBe("ERR_ENCODING_INVALID_ENCODED_DATA");
   });
 
   it("should not trim invalid byte sequences when fatal is false", () => {
@@ -250,13 +259,40 @@ describe("TextDecoder", () => {
   it("constructor should set values", () => {
     const decoder = new TextDecoder("utf-8", { fatal: true, ignoreBOM: false });
     expect(decoder.fatal).toBe(true);
-    // expect(decoder.ignoreBOM).toBe(false); // currently the getter for ignoreBOM doesn't work and always returns undefined
+    expect(decoder.ignoreBOM).toBe(false);
   });
 
   it("should throw on invalid input", () => {
     expect(() => {
       const decoder = new TextDecoder("utf-8", { fatal: 10, ignoreBOM: {} });
     }).toThrow();
+  });
+
+  it("should support undifined", () => {
+    const decoder = new TextDecoder(undefined);
+    expect(decoder.encoding).toBe("utf-8");
+  });
+});
+
+describe("TextDecoder ignoreBOM", () => {
+  it.each([
+    {
+      encoding: "utf-8",
+      bytes: [0xef, 0xbb, 0xbf, 0x61, 0x62, 0x63],
+    },
+    {
+      encoding: "utf-16le",
+      bytes: [0xff, 0xfe, 0x61, 0x00, 0x62, 0x00, 0x63, 0x00],
+    },
+  ])("should ignoreBOM for: %o", ({ encoding, bytes }) => {
+    const BOM = "\uFEFF";
+    const array = new Uint8Array(bytes);
+
+    const decoder_ignore_bom = new TextDecoder(encoding, { ignoreBOM: true });
+    expect(decoder_ignore_bom.decode(array)).toStrictEqual(`${BOM}abc`);
+
+    const decoder_not_ignore_bom = new TextDecoder(encoding, { ignoreBOM: false });
+    expect(decoder_not_ignore_bom.decode(array)).toStrictEqual("abc");
   });
 });
 

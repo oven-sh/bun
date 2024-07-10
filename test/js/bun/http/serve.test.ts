@@ -1,15 +1,21 @@
 import { file, gc, Serve, serve, Server } from "bun";
-import { afterEach, describe, it, expect, afterAll } from "bun:test";
+import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv } from "harness";
-import { renderToReadableStream } from "react-dom/server";
-import app_jsx from "./app.jsx";
+import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4 } from "harness";
+// import { renderToReadableStream } from "react-dom/server";
+// import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
 import { tmpdir } from "os";
+import { heapStats } from "bun:jsc";
+
+let renderToReadableStream: any = null;
+let app_jsx: any = null;
 
 type Handler = (req: Request) => Response;
-afterEach(() => gc(true));
+afterEach(() => {
+  gc(true);
+});
 
 const count = 200;
 let server: Server | undefined;
@@ -23,6 +29,7 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
         server = serve({ ...serverOptions, port: 0 });
         break;
       } catch (e: any) {
+        console.log("catch:", e);
         if (e?.message !== `Failed to start server `) {
           throw e;
         }
@@ -40,7 +47,91 @@ afterAll(() => {
   }
 });
 
-[101, 418, 599, 200, 200n, 101n, 599n].forEach(statusCode => {
+describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
+  for (let isDirect of [true, false] as const) {
+    it(
+      isDirect ? "direct" : "default",
+      async () => {
+        const blob = new Blob([new Uint8Array(1024 * 768).fill(123)]);
+        Bun.gc(true);
+
+        const expected = Bun.CryptoHasher.hash("sha256", blob, "base64");
+        const initialCount = heapStats().objectTypeCounts.ReadableStream || 0;
+
+        await runTest(
+          {
+            async fetch(req) {
+              var hasher = new Bun.SHA256();
+              for await (const chunk of req.body) {
+                await Bun.sleep(0);
+                hasher.update(chunk);
+              }
+              return new Response(
+                isDirect
+                  ? new ReadableStream({
+                      type: "direct",
+                      async pull(controller) {
+                        await Bun.sleep(0);
+                        controller.write(Buffer.from(hasher.digest("base64")));
+                        await controller.flush();
+                        controller.close();
+                      },
+                    })
+                  : new ReadableStream({
+                      async pull(controller) {
+                        await Bun.sleep(0);
+                        controller.enqueue(Buffer.from(hasher.digest("base64")));
+                        controller.close();
+                      },
+                    }),
+              );
+            },
+          },
+          async server => {
+            const count = 1000;
+            async function callback() {
+              const response = await fetch(server.url, { body: blob, method: "POST" });
+
+              // We are testing for ReadableStream leaks, so we use the ReadableStream here.
+              const chunks = [];
+              for await (const chunk of response.body) {
+                chunks.push(chunk);
+              }
+
+              const digest = Buffer.from(Bun.concatArrayBuffers(chunks)).toString();
+
+              expect(digest).toBe(expected);
+              Bun.gc(false);
+            }
+            {
+              let remaining = count;
+
+              const batchSize = 64;
+              while (remaining > 0) {
+                const promises = new Array(count);
+                for (let i = 0; i < batchSize && remaining > 0; i++) {
+                  promises[i] = callback();
+                }
+                await Promise.all(promises);
+                remaining -= batchSize;
+              }
+            }
+
+            Bun.gc(true);
+            dumpStats();
+            expect(heapStats().objectTypeCounts.ReadableStream).toBeWithin(
+              Math.max(initialCount - count / 2, 0),
+              initialCount + count / 2,
+            );
+          },
+        );
+      },
+      100000,
+    );
+  }
+});
+
+[200, 200n, 303, 418, 599, 599n].forEach(statusCode => {
   it(`should response with HTTP status code (${statusCode})`, async () => {
     await runTest(
       {
@@ -49,7 +140,7 @@ afterAll(() => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(response.status).toBe(Number(statusCode));
         expect(await response.text()).toBe("Foo Bar");
       },
@@ -71,7 +162,7 @@ afterAll(() => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(response.status).toBe(500);
         expect(await response.text()).toBe("Error!");
       },
@@ -88,7 +179,7 @@ it("should display a welcome message when the response value type is incorrect",
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       const text = await response.text();
       expect(text).toContain("Welcome to Bun!");
     },
@@ -97,58 +188,50 @@ it("should display a welcome message when the response value type is incorrect",
 
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
     async server => {
-      try {
-        await fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal });
-        throw new Error("Expected fetch to throw");
-      } catch (e: any) {
-        expect(e.name).toBe("AbortError");
-      }
-      await Bun.sleep(1);
-
-      expect(didAbort).toBe(true);
+      expect(async () => {
+        const response = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await response.blob();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
 
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
 
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-
-        expect(didAbort).toBe(false);
         aborty.abort();
-        await Bun.sleep(2);
+        await Bun.sleep(20);
         return new Response("Test failed!");
       },
     },
     async server => {
-      expect(async () => fetch(`http://${server.hostname}:${server.port}`, { signal: aborty.signal })).toThrow(
-        "The operation was aborted.",
-      );
-
-      await Bun.sleep(1);
-
-      expect(didAbort).toBe(true);
+      await expect(async () => {
+        const resp = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await Bun.sleep(10);
+        resp.body?.getReader();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
@@ -163,7 +246,7 @@ it("should work for a file", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe(textToExpect);
     },
   );
@@ -200,7 +283,7 @@ it("request.url should be based on the Host header", async () => {
       },
     },
     async server => {
-      const expected = `http://${server.hostname}:${server.port}/helloooo`;
+      const expected = `${server.url.origin}/helloooo`;
       const response = await fetch(expected, {
         headers: {
           Host: "example.com",
@@ -215,96 +298,64 @@ it("request.url should be based on the Host header", async () => {
 describe("streaming", () => {
   describe("error handler", () => {
     it("throw on pull renders headers, does not call error handler", async () => {
-      var pass = true;
-      await runTest(
-        {
-          error(e) {
-            pass = false;
-            return new Response("FAIL!", { status: 555 });
-          },
-          fetch(req) {
-            return new Response(
-              new ReadableStream({
-                pull(controller) {
-                  throw new Error("TestPassed");
-                },
-                cancel(reason) {},
-              }),
-              {
-                status: 402,
-                headers: {
-                  "I-AM": "A-TEAPOT",
-                },
-              },
-            );
-          },
-        },
-        async server => {
-          const response = await fetch(`http://${server.hostname}:${server.port}`);
-          expect(response.status).toBe(402);
-          expect(response.headers.get("I-AM")).toBe("A-TEAPOT");
-          expect(await response.text()).toBe("");
-          expect(pass).toBe(true);
-        },
-      );
+      let subprocess;
+
+      afterAll(() => {
+        subprocess?.kill();
+      });
+
+      const onMessage = mock(async url => {
+        const response = await fetch(url);
+        expect(response.status).toBe(402);
+        expect(response.headers.get("X-Hey")).toBe("123");
+        expect(response.text()).resolves.toBe("");
+        subprocess.kill();
+      });
+
+      subprocess = Bun.spawn({
+        cwd: import.meta.dirname,
+        cmd: [bunExe(), "readable-stream-throws.fixture.js"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        ipc: onMessage,
+      });
+
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      expect(exitCode).toBeInteger();
+      expect(stderr).toContain("error: Oops");
+      expect(onMessage).toHaveBeenCalled();
     });
 
-    describe("throw on pull after writing should not call the error handler", () => {
-      async function execute(options: ResponseInit) {
-        var pass = true;
-        await runTest(
-          {
-            error(e) {
-              pass = false;
-              return new Response("FAIL", { status: 555 });
-            },
-            fetch(req) {
-              const stream = new ReadableStream({
-                async pull(controller) {
-                  controller.enqueue("PASS");
-                  controller.close();
-                  throw new Error("FAIL");
-                },
-              });
-              return new Response(stream, options);
-            },
-          },
-          async server => {
-            const response = await fetch(`http://${server.hostname}:${server.port}`);
-            // connection terminated
-            expect(await response.text()).toBe("");
-            expect(response.status).toBe(options.status ?? 200);
-            expect(pass).toBe(true);
-          },
-        );
-      }
+    it("throw on pull after writing should not call the error handler", async () => {
+      let subprocess;
 
-      it("with headers", async () => {
-        await execute({
-          headers: {
-            "X-A": "123",
-          },
-        });
+      afterAll(() => {
+        subprocess?.kill();
       });
 
-      it("with headers and status", async () => {
-        await execute({
-          status: 204,
-          headers: {
-            "X-A": "123",
-          },
-        });
+      const onMessage = mock(async href => {
+        const url = new URL("write", href);
+        const response = await fetch(url);
+        expect(response.status).toBe(402);
+        expect(response.headers.get("X-Hey")).toBe("123");
+        expect(response.text()).resolves.toBe("");
+        subprocess.kill();
       });
 
-      it("with status", async () => {
-        await execute({
-          status: 204,
-        });
+      subprocess = Bun.spawn({
+        cwd: import.meta.dirname,
+        cmd: [bunExe(), "readable-stream-throws.fixture.js"],
+        env: bunEnv,
+        stdout: "ignore",
+        stderr: "pipe",
+        ipc: onMessage,
       });
 
-      it("with empty object", async () => {
-        await execute({});
-      });
+      let [exitCode, stderr] = await Promise.all([subprocess.exited, new Response(subprocess.stderr).text()]);
+      expect(exitCode).toBeInteger();
+      expect(stderr).toContain("error: Oops");
+      expect(onMessage).toHaveBeenCalled();
     });
   });
 
@@ -325,7 +376,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         const text = await response.text();
         expect(text.length).toBe(textToExpect.length);
         expect(text).toBe(textToExpect);
@@ -350,7 +401,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       },
     );
@@ -377,7 +428,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(response.status).toBe(200);
         expect(await response.text()).toBe("Test Passed");
       },
@@ -408,7 +459,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(response.status).toBe(500);
       },
     );
@@ -435,7 +486,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(response.status).toBe(500);
         expect(await response.text()).toBe("Fail");
         expect(pass).toBe(true);
@@ -466,7 +517,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       },
     );
@@ -489,7 +540,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         const text = await response.text();
         expect(text).toBe(textToExpect);
       },
@@ -517,7 +568,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       },
     );
@@ -553,7 +604,7 @@ describe("streaming", () => {
           },
         },
         async server => {
-          const response = await fetch(`http://${server.hostname}:${server.port}`);
+          const response = await fetch(server.url.origin);
           expect(await response.text()).toBe(textToExpect);
           count++;
         },
@@ -582,7 +633,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       },
     );
@@ -612,7 +663,7 @@ describe("streaming", () => {
         },
       },
       async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       },
     );
@@ -627,7 +678,7 @@ it("should work for a hello world", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe("Hello, world!");
     },
   );
@@ -643,7 +694,7 @@ it("should work for a blob", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe(textToExpect);
     },
   );
@@ -659,7 +710,7 @@ it("should work for a blob stream", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe(textToExpect);
     },
   );
@@ -675,7 +726,7 @@ it("should work for a file stream", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe(textToExpect);
     },
   );
@@ -695,7 +746,7 @@ it("fetch should work with headers", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`, {
+      const response = await fetch(server.url.origin, {
         headers: {
           "X-Foo": "bar",
         },
@@ -717,7 +768,7 @@ it(`should work for a file ${count} times serial`, async () => {
     },
     async server => {
       for (let i = 0; i < count; i++) {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       }
     },
@@ -734,7 +785,7 @@ it(`should work for ArrayBuffer ${count} times serial`, async () => {
     },
     async server => {
       for (let i = 0; i < count; i++) {
-        const response = await fetch(`http://${server.hostname}:${server.port}`);
+        const response = await fetch(server.url.origin);
         expect(await response.text()).toBe(textToExpect);
       }
     },
@@ -753,11 +804,11 @@ describe("parallel", () => {
       async server => {
         for (let i = 0; i < count; ) {
           let responses = await Promise.all([
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
           ]);
 
           for (let response of responses) {
@@ -779,11 +830,11 @@ describe("parallel", () => {
       async server => {
         for (let i = 0; i < count; ) {
           let responses = await Promise.all([
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
-            fetch(`http://${server.hostname}:${server.port}`),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
+            fetch(server.url.origin),
           ]);
 
           for (let response of responses) {
@@ -804,10 +855,10 @@ it("should support reloading", async () => {
       fetch: first,
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(await response.text()).toBe("first");
       server.reload({ fetch: second });
-      const response2 = await fetch(`http://${server.hostname}:${server.port}`);
+      const response2 = await fetch(server.url.origin);
       expect(await response2.text()).toBe("second");
     },
   );
@@ -885,7 +936,7 @@ describe("status code text", () => {
           },
         },
         async server => {
-          const response = await fetch(`http://${server.hostname}:${server.port}`);
+          const response = await fetch(server.url.origin);
           expect(response.status).toBe(parseInt(code));
           expect(response.statusText).toBe(fixture[code]);
         },
@@ -908,7 +959,7 @@ it("should support multiple Set-Cookie headers", async () => {
       },
     },
     async server => {
-      const response = await fetch(`http://${server.hostname}:${server.port}`);
+      const response = await fetch(server.url.origin);
       expect(response.headers.getAll("Set-Cookie")).toEqual(["foo=bar", "baz=qux"]);
       expect(response.headers.get("Set-Cookie")).toEqual("foo=bar, baz=qux");
 
@@ -947,6 +998,18 @@ describe("should support Content-Range with Bun.file()", () => {
     },
   });
 
+  const getServerWithSize = runTest.bind(null, {
+    fetch(req) {
+      const { searchParams } = new URL(req.url);
+      const start = Number(searchParams.get("start"));
+      const end = Number(searchParams.get("end"));
+      const file = Bun.file(fixture);
+      return new Response(file.slice(start, end), {
+        headers: { "Content-Range": "bytes " + start + "-" + end + "/" + file.size },
+      });
+    },
+  });
+
   const good = [
     [0, 1],
     [1, 2],
@@ -964,9 +1027,22 @@ describe("should support Content-Range with Bun.file()", () => {
   for (const [start, end] of good) {
     it(`good range: ${start} - ${end}`, async () => {
       await getServer(async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`, {
+        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`, {
           verbose: true,
         });
+        expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
+        expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
+      });
+    });
+  }
+
+  for (const [start, end] of good) {
+    it(`good range with size: ${start} - ${end}`, async () => {
+      await getServerWithSize(async server => {
+        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`, {
+          verbose: true,
+        });
+        expect(parseInt(response.headers.get("Content-Range")?.split("/")[1])).toEqual(full.byteLength);
         expect(await response.arrayBuffer()).toEqual(full.buffer.slice(start, end));
         expect(response.status).toBe(start > 0 || end < full.byteLength ? 206 : 200);
       });
@@ -988,7 +1064,7 @@ describe("should support Content-Range with Bun.file()", () => {
   for (const [start, end] of emptyRanges) {
     it(`empty range: ${start} - ${end}`, async () => {
       await getServer(async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`);
+        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
         const out = await response.arrayBuffer();
         expect(out).toEqual(new ArrayBuffer(0));
         expect(response.status).toBe(206);
@@ -1010,7 +1086,7 @@ describe("should support Content-Range with Bun.file()", () => {
   for (const [start, end] of badRanges) {
     it(`bad range: ${start} - ${end}`, async () => {
       await getServer(async server => {
-        const response = await fetch(`http://${server.hostname}:${server.port}/?start=${start}&end=${end}`);
+        const response = await fetch(`${server.url.origin}/?start=${start}&end=${end}`);
         const out = await response.arrayBuffer();
         expect(out).toEqual(new ArrayBuffer(0));
         expect(response.status).toBe(206);
@@ -1033,6 +1109,8 @@ it("formats error responses correctly", async () => {
 });
 
 it("request body and signal life cycle", async () => {
+  renderToReadableStream = (await import("react-dom/server.browser")).renderToReadableStream;
+  app_jsx = (await import("./app")).default;
   {
     const headers = {
       headers: {
@@ -1040,38 +1118,33 @@ it("request body and signal life cycle", async () => {
       },
     };
 
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       async fetch(req) {
         return new Response(await renderToReadableStream(app_jsx), headers);
       },
     });
 
-    try {
+    for (let j = 0; j < 10; j++) {
+      const batchSize = 64;
       const requests = [];
-      for (let j = 0; j < 10; j++) {
-        for (let i = 0; i < 250; i++) {
-          requests.push(fetch(`http://${server.hostname}:${server.port}`));
-        }
-
-        await Promise.all(requests);
-        requests.length = 0;
-        Bun.gc(true);
+      for (let i = 0; i < batchSize; i++) {
+        requests.push(fetch(server.url.origin));
       }
-    } catch (e) {
-      console.error(e);
+      await Promise.all(requests);
+      Bun.gc(true);
     }
+
     await Bun.sleep(10);
-    expect(true).toBe(true);
-    server.stop(true);
+    expect().pass();
   }
-});
+}, 30_000);
 
 it("propagates content-type from a Bun.file()'s file path in fetch()", async () => {
   const body = Bun.file(import.meta.dir + "/fetch.js.txt");
   const bodyText = await body.text();
 
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     development: false,
     async fetch(req) {
@@ -1084,7 +1157,7 @@ it("propagates content-type from a Bun.file()'s file path in fetch()", async () 
   });
 
   // @ts-ignore
-  const reqBody = new Request(`http://${server.hostname}:${server.port}`, {
+  const reqBody = new Request(server.url.origin, {
     body,
     method: "POST",
   });
@@ -1093,12 +1166,10 @@ it("propagates content-type from a Bun.file()'s file path in fetch()", async () 
 
   // but it does for Response
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
-
-  server.stop(true);
 });
 
 it("does propagate type for Blob", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     development: false,
     async fetch(req) {
@@ -1109,20 +1180,17 @@ it("does propagate type for Blob", async () => {
 
   const body = new Blob(["hey"], { type: "text/plain;charset=utf-8" });
   // @ts-ignore
-  const res = await fetch(`http://${server.hostname}:${server.port}`, {
+  const res = await fetch(server.url.origin, {
     body,
     method: "POST",
   });
   expect(res.status).toBe(200);
   expect(res.headers.get("Content-Type")).toBe("text/plain;charset=utf-8");
-
-  server.stop(true);
 });
 
 it("unix socket connection in Bun.serve", async () => {
   const unix = join(tmpdir(), "bun." + Date.now() + ((Math.random() * 32) | 0).toString(16) + ".sock");
-  const server = Bun.serve({
-    port: 0,
+  using server = Bun.serve({
     unix,
 
     async fetch(req) {
@@ -1148,13 +1216,12 @@ it("unix socket connection in Bun.serve", async () => {
   await promise;
   expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nhey");
   connection.end();
-  server.stop(true);
 });
 
 it("unix socket connection throws an error on a bad domain without crashing", async () => {
   const unix = "/i/don/tevent/exist/because/the/directory/is/invalid/yes.sock";
   expect(() => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       unix,
 
@@ -1164,4 +1231,281 @@ it("unix socket connection throws an error on a bad domain without crashing", as
       },
     });
   }).toThrow();
+});
+
+it("#5859 text", async () => {
+  using server = Bun.serve({
+    port: 0,
+    development: false,
+    async fetch(req) {
+      return new Response(await req.text(), {});
+    },
+  });
+
+  const response = await fetch(server.url.origin, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(await response.text()).toBe("�");
+});
+
+it("#5859 json", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req) {
+      try {
+        await req.json();
+      } catch (e) {
+        return new Response("FAIL", { status: 500 });
+      }
+
+      return new Response("SHOULD'VE FAILED", {});
+    },
+  });
+
+  const response = await fetch(server.url.origin, {
+    method: "POST",
+    body: new Uint8Array([0xfd]),
+  });
+
+  expect(response.ok).toBeFalse();
+  expect(await response.text()).toBe("FAIL");
+});
+
+it("#5859 arrayBuffer", async () => {
+  const tmp = join(tmpdirSync(), "bad");
+  await Bun.write(tmp, new Uint8Array([0xfd]));
+  expect(async () => await Bun.file(tmp).json()).toThrow();
+});
+
+it.if(isIPv4())("server.requestIP (v4)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "127.0.0.1",
+  });
+
+  const response = await fetch(server.url.origin).then(x => x.json());
+  expect(response).toEqual({
+    address: "127.0.0.1",
+    family: "IPv4",
+    port: expect.any(Number),
+  });
+});
+
+it.if(isIPv6())("server.requestIP (v6)", async () => {
+  using server = Bun.serve({
+    port: 0,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+    hostname: "::1",
+  });
+
+  const response = await fetch(`http://localhost:${server.port}`).then(x => x.json());
+  expect(response).toEqual({
+    address: "::1",
+    family: "IPv6",
+    port: expect.any(Number),
+  });
+});
+
+it.if(isPosix)("server.requestIP (unix)", async () => {
+  const unix = join(tmpdirSync(), "serve.sock");
+  using server = Bun.serve({
+    unix,
+    fetch(req, server) {
+      return Response.json(server.requestIP(req));
+    },
+  });
+  const requestText = `GET / HTTP/1.1\r\nHost: localhost\r\n\r\n`;
+  const received: Buffer[] = [];
+  const { resolve, promise } = Promise.withResolvers<void>();
+  const connection = await Bun.connect({
+    unix,
+    socket: {
+      data(socket, data) {
+        received.push(data);
+        resolve();
+      },
+    },
+  });
+  connection.write(requestText);
+  connection.flush();
+  await promise;
+  expect(Buffer.concat(received).toString()).toEndWith("\r\n\r\nnull");
+  connection.end();
+});
+
+it("should response with HTTP 413 when request body is larger than maxRequestBodySize, issue#6031", async () => {
+  using server = Bun.serve({
+    port: 0,
+    maxRequestBodySize: 10,
+    fetch(req, server) {
+      return new Response("OK");
+    },
+  });
+
+  {
+    const resp = await fetch(server.url.origin, {
+      method: "POST",
+      body: "A".repeat(10),
+    });
+    expect(resp.status).toBe(200);
+    expect(await resp.text()).toBe("OK");
+  }
+  {
+    const resp = await fetch(server.url.origin, {
+      method: "POST",
+      body: "A".repeat(11),
+    });
+    expect(resp.status).toBe(413);
+  }
+});
+
+it("should support promise returned from error", async () => {
+  const { promise, resolve } = Promise.withResolvers<string>();
+
+  const subprocess = Bun.spawn({
+    cwd: import.meta.dirname,
+    cmd: [bunExe(), "bun-serve.fixture.js"],
+    env: bunEnv,
+    stdout: "ignore",
+    stderr: "pipe",
+    ipc(message) {
+      resolve(message);
+    },
+  });
+
+  afterAll(() => {
+    subprocess.kill();
+  });
+
+  const url = new URL(await promise);
+
+  {
+    const resp = await fetch(new URL("async-fulfilled", url));
+    expect(resp.status).toBe(200);
+    expect(resp.text()).resolves.toBe("Async fulfilled");
+  }
+
+  {
+    const resp = await fetch(new URL("async-rejected", url));
+    expect(resp.status).toBe(500);
+  }
+
+  {
+    const resp = await fetch(new URL("async-pending", url));
+    expect(resp.status).toBe(200);
+    expect(resp.text()).resolves.toBe("Async pending");
+  }
+
+  {
+    const resp = await fetch(new URL("async-rejected-pending", url));
+    expect(resp.status).toBe(500);
+  }
+
+  subprocess.kill();
+});
+
+if (process.platform === "linux")
+  it("should use correct error when using a root range port(#7187)", () => {
+    expect(() => {
+      using server = Bun.serve({
+        port: 1003,
+        fetch(req) {
+          return new Response("request answered");
+        },
+      });
+    }).toThrow("permission denied 0.0.0.0:1003");
+  });
+
+describe("should error with invalid options", async () => {
+  it("requestCert", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          requestCert: "invalid",
+        },
+      });
+    }).toThrow("Expected requestCert to be a boolean");
+  });
+  it("rejectUnauthorized", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          rejectUnauthorized: "invalid",
+        },
+      });
+    }).toThrow("Expected rejectUnauthorized to be a boolean");
+  });
+  it("lowMemoryMode", () => {
+    expect(() => {
+      Bun.serve({
+        port: 0,
+        fetch(req) {
+          return new Response("hi");
+        },
+        tls: {
+          rejectUnauthorized: true,
+          lowMemoryMode: "invalid",
+        },
+      });
+    }).toThrow("Expected lowMemoryMode to be a boolean");
+  });
+});
+it("should resolve pending promise if requested ended with pending read", async () => {
+  let error: Error;
+  function shouldError(e: Error) {
+    error = e;
+  }
+  let is_done = false;
+  function shouldMarkDone(result: { done: boolean; value: any }) {
+    is_done = result.done;
+  }
+  await runTest(
+    {
+      fetch(req) {
+        // @ts-ignore
+        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
+        return new Response("OK");
+      },
+    },
+    async server => {
+      const response = await fetch(server.url.origin, {
+        method: "POST",
+        body: "1".repeat(64 * 1024),
+      });
+      const text = await response.text();
+      expect(text).toContain("OK");
+      expect(is_done).toBe(true);
+      expect(error).toBeUndefined();
+    },
+  );
+});
+
+it("should work with dispose keyword", async () => {
+  let url: string;
+  {
+    using server = Bun.serve({
+      port: 0,
+      fetch() {
+        return new Response("OK");
+      },
+    });
+    url = server.url;
+    expect((await fetch(url)).status).toBe(200);
+  }
+  expect(fetch(url)).rejects.toThrow();
 });

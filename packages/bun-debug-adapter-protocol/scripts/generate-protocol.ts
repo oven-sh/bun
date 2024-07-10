@@ -5,7 +5,7 @@ import { spawnSync } from "node:child_process";
 run().catch(console.error);
 
 async function run() {
-  const cwd = new URL("../protocol/", import.meta.url);
+  const cwd = new URL("../src/protocol/", import.meta.url);
   const runner = "Bun" in globalThis ? "bunx" : "npx";
   const write = (name: string, data: string) => {
     const path = new URL(name, cwd);

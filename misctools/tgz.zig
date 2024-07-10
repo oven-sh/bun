@@ -37,7 +37,7 @@ pub fn main() anyerror!void {
         Global.exit(1);
     }
 
-    var tarball_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var tarball_path_buf: bun.PathBuffer = undefined;
     var basename = std.fs.path.basename(bun.asByteSlice(args[args.len - 1]));
     while (RecognizedExtensions.has(std.fs.path.extension(basename))) {
         basename = basename[0 .. basename.len - std.fs.path.extension(basename).len];
@@ -47,7 +47,7 @@ pub fn main() anyerror!void {
         bun.asByteSlice(args[args.len - 1]),
     };
 
-    const tarball_path = path_handler.joinAbsStringBuf(try std.process.getCwdAlloc(std.heap.c_allocator), &tarball_path_buf, &parts, .auto);
+    const tarball_path = path_handler.joinAbsStringBuf(try bun.getcwdAlloc(std.heap.c_allocator), &tarball_path_buf, &parts, .auto);
     Output.prettyErrorln("Tarball Path: {s}", .{tarball_path});
     var folder = basename;
 
@@ -88,8 +88,9 @@ pub fn main() anyerror!void {
         null,
         void,
         void{},
-        1,
-        false,
-        false,
+        .{
+            .depth_to_skip = 1,
+            .close_handles = false,
+        },
     );
 }

@@ -23,19 +23,28 @@
 #include "root.h"
 
 #include <JavaScriptCore/JSGlobalObject.h>
-#include "wtf/NeverDestroyed.h"
+#include <wtf/NeverDestroyed.h>
 
 #include "BufferEncodingType.h"
-#include "Buffer.h"
+#include "headers-handwritten.h"
 
+extern "C" JSC::EncodedJSValue JSBuffer__bufferFromLength(JSC::JSGlobalObject* lexicalGlobalObject, int64_t length);
+extern "C" JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator);
+extern "C" JSC::EncodedJSValue Bun__encoding__toString(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject, Encoding encoding);
+extern "C" JSC::EncodedJSValue Bun__encoding__toStringUTF8(const uint8_t* input, size_t len, JSC::JSGlobalObject* globalObject);
+extern "C" bool Bun__Buffer_fill(ZigString*, void*, size_t, WebCore::BufferEncodingType);
 extern "C" bool JSBuffer__isBuffer(JSC::JSGlobalObject*, JSC::EncodedJSValue);
-void toBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSUint8Array* uint8Array);
-JSC::JSValue makeBuffer(JSC::JSGlobalObject* lexicalGlobalObject, unsigned int byteLength);
-JSC::JSValue makeBufferUnsafe(JSC::JSGlobalObject* lexicalGlobalObject, unsigned int byteLength);
 
 namespace WebCore {
 
-JSC::EncodedJSValue constructSlowBuffer(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame);
+JSC::JSUint8Array* createUninitializedBuffer(JSC::JSGlobalObject* lexicalGlobalObject, size_t length);
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const uint8_t* data, size_t length);
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const Vector<uint8_t>& data);
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const std::span<const uint8_t> data);
+JSC::JSUint8Array* createBuffer(JSC::JSGlobalObject* lexicalGlobalObject, const char* ptr, size_t length);
+JSC::JSUint8Array* createEmptyBuffer(JSC::JSGlobalObject* lexicalGlobalObject);
+
+JSC_DECLARE_HOST_FUNCTION(constructSlowBuffer);
 JSC::JSObject* createBufferPrototype(JSC::VM&, JSC::JSGlobalObject*);
 JSC::Structure* createBufferStructure(JSC::VM&, JSC::JSGlobalObject*, JSC::JSValue prototype);
 JSC::JSObject* createBufferConstructor(JSC::VM&, JSC::JSGlobalObject*, JSC::JSObject* bufferPrototype);

@@ -1,50 +1,115 @@
-import { dns } from "bun";
+import { SystemError, dns } from "bun";
 import { describe, expect, it, test } from "bun:test";
 import { withoutAggressiveGC } from "harness";
+import { isIP, isIPv4, isIPv6 } from "node:net";
 
-describe("dns.lookup", () => {
-  const backends = [process.platform === "darwin" ? "system" : undefined, "libc", "c-ares"].filter(x => !!x) as (
-    | "system"
-    | "libc"
-    | "c-ares"
-  )[];
-  for (let backend of backends) {
-    it(backend + " parallell x 10", async () => {
-      const promises = [];
-      for (let i = 0; i < 10; i++) {
-        promises.push(dns.lookup("localhost", { backend }));
-      }
-      const results = (await Promise.all(promises)).flat();
-      withoutAggressiveGC(() => {
-        for (let { family, address } of results) {
-          if (family === 4) {
-            expect(address).toBe("127.0.0.1");
-          } else if (family === 6) {
-            expect(address).toBe("::1");
-          } else {
-            throw new Error("Unknown family");
+const backends = ["system", "libc", "c-ares"];
+const validHostnames = ["localhost", "example.com"];
+const invalidHostnames = ["adsfa.asdfasdf.asdf.com"]; // known invalid
+const malformedHostnames = [" ", ".", " .", "localhost:80", "this is not a hostname"];
+const isWindows = process.platform === "win32";
+describe("dns", () => {
+  describe.each(backends)("lookup() [backend: %s]", backend => {
+    describe.each(validHostnames)("%s", hostname => {
+      test.each([
+        {
+          options: { backend },
+          address: isIP,
+        },
+        {
+          options: { backend, family: 4 },
+          address: isIPv4,
+          family: 4,
+        },
+        {
+          options: { backend, family: "IPv4" },
+          address: isIPv4,
+          family: 4,
+        },
+        {
+          options: { backend, family: 6 },
+          address: isIPv6,
+          family: 6,
+        },
+        {
+          options: { backend, family: "IPv6" },
+          address: isIPv6,
+          family: 6,
+        },
+        {
+          options: { backend, family: 0 },
+          address: isIP,
+        },
+        {
+          options: { backend, family: "any" },
+          address: isIP,
+        },
+      ])("%j", async ({ options, address: expectedAddress, family: expectedFamily }) => {
+        // this behavior matchs nodejs
+        const expect_to_fail =
+          isWindows &&
+          backend !== "c-ares" &&
+          (options.family === "IPv6" || options.family === 6) &&
+          hostname !== "localhost";
+        if (expect_to_fail) {
+          try {
+            // @ts-expect-error
+            await dns.lookup(hostname, options);
+            expect.unreachable();
+          } catch (err: unknown) {
+            expect(err).toBeDefined();
+            expect((err as SystemError).code).toBe("DNS_ENOTFOUND");
           }
+          return;
+        }
+        // @ts-expect-error
+        const result = await dns.lookup(hostname, options);
+        expect(result).toBeArray();
+        expect(result.length).toBeGreaterThan(0);
+        withoutAggressiveGC(() => {
+          for (const { family, address, ttl } of result) {
+            expect(address).toBeString();
+            expect(expectedAddress(address)).toBeTruthy();
+            expect(family).toBeInteger();
+            if (expectedFamily !== undefined) {
+              expect(family).toBe(expectedFamily);
+            }
+            expect(ttl).toBeInteger();
+          }
+        });
+      });
+    });
+    test.each(validHostnames)("%s [parallel x 10]", async hostname => {
+      const results = await Promise.all(
+        // @ts-expect-error
+        Array.from({ length: 10 }, () => dns.lookup(hostname, { backend })),
+      );
+      const answers = results.flat();
+      expect(answers).toBeArray();
+      expect(answers.length).toBeGreaterThanOrEqual(10);
+      withoutAggressiveGC(() => {
+        for (const { family, address, ttl } of answers) {
+          expect(address).toBeString();
+          expect(isIP(address)).toBeTruthy();
+          expect(family).toBeInteger();
+          expect(ttl).toBeInteger();
         }
       });
     });
-
-    it(backend + " remote", async () => {
-      const [first, second] = await dns.lookup("google.com", { backend });
-      console.log(first, second);
-    });
-    it(backend + " local", async () => {
-      const [first, second] = await dns.lookup("localhost", { backend });
-      console.log(first, second);
+    test.each(invalidHostnames)("%s", hostname => {
+      // @ts-expect-error
+      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+        code: "DNS_ENOTFOUND",
+        name: "DNSException",
+      });
     });
 
-    it(backend + " failing domain throws an error without taking a very long time", async () => {
-      try {
-        await dns.lookup("yololololololo1234567.com", { backend });
-        throw 42;
-      } catch (e: any) {
-        expect(typeof e).not.toBe("number");
-        expect(e.code).toBe("DNS_ENOTFOUND");
-      }
+    test.each(malformedHostnames)("'%s'", hostname => {
+      // @ts-expect-error
+      expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
+        code: "DNS_ENOTFOUND",
+        name: "DNSException",
+      });
     });
-  }
+  });
 });

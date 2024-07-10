@@ -1,6 +1,7 @@
 //
 // this file is a copy of Wyhash from the zig standard library, version v0.11.0-dev.2609+5e19250a1
 //
+const assert = if (@hasDecl(@import("root"), "bun")) (@import("root").bun).assert else @import("std").debug.assert;
 
 const std = @import("std");
 const mem = std.mem;
@@ -15,7 +16,7 @@ const primes = [_]u64{
 
 fn read_bytes(comptime bytes: u8, data: []const u8) u64 {
     const T = std.meta.Int(.unsigned, 8 * bytes);
-    return mem.readIntLittle(T, data[0..bytes]);
+    return mem.readInt(T, data[0..bytes], .little);
 }
 
 fn read_8bytes_swapped(data: []const u8) u64 {
@@ -51,7 +52,7 @@ const WyhashStateless = struct {
     }
 
     inline fn round(self: *WyhashStateless, b: []const u8) void {
-        std.debug.assert(b.len == 32);
+        assert(b.len == 32);
 
         self.seed = mix0(
             read_bytes(8, b[0..]),
@@ -65,19 +66,19 @@ const WyhashStateless = struct {
     }
 
     pub inline fn update(self: *WyhashStateless, b: []const u8) void {
-        std.debug.assert(b.len % 32 == 0);
+        assert(b.len % 32 == 0);
 
         var off: usize = 0;
         while (off < b.len) : (off += 32) {
             self.round(b[off .. off + 32]);
-            // @call(.always_inline, self.round, .{b[off .. off + 32]});
+            // @call(bun.callmod_inline, self.round, .{b[off .. off + 32]});
         }
 
         self.msg_len += b.len;
     }
 
     pub inline fn final(self: *WyhashStateless, b: []const u8) u64 {
-        std.debug.assert(b.len < 32);
+        assert(b.len < 32);
 
         const seed = self.seed;
         const rem_len = @as(u5, @intCast(b.len));
@@ -127,34 +128,34 @@ const WyhashStateless = struct {
 
         var c = WyhashStateless.init(seed);
         c.update(input[0..aligned_len]);
-        // @call(.always_inline, c.update, .{input[0..aligned_len]});
+        // @call(bun.callmod_inline, c.update, .{input[0..aligned_len]});
         return c.final(input[aligned_len..]);
-        // return @call(.always_inline, c.final, .{input[aligned_len..]});
+        // return @call(bun.callmod_inline, c.final, .{input[aligned_len..]});
     }
 };
 
 /// Fast non-cryptographic 64bit hash function.
 /// See https://github.com/wangyi-fudan/wyhash
-pub const Wyhash = struct {
+pub const Wyhash11 = struct {
     state: WyhashStateless,
 
     buf: [32]u8,
     buf_len: usize,
 
-    pub fn init(seed: u64) Wyhash {
-        return Wyhash{
+    pub fn init(seed: u64) Wyhash11 {
+        return Wyhash11{
             .state = WyhashStateless.init(seed),
             .buf = undefined,
             .buf_len = 0,
         };
     }
 
-    pub fn update(self: *Wyhash, b: []const u8) void {
+    pub fn update(self: *Wyhash11, b: []const u8) void {
         var off: usize = 0;
 
         if (self.buf_len != 0 and self.buf_len + b.len >= 32) {
             off += 32 - self.buf_len;
-            mem.copy(u8, self.buf[self.buf_len..], b[0..off]);
+            mem.copyForwards(u8, self.buf[self.buf_len..], b[0..off]);
             self.state.update(self.buf[0..]);
             self.buf_len = 0;
         }
@@ -163,11 +164,11 @@ pub const Wyhash = struct {
         const aligned_len = remain_len - (remain_len % 32);
         self.state.update(b[off .. off + aligned_len]);
 
-        mem.copy(u8, self.buf[self.buf_len..], b[off + aligned_len ..]);
+        mem.copyForwards(u8, self.buf[self.buf_len..], b[off + aligned_len ..]);
         self.buf_len += @as(u8, @intCast(b[off + aligned_len ..].len));
     }
 
-    pub fn final(self: *Wyhash) u64 {
+    pub fn final(self: *Wyhash11) u64 {
         const rem_key = self.buf[0..self.buf_len];
 
         return self.state.final(rem_key);

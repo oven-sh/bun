@@ -88,4 +88,42 @@ describe("escapeHTML", () => {
     expect(escapeHTML(" ".repeat(32) + "😊lo")).toBe(" ".repeat(32) + "😊lo");
     expect(escapeHTML(" ".repeat(32) + "lo😊")).toBe(" ".repeat(32) + "lo😊");
   });
+
+  it("bad input doesn't crash", () => {
+    escapeHTML("a".repeat(512) + String.fromCodePoint(0xd800));
+
+    for (let i = 0; i < 768; i++) {
+      escapeHTML("\xff" + "a".repeat(i));
+      escapeHTML(String.fromCodePoint(0xd800) + "a".repeat(i));
+      escapeHTML("a".repeat(i) + String.fromCodePoint(0xd800));
+      escapeHTML(String.fromCodePoint(0xd800).repeat(i));
+      escapeHTML("\xff" + String.fromCodePoint(0xd800).repeat(i));
+      escapeHTML("\xff".repeat(i) + String.fromCodePoint(0xd800));
+      escapeHTML(String.fromCodePoint(0xd800) + "\xff".repeat(i));
+    }
+  });
+
+  it("fuzz latin1", () => {
+    for (let i = 0; i < 256; i++) {
+      const initial = Buffer.alloc(i + 1, "a");
+      for (let j = 0; j < i; j++) {
+        const clone = Buffer.from(initial);
+        clone[j] = ">".charCodeAt(0);
+        Bun.escapeHTML(clone.toString());
+      }
+    }
+  });
+
+  it("fuzz utf16", () => {
+    for (let i = 0; i < 256; i++) {
+      const initial = new Uint16Array(i);
+      initial.fill("a".charCodeAt(0));
+
+      for (let j = 0; j < i; j++) {
+        const clone = Buffer.from(initial);
+        clone[j] = ">".charCodeAt(0);
+        Bun.escapeHTML(clone.toString("utf16le"));
+      }
+    }
+  });
 });

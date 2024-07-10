@@ -267,13 +267,16 @@ JSC::JSValue toJS(JSC::JSGlobalObject* state, JSDOMGlobalObject* globalObject, E
         // #endif
     case WorkerEventTargetInterfaceType:
         return toJS(state, globalObject, static_cast<Worker&>(impl));
-        //     case WorkletGlobalScopeEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<WorkletGlobalScope&>(impl));
-        //     case XMLHttpRequestEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<XMLHttpRequest&>(impl));
-        //     case XMLHttpRequestUploadEventTargetInterfaceType:
-        //         return toJS(state, globalObject, static_cast<XMLHttpRequestUpload&>(impl));
-        //     }
+    //     case WorkletGlobalScopeEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<WorkletGlobalScope&>(impl));
+    //     case XMLHttpRequestEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<XMLHttpRequest&>(impl));
+    //     case XMLHttpRequestUploadEventTargetInterfaceType:
+    //         return toJS(state, globalObject, static_cast<XMLHttpRequestUpload&>(impl));
+    //     }
+    default: {
+        break;
+    }
     }
     return wrap(state, globalObject, impl);
 }

@@ -1,8 +1,13 @@
+#pragma once
+
 #include "root.h"
 #include "headers-handwritten.h"
 
-#include "JavaScriptCore/JSCInlines.h"
+#include <JavaScriptCore/JSCInlines.h>
 #include "BunClientData.h"
+
+BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject);
 
 namespace Zig {
 class GlobalObject;
@@ -39,6 +44,7 @@ union OnLoadResultValue {
 struct OnLoadResult {
     OnLoadResultValue value;
     OnLoadResultType type;
+    bool wasMock;
 };
 
 class PendingVirtualModuleResult : public JSC::JSInternalFieldObjectImpl<3> {
@@ -58,7 +64,7 @@ public:
     }
 
     JS_EXPORT_PRIVATE static PendingVirtualModuleResult* create(VM&, Structure*);
-    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer);
+    static PendingVirtualModuleResult* create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleMock);
     static PendingVirtualModuleResult* createWithInitialValues(VM&, Structure*);
     static Structure* createStructure(VM&, JSGlobalObject*, JSValue);
 
@@ -78,26 +84,32 @@ public:
 
     PendingVirtualModuleResult(JSC::VM&, JSC::Structure*);
     void finishCreation(JSC::VM&, const WTF::String& specifier, const WTF::String& referrer);
+
+    bool wasModuleMock = false;
 };
 
-OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue);
 JSValue fetchESMSourceCodeSync(
     Zig::GlobalObject* globalObject,
+    JSValue spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer);
+    BunString* referrer,
+    BunString* typeAttribute);
 
 JSValue fetchESMSourceCodeAsync(
     Zig::GlobalObject* globalObject,
+    JSValue spceifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer);
+    BunString* referrer,
+    BunString* typeAttribute);
 
 JSValue fetchCommonJSModule(
     Zig::GlobalObject* globalObject,
     JSCommonJSModule* moduleObject,
     JSValue specifierValue,
     BunString* specifier,
-    BunString* referrer);
+    BunString* referrer,
+    BunString* typeAttribute);
 
 } // namespace Bun

@@ -1,43 +1,49 @@
 #include "_NativeModule.h"
 
 #include "ExceptionOr.h"
-#include "JavaScriptCore/APICast.h"
-#include "JavaScriptCore/AggregateError.h"
-#include "JavaScriptCore/BytecodeIndex.h"
-#include "JavaScriptCore/CallFrameInlines.h"
-#include "JavaScriptCore/ClassInfo.h"
-#include "JavaScriptCore/CodeBlock.h"
-#include "JavaScriptCore/Completion.h"
-#include "JavaScriptCore/DeferTermination.h"
-#include "JavaScriptCore/Error.h"
-#include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/HeapSnapshotBuilder.h"
-#include "JavaScriptCore/JIT.h"
-#include "JavaScriptCore/JSBasePrivate.h"
-#include "JavaScriptCore/JSCInlines.h"
-#include "JavaScriptCore/JSONObject.h"
-#include "JavaScriptCore/JavaScript.h"
-#include "JavaScriptCore/ObjectConstructor.h"
-#include "JavaScriptCore/SamplingProfiler.h"
-#include "JavaScriptCore/TestRunnerUtils.h"
-#include "JavaScriptCore/VMTrapsInlines.h"
+#include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSNativeStdFunction.h"
 #include "MessagePort.h"
 #include "SerializedScriptValue.h"
-#include "wtf/FileSystem.h"
-#include "wtf/MemoryFootprint.h"
-#include "wtf/text/WTFString.h"
+#include <JavaScriptCore/APICast.h>
+#include <JavaScriptCore/AggregateError.h>
+#include <JavaScriptCore/BytecodeIndex.h>
+#include <JavaScriptCore/CallFrameInlines.h>
+#include <JavaScriptCore/ClassInfo.h>
+#include <JavaScriptCore/CodeBlock.h>
+#include <JavaScriptCore/Completion.h>
+#include <JavaScriptCore/DeferTermination.h>
+#include <JavaScriptCore/Error.h>
+#include <JavaScriptCore/ErrorInstance.h>
+#include <JavaScriptCore/HeapSnapshotBuilder.h>
+#include <JavaScriptCore/JIT.h>
+#include <JavaScriptCore/JSBasePrivate.h>
+#include <JavaScriptCore/JSCInlines.h>
+#include <JavaScriptCore/JSONObject.h>
+#include <JavaScriptCore/JSPromise.h>
+#include <JavaScriptCore/JavaScript.h>
+#include <JavaScriptCore/ObjectConstructor.h>
+#include <JavaScriptCore/SamplingProfiler.h>
+#include <JavaScriptCore/TestRunnerUtils.h>
+#include <JavaScriptCore/VMTrapsInlines.h>
+#include <wtf/FileSystem.h>
+#include <wtf/MemoryFootprint.h>
+#include <wtf/text/WTFString.h>
 
-#include "Process.h"
+#include "BunProcess.h"
 #include <JavaScriptCore/SourceProviderCache.h>
 #if ENABLE(REMOTE_INSPECTOR)
-#include "JavaScriptCore/RemoteInspectorServer.h"
+#include <JavaScriptCore/RemoteInspectorServer.h>
 #endif
 
 #include "JSDOMConvertBase.h"
 #include "ZigSourceProvider.h"
 #include "mimalloc.h"
 
-#include "JavaScriptCore/ControlFlowProfiler.h"
+#include <JavaScriptCore/ControlFlowProfiler.h>
 
 using namespace JSC;
 using namespace WTF;
@@ -91,8 +97,10 @@ JSC_DEFINE_HOST_FUNCTION(functionStartRemoteDebugger,
   if (!server.start(reinterpret_cast<const char *>(host), port)) {
     throwVMError(
         globalObject, scope,
-        createError(globalObject, "Failed to start server \""_s + host + ":"_s +
-                                      port + "\". Is port already in use?"_s));
+        createError(globalObject,
+                    makeString("Failed to start server \""_s,
+                               reinterpret_cast<const unsigned char *>(host),
+                               ":"_s, port, "\". Is port already in use?"_s)));
     return JSC::JSValue::encode(JSC::jsUndefined());
   }
 
@@ -194,7 +202,6 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
                          (JSGlobalObject * globalObject, CallFrame *)) {
 
   auto &vm = globalObject->vm();
-  JSC::DisallowGC disallowGC;
 
   // this is a C API function
   auto *stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
@@ -204,6 +211,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
     ASSERT(heapSizeValue.isNumber());
     if (heapSizeValue.toInt32(globalObject) == 0) {
       vm.heap.collectNow(Sync, CollectionScope::Full);
+      JSC::DisallowGC disallowGC;
       stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
     }
   }
@@ -238,7 +246,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCreateMemoryFootprint,
                   &peak_rss, &current_commit, &peak_commit, &page_faults);
 
   // mi_process_info produces incorrect rss size on linux.
-  Zig::getRSS(&current_rss);
+  Bun::getRSS(&current_rss);
 
   VM &vm = globalObject->vm();
   JSC::JSObject *object = JSC::constructEmptyObject(
@@ -413,7 +421,6 @@ JSC_DECLARE_HOST_FUNCTION(functionGetProtectedObjects);
 JSC_DEFINE_HOST_FUNCTION(functionGetProtectedObjects,
                          (JSGlobalObject * globalObject, CallFrame *)) {
   MarkedArgumentBuffer list;
-  size_t result = 0;
   globalObject->vm().heap.forEachProtectedCell(
       [&](JSCell *cell) { list.append(cell); });
   RELEASE_ASSERT(!list.hasOverflowed());
@@ -466,9 +473,6 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject,
   String timeZoneName = callFrame->argument(0).toWTFString(globalObject);
   RETURN_IF_EXCEPTION(scope, encodedJSValue());
 
-  double time = callFrame->argument(1).toNumber(globalObject);
-  RETURN_IF_EXCEPTION(scope, encodedJSValue());
-
   if (!WTF::setTimeZoneOverride(timeZoneName)) {
     throwTypeError(globalObject, scope,
                    makeString("Invalid timezone: \""_s, timeZoneName, "\""_s));
@@ -477,7 +481,7 @@ JSC_DEFINE_HOST_FUNCTION(functionSetTimeZone, (JSGlobalObject * globalObject,
   vm.dateCache.resetIfNecessarySlow();
   WTF::Vector<UChar, 32> buffer;
   WTF::getTimeZoneOverride(buffer);
-  WTF::String timeZoneString(buffer.data(), buffer.size());
+  WTF::String timeZoneString({buffer.data(), buffer.size()});
   return JSValue::encode(jsString(vm, timeZoneString));
 }
 
@@ -488,6 +492,18 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject,
       vm.ensureSamplingProfiler(WTF::Stopwatch::create());
 
   JSC::JSValue callbackValue = callFrame->argument(0);
+  JSC::JSValue sampleValue = callFrame->argument(1);
+
+  MarkedArgumentBuffer args;
+
+  if (callFrame->argumentCount() > 2) {
+    size_t count = callFrame->argumentCount();
+    args.ensureCapacity(count - 2);
+    for (size_t i = 2; i < count; i++) {
+      args.append(callFrame->argument(i));
+    }
+  }
+
   auto throwScope = DECLARE_THROW_SCOPE(vm);
   if (callbackValue.isUndefinedOrNull() || !callbackValue.isCallable()) {
     throwException(
@@ -498,48 +514,87 @@ JSC_DEFINE_HOST_FUNCTION(functionRunProfiler, (JSGlobalObject * globalObject,
 
   JSC::JSFunction *function = jsCast<JSC::JSFunction *>(callbackValue);
 
-  JSC::JSValue sampleValue = callFrame->argument(1);
   if (sampleValue.isNumber()) {
     unsigned sampleInterval = sampleValue.toUInt32(globalObject);
     samplingProfiler.setTimingInterval(
         Seconds::fromMicroseconds(sampleInterval));
   }
 
+  const auto report = [](JSC::VM &vm,
+                         JSC::JSGlobalObject *globalObject) -> JSC::JSValue {
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto &samplingProfiler = *vm.samplingProfiler();
+    StringPrintStream topFunctions;
+    samplingProfiler.reportTopFunctions(topFunctions);
+
+    StringPrintStream byteCodes;
+    samplingProfiler.reportTopBytecodes(byteCodes);
+
+    JSValue stackTraces = JSONParse(
+        globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
+
+    samplingProfiler.shutdown();
+    RETURN_IF_EXCEPTION(throwScope, {});
+
+    JSObject *result =
+        constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
+    result->putDirect(vm, Identifier::fromString(vm, "functions"_s),
+                      jsString(vm, topFunctions.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s),
+                      jsString(vm, byteCodes.toString()));
+    result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s),
+                      stackTraces);
+
+    return result;
+  };
+  const auto reportFailure = [](JSC::VM &vm) -> JSC::JSValue {
+    if (auto *samplingProfiler = vm.samplingProfiler()) {
+      samplingProfiler->pause();
+      samplingProfiler->shutdown();
+      samplingProfiler->clearData();
+    }
+
+    return {};
+  };
+
   JSC::CallData callData = JSC::getCallData(function);
-  MarkedArgumentBuffer args;
 
   samplingProfiler.noticeCurrentThreadAsJSCExecutionThread();
   samplingProfiler.start();
-  JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
-  samplingProfiler.pause();
-  if (throwScope.exception()) {
-    samplingProfiler.shutdown();
-    samplingProfiler.clearData();
-    return JSValue::encode(JSValue{});
+  JSValue returnValue =
+      JSC::call(globalObject, function, callData, JSC::jsUndefined(), args);
+
+  if (returnValue.isEmpty() || throwScope.exception()) {
+    return JSValue::encode(reportFailure(vm));
   }
 
-  StringPrintStream topFunctions;
-  samplingProfiler.reportTopFunctions(topFunctions);
+  if (auto *promise = jsDynamicCast<JSPromise *>(returnValue)) {
+    auto afterOngoingPromiseCapability =
+        JSC::JSPromise::create(vm, globalObject->promiseStructure());
+    RETURN_IF_EXCEPTION(throwScope, {});
 
-  StringPrintStream byteCodes;
-  samplingProfiler.reportTopBytecodes(byteCodes);
+    JSNativeStdFunction *resolve = JSNativeStdFunction::create(
+        vm, globalObject, 0, "resolve"_s,
+        [report](JSGlobalObject *globalObject, CallFrame *callFrame) {
+          return JSValue::encode(JSPromise::resolvedPromise(
+              globalObject, report(globalObject->vm(), globalObject)));
+        });
+    JSNativeStdFunction *reject = JSNativeStdFunction::create(
+        vm, globalObject, 0, "reject"_s,
+        [reportFailure](JSGlobalObject *globalObject, CallFrame *callFrame) {
+          EnsureStillAliveScope error = callFrame->argument(0);
+          auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+          reportFailure(globalObject->vm());
+          throwException(globalObject, scope, error.value());
+          return JSValue::encode(jsUndefined());
+        });
+    promise->performPromiseThen(globalObject, resolve, reject,
+                                afterOngoingPromiseCapability);
+    return JSValue::encode(afterOngoingPromiseCapability);
+  }
 
-  JSValue stackTraces = JSONParse(
-      globalObject, samplingProfiler.stackTracesAsJSON()->toJSONString());
-
-  samplingProfiler.shutdown();
-  samplingProfiler.clearData();
-
-  JSObject *result =
-      constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
-  result->putDirect(vm, Identifier::fromString(vm, "functions"_s),
-                    jsString(vm, topFunctions.toString()));
-  result->putDirect(vm, Identifier::fromString(vm, "bytecodes"_s),
-                    jsString(vm, byteCodes.toString()));
-  result->putDirect(vm, Identifier::fromString(vm, "stackTraces"_s),
-                    stackTraces);
-
-  return JSValue::encode(result);
+  return JSValue::encode(report(vm, globalObject));
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionGenerateHeapSnapshotForDebugging);
@@ -653,7 +708,7 @@ JSC_DEFINE_HOST_FUNCTION(functionDeserialize, (JSGlobalObject * globalObject,
   RELEASE_AND_RETURN(throwScope, JSValue::encode(result));
 }
 
-extern "C" EncodedJSValue ByteRangeMapping__findExecutedLines(
+extern "C" JSC::EncodedJSValue ByteRangeMapping__findExecutedLines(
     JSC::JSGlobalObject *, BunString sourceURL, BasicBlockRange *ranges,
     size_t len, size_t functionOffset, bool ignoreSourceMap);
 
@@ -746,7 +801,7 @@ JSC_DEFINE_HOST_FUNCTION(functionCodeCoverageForFile,
 namespace Zig {
 DEFINE_NATIVE_MODULE(BunJSC)
 {
-    INIT_NATIVE_MODULE(33);
+    INIT_NATIVE_MODULE(34);
 
     putNativeFn(Identifier::fromString(vm, "callerSourceOrigin"_s), functionCallerSourceOrigin);
     putNativeFn(Identifier::fromString(vm, "jscDescribe"_s), functionDescribe);

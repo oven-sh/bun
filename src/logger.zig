@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("root").bun.JSC;
+const js = bun.JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
 const bun = @import("root").bun;
 const string = bun.string;
@@ -12,12 +12,12 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
@@ -84,6 +84,10 @@ pub const Loc = struct {
         return loc.start == other.start;
     }
 
+    pub inline fn isEmpty(this: Loc) bool {
+        return eql(this, Empty);
+    }
+
     pub fn jsonStringify(self: *const Loc, writer: anytype) !void {
         return try writer.write(self.start);
     }
@@ -102,15 +106,11 @@ pub const Location = struct {
     pub fn count(this: Location, builder: *StringBuilder) void {
         builder.count(this.file);
         builder.count(this.namespace);
-        if (this.line_text) |text| builder.count(text[0..@min(text.len, 690)]);
+        if (this.line_text) |text| builder.count(text);
         if (this.suggestion) |text| builder.count(text);
     }
 
     pub fn clone(this: Location, allocator: std.mem.Allocator) !Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(this.namespace);
-        bun.assertDefined(this.file);
-
         return Location{
             .file = try allocator.dupe(u8, this.file),
             .namespace = this.namespace,
@@ -124,10 +124,6 @@ pub const Location = struct {
     }
 
     pub fn cloneWithBuilder(this: Location, string_builder: *StringBuilder) Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(this.namespace);
-        bun.assertDefined(this.file);
-
         return Location{
             .file = string_builder.append(this.file),
             .namespace = this.namespace,
@@ -141,9 +137,6 @@ pub const Location = struct {
     }
 
     pub fn toAPI(this: *const Location) Api.Location {
-        bun.assertDefined(this.file);
-        bun.assertDefined(this.namespace);
-
         return Api.Location{
             .file = this.file,
             .namespace = this.namespace,
@@ -159,10 +152,6 @@ pub const Location = struct {
     pub fn deinit(_: *Location, _: std.mem.Allocator) void {}
 
     pub fn init(file: string, namespace: string, line: i32, column: i32, length: u32, line_text: ?string, suggestion: ?string) Location {
-        // mostly to catch undefined memory
-        bun.assertDefined(file);
-        bun.assertDefined(namespace);
-
         return Location{
             .file = file,
             .namespace = namespace,
@@ -175,36 +164,43 @@ pub const Location = struct {
         };
     }
 
-    pub fn init_or_nil(_source: ?*const Source, r: Range) ?Location {
+    pub fn initOrNull(_source: ?*const Source, r: Range) ?Location {
         if (_source) |source| {
-            var data = source.initErrorPosition(r.loc);
+            if (r.isEmpty()) {
+                return Location{
+                    .file = source.path.text,
+                    .namespace = source.path.namespace,
+                    .line = -1,
+                    .column = -1,
+                    .length = 0,
+                    .line_text = "",
+                    .offset = 0,
+                };
+            }
+            const data = source.initErrorPosition(r.loc);
             var full_line = source.contents[data.line_start..data.line_end];
             if (full_line.len > 80 + data.column_count) {
                 full_line = full_line[@max(data.column_count, 40) - 40 .. @min(data.column_count + 40, full_line.len - 40) + 40];
             }
-
-            bun.assertDefined(source.path.text);
-            bun.assertDefined(source.path.namespace);
-            bun.assertDefined(full_line);
 
             return Location{
                 .file = source.path.text,
                 .namespace = source.path.namespace,
                 .line = usize2Loc(data.line_count).start,
                 .column = usize2Loc(data.column_count).start,
-                .length = full_line.len,
-                .line_text = full_line,
+                .length = if (r.len > -1) @as(u32, @intCast(r.len)) else 1,
+                .line_text = std.mem.trimLeft(u8, full_line, "\n\r"),
                 .offset = @as(usize, @intCast(@max(r.loc.start, 0))),
             };
-        } else {
-            return null;
         }
+        return null;
     }
 };
 
 pub const Data = struct {
     text: string,
     location: ?Location = null,
+
     pub fn deinit(d: *Data, allocator: std.mem.Allocator) void {
         if (d.location) |*loc| {
             loc.deinit(allocator);
@@ -217,7 +213,7 @@ pub const Data = struct {
         if (!should or this.location == null or this.location.?.line_text == null)
             return this;
 
-        var new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
+        const new_line_text = try allocator.dupe(u8, this.location.?.line_text.?);
         var new_location = this.location.?;
         new_location.line_text = new_line_text;
         return Data{
@@ -257,23 +253,63 @@ pub const Data = struct {
         to: anytype,
         kind: Kind,
         comptime enable_ansi_colors: bool,
-        comptime is_note: bool,
     ) !void {
         if (this.text.len == 0) return;
 
         const message_color = switch (kind) {
             .err => comptime Output.color_map.get("b").?,
-            .note => comptime Output.color_map.get("cyan").? ++ Output.color_map.get("d").?,
+            .note => comptime Output.color_map.get("blue").?,
             else => comptime Output.color_map.get("d").? ++ Output.color_map.get("b").?,
         };
 
         const color_name: string = switch (kind) {
             .err => comptime Output.color_map.get("red").?,
-            .note => comptime Output.color_map.get("cyan").?,
+            .note => comptime Output.color_map.get("blue").?,
             else => comptime Output.color_map.get("d").?,
         };
 
-        try to.writeAll("\n\n");
+        if (this.location) |*location| {
+            if (location.line_text) |line_text_| {
+                const line_text_right_trimmed = std.mem.trimRight(u8, line_text_, " \r\n\t");
+                const line_text = std.mem.trimLeft(u8, line_text_right_trimmed, "\n\r");
+                if (location.column > -1 and line_text.len > 0) {
+                    var line_offset_for_second_line: usize = @intCast(location.column - 1);
+
+                    if (location.line > -1) {
+                        switch (kind == .err or kind == .warn) {
+                            inline else => |bold| try to.print(
+                                // bold the line number for error but dim for the attached note
+                                if (bold)
+                                    comptime Output.prettyFmt("<b>{d} | <r>", enable_ansi_colors)
+                                else
+                                    comptime Output.prettyFmt("<d>{d} | <r>", enable_ansi_colors),
+                                .{
+                                    location.line,
+                                },
+                            ),
+                        }
+
+                        line_offset_for_second_line += std.fmt.count("{d} | ", .{location.line});
+                    }
+
+                    try to.print("{}\n", .{bun.fmt.fmtJavaScript(line_text, enable_ansi_colors)});
+
+                    try to.writeByteNTimes(' ', line_offset_for_second_line);
+                    if ((comptime enable_ansi_colors) and message_color.len > 0) {
+                        try to.writeAll(message_color);
+                        try to.writeAll(color_name);
+                        // always bold the ^
+                        try to.writeAll(comptime Output.color_map.get("b").?);
+
+                        try to.writeByte('^');
+
+                        try to.writeAll("\x1b[0m\n");
+                    } else {
+                        try to.writeAll("^\n");
+                    }
+                }
+            }
+        }
 
         if (comptime enable_ansi_colors) {
             try to.writeAll(color_name);
@@ -281,113 +317,42 @@ pub const Data = struct {
 
         try to.writeAll(kind.string());
 
-        try std.fmt.format(to, comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
+        try to.print(comptime Output.prettyFmt("<r><d>: <r>", enable_ansi_colors), .{});
 
         if (comptime enable_ansi_colors) {
             try to.writeAll(message_color);
         }
 
-        try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>\n", enable_ansi_colors), .{this.text});
+        try to.print(comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{this.text});
 
-        if (this.location) |location| {
-            if (location.line_text) |line_text_| {
-                const line_text = std.mem.trimRight(u8, line_text_, "\r\n\t");
-
-                const location_in_line_text = @as(u32, @intCast(@max(location.column, 1) - 1));
-                const has_position = location.column > -1 and line_text.len > 0 and location_in_line_text < line_text.len;
-
-                if (has_position) {
-                    if (comptime enable_ansi_colors) {
-                        const is_colored = message_color.len > 0;
-
-                        const before_segment = line_text[0..location_in_line_text];
-
-                        try to.writeAll(before_segment);
-                        if (is_colored) {
-                            try to.writeAll(color_name);
-                        }
-
-                        const rest_of_line = line_text[location_in_line_text..];
-
-                        if (rest_of_line.len > 0) {
-                            var end_of_segment: usize = 1;
-                            var iter = strings.CodepointIterator.initOffset(rest_of_line, 1);
-                            // extremely naive: we should really use IsIdentifierContinue || isIdentifierStart here
-
-                            // highlight until we reach the next matching
-                            switch (line_text[location_in_line_text]) {
-                                '\'' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('\'');
-                                },
-                                '"' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('"');
-                                },
-                                '<' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('>');
-                                },
-                                '`' => {
-                                    end_of_segment = iter.scanUntilQuotedValueOrEOF('`');
-                                },
-                                else => {},
-                            }
-                            try to.writeAll(rest_of_line[0..end_of_segment]);
-                            if (is_colored) {
-                                try to.writeAll("\x1b[0m");
-                            }
-
-                            try to.writeAll(rest_of_line[end_of_segment..]);
-                        } else if (is_colored) {
-                            try to.writeAll("\x1b[0m");
-                        }
-                    } else {
-                        try to.writeAll(line_text);
-                    }
-
-                    try to.writeAll("\n");
-
-                    try to.writeByteNTimes(' ', location_in_line_text);
-                    if (comptime enable_ansi_colors) {
-                        const is_colored = message_color.len > 0;
-                        if (is_colored) {
-                            try to.writeAll(message_color);
-                            try to.writeAll(color_name);
-                            // always bold the ^
-                            try to.writeAll(comptime Output.color_map.get("b").?);
-                        }
-
-                        try to.writeByte('^');
-
-                        if (is_colored) {
-                            try to.writeAll("\x1b[0m\n");
-                        }
-                    } else {
-                        try to.writeAll("^\n");
-                    }
-                }
-            }
-
+        if (this.location) |*location| {
             if (location.file.len > 0) {
-                if (comptime enable_ansi_colors) {
-                    if (!is_note and kind == .err) {
-                        try to.writeAll(comptime Output.color_map.get("b").?);
-                    } else {}
-                }
+                try to.writeAll("\n");
+                try to.writeByteNTimes(' ', (kind.string().len + ": ".len) - "at ".len);
 
-                try std.fmt.format(to, comptime Output.prettyFmt("{s}<r>", enable_ansi_colors), .{
+                try to.print(comptime Output.prettyFmt("<d>at <r><cyan>{s}<r>", enable_ansi_colors), .{
                     location.file,
                 });
 
                 if (location.line > -1 and location.column > -1) {
-                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                    try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r><d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
                         location.column,
-                        location.offset,
                     });
                 } else if (location.line > -1) {
-                    try std.fmt.format(to, comptime Output.prettyFmt("<d>:<r><yellow>{d}<r> <d>{d}<r>", enable_ansi_colors), .{
+                    try to.print(comptime Output.prettyFmt("<d>:<r><yellow>{d}<r>", enable_ansi_colors), .{
                         location.line,
-                        location.offset,
                     });
+                }
+
+                if (Environment.isDebug) {
+                    // comptime magic: do not print byte when using Bun.inspect, but only print
+                    // when you the writer is to a file (like standard out)
+                    if ((comptime std.mem.indexOf(u8, @typeName(@TypeOf(to)), "fs.file") != null) and Output.enable_ansi_colors_stderr) {
+                        try to.print(comptime Output.prettyFmt(" <d>byte={d}<r>", enable_ansi_colors), .{
+                            location.offset,
+                        });
+                    }
                 }
             }
         }
@@ -497,7 +462,7 @@ pub const Msg = struct {
             Api.MessageData,
             notes_len,
         );
-        var msg = Api.Message{
+        const msg = Api.Message{
             .level = this.kind.toAPI(),
             .data = this.data.toAPI(),
             .notes = _notes,
@@ -533,7 +498,10 @@ pub const Msg = struct {
             for (notes) |*note| {
                 note.deinit(allocator);
             }
+
+            allocator.free(notes);
         }
+
         msg.notes = null;
     }
 
@@ -542,11 +510,17 @@ pub const Msg = struct {
         to: anytype,
         comptime enable_ansi_colors: bool,
     ) !void {
-        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors, false);
+        try msg.data.writeFormat(to, msg.kind, enable_ansi_colors);
 
         if (msg.notes) |notes| {
+            if (notes.len > 0) {
+                try to.writeAll("\n");
+            }
+
             for (notes) |note| {
-                try note.writeFormat(to, .note, enable_ansi_colors, true);
+                try to.writeAll("\n");
+
+                try note.writeFormat(to, .note, enable_ansi_colors);
             }
         }
     }
@@ -593,6 +567,7 @@ pub const Msg = struct {
 pub const Range = struct {
     loc: Loc = Loc.Empty,
     len: i32 = 0,
+
     pub const None = Range{ .loc = Loc.Empty, .len = 0 };
 
     pub fn in(this: Range, buf: []const u8) []const u8 {
@@ -662,11 +637,11 @@ pub const Log = struct {
     }
 
     pub const Level = enum(i8) {
-        verbose,
-        debug,
-        info,
-        warn,
-        err,
+        verbose, // 0
+        debug, // 1
+        info, // 2
+        warn, //  3
+        err, // 4
 
         pub fn atLeast(this: Level, other: Level) bool {
             return @intFromEnum(this) <= @intFromEnum(other);
@@ -688,6 +663,19 @@ pub const Log = struct {
             .{ "warn", Level.warn },
             .{ "error", Level.err },
         });
+
+        pub fn fromJS(globalThis: *JSC.JSGlobalObject, value: JSC.JSValue) !?Level {
+            if (value == .zero or value == .undefined) {
+                return null;
+            }
+
+            if (!value.isString()) {
+                globalThis.throwInvalidArguments("Expected logLevel to be a string", .{});
+                return error.JSError;
+            }
+
+            return Map.fromJS(globalThis, value);
+        }
     };
 
     pub fn init(allocator: std.mem.Allocator) Log {
@@ -703,7 +691,19 @@ pub const Log = struct {
         };
     }
 
+    pub fn addDebugFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        if (!Kind.shouldPrint(.debug, log.level)) return;
+
+        @setCold(true);
+        try log.addMsg(.{
+            .kind = .debug,
+            .data = try rangeData(source, Range{ .loc = l }, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+        });
+    }
+
     pub fn addVerbose(log: *Log, source: ?*const Source, loc: Loc, text: string) !void {
+        if (!Kind.shouldPrint(.verbose, log.level)) return;
+
         @setCold(true);
         try log.addMsg(.{
             .kind = .verbose,
@@ -741,7 +741,7 @@ pub const Log = struct {
 
     pub fn toJSArray(this: Log, global: *JSC.JSGlobalObject, allocator: std.mem.Allocator) JSC.JSValue {
         const msgs: []const Msg = this.msgs.items;
-        var errors_stack: [256]*anyopaque = undefined;
+        const errors_stack: [256]*anyopaque = undefined;
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         var arr = JSC.JSValue.createEmptyArray(global, count);
@@ -770,7 +770,7 @@ pub const Log = struct {
             var note_i: usize = 0;
             for (self.msgs.items) |*msg| {
                 if (msg.notes) |current_notes| {
-                    var start_note_i: usize = note_i;
+                    const start_note_i: usize = note_i;
                     for (current_notes) |note| {
                         notes[note_i] = note;
                         note_i += 1;
@@ -799,14 +799,7 @@ pub const Log = struct {
             var string_builder = StringBuilder{};
             var notes_count: usize = 0;
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items) |msg| {
                     msg.count(&string_builder);
 
                     if (msg.notes) |notes| {
@@ -820,14 +813,7 @@ pub const Log = struct {
             var note_i: usize = 0;
 
             {
-                var i: usize = 0;
-                var j: usize = other.msgs.items.len - self.msgs.items.len;
-
-                while (i < self.msgs.items.len) : ({
-                    i += 1;
-                    j += 1;
-                }) {
-                    const msg: Msg = self.msgs.items[i];
+                for (self.msgs.items, (other.msgs.items.len - self.msgs.items.len)..) |msg, j| {
                     other.msgs.items[j] = msg.cloneWithBuilder(notes_buf[note_i..], &string_builder);
                     note_i += (msg.notes orelse &[_]Data{}).len;
                 }
@@ -1008,14 +994,18 @@ pub const Log = struct {
         });
     }
 
-    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime text: string, args: anytype) !void {
+    pub fn addRangeErrorFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
         try log.addMsg(.{
             .kind = .err,
-            .data = try rangeData(source, r, allocPrint(allocator, text, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
             .notes = notes,
         });
+    }
+
+    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
     }
 
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
@@ -1096,6 +1086,41 @@ pub const Log = struct {
         });
     }
 
+    pub fn addRangeWarningFmtWithNotes(log: *Log, source: ?*const Source, r: Range, allocator: std.mem.Allocator, notes: []Data, comptime fmt: string, args: anytype) !void {
+        @setCold(true);
+        log.warnings += 1;
+        try log.addMsg(.{
+            .kind = .warn,
+            .data = try rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable).cloneLineText(log.clone_line_text, log.msgs.allocator),
+            .notes = notes,
+        });
+    }
+
+    pub fn addRangeErrorFmtWithNote(
+        log: *Log,
+        source: ?*const Source,
+        r: Range,
+        allocator: std.mem.Allocator,
+        comptime fmt: string,
+        args: anytype,
+        comptime note_fmt: string,
+        note_args: anytype,
+        note_range: Range,
+    ) !void {
+        @setCold(true);
+        if (!Kind.shouldPrint(.err, log.level)) return;
+        log.errors += 1;
+
+        var notes = try allocator.alloc(Data, 1);
+        notes[0] = rangeData(source, note_range, allocPrint(allocator, note_fmt, note_args) catch unreachable);
+
+        try log.addMsg(.{
+            .kind = .err,
+            .data = rangeData(source, r, allocPrint(allocator, fmt, args) catch unreachable),
+            .notes = notes,
+        });
+    }
+
     pub fn addWarning(log: *Log, source: ?*const Source, l: Loc, text: string) !void {
         @setCold(true);
         if (!Kind.shouldPrint(.warn, log.level)) return;
@@ -1163,17 +1188,6 @@ pub const Log = struct {
     }
 
     pub inline fn addMsg(self: *Log, msg: Msg) !void {
-        if (comptime Environment.allow_assert) {
-            if (msg.notes) |notes| {
-                bun.assertDefined(notes);
-                for (notes) |note| {
-                    bun.assertDefined(note.text);
-                    if (note.location) |loc| {
-                        bun.assertDefined(loc);
-                    }
-                }
-            }
-        }
         try self.msgs.append(msg);
     }
 
@@ -1208,42 +1222,51 @@ pub const Log = struct {
     }
 
     pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
-        var printed = false;
-
+        var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top
             // errors at the bottom
             // This is so if you're reading from a terminal
             // and there are a bunch of warnings
             // You can more easily see where the errors are
-
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind != .err) {
                     if (msg.kind.shouldPrint(self.level)) {
+                        if (needs_newline) try to.writeAll("\n\n");
                         try msg.writeFormat(to, enable_ansi_colors);
-                        printed = true;
+                        needs_newline = true;
                     }
                 }
             }
 
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind == .err) {
                     if (msg.kind.shouldPrint(self.level)) {
+                        if (needs_newline) try to.writeAll("\n\n");
                         try msg.writeFormat(to, enable_ansi_colors);
-                        printed = true;
+                        needs_newline = true;
                     }
                 }
             }
         } else {
-            for (self.msgs.items) |msg| {
+            for (self.msgs.items) |*msg| {
                 if (msg.kind.shouldPrint(self.level)) {
+                    if (needs_newline) try to.writeAll("\n\n");
                     try msg.writeFormat(to, enable_ansi_colors);
-                    printed = true;
+                    needs_newline = true;
                 }
             }
         }
 
-        if (printed) _ = try to.write("\n");
+        if (needs_newline) _ = try to.write("\n");
+    }
+
+    pub fn printForLogLevelColorsRuntime(self: *Log, to: anytype, enable_ansi_colors: bool) !void {
+        if (enable_ansi_colors) {
+            return self.printForLogLevelWithEnableAnsiColors(to, true);
+        } else {
+            return self.printForLogLevelWithEnableAnsiColors(to, false);
+        }
     }
 
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
@@ -1273,7 +1296,7 @@ pub const Source = struct {
 
     index: Index = Index.source(0),
 
-    pub fn fmtIdentifier(this: *const Source) strings.FormatValidIdentifier {
+    pub fn fmtIdentifier(this: *const Source) bun.fmt.FormatValidIdentifier {
         return this.path.name.fmtIdentifier();
     }
 
@@ -1282,7 +1305,7 @@ pub const Source = struct {
             return this.identifier_name;
         }
 
-        std.debug.assert(this.path.text.len > 0);
+        bun.assert(this.path.text.len > 0);
         const name = try this.path.name.nonUniqueNameString(allocator);
         this.identifier_name = name;
         return name;
@@ -1335,7 +1358,7 @@ pub const Source = struct {
     }
 
     pub fn initPathString(pathString: string, contents: string) Source {
-        var path = fs.Path.init(pathString);
+        const path = fs.Path.init(pathString);
         return Source{ .key_path = path, .path = path, .contents = contents };
     }
 
@@ -1368,7 +1391,7 @@ pub const Source = struct {
 
         if (quote == '"' or quote == '\'') {
             var i: usize = 1;
-            var c: u8 = undefined;
+            var c: u8 = 0;
             while (i < text.len) {
                 c = text[i];
 
@@ -1396,9 +1419,10 @@ pub const Source = struct {
         return Range{ .loc = loc };
     }
 
-    pub fn initErrorPosition(self: *const Source, _offset: Loc) ErrorPosition {
+    pub fn initErrorPosition(self: *const Source, offset_loc: Loc) ErrorPosition {
+        bun.assert(!offset_loc.isEmpty());
         var prev_code_point: i32 = 0;
-        var offset: usize = @min(if (_offset.start < 0) 0 else @as(usize, @intCast(_offset.start)), @max(self.contents.len, 1) - 1);
+        const offset: usize = @min(@as(usize, @intCast(offset_loc.start)), @max(self.contents.len, 1) - 1);
 
         const contents = self.contents;
 
@@ -1470,5 +1494,5 @@ pub const Source = struct {
 };
 
 pub fn rangeData(source: ?*const Source, r: Range, text: string) Data {
-    return Data{ .text = text, .location = Location.init_or_nil(source, r) };
+    return Data{ .text = text, .location = Location.initOrNull(source, r) };
 }

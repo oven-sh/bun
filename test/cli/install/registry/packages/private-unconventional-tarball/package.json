@@ -1,0 +1,39 @@
+{
+	"name": "private-unconventional-tarball",
+	"versions": {
+		"1.0.0": {
+			"name": "private-unconventional-tarball",
+			"version": "1.0.0",
+			"_id": "private-unconventional-tarball@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-Ii1tbHdsZBPgmFM+St5XvVxWJNM1Eo9B4ox+56+PIdwdZIADtRA6FFvCbv22HdksnTZXKdtnlyJT/4RZkOvOYg==",
+				"shasum": "98435da277bd90198de4e01438868873168bca1a",
+				"tarball": "http://localhost:4873/private-unconventional-tarball/-/private-unconventional-tarball-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:30.692Z",
+		"created": "2023-11-01T22:05:30.692Z",
+		"1.0.0": "2023-11-01T22:05:30.692Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"private-unconventional-tarball-1.0.0.tgz": {
+			"shasum": "98435da277bd90198de4e01438868873168bca1a",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-d878273c601bcb20",
+	"_id": "private-unconventional-tarball",
+	"readme": "ERROR: No README data found!"
+}

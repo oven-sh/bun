@@ -1,0 +1,42 @@
+{
+	"name": "one-range-dep-too",
+	"versions": {
+		"1.0.0": {
+			"name": "one-range-dep-too",
+			"version": "1.0.0",
+			"dependencies": {
+				"no-deps": "^1.0.0"
+			},
+			"_id": "one-range-dep-too@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-WJ5OcM5uEEVKnZsdsiTkQyzAmZj9RVIII+tl7xR5Wcf85UkVWIP6i0ZSGo0GAbAfI+XnpJkPX7uAQqTOUrRddA==",
+				"shasum": "0b585118737ce3a9e632e7555cbf74e5af029793",
+				"tarball": "http://localhost:4873/one-range-dep-too/-/one-range-dep-too-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:26.663Z",
+		"created": "2023-11-01T22:05:26.663Z",
+		"1.0.0": "2023-11-01T22:05:26.663Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-range-dep-too-1.0.0.tgz": {
+			"shasum": "0b585118737ce3a9e632e7555cbf74e5af029793",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-295e2bd39b0317a2",
+	"_id": "one-range-dep-too",
+	"readme": "ERROR: No README data found!"
+}

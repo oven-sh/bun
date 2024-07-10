@@ -11,21 +11,20 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const clap = @import("../src/deps/zig-clap/clap.zig");
-const AsyncIO = @import("root").bun.AsyncIO;
 
 const URL = @import("../src/url.zig").URL;
-const Headers = @import("root").bun.HTTP.Headers;
+const Headers = bun.http.Headers;
 const Method = @import("../src/http/method.zig").Method;
 const ColonListType = @import("../src/cli/colon_list_type.zig").ColonListType;
 const HeadersTuple = ColonListType(string, noop_resolver);
 const path_handler = @import("../src/resolver/resolve_path.zig");
-const NetworkThread = @import("root").bun.HTTP.NetworkThread;
-const HTTP = @import("root").bun.HTTP;
+const NetworkThread = bun.http.NetworkThread;
+const HTTP = bun.http;
 fn noop_resolver(in: string) !string {
     return in;
 }
 
-var waker: AsyncIO.Waker = undefined;
+var waker: bun.Async.Waker = undefined;
 
 fn spamMe(count: usize) void {
     Output.Source.configureNamedThread("1");
@@ -41,7 +40,7 @@ fn spamMe(count: usize) void {
 const thread_count = 1;
 pub fn machMain(runs: usize) anyerror!void {
     defer Output.flush();
-    waker = try AsyncIO.Waker.init(bun.default_allocator);
+    waker = try bun.Async.Waker.init(bun.default_allocator);
 
     var args = try std.process.argsAlloc(bun.default_allocator);
     const count = std.fmt.parseInt(usize, args[args.len - 1], 10) catch 1024;
@@ -70,7 +69,7 @@ pub fn machMain(runs: usize) anyerror!void {
 
     Output.prettyErrorln("[EVFILT_MACHPORT] Recv {any}", .{bun.fmt.fmtDuration(elapsed)});
 }
-var user_waker: AsyncIO.UserFilterWaker = undefined;
+var user_waker: bun.Async.UserFilterWaker = undefined;
 
 fn spamMeUserFilter(count: usize) void {
     Output.Source.configureNamedThread("2");
@@ -85,7 +84,7 @@ fn spamMeUserFilter(count: usize) void {
 }
 pub fn userMain(runs: usize) anyerror!void {
     defer Output.flush();
-    user_waker = try AsyncIO.UserFilterWaker.init(bun.default_allocator);
+    user_waker = try bun.Async.UserFilterWaker.init(bun.default_allocator);
 
     var args = try std.process.argsAlloc(bun.default_allocator);
     const count = std.fmt.parseInt(usize, args[args.len - 1], 10) catch 1024;
@@ -127,11 +126,11 @@ pub fn main() anyerror!void {
     Output.prettyErrorln("For {d} messages and {d} threads:", .{ count, thread_count });
     Output.flush();
     defer Output.flush();
-    const runs = if (std.os.getenv("RUNS")) |run_count| try std.fmt.parseInt(usize, run_count, 10) else 1;
+    const runs = if (std.posix.getenv("RUNS")) |run_count| try std.fmt.parseInt(usize, run_count, 10) else 1;
 
-    if (std.os.getenv("NO_MACH") == null)
+    if (std.posix.getenv("NO_MACH") == null)
         try machMain(runs);
 
-    if (std.os.getenv("NO_USER") == null)
+    if (std.posix.getenv("NO_USER") == null)
         try userMain(runs);
 }

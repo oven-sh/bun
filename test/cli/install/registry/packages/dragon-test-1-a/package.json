@@ -1,0 +1,39 @@
+{
+	"name": "dragon-test-1-a",
+	"versions": {
+		"1.0.0": {
+			"name": "dragon-test-1-a",
+			"version": "1.0.0",
+			"_id": "dragon-test-1-a@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-kztUHk7vRb6buxO34xezbi7nyXRhJjxLR39+Df5cQeE8QlOu9ppkjBkoahxkfxn7ceJZO0ukH8mpk4u0U6leeg==",
+				"shasum": "92b62509c96abafe534232175b7739c1f75dc58f",
+				"tarball": "http://localhost:4873/dragon-test-1-a/-/dragon-test-1-a-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:01.718Z",
+		"created": "2023-11-01T22:05:01.718Z",
+		"1.0.0": "2023-11-01T22:05:01.718Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"dragon-test-1-a-1.0.0.tgz": {
+			"shasum": "92b62509c96abafe534232175b7739c1f75dc58f",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-e27190220485b8a2",
+	"_id": "dragon-test-1-a",
+	"readme": "ERROR: No README data found!"
+}

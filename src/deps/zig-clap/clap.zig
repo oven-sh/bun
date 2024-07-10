@@ -1,10 +1,12 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 const debug = std.debug;
 const heap = std.heap;
 const io = std.io;
 const mem = std.mem;
 const testing = std.testing;
+const Output = @import("../../output.zig");
 
 pub const args = @import("clap/args.zig");
 
@@ -208,27 +210,36 @@ pub const Diagnostic = struct {
 
     /// Default diagnostics reporter when all you want is English with no colors.
     /// Use this as a reference for implementing your own if needed.
-    pub fn report(diag: Diagnostic, stream: anytype, err: anyerror) !void {
-        const Arg = struct {
-            prefix: []const u8,
-            name: []const u8,
-        };
-        const a = if (diag.name.short) |*c|
-            Arg{ .prefix = "-", .name = @as(*const [1]u8, c)[0..] }
-        else if (diag.name.long) |l|
-            Arg{ .prefix = "--", .name = l }
-        else
-            Arg{ .prefix = "", .name = diag.arg };
+    pub fn report(diag: Diagnostic, _: anytype, err: anyerror) !void {
+        var name_buf: [1024]u8 = undefined;
+        const name = if (diag.name.short) |s| short: {
+            name_buf[0] = '-';
+            name_buf[1] = s;
+            name_buf[2] = 0;
+            break :short name_buf[0..2];
+        } else if (diag.name.long) |l| long: {
+            name_buf[0] = '-';
+            name_buf[1] = '-';
+            const long = l[0..@min(l.len, name_buf.len - 2)];
+            @memcpy(name_buf[2..][0..long.len], long);
+            break :long name_buf[0 .. 2 + long.len];
+        } else diag.arg;
 
         switch (err) {
-            error.DoesntTakeValue => try stream.print("The argument '{s}{s}' does not take a value\n", .{ a.prefix, a.name }),
-            error.MissingValue => try stream.print("The argument '{s}{s}' requires a value but none was supplied\n", .{ a.prefix, a.name }),
-            error.InvalidArgument => if (a.prefix.len > 0 and a.name.len > 0)
-                try stream.print("Invalid argument '{s}{s}'\n", .{ a.prefix, a.name })
-            else
-                try stream.print("Failed to parse argument due to unexpected single dash\n", .{}),
-            else => try stream.print("Error while parsing arguments: {s}\n", .{@errorName(err)}),
+            error.DoesntTakeValue => {
+                Output.prettyErrorln("<red>error<r><d>:<r> The argument '{s}' does not take a value.", .{name});
+            },
+            error.MissingValue => {
+                Output.prettyErrorln("<red>error<r><d>:<r> The argument '{s}' requires a value but none was supplied.", .{name});
+            },
+            error.InvalidArgument => {
+                Output.prettyErrorln("<red>error<r><d>:<r> Invalid Argument '{s}'", .{name});
+            },
+            else => {
+                Output.prettyErrorln("<red>error<r><d>:<r> {s} while parsing argument '{s}'", .{ @errorName(err), name });
+            },
         }
+        Output.flush();
     }
 };
 
@@ -241,7 +252,7 @@ fn testDiag(diag: Diagnostic, err: anyerror, expected: []const u8) void {
 
 pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
     return struct {
-        arena: @import("root").bun.ArenaAllocator,
+        arena: bun.ArenaAllocator,
         clap: ComptimeClap(Id, params),
         exe_arg: ?[]const u8,
 
@@ -353,11 +364,15 @@ pub fn helpFull(
         if (param.names.short == null and param.names.long == null)
             continue;
 
-        var cs = io.countingWriter(stream);
-        try stream.print("\t", .{});
-        try printParam(cs.writer(), Id, param, Error, context, valueText);
-        try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
-        try stream.print("\t{s}\n", .{try helpText(context, param)});
+        const help_text = try helpText(context, param);
+        // only print flag if description is defined
+        if (help_text.len > 0) {
+            var cs = io.countingWriter(stream);
+            try stream.print("\t", .{});
+            try printParam(cs.writer(), Id, param, Error, context, valueText);
+            try stream.writeByteNTimes(' ', max_spacing - @as(usize, @intCast(cs.bytes_written)));
+            try stream.print("\t{s}\n", .{try helpText(context, param)});
+        }
     }
 }
 
@@ -426,6 +441,99 @@ pub fn helpEx(
         Context.help,
         Context.value,
     );
+}
+
+pub fn simplePrintParam(param: Param(Help)) !void {
+    Output.pretty("\n", .{});
+    if (param.names.short) |s| {
+        Output.pretty("  <cyan>-{c}<r>", .{s});
+    } else {
+        Output.pretty("    ", .{});
+    }
+    if (param.names.long) |l| {
+        if (param.names.short) |_| {
+            Output.pretty(", ", .{});
+        } else {
+            Output.pretty("  ", .{});
+        }
+
+        Output.pretty("<cyan>--{s}<r>", .{l});
+    } else {
+        Output.pretty("    ", .{});
+    }
+}
+
+pub fn simpleHelp(
+    params: []const Param(Help),
+) void {
+    const max_spacing = blk: {
+        var res: usize = 2;
+        for (params) |param| {
+            const flags_len = if (param.names.long) |l| l.len else 0;
+            if (res < flags_len)
+                res = flags_len;
+        }
+
+        break :blk res;
+    };
+
+    for (params) |param| {
+        if (param.names.short == null and param.names.long == null)
+            continue;
+
+        const desc_text = getHelpSimple(param);
+        if (desc_text.len == 0) continue;
+
+        // create a string with spaces_len spaces
+        const default_allocator = bun.default_allocator;
+
+        const flags_len = if (param.names.long) |l| l.len else 0;
+        const num_spaces_after = max_spacing - flags_len;
+        var spaces_after = default_allocator.alloc(u8, num_spaces_after) catch unreachable;
+        defer default_allocator.free(spaces_after);
+        for (0..num_spaces_after) |i| {
+            spaces_after[i] = ' ';
+        }
+
+        simplePrintParam(param) catch unreachable;
+        Output.pretty("  {s}  {s}", .{ spaces_after, desc_text });
+    }
+}
+
+pub fn simpleHelpBunTopLevel(
+    comptime params: []const Param(Help),
+) void {
+    const max_spacing = 25;
+    const space_buf: *const [max_spacing]u8 = " " ** max_spacing;
+
+    const computed_max_spacing = comptime blk: {
+        var res: usize = 2;
+        for (params) |param| {
+            const flags_len = if (param.names.long) |l| l.len else 0;
+            if (res < flags_len)
+                res = flags_len;
+        }
+
+        break :blk res;
+    };
+
+    if (computed_max_spacing > max_spacing) {
+        @compileError("a parameter is too long to be nicely printed in `bun --help`");
+    }
+
+    inline for (params) |param| {
+        if (!(param.names.short == null and param.names.long == null)) {
+            const desc_text = comptime getHelpSimple(param);
+            if (desc_text.len != 0) {
+                simplePrintParam(param) catch unreachable;
+
+                const flags_len = if (param.names.long) |l| l.len else 0;
+                const num_spaces_after = max_spacing - flags_len;
+
+                Output.pretty(space_buf[0..num_spaces_after] ++ desc_text, .{});
+            }
+        }
+    }
 }
 
 pub const Help = struct {

@@ -1,0 +1,27 @@
+import { useState } from "react";
+
+export function Counter() {
+  console.log('counter b loaded');
+
+  const [count, setCount] = useState(0);
+
+  function increment() {
+    setCount(count + 2);
+  }
+
+  function decrement() {
+    setCount(count - 2);
+  }
+
+  return (
+    <div id="counter-fixture" className="rounded-br-full">
+      <p>Count B: {count}</p>
+      <button className="inc" onClick={increment}>
+        +
+      </button>
+      <button className="dec" onClick={decrement}>
+        -
+      </button>
+    </div>
+  );
+}

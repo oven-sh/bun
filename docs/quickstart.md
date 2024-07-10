@@ -42,6 +42,34 @@ const server = Bun.serve({
 console.log(`Listening on http://localhost:${server.port} ...`);
 ```
 
+{% details summary="Seeing TypeScript errors on `Bun`?" %}
+If you used `bun init`, Bun will have automatically installed Bun's TypeScript declarations and configured your `tsconfig.json`. If you're trying out Bun in an existing project, you may see a type error on the `Bun` global.
+
+To fix this, first install `@types/bun` as a dev dependency.
+
+```sh
+$ bun add -d @types/bun
+```
+
+Then add the following to your `compilerOptions` in `tsconfig.json`:
+
+```json#tsconfig.json
+{
+  "compilerOptions": {
+    "lib": ["ESNext"],
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleDetection": "force",
+    "moduleResolution": "bundler",
+    "allowImportingTsExtensions": true,
+    "verbatimModuleSyntax": true,
+    "noEmit": true,
+  }
+}
+```
+
+{% /details %}
+
 Run the file from your shell.
 
 ```bash
@@ -64,7 +92,7 @@ Bun can also execute `"scripts"` from your `package.json`. Add the following scr
 +     "start": "bun run index.ts"
 +   },
     "devDependencies": {
-      "bun-types": "^0.7.0"
+      "@types/bun": "^1.0.0"
     }
   }
 ```
@@ -74,7 +102,7 @@ Then run it with `bun run start`.
 ```bash
 $ bun run start
   $ bun run index.ts
-  Listening on http://localhost:4000...
+  Listening on http://localhost:3000 ...
 ```
 
 {% callout %}
@@ -96,12 +124,12 @@ Update `index.ts` to use `figlet` in the `fetch` handler.
 + import figlet from "figlet";
 
   const server = Bun.serve({
-    fetch() {
+    port: 3000,
+    fetch(req) {
 +     const body = figlet.textSync("Bun!");
 +     return new Response(body);
 -     return new Response("Bun!");
     },
-    port: 3000,
   });
 ```
 

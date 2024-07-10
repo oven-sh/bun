@@ -137,7 +137,9 @@ void JSReadableStreamBYOBRequest::finishCreation(VM& vm)
 
 JSObject* JSReadableStreamBYOBRequest::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSReadableStreamBYOBRequestPrototype::create(vm, &globalObject, JSReadableStreamBYOBRequestPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSReadableStreamBYOBRequestPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSReadableStreamBYOBRequestPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSReadableStreamBYOBRequest::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -156,7 +158,7 @@ void JSReadableStreamBYOBRequest::destroy(JSC::JSCell* cell)
     thisObject->JSReadableStreamBYOBRequest::~JSReadableStreamBYOBRequest();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsReadableStreamBYOBRequestConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

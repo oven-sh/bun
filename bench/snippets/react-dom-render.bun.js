@@ -26,6 +26,11 @@ group("new Response(stream).arrayBuffer()", () => {
   bench("react-dom/server.bun", async () => await new Response(await renderToReadableStreamBun(<App />)).arrayBuffer());
 });
 
+group("new Response(stream).bytes()", () => {
+  bench("react-dom/server.browser", async () => await new Response(await renderToReadableStream(<App />)).bytes());
+  bench("react-dom/server.bun", async () => await new Response(await renderToReadableStreamBun(<App />)).bytes());
+});
+
 group("new Response(stream).blob()", () => {
   bench("react-dom/server.browser", async () => await new Response(await renderToReadableStream(<App />)).blob());
   bench("react-dom/server.bun", async () => await new Response(await renderToReadableStreamBun(<App />)).blob());

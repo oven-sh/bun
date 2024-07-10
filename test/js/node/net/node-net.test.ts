@@ -1,11 +1,10 @@
 import { ServerWebSocket, TCPSocket, Socket as _BunSocket, TCPSocketListener } from "bun";
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from "bun:test";
-import { connect, isIP, isIPv4, isIPv6, Socket, createConnection } from "net";
-import { realpathSync, mkdtempSync } from "fs";
-import { tmpdir } from "os";
+import { describe, expect, it } from "bun:test";
+import { connect, isIP, isIPv4, isIPv6, Socket, createConnection, Server } from "net";
 import { join } from "path";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-const socket_domain = mkdtempSync(join(realpathSync(tmpdir()), "node-net"));
+const socket_domain = tmpdirSync();
 
 it("should support net.isIP()", () => {
   expect(isIP("::1")).toBe(6);
@@ -32,10 +31,9 @@ it("should support net.isIPv6()", () => {
 });
 
 describe("net.Socket read", () => {
-  var port = 12345;
   var unix_servers = 0;
   for (let [message, label] of [
-    // ["Hello World!".repeat(1024), "long message"],
+    ["Hello World!".repeat(1024), "long message"],
     ["Hello!", "short message"],
   ]) {
     describe(label, () => {
@@ -253,13 +251,42 @@ describe("net.Socket read", () => {
             .on("error", done);
         }, socket_domain),
       );
+
+      it(
+        "should support onread callback",
+        runWithServer((server, drain, done) => {
+          var data = "";
+          const options = {
+            host: server.hostname,
+            port: server.port,
+            onread: {
+              buffer: Buffer.alloc(4096),
+              callback: (size, buf) => {
+                data += buf.slice(0, size).toString("utf8");
+              },
+            },
+          };
+          const socket = createConnection(options, () => {
+            expect(socket).toBeDefined();
+            expect(socket.connecting).toBe(false);
+          })
+            .on("end", () => {
+              try {
+                expect(data).toBe(message);
+                done();
+              } catch (e) {
+                done(e);
+              }
+            })
+            .on("error", done);
+        }),
+      );
     });
   }
 });
 
 describe("net.Socket write", () => {
   const message = "Hello World!".repeat(1024);
-  let port = 53213;
 
   function runWithServer(cb: (..._: any[]) => void) {
     return (done: (_?: any) => void) => {
@@ -267,6 +294,7 @@ describe("net.Socket write", () => {
 
       function close(socket: _BunSocket<Buffer[]>) {
         expect(Buffer.concat(socket.data).toString("utf8")).toBe(message);
+        server.stop();
         done();
       }
 
@@ -314,7 +342,7 @@ describe("net.Socket write", () => {
     "should work with .end(data)",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port)
+        .connect(server.port, server.hostname)
         .on("ready", () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
@@ -328,7 +356,7 @@ describe("net.Socket write", () => {
     "should work with .write(data).end()",
     runWithServer((server, done) => {
       const socket = new Socket()
-        .connect(server.port, () => {
+        .connect(server.port, server.hostname, () => {
           expect(socket).toBeDefined();
           expect(socket.connecting).toBe(false);
         })
@@ -354,6 +382,34 @@ describe("net.Socket write", () => {
       socket.end();
     }),
   );
+
+  it("should allow reconnecting after end()", async () => {
+    const server = new Server(socket => socket.end());
+    const port = await new Promise(resolve => {
+      server.once("listening", () => resolve(server.address().port));
+      server.listen();
+    });
+
+    const socket = new Socket();
+    socket.on("data", data => console.log(data.toString()));
+    socket.on("error", err => console.error(err));
+
+    async function run() {
+      return new Promise((resolve, reject) => {
+        socket.once("connect", (...args) => {
+          socket.write("script\n", err => {
+            if (err) return reject(err);
+            socket.end(() => setTimeout(resolve, 3));
+          });
+        });
+        socket.connect(port, "127.0.0.1");
+      });
+    }
+
+    for (let i = 0; i < 10; i++) {
+      await run();
+    }
+  });
 });
 
 it("should handle connection error", done => {
@@ -370,8 +426,8 @@ it("should handle connection error", done => {
     }
     errored = true;
     expect(error).toBeDefined();
-    expect(error.name).toBe("SystemError");
     expect(error.message).toBe("Failed to connect");
+    expect((error as any).code).toBe("ECONNREFUSED");
   });
 
   socket.on("connect", () => {
@@ -382,4 +438,55 @@ it("should handle connection error", done => {
     expect(errored).toBe(true);
     done();
   });
+});
+
+it("should handle connection error (unix)", done => {
+  let errored = false;
+
+  // @ts-ignore
+  const socket = connect("loser", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("error", error => {
+    if (errored) {
+      return done(new Error("Should not have errored twice"));
+    }
+    errored = true;
+    expect(error).toBeDefined();
+    expect(error.message).toBe("Failed to connect");
+    expect((error as any).code).toBe("ENOENT");
+  });
+
+  socket.on("connect", () => {
+    done(new Error("Should not have connected"));
+  });
+
+  socket.on("close", () => {
+    expect(errored).toBe(true);
+    done();
+  });
+});
+
+it("Socket has a prototype", () => {
+  function Connection() {}
+  function Connection2() {}
+  require("util").inherits(Connection, Socket);
+  require("util").inherits(Connection2, require("tls").TLSSocket);
+});
+
+it("unref should exit when no more work pending", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-unref-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(0);
+});
+
+it("socket should keep process alive if unref is not called", async () => {
+  const process = Bun.spawn({
+    cmd: [bunExe(), join(import.meta.dir, "node-ref-default-fixture.js")],
+    env: bunEnv,
+  });
+  expect(await process.exited).toBe(1);
 });

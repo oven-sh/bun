@@ -26,10 +26,10 @@ Below is a quick "cheat sheet" that doubles as a table of contents. Click an ite
 
 ---
 
-<!-- - [`File`](#file)
-- _Browser only_. A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20; Bun does not support `File` yet; most of its functionality is provided by `BunFile`.
+- [`File`](#file)
+- A subclass of `Blob` that represents a file. Has a `name` and `lastModified` timestamp. There is experimental support in Node.js v20.
 
---- -->
+---
 
 - [`BunFile`](#bunfile)
 - _Bun only_. A subclass of `Blob` that represents a lazily-loaded file on disk. Created with `Bun.file(path)`.
@@ -49,7 +49,6 @@ Despite the name, it isn't an array and supports none of the array methods and o
 
 ```ts
 const buf = new ArrayBuffer(8);
-
 buf.byteLength; // => 8
 
 const slice = buf.slice(0, 4); // returns new ArrayBuffer
@@ -66,19 +65,19 @@ Below we create a new `DataView` and set the first byte to 5.
 
 ```ts
 const buf = new ArrayBuffer(4);
-// [0x0, 0x0, 0x0, 0x0]
+// [0b00000000, 0b00000000, 0b00000000, 0b00000000]
 
 const dv = new DataView(buf);
 dv.setUint8(0, 3); // write value 3 at byte offset 0
 dv.getUint8(0); // => 3
-// [0x11, 0x0, 0x0, 0x0]
+// [0b00000011, 0b00000000, 0b00000000, 0b00000000]
 ```
 
 Now let's write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
 
 ```ts
 dv.setUint16(1, 513);
-// [0x11, 0x10, 0x1, 0x0]
+// [0b00000011, 0b00000010, 0b00000001, 0b00000000]
 
 console.log(dv.getUint16(1)); // => 513
 ```
@@ -396,7 +395,7 @@ Bun implements `Buffer`, a Node.js API for working with binary data that pre-dat
 
 ```ts
 const buf = Buffer.from("hello world");
-// => Buffer(16) [ 116, 104, 105, 115, 32, 105, 115, 32, 97, 32, 115, 116, 114, 105, 110, 103 ]
+// => Buffer(11) [ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 ]
 
 buf.length; // => 11
 buf[0]; // => 104, ascii for 'h'
@@ -412,7 +411,7 @@ For complete documentation, refer to the [Node.js documentation](https://nodejs.
 
 `Blob` is a Web API commonly used for representing files. `Blob` was initially implemented in browsers (unlike `ArrayBuffer` which is part of JavaScript itself), but it is now supported in Node and Bun.
 
-It isn't common to directly create `Blob` instances. More often, you'll recieve instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
+It isn't common to directly create `Blob` instances. More often, you'll receive instances of `Blob` from an external source (like an `<input type="file">` element in the browser) or library. That said, it is possible to create a `Blob` from one or more string or binary "blob parts".
 
 ```ts
 const blob = new Blob(["<html>Hello</html>"], {
@@ -507,7 +506,7 @@ for await (const chunk of stream) {
 }
 ```
 
-For a more complete discusson of streams in Bun, see [API > Streams](/docs/api/streams).
+For a more complete discussion of streams in Bun, see [API > Streams](/docs/api/streams).
 
 ## Conversion
 
@@ -887,15 +886,25 @@ new Response(stream).arrayBuffer();
 Bun.readableStreamToArrayBuffer(stream);
 ```
 
+#### To `Uint8Array`
+
+```ts
+// with Response
+new Response(stream).bytes();
+
+// with Bun function
+Bun.readableStreamToBytes(stream);
+```
+
 #### To `TypedArray`
 
 ```ts
 // with Response
 const buf = await new Response(stream).arrayBuffer();
-new Uint8Array(buf);
+new Int8Array(buf);
 
 // with Bun function
-new Uint8Array(Bun.readableStreamToArrayBuffer(stream));
+new Int8Array(Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `DataView`

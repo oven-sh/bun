@@ -1,18 +1,83 @@
 /**
  * See `./expectBundled.md` for how this works.
  */
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
-import dedent from "dedent";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
-import type { Expect } from "bun:test";
+import type { Matchers } from "bun:test";
 import { PluginBuilder } from "bun";
 import * as esbuild from "esbuild";
+import { SourceMapConsumer } from "source-map";
+
+/** Dedent module does a bit too much with their stuff. we will be much simpler */
+export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+  // https://github.com/tc39/proposal-string-cooked#motivation
+  let single_string = String.raw({ raw: str }, ...args);
+  single_string = single_string.trim();
+
+  let lines = single_string.split("\n");
+  let first_line = lines[0];
+  let smallest_indent = Infinity;
+  for (let line of lines.slice(1)) {
+    let match = line.match(/^\s+/);
+    if (match) {
+      smallest_indent = Math.min(smallest_indent, match[0].length);
+    } else {
+      return single_string;
+    }
+  }
+
+  if (smallest_indent === Infinity) {
+    return single_string;
+  }
+
+  return (
+    first_line +
+    "\n" +
+    lines
+      .slice(1)
+      .map(x => x.slice(smallest_indent))
+      .join("\n")
+  );
+}
 
 let currentFile: string | undefined;
+
+function errorOrWarnParser(isError = true) {
+  const prefix = isError ? "error: " : "warn: ";
+  return function (text: string) {
+    var i = 0;
+    var list = [];
+    while (i < text.length) {
+      let errorLineI = text.indexOf(prefix, i);
+      if (errorLineI === -1) {
+        return list;
+      }
+      const message = text.slice(errorLineI + prefix.length, text.indexOf("\n", errorLineI + 1));
+      i = errorLineI + 1;
+      const fileLineI = text.indexOf(" at ", errorLineI + message.length);
+
+      let fileLine = "";
+      if (fileLineI !== -1) {
+        const fileLineEnd = text.indexOf("\n", fileLineI + 1);
+        fileLine = text.slice(fileLineI + "\n    at ".length, fileLineEnd);
+        i = fileLineEnd;
+      }
+      list.push([message, fileLine]);
+
+      if (i === -1) {
+        break;
+      }
+    }
+    return list;
+  };
+}
+
+const errorParser = errorOrWarnParser(true);
+const warnParser = errorOrWarnParser(false);
 
 type BunTestExports = typeof import("bun:test");
 export function testForFile(file: string): BunTestExports {
@@ -40,9 +105,10 @@ const HIDE_SKIP = process.env.BUN_BUNDLER_TEST_HIDE_SKIP;
 const BUN_EXE = (process.env.BUN_EXE && Bun.which(process.env.BUN_EXE)) ?? bunExe();
 export const RUN_UNCHECKED_TESTS = false;
 
-const outBaseTemplate = path.join(tmpdir(), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
-if (!existsSync(path.dirname(outBaseTemplate))) mkdirSync(path.dirname(outBaseTemplate), { recursive: true });
-const outBase = mkdtempSync(outBaseTemplate);
+const tempDirectoryTemplate = path.join(realpathSync(tmpdir()), "bun-build-tests", `${ESBUILD ? "esbuild" : "bun"}-`);
+if (!existsSync(path.dirname(tempDirectoryTemplate)))
+  mkdirSync(path.dirname(tempDirectoryTemplate), { recursive: true });
+const tempDirectory = mkdtempSync(tempDirectoryTemplate);
 const testsRan = new Set();
 
 if (ESBUILD) {
@@ -56,9 +122,9 @@ export interface BundlerTestInput {
   todo?: boolean;
 
   // file options
-  files: Record<string, string>;
+  files: Record<string, string | Buffer | Blob>;
   /** Files to be written only after the bundle is done. */
-  runtimeFiles?: Record<string, string>;
+  runtimeFiles?: Record<string, string | Buffer>;
   /** Defaults to the first item in `files` */
   entryPoints?: string[];
   /** ??? */
@@ -82,6 +148,10 @@ export interface BundlerTestInput {
   assetNaming?: string;
   banner?: string;
   define?: Record<string, string | number>;
+
+  /** Use for resolve custom conditions */
+  conditions?: string[];
+
   /** Default is "[name].[ext]" */
   entryNaming?: string;
   /** Default is "[name]-[hash].[ext]" */
@@ -126,7 +196,7 @@ export interface BundlerTestInput {
   unsupportedJSFeatures?: string[];
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
-  sourceMap?: "inline" | "external" | "none";
+  sourceMap?: "inline" | "external" | "linked" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
 
@@ -193,7 +263,34 @@ export interface BundlerTestInput {
 
   /* TODO: remove this from the tests after this is implemented */
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
+
+  snapshotSourceMap?: Record<string, SourceMapTests>;
 }
+
+export interface SourceMapTests {
+  /** Should be verbaitim equal to the input */
+  files: string[];
+  /**
+   * some tests do not use bun snapshots because they are huge, and doing byte
+   * for byte snapshots will not be sustainable. Instead, we will sample a few mappings to make sure
+   * the map is correct. This can be used to test for a single mapping.
+   */
+  mappings?: MappingSnapshot[];
+  /** For small files it is acceptable to inline all of the mappings. */
+  mappingsExactMatch?: string;
+}
+
+/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more consise */
+export type MappingSnapshot = [
+  // format a string like "file:line:col", for example
+  //    "index.ts:5:2"
+  // If column is left out, it is the first non-whitespace character
+  //    "index.ts:5"
+  // If column is quoted text, find the token and use the column of it
+  //    "index.ts:5:'abc'"
+  source_code: string,
+  generated_mapping: string,
+];
 
 export interface BundlerTestBundleAPI {
   root: string;
@@ -204,7 +301,7 @@ export interface BundlerTestBundleAPI {
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
   appendFile(file: string, contents: string): void;
-  expectFile(file: string): Expect;
+  expectFile(file: string): Matchers<string>;
   assertFileExists(file: string): void;
   /**
    * Finds all `capture(...)` calls and returns the strings within each function call.
@@ -236,6 +333,12 @@ export interface BundlerTestRunOptions {
   errorLineMatch?: RegExp;
 
   runtime?: "bun" | "node";
+
+  setCwd?: boolean;
+  /** Expect a certain non-zero exit code */
+  exitCode?: number;
+  /** Run a function with stdout and stderr. Use expect to assert exact outputs */
+  validate?: (ctx: { stdout: string; stderr: string }) => void;
 }
 
 /** given when you do itBundled('id', (this object) => BundlerTestInput) */
@@ -288,6 +391,7 @@ function expectBundled(
     chunkNaming,
     cjs2esm,
     compile,
+    conditions,
     dce,
     dceKeepMarkerCount,
     define,
@@ -311,21 +415,22 @@ function expectBundled(
     minifyIdentifiers,
     minifySyntax,
     minifyWhitespace,
-    todo: notImplemented,
     onAfterBundle,
-    root: outbase,
     outdir,
     outfile,
     outputPaths,
     plugins,
     publicPath,
+    root: outbase,
     run,
     runtimeFiles,
     serverComponents = false,
     skipOnEsbuild,
+    snapshotSourceMap,
     sourceMap,
     splitting,
     target,
+    todo: notImplemented,
     treeShaking,
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
@@ -341,7 +446,7 @@ function expectBundled(
 
   // TODO: Remove this check once all options have been implemented
   if (Object.keys(unknownProps).length > 0) {
-    throw new Error("expectBundled recieved unexpected options: " + Object.keys(unknownProps).join(", "));
+    throw new Error("expectBundled received unexpected options: " + Object.keys(unknownProps).join(", "));
   }
 
   // This is a sanity check that protects against bad copy pasting.
@@ -410,7 +515,9 @@ function expectBundled(
       backend = plugins !== undefined ? "api" : "cli";
     }
 
-    const root = path.join(outBase, id.replaceAll("/", path.sep));
+    let root = path.join(tempDirectory, id);
+    mkdirSync(root, { recursive: true });
+    root = realpathSync(root);
     if (DEBUG) console.log("root:", root);
 
     const entryPaths = entryPoints.map(file => path.join(root, file));
@@ -425,7 +532,7 @@ function expectBundled(
     outputPaths = (
       outputPaths
         ? outputPaths.map(file => path.join(root, file))
-        : entryPaths.map(file => path.join(outdir!, path.basename(file)))
+        : entryPaths.map(file => path.join(outdir || "", path.basename(file).replace(/\.[jt]sx?$/, ".js")))
     ).map(x => x.replace(/\.ts$/, ".js"));
 
     if (cjs2esm && !outfile && !minifySyntax && !minifyWhitespace) {
@@ -457,13 +564,16 @@ function expectBundled(
         cwd: root,
       });
       if (!installProcess.success) {
-        throw new Error("Failed to install dependencies");
+        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+        throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
     for (const [file, contents] of Object.entries(files)) {
       const filename = path.join(root, file);
       mkdirSync(path.dirname(filename), { recursive: true });
-      writeFileSync(filename, dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(filename, formattedContents);
     }
 
     if (useDefineForClassFields !== undefined) {
@@ -511,6 +621,7 @@ function expectBundled(
               `--target=${target}`,
               // `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
               minifyWhitespace && `--minify-whitespace`,
@@ -547,6 +658,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
+              conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
               `--jsx=${jsx.runtime === "classic" ? "transform" : "automatic"}`,
@@ -584,11 +696,18 @@ function expectBundled(
         .map(x => String(x)) as [string, ...string[]];
 
       if (DEBUG) {
-        writeFileSync(
-          path.join(root, "run.sh"),
-          "#!/bin/sh\n" +
+        if (process.platform !== "win32") {
+          writeFileSync(
+            path.join(root, "run.sh"),
+            "#!/bin/sh\n" +
+              cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
+          );
+        } else {
+          writeFileSync(
+            path.join(root, "run.ps1"),
             cmd.map(x => (x.match(/^[a-z0-9_:=\./\\-]+$/i) ? x : `"${x.replace(/"/g, '\\"')}"`)).join(" "),
-        );
+          );
+        }
         try {
           mkdirSync(path.join(root, ".vscode"), { recursive: true });
         } catch (e) {}
@@ -602,30 +721,22 @@ function expectBundled(
                 ...(compile
                   ? [
                       {
-                        "type": "lldb",
+                        "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                         "request": "launch",
                         "name": "run compiled exe",
                         "program": outfile,
                         "args": [],
                         "cwd": root,
-                        "env": {
-                          "FORCE_COLOR": "1",
-                        },
-                        "console": "internalConsole",
                       },
                     ]
                   : []),
                 {
-                  "type": "lldb",
+                  "type": process.platform !== "win32" ? "lldb" : "cppvsdbg",
                   "request": "launch",
                   "name": "bun test",
                   "program": cmd[0],
                   "args": cmd.slice(1),
                   "cwd": root,
-                  "env": {
-                    "FORCE_COLOR": "1",
-                  },
-                  "console": "internalConsole",
                 },
               ],
             },
@@ -652,29 +763,32 @@ function expectBundled(
       // Check for errors
       if (!success) {
         if (!ESBUILD) {
-          const errorText = stderr.toString("utf-8");
-          const errorRegex = /^error: (.*?)\n(?:.*?\n\s*\^\s*\n(.*?)\n)?/gms;
+          const errorText = stderr.toUnixString();
+
           var skip = false;
           if (errorText.includes("----- bun meta -----")) {
             skip = true;
           }
+
           const allErrors = skip
             ? []
-            : ([...errorText.matchAll(errorRegex)]
-                .map(([_str1, error, source]) => {
+            : (errorParser(errorText)
+                .map(([error, source]) => {
                   if (!source) {
                     if (error === "FileNotFound") {
                       return null;
                     }
                     return { error, file: "<bun>" };
                   }
-                  const [_str2, fullFilename, line, col] = source?.match?.(/bun-build-tests\/(.*):(\d+):(\d+)/) ?? [];
-                  const file = fullFilename?.slice?.(id.length + path.basename(outBase).length + 1);
+                  const [_str2, fullFilename, line, col] =
+                    source?.match?.(/bun-build-tests[\/\\](.*):(\d+):(\d+)/) ?? [];
+                  const file = fullFilename
+                    ?.slice?.(id.length + path.basename(tempDirectory).length + 1)
+                    .replaceAll("\\", "/");
 
                   return { error, file, line, col };
                 })
                 .filter(Boolean) as any[]);
-
           if (allErrors.length === 0) {
             console.log(errorText);
           }
@@ -735,9 +849,12 @@ function expectBundled(
 
             return testRef(id, opts);
           }
+          if (allErrors.length === 0) {
+            throw new Error("Bundle Failed\ncode: " + exitCode + "\nstdout: " + stdout + "\nstderr: " + stderr);
+          }
           throw new Error("Bundle Failed\n" + [...allErrors].map(formatError).join("\n"));
         } else if (!expectedErrors) {
-          throw new Error("Bundle Failed\n" + stderr?.toString("utf-8"));
+          throw new Error("Bundle Failed\n" + stderr?.toUnixString());
         }
         return testRef(id, opts);
       } else if (expectedErrors) {
@@ -746,10 +863,10 @@ function expectBundled(
 
       // Check for warnings
       if (!ESBUILD) {
-        const warningRegex = /^warn: (.*?)\n.*?\n\s*\^\s*\n(.*?)\n/gms;
-        const allWarnings = [...stderr!.toString("utf-8").matchAll(warningRegex)].map(([_str1, error, source]) => {
-          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests\/(.*):(\d+):(\d+)/)!;
-          const file = fullFilename.slice(id.length + path.basename(outBase).length + 1);
+        const warningText = stderr!.toUnixString();
+        const allWarnings = warnParser(warningText).map(([error, source]) => {
+          const [_str2, fullFilename, line, col] = source.match(/bun-build-tests[\/\\](.*):(\d+):(\d+)/)!;
+          const file = fullFilename.slice(id.length + path.basename(tempDirectory).length + 1).replaceAll("\\", "/");
           return { error, file, line, col };
         });
         const expectedWarnings = bundleWarnings
@@ -828,6 +945,10 @@ function expectBundled(
           target,
           publicPath,
         } as BuildConfig;
+
+        if (conditions?.length) {
+          buildConfig.conditions = conditions;
+        }
 
         if (DEBUG) {
           if (_referenceFn) {
@@ -953,7 +1074,7 @@ for (const [key, blob] of build.outputs) {
 
     const readCache: Record<string, string> = {};
     const readFile = (file: string) =>
-      readCache[file] || (readCache[file] = readFileSync(path.join(root, file), "utf-8"));
+      readCache[file] || (readCache[file] = readFileSync(path.join(root, file)).toUnixString());
     const writeFile = (file: string, contents: string) => {
       readCache[file] = contents;
       writeFileSync(path.join(root, file), contents);
@@ -976,12 +1097,39 @@ for (const [key, blob] of build.outputs) {
       options: opts,
       captureFile: (file, fnName = "capture") => {
         const fileContents = readFile(file);
-        const regex = new RegExp(`\\b${fnName}\\s*\\(((?:\\(\\))?.*?)\\)`, "g");
-        const matches = [...fileContents.matchAll(regex)];
+        let i = 0;
+        const length = fileContents.length;
+        const matches = [];
+        while (i < length) {
+          i = fileContents.indexOf(fnName, i);
+          if (i === -1) {
+            break;
+          }
+          const start = i;
+          let depth = 0;
+          while (i < length) {
+            const char = fileContents[i];
+            if (char === "(") {
+              depth++;
+            } else if (char === ")") {
+              depth--;
+              if (depth === 0) {
+                break;
+              }
+            }
+            i++;
+          }
+          if (depth !== 0) {
+            throw new Error(`Could not find closing paren for ${fnName} call in ${file}`);
+          }
+          matches.push(fileContents.slice(start + fnName.length + 1, i));
+          i++;
+        }
+
         if (matches.length === 0) {
           throw new Error(`No ${fnName} calls found in ${file}`);
         }
-        return matches.map(match => match[1]);
+        return matches;
       },
     } satisfies BundlerTestBundleAPI;
 
@@ -991,7 +1139,7 @@ for (const [key, blob] of build.outputs) {
     if (dce && typeof dceKeepMarkerCount !== "number" && dceKeepMarkerCount !== false) {
       for (const file of Object.entries(files)) {
         keepMarkers[outfile ? outfile : path.join(outdir!, file[0]).slice(root.length).replace(/\.ts$/, ".js")] ??= [
-          ...file[1].matchAll(/KEEP/gi),
+          ...String(file[1]).matchAll(/KEEP/gi),
         ].length;
       }
     }
@@ -1004,7 +1152,7 @@ for (const [key, blob] of build.outputs) {
           throw new Error("Bundle was not written to disk: " + outfile);
         } else {
           if (dce) {
-            const content = readFileSync(outfile).toString();
+            const content = readFileSync(outfile).toUnixString();
             const dceFails = [...content.matchAll(/FAIL|FAILED|DROP|REMOVE/gi)];
             if (dceFails.length) {
               throw new Error("DCE test did not remove all expected code in " + outfile + ".");
@@ -1104,8 +1252,8 @@ for (const [key, blob] of build.outputs) {
       if (cjs2esm) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
-        const matches = [...outfiletext.matchAll(regex)].map(match => "/" + match[1]);
-        const expectedMatches = cjs2esm === true ? [] : cjs2esm.unhandled ?? [];
+        const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {
@@ -1124,7 +1272,9 @@ for (const [key, blob] of build.outputs) {
     // Write runtime files to disk as well as run the post bundle hook.
     for (const [file, contents] of Object.entries(runtimeFiles ?? {})) {
       mkdirSync(path.dirname(path.join(root, file)), { recursive: true });
-      writeFileSync(path.join(root, file), dedent(contents).replace(/\{\{root\}\}/g, root));
+      const formattedContents =
+        typeof contents === "string" ? dedent(contents).replace(/\{\{root\}\}/g, root) : contents;
+      writeFileSync(path.join(root, file), formattedContents);
     }
 
     if (onAfterBundle) {
@@ -1134,7 +1284,7 @@ for (const [key, blob] of build.outputs) {
     // check reference
     if (matchesReference) {
       const { ref } = matchesReference;
-      const theirRoot = path.join(outBase, ref.id.replaceAll("/", path.sep));
+      const theirRoot = path.join(tempDirectory, ref.id);
       if (!existsSync(theirRoot)) {
         expectBundled(ref.id, ref.options, false, true);
         if (!existsSync(theirRoot)) {
@@ -1148,10 +1298,76 @@ for (const [key, blob] of build.outputs) {
         if (!existsSync(theirs)) throw new Error(`Reference test "${ref.id}" did not write ${file}`);
         if (!existsSync(ours)) throw new Error(`Test did not write ${file}`);
         try {
-          expect(readFileSync(ours).toString()).toBe(readFileSync(theirs).toString());
+          expect(readFileSync(ours).toUnixString()).toBe(readFileSync(theirs).toUnixString());
         } catch (error) {
           console.log("Expected reference test " + ref.id + "'s " + file + " to match ours");
           throw error;
+        }
+      }
+    }
+
+    // Check that all source maps are valid
+    if (opts.sourceMap === "external" && outdir) {
+      for (const file_input of readdirSync(outdir, { recursive: true })) {
+        const file = file_input.toString("utf8"); // type bug? `file_input` is `Buffer|string`
+        if (file.endsWith(".map")) {
+          const parsed = await Bun.file(path.join(outdir, file)).json();
+          const mappedLocations = new Map();
+          await SourceMapConsumer.with(parsed, null, async map => {
+            map.eachMapping(m => {
+              expect(m.source).toBeDefined();
+              expect(m.generatedLine).toBeGreaterThanOrEqual(1);
+              expect(m.generatedColumn).toBeGreaterThanOrEqual(0);
+              expect(m.originalLine).toBeGreaterThanOrEqual(1);
+              expect(m.originalColumn).toBeGreaterThanOrEqual(0);
+
+              const loc_key = `${m.generatedLine}:${m.generatedColumn}`;
+              if (mappedLocations.has(loc_key)) {
+                const fmtLoc = (loc: any) =>
+                  `${loc.generatedLine}:${m.generatedColumn} -> ${m.originalLine}:${m.originalColumn} [${m.source.replaceAll(/^(\.\.\/)+/g, "/").replace(root, "")}]`;
+
+                const a = fmtLoc(mappedLocations.get(loc_key));
+                const b = fmtLoc(m);
+
+                // We only care about duplicates that point to
+                // multiple source locations.
+                if (a !== b) throw new Error("Duplicate mapping in source-map for " + loc_key + "\n" + a + "\n" + b);
+              }
+              mappedLocations.set(loc_key, { ...m });
+            });
+            const map_tests = snapshotSourceMap?.[path.basename(file)];
+            if (map_tests) {
+              expect(parsed.sources.map((a: string) => a.replaceAll("\\", "/"))).toEqual(map_tests.files);
+              for (let i = 0; i < parsed.sources; i++) {
+                const source = parsed.sources[i];
+                const sourcemap_content = parsed.sourceContent[i];
+                const actual_content = readFileSync(path.resolve(path.join(outdir!, file), source), "utf-8");
+                expect(sourcemap_content).toBe(actual_content);
+              }
+
+              const generated_code = await Bun.file(path.join(outdir!, file.replace(".map", ""))).text();
+
+              if (map_tests.mappings)
+                for (const mapping of map_tests.mappings) {
+                  const src = parseSourceMapStrSource(outdir!, parsed, mapping[0]);
+                  const dest = parseSourceMapStrGenerated(generated_code, mapping[1]);
+                  const pos = map.generatedPositionFor(src);
+                  if (!dest.matched) {
+                    const real_generated = generated_code
+                      .split("\n")
+                      [pos.line! - 1].slice(pos.column!)
+                      .slice(0, dest.expected!.length);
+                    expect(`${pos.line}:${pos.column}:${real_generated}`).toBe(mapping[1]);
+                    throw new Error("Not matched");
+                  }
+                  expect(pos.line === dest.line);
+                  expect(pos.column === dest.column);
+                }
+              if (map_tests.mappingsExactMatch) {
+                expect(parsed.mappings).toBe(map_tests.mappingsExactMatch);
+              }
+            }
+          });
         }
       }
     }
@@ -1172,40 +1388,49 @@ for (const [key, blob] of build.outputs) {
           throw new Error(prefix + "run.file is required when there is more than one entrypoint.");
         }
 
-        const { success, stdout, stderr } = Bun.spawnSync({
-          cmd: [
-            ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
-            ...(run.bunArgs ?? []),
-            file,
-            ...(run.args ?? []),
-          ] as [string, ...string[]],
+        const args = [
+          ...(compile ? [] : [(run.runtime ?? "bun") === "bun" ? bunExe() : "node"]),
+          ...(run.bunArgs ?? []),
+          file,
+          ...(run.args ?? []),
+        ] as [string, ...string[]];
+
+        const { success, stdout, stderr, exitCode, signalCode } = Bun.spawnSync({
+          cmd: args,
           env: {
             ...bunEnv,
             FORCE_COLOR: "0",
             IS_TEST_RUNNER: "1",
           },
           stdio: ["ignore", "pipe", "pipe"],
+          cwd: run.setCwd ? root : undefined,
         });
+
+        if (signalCode === "SIGTRAP") {
+          throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+        }
 
         if (run.error) {
           if (success) {
             throw new Error(
               prefix +
                 "Bundle should have thrown at runtime\n" +
-                stdout!.toString("utf-8") +
+                stdout!.toUnixString() +
                 "\n" +
-                stderr!.toString("utf-8"),
+                stderr!.toUnixString(),
             );
           }
 
           if (run.errorLineMatch) {
             // in order to properly analyze the error, we have to look backwards on stderr. this approach
-            // most definetly can be improved but it works fine here.
+            // most definitely can be improved but it works fine here.
             const stack = [];
             let error;
             const lines = stderr!
-              .toString("utf-8")
+              .toUnixString()
               .split("\n")
+              // remove `Bun v1.0.0...` line
+              .slice(0, -2)
               .filter(Boolean)
               .map(x => x.trim())
               .reverse();
@@ -1236,23 +1461,34 @@ for (const [key, blob] of build.outputs) {
             }
           }
         } else if (!success) {
-          throw new Error(prefix + "Runtime failed\n" + stdout!.toString("utf-8") + "\n" + stderr!.toString("utf-8"));
+          if (run.exitCode) {
+            expect([exitCode, signalCode]).toEqual([run.exitCode, undefined]);
+          } else {
+            throw new Error(prefix + "Runtime failed\n" + stdout!.toUnixString() + "\n" + stderr!.toUnixString());
+          }
+        }
+
+        if (run.validate) {
+          run.validate({ stderr: stderr.toUnixString(), stdout: stdout.toUnixString() });
         }
 
         if (run.stdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           if (typeof run.stdout === "string") {
             const expected = dedent(run.stdout).trim();
             if (expected !== result) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
+              console.log(`---`);
+              console.log(`expected stdout:`);
+              console.log(expected);
               console.log(`---`);
             }
             expect(result).toBe(expected);
           } else {
             if (!run.stdout.test(result)) {
-              console.log(`runtime failed file=${file}`);
+              console.log(`runtime failed file: ${file}`);
               console.log(`reference stdout:`);
               console.log(result);
               console.log(`---`);
@@ -1262,7 +1498,7 @@ for (const [key, blob] of build.outputs) {
         }
 
         if (run.partialStdout !== undefined) {
-          const result = stdout!.toString("utf-8").trim();
+          const result = stdout!.toUnixString().trim();
           const expected = dedent(run.partialStdout).trim();
           if (!result.includes(expected)) {
             console.log(`runtime failed file=${file}`);
@@ -1287,7 +1523,7 @@ export function itBundled(
 ): BundlerTestRef {
   if (typeof opts === "function") {
     const fn = opts;
-    opts = opts({ root: path.join(outBase, id.replaceAll("/", path.sep)), getConfigRef });
+    opts = opts({ root: path.join(tempDirectory, id), getConfigRef });
     // @ts-expect-error
     opts._referenceFn = fn;
   }
@@ -1300,25 +1536,19 @@ export function itBundled(
     try {
       expectBundled(id, opts, true);
     } catch (error) {
-      // it.todo(id, () => {
-      //   throw error;
-      // });
       return ref;
     }
   }
 
   if (opts.todo && !FILTER) {
     it.todo(id, () => expectBundled(id, opts as any));
-    // it(id, async () => {
-    //   try {
-    //     await expectBundled(id, opts as any);
-    //   } catch (error) {
-    //     return;
-    //   }
-    //   throw new Error(`Expected test to fail but it passed.`);
-    // });
   } else {
-    it(id, () => expectBundled(id, opts as any));
+    it(
+      id,
+      () => expectBundled(id, opts as any),
+      // sourcemap code is slow
+      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
+    );
   }
   return ref;
 }
@@ -1337,4 +1567,95 @@ function formatError(err: ErrorMeta) {
 
 function filterMatches(id: string) {
   return FILTER === id || FILTER + "Dev" === id || FILTER + "Prod" === id;
+}
+
+interface SourceMapDecodedLocation {
+  line: number;
+  column: number;
+  source: string;
+}
+
+interface SourceMap {
+  sourcesContent: string[];
+  sources: string[];
+}
+
+function parseSourceMapStrSource(root: string, source_map: SourceMap, string: string) {
+  const split = string.split(":");
+  if (split.length < 2)
+    throw new Error("Test is invalid; Invalid source location. See MappingSnapshot typedef for more info.");
+  const [file, line_raw, col_raw] = split;
+  const source_id = source_map.sources.findIndex(x => x.endsWith(file));
+  if (source_id === -1)
+    throw new Error("Test is invalid; Invalid file " + file + ". See MappingSnapshot typedef for more info.");
+
+  const line = Number(line_raw);
+  if (!Number.isInteger(line))
+    throw new Error(
+      "Test is invalid; Invalid source line " +
+        JSON.stringify(line_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+
+  let col = Number(col_raw);
+  if (!Number.isInteger(col)) {
+    const text = source_map.sourcesContent[source_id].split("\n")[line - 1];
+    if (col_raw === "") {
+      col = text.split("").findIndex(x => x != " " && x != "\t");
+    } else if (col_raw[0] == "'" && col_raw[col_raw.length - 1] == "'") {
+      col = text.indexOf(col_raw.slice(1, -1));
+      if (col == -1) {
+        throw new Error(
+          `Test is invalid; String "${col_raw.slice(1, -1)}" is not present on line ${line} of ${path.join(root, source_map.sources[source_id])}`,
+        );
+      }
+    } else {
+      throw new Error(
+        "Test is invalid; Invalid source column " +
+          JSON.stringify(col_raw) +
+          ". See MappingSnapshot typedef for more info.",
+      );
+    }
+    if (col > text.length) {
+      throw new Error(
+        `Test is invalid; Line ${line} is only ${text.length} columns long, snapshot points to column ${col}`,
+      );
+    }
+  }
+
+  return { line, column: col, source: source_map.sources[source_id] };
+}
+
+function parseSourceMapStrGenerated(source_code: string, string: string) {
+  const split = string.split(":");
+  if (split.length != 3)
+    throw new Error("Test is invalid; Invalid generated location. See MappingSnapshot typedef for more info.");
+  const [line_raw, col_raw, ...match] = split;
+  const line = Number(line_raw);
+  if (!Number.isInteger(line))
+    throw new Error(
+      "Test is invalid; Invalid generated line " +
+        JSON.stringify(line_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+
+  let column = Number(col_raw);
+  if (!Number.isInteger(column)) {
+    throw new Error(
+      "Test is invalid; Invalid generated column " +
+        JSON.stringify(col_raw) +
+        ". See MappingSnapshot typedef for more info.",
+    );
+  }
+
+  if (match.length > 0) {
+    let str = match.join(":");
+    const text = source_code.split("\n")[line - 1];
+    const actual = text.slice(column, column + str.length);
+    if (actual !== str) {
+      return { matched: false, line, column, actual, expected: str };
+    }
+  }
+
+  return { matched: true, line, column };
 }

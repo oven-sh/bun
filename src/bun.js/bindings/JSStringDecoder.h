@@ -46,7 +46,10 @@ public:
     }
 
     void finishCreation(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
-    static void destroy(JSCell*) {}
+    static void destroy(JSCell* thisObject)
+    {
+        static_cast<JSStringDecoder*>(thisObject)->~JSStringDecoder();
+    }
 
     JSC::JSValue write(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
     JSC::JSValue end(JSC::VM&, JSC::JSGlobalObject*, uint8_t*, uint32_t);
@@ -77,6 +80,7 @@ public:
     template<typename CellType, JSC::SubspaceAccess>
     static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
     {
+        STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSStringDecoderPrototype, Base);
         return &vm.plainObjectSpace();
     }
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype)

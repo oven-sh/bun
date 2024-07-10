@@ -12,30 +12,18 @@ const std = @import("std");
 const open = @import("../open.zig");
 const CLI = @import("../cli.zig");
 const Fs = @import("../fs.zig");
-const ParseJSON = @import("../json_parser.zig").ParseJSONUTF8;
+const ParseJSON = @import("../json_parser.zig").ParsePackageJSONUTF8;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
 const linker = @import("../linker.zig");
 const options = @import("../options.zig");
 const initializeStore = @import("./create_command.zig").initializeStore;
 const lex = bun.js_lexer;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSPrinter = bun.js_printer;
 
 fn exists(path: anytype) bool {
-    if (@TypeOf(path) == [:0]const u8 or @TypeOf(path) == [:0]u8) {
-        if (std.os.accessZ(path, 0)) {
-            return true;
-        } else |_| {
-            return false;
-        }
-    } else {
-        if (std.os.access(path, 0)) {
-            return true;
-        } else |_| {
-            return false;
-        }
-    }
+    return bun.sys.exists(path);
 }
 pub const InitCommand = struct {
     fn prompt(
@@ -51,7 +39,22 @@ pub const InitCommand = struct {
 
         Output.flush();
 
-        const input = try std.io.getStdIn().reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+        // deleting the entire line
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
+        else {};
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
+        var input = try bun.Output.buffered_stdin.reader().readUntilDelimiterAlloc(alloc, '\n', 1024);
+        if (strings.endsWithChar(input, '\r')) {
+            input = input[0 .. input.len - 1];
+        }
         if (input.len > 0) {
             return input;
         } else {
@@ -98,7 +101,21 @@ pub const InitCommand = struct {
         entry_point: string = "",
     };
 
-    pub fn exec(alloc: std.mem.Allocator, argv: [][*:0]u8) !void {
+    pub fn exec(alloc: std.mem.Allocator, argv: [][:0]const u8) !void {
+        const print_help = brk: {
+            for (argv) |arg| {
+                if (strings.eqlComptime(arg, "--help")) {
+                    break :brk true;
+                }
+            }
+            break :brk false;
+        };
+
+        if (print_help) {
+            CLI.Command.Tag.printHelp(.InitCommand, true);
+            Global.exit(0);
+        }
+
         var fs = try Fs.FileSystem.init(null);
         const pathname = Fs.PathName.init(fs.topLevelDirWithoutTrailingSlash());
         const destination_dir = std.fs.cwd();
@@ -131,10 +148,12 @@ pub const InitCommand = struct {
                 package_json_contents = try MutableString.init(alloc, size);
                 package_json_contents.list.expandToCapacity();
 
+                const prev_file_pos = if (comptime Environment.isWindows) try pkg.getPos() else 0;
                 _ = pkg.preadAll(package_json_contents.list.items, 0) catch {
                     package_json_file = null;
                     break :read_package_json;
                 };
+                if (comptime Environment.isWindows) try pkg.seekTo(prev_file_pos);
             }
         }
 
@@ -210,7 +229,7 @@ pub const InitCommand = struct {
             ).data.e_object;
         }
 
-        const auto_yes = brk: {
+        const auto_yes = Output.stdout_descriptor_type != .terminal or brk: {
             for (argv) |arg_| {
                 const arg = bun.span(arg_);
                 if (strings.eqlComptime(arg, "-y") or strings.eqlComptime(arg, "--yes")) {
@@ -225,18 +244,28 @@ pub const InitCommand = struct {
                 Output.prettyln("<r><b>bun init<r> helps you get started with a minimal project and tries to guess sensible defaults. <d>Press ^C anytime to quit<r>\n\n", .{});
                 Output.flush();
 
-                fields.name = try normalizePackageName(alloc, try prompt(
+                const name = prompt(
                     alloc,
                     "<r><cyan>package name<r> ",
                     fields.name,
                     Output.enable_ansi_colors_stdout,
-                ));
-                fields.entry_point = try prompt(
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
+                fields.name = try normalizePackageName(alloc, name);
+
+                fields.entry_point = prompt(
                     alloc,
                     "<r><cyan>entry point<r> ",
                     fields.entry_point,
                     Output.enable_ansi_colors_stdout,
-                );
+                ) catch |err| {
+                    if (err == error.EndOfStream) return;
+                    return err;
+                };
+
                 try Output.writer().writeAll("\n");
                 Output.flush();
             } else {
@@ -311,7 +340,7 @@ pub const InitCommand = struct {
 
             if (needs_dev_dependencies) {
                 var dev_dependencies = fields.object.get("devDependencies") orelse js_ast.Expr.init(js_ast.E.Object, js_ast.E.Object{}, logger.Loc.Empty);
-                try dev_dependencies.data.e_object.putString(alloc, "bun-types", "latest");
+                try dev_dependencies.data.e_object.putString(alloc, "@types/bun", "latest");
                 try fields.object.put(alloc, "devDependencies", dev_dependencies);
             }
 
@@ -326,20 +355,21 @@ pub const InitCommand = struct {
             if (package_json_file == null) {
                 package_json_file = try std.fs.cwd().createFileZ("package.json", .{});
             }
-            var package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
+            const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
             const written = JSPrinter.printJSON(
                 @TypeOf(package_json_writer),
                 package_json_writer,
                 js_ast.Expr{ .data = .{ .e_object = fields.object }, .loc = logger.Loc.Empty },
                 &logger.Source.initEmptyFile("package.json"),
+                .{},
             ) catch |err| {
                 Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                 package_json_file = null;
                 break :write_package_json;
             };
 
-            std.os.ftruncate(package_json_file.?.handle, written + 1) catch {};
+            std.posix.ftruncate(package_json_file.?.handle, written + 1) catch {};
             package_json_file.?.close();
         }
 
@@ -395,7 +425,7 @@ pub const InitCommand = struct {
                 defer file.close();
                 file.writer().print(README, .{
                     .name = fields.name,
-                    .bunVersion = Global.version.fmt(""),
+                    .bunVersion = Environment.version_string,
                     .entryPoint = fields.entry_point,
                 }) catch break :brk;
                 Output.prettyln(" + <r><d>{s}<r>", .{filename});
@@ -418,16 +448,16 @@ pub const InitCommand = struct {
         Output.flush();
 
         if (exists("package.json")) {
-            var process = std.ChildProcess.init(
+            var process = std.process.Child.init(
                 &.{
-                    try std.fs.selfExePathAlloc(alloc),
+                    try bun.selfExePath(),
                     "install",
                 },
                 alloc,
             );
-            process.stderr_behavior = .Pipe;
-            process.stdin_behavior = .Pipe;
-            process.stdout_behavior = .Pipe;
+            process.stderr_behavior = .Ignore;
+            process.stdin_behavior = .Ignore;
+            process.stdout_behavior = .Ignore;
             _ = try process.spawnAndWait();
         }
     }

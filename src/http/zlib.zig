@@ -1,7 +1,7 @@
 const Lock = @import("../lock.zig").Lock;
 const std = @import("std");
-const MutableString = @import("root").bun.MutableString;
-const getAllocator = @import("../http_client_async.zig").getAllocator;
+const MutableString = bun.MutableString;
+const getAllocator = @import("../http.zig").getAllocator;
 const ZlibPool = @This();
 const Zlib = @import("../zlib.zig");
 const bun = @import("root").bun;
@@ -17,7 +17,7 @@ pub fn get(allocator: std.mem.Allocator) *MutableString {
 
 pub fn put(mutable: *MutableString) void {
     mutable.reset();
-    var node = @fieldParentPtr(BufferPool.Node, "data", mutable);
+    var node: BufferPool.Node = @fieldParentPtr("data", mutable);
     node.release();
 }
 

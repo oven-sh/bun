@@ -29,6 +29,18 @@ pub fn BabyList(comptime Type: type) type {
             this.* = .{};
         }
 
+        pub fn orderedRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.orderedRemove(index);
+        }
+
+        pub fn swapRemove(this: *@This(), index: usize) Type {
+            var l = this.list();
+            defer this.update(l);
+            return l.swapRemove(index);
+        }
+
         pub fn contains(this: @This(), item: []const Type) bool {
             return this.len > 0 and @intFromPtr(item.ptr) >= @intFromPtr(this.ptr) and @intFromPtr(item.ptr) < @intFromPtr(this.ptr) + this.len;
         }
@@ -57,7 +69,7 @@ pub fn BabyList(comptime Type: type) type {
 
         pub fn clone(this: @This(), allocator: std.mem.Allocator) !@This() {
             var list_ = this.listManaged(allocator);
-            var copy = try list_.clone();
+            const copy = try list_.clone();
             return ListType{
                 .ptr = copy.items.ptr,
                 .len = @as(u32, @truncate(copy.items.len)),
@@ -65,27 +77,46 @@ pub fn BabyList(comptime Type: type) type {
             };
         }
 
+        pub fn deepClone(this: @This(), allocator: std.mem.Allocator) !@This() {
+            if (comptime Type != bun.JSAst.Expr and Type != bun.JSAst.G.Property) @compileError("Unsupported type for BabyList.deepClone()");
+            var list_ = try initCapacity(allocator, this.len);
+            for (this.slice()) |item| {
+                list_.appendAssumeCapacity(try item.deepClone(allocator));
+            }
+
+            return list_;
+        }
+
+        pub fn clearRetainingCapacity(this: *@This()) void {
+            this.len = 0;
+        }
+
+        pub fn replaceRange(this: *@This(), start: usize, len_: usize, new_items: []const Type) !void {
+            var list_ = this.listManaged(bun.default_allocator);
+            try list_.replaceRange(start, len_, new_items);
+        }
+
         pub fn appendAssumeCapacity(this: *@This(), value: Type) void {
+            bun.assert(this.cap > this.len);
             this.ptr[this.len] = value;
             this.len += 1;
-            std.debug.assert(this.cap >= this.len);
         }
 
         pub fn writableSlice(this: *@This(), allocator: std.mem.Allocator, cap: usize) ![]Type {
             var list_ = this.listManaged(allocator);
             try list_.ensureUnusedCapacity(cap);
-            var writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
+            const writable = list_.items.ptr[this.len .. this.len + @as(u32, @truncate(cap))];
             list_.items.len += cap;
             this.update(list_);
             return writable;
         }
 
         pub fn appendSliceAssumeCapacity(this: *@This(), values: []const Type) void {
-            var tail = this.ptr[this.len .. this.len + values.len];
-            std.debug.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
+            const tail = this.ptr[this.len .. this.len + values.len];
+            bun.assert(this.cap >= this.len + @as(u32, @truncate(values.len)));
             bun.copy(Type, tail, values);
             this.len += @as(u32, @truncate(values.len));
-            std.debug.assert(this.cap >= this.len);
+            bun.assert(this.cap >= this.len);
         }
 
         pub fn initCapacity(allocator: std.mem.Allocator, len: usize) !ListType {
@@ -119,7 +150,7 @@ pub fn BabyList(comptime Type: type) type {
             }
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(list_.items.len <= list_.capacity);
+                bun.assert(list_.items.len <= list_.capacity);
             }
 
             return ListType{
@@ -130,7 +161,7 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub fn fromSlice(allocator: std.mem.Allocator, items: []const Elem) !ListType {
-            var allocated = try allocator.alloc(Elem, items.len);
+            const allocated = try allocator.alloc(Elem, items.len);
             bun.copy(Elem, allocated, items);
 
             return ListType{
@@ -138,6 +169,12 @@ pub fn BabyList(comptime Type: type) type {
                 .len = @as(u32, @truncate(allocated.len)),
                 .cap = @as(u32, @truncate(allocated.len)),
             };
+        }
+
+        pub fn allocatedSlice(this: *const ListType) []u8 {
+            if (this.cap == 0) return &.{};
+
+            return this.ptr[0..this.cap];
         }
 
         pub fn update(this: *ListType, list_: anytype) void {
@@ -148,7 +185,7 @@ pub fn BabyList(comptime Type: type) type {
             };
 
             if (comptime Environment.allow_assert) {
-                std.debug.assert(this.len <= this.cap);
+                bun.assert(this.len <= this.cap);
             }
         }
 
@@ -180,12 +217,12 @@ pub fn BabyList(comptime Type: type) type {
         }
 
         pub inline fn at(this: ListType, index: usize) *const Type {
-            std.debug.assert(index < this.len);
+            bun.assert(index < this.len);
             return &this.ptr[index];
         }
 
         pub inline fn mut(this: ListType, index: usize) *Type {
-            std.debug.assert(index < this.len);
+            bun.assert(index < this.len);
             return &this.ptr[index];
         }
 
@@ -208,6 +245,12 @@ pub fn BabyList(comptime Type: type) type {
             var list_ = this.list();
             try list_.append(allocator, value);
             this.update(list_);
+        }
+
+        pub fn appendFmt(this: *@This(), allocator: std.mem.Allocator, comptime fmt: []const u8, args: anytype) !void {
+            var list__ = this.listManaged(allocator);
+            const writer = list__.writer();
+            try writer.print(fmt, args);
         }
 
         pub fn append(this: *@This(), allocator: std.mem.Allocator, value: []const Type) !void {
@@ -269,7 +312,7 @@ pub fn BabyList(comptime Type: type) type {
                 while (remain.len > 0) {
                     const orig_len = list_.items.len;
 
-                    var slice_ = list_.items.ptr[orig_len..list_.capacity];
+                    const slice_ = list_.items.ptr[orig_len..list_.capacity];
                     const result = strings.copyUTF16IntoUTF8WithBuffer(slice_, []const u16, remain, trimmed, out_len, true);
                     remain = remain[result.read..];
                     list_.items.len += @as(usize, result.written);
@@ -278,6 +321,14 @@ pub fn BabyList(comptime Type: type) type {
             }
 
             return this.len - initial;
+        }
+
+        pub fn writeTypeAsBytesAssumeCapacity(this: *@This(), comptime Int: type, int: Int) void {
+            if (comptime Type != u8)
+                @compileError("Unsupported for type " ++ @typeName(Type));
+            bun.assert(this.cap >= this.len + @sizeOf(Int));
+            @as([*]align(1) Int, @ptrCast(this.ptr[this.len .. this.len + @sizeOf(Int)]))[0] = int;
+            this.len += @sizeOf(Int);
         }
     };
 }

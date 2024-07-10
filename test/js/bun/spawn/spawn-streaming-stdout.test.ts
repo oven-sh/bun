@@ -1,42 +1,56 @@
-import { it, test, expect } from "bun:test";
 import { spawn } from "bun";
-import { bunExe, bunEnv, gcTick } from "harness";
+import { expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD } from "harness";
+import { devNull } from "os";
 
 test("spawn can read from stdout multiple chunks", async () => {
   gcTick(true);
-  const maxFD = openSync("/dev/null", "w");
-  closeSync(maxFD);
-
-  for (let i = 0; i < 10; i++)
-    await (async function () {
-      var exited;
-      const proc = spawn({
-        cmd: [bunExe(), import.meta.dir + "/spawn-streaming-stdout-repro.js"],
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "ignore",
-        env: bunEnv,
-      });
-      var chunks = [];
-      let counter = 0;
-      try {
-        for await (var chunk of proc.stdout) {
-          chunks.push(chunk);
-          counter++;
-          if (counter > 3) break;
+  var maxFD: number = -1;
+  let concurrency = 7;
+  const count = 100;
+  const interval = setInterval(dumpStats, 1000).unref();
+  for (let i = 0; i < count; ) {
+    const promises = new Array(concurrency);
+    for (let j = 0; j < concurrency; j++) {
+      promises[j] = (async function () {
+        const proc = spawn({
+          cmd: [bunExe(), import.meta.dir + "/spawn-streaming-stdout-repro.js"],
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "ignore",
+          env: bunEnv,
+        });
+        var chunks = [];
+        let counter = 0;
+        try {
+          for await (var chunk of proc.stdout) {
+            chunks.push(chunk);
+            counter++;
+            if (counter > 3) break;
+          }
+        } catch (e: any) {
+          console.log(e.stack);
+          throw e;
         }
-      } catch (e: any) {
-        console.log(e.stack);
-        throw e;
-      }
-      expect(counter).toBe(4);
-      // TODO: fix bug with returning SIGHUP instead of exit code 1
-      proc.kill();
-      expect(Buffer.concat(chunks).toString()).toBe("Wrote to stdout\n".repeat(4));
-    })();
-
-  const newMaxFD = openSync("/dev/null", "w");
-  closeSync(newMaxFD);
+        expect(counter).toBe(4);
+        proc.kill();
+        expect(Buffer.concat(chunks).toString()).toStartWith("Wrote to stdout\n".repeat(4));
+        await proc.exited;
+      })();
+    }
+    await Promise.all(promises);
+    i += concurrency;
+    if (maxFD === -1) {
+      maxFD = getMaxFD();
+    }
+  }
+  const newMaxFD = getMaxFD();
   expect(newMaxFD).toBe(maxFD);
-});
+  clearInterval(interval);
+  await expectMaxObjectTypeCount(expect, "ReadableStream", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableStreamDefaultReader", 10);
+  await expectMaxObjectTypeCount(expect, "ReadableByteStreamController", 10);
+  await expectMaxObjectTypeCount(expect, "Subprocess", 5);
+  dumpStats();
+}, 60_0000);

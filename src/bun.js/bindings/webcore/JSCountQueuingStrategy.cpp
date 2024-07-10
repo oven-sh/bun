@@ -136,7 +136,9 @@ void JSCountQueuingStrategy::finishCreation(VM& vm)
 
 JSObject* JSCountQueuingStrategy::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSCountQueuingStrategyPrototype::create(vm, &globalObject, JSCountQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSCountQueuingStrategyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSCountQueuingStrategyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSCountQueuingStrategy::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -155,7 +157,7 @@ void JSCountQueuingStrategy::destroy(JSC::JSCell* cell)
     thisObject->JSCountQueuingStrategy::~JSCountQueuingStrategy();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsCountQueuingStrategyConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);

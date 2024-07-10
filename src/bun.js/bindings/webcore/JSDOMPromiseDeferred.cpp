@@ -281,7 +281,7 @@ void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, ArrayBuffer* 
 
 void fulfillPromiseWithArrayBuffer(Ref<DeferredPromise>&& promise, const void* data, size_t length)
 {
-    fulfillPromiseWithArrayBuffer(WTFMove(promise), ArrayBuffer::tryCreate(data, length).get());
+    fulfillPromiseWithArrayBuffer(WTFMove(promise), ArrayBuffer::tryCreate({ reinterpret_cast<const uint8_t*>(data), length }).get());
 }
 
 bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)
@@ -289,16 +289,7 @@ bool DeferredPromise::handleTerminationExceptionIfNeeded(CatchScope& scope, JSDO
     auto* exception = scope.exception();
     VM& vm = scope.vm();
 
-    auto& scriptExecutionContext = *lexicalGlobalObject.scriptExecutionContext();
-    // if (is<WorkerGlobalScope>(scriptExecutionContext)) {
-    //     auto* scriptController = downcast<WorkerGlobalScope>(scriptExecutionContext).script();
-    //     bool terminatorCausedException = vm.isTerminationException(exception);
-    //     if (terminatorCausedException || (scriptController && scriptController->isTerminatingExecution())) {
-    //         scriptController->forbidExecution();
-    //         return true;
-    //     }
-    // }
-    return false;
+    return !!exception && vm.isTerminationException(exception);
 }
 
 void DeferredPromise::handleUncaughtException(CatchScope& scope, JSDOMGlobalObject& lexicalGlobalObject)

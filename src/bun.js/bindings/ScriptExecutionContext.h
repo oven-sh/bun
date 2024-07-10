@@ -12,16 +12,12 @@
 #include <wtf/text/WTFString.h>
 #include <wtf/CompletionHandler.h>
 #include "CachedScript.h"
-#include "wtf/URL.h"
+#include <wtf/URL.h>
 
 namespace uWS {
 template<bool isServer, bool isClient, typename UserData>
 struct WebSocketContext;
 }
-
-#ifndef ZIG_GLOBAL_OBJECT_DEFINED
-#include "ZigGlobalObject.h"
-#endif
 
 struct us_socket_t;
 struct us_socket_context_t;
@@ -169,33 +165,15 @@ public:
     void addToContextsMap();
     void removeFromContextsMap();
 
-    void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda)
-    {
-        auto* task = new EventLoopTask(WTFMove(lambda));
-        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskConcurrently(task);
-    }
+    void postTaskConcurrently(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
-    void postTask(Function<void(ScriptExecutionContext&)>&& lambda)
-    {
-        auto* task = new EventLoopTask(WTFMove(lambda));
-        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-    }
+    void postTask(Function<void(ScriptExecutionContext&)>&& lambda);
     // Executes the task on context's thread asynchronously.
-    void postTask(EventLoopTask* task)
-    {
-        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTask(task);
-    }
+    void postTask(EventLoopTask* task);
     // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(EventLoopTask* task, Seconds timeout)
-    {
-        reinterpret_cast<Zig::GlobalObject*>(m_globalObject)->queueTaskOnTimeout(task, static_cast<int>(timeout.milliseconds()));
-    }
+    void postTaskOnTimeout(EventLoopTask* task, Seconds timeout);
     // Executes the task on context's thread asynchronously.
-    void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout)
-    {
-        auto* task = new EventLoopTask(WTFMove(lambda));
-        postTaskOnTimeout(task, timeout);
-    }
+    void postTaskOnTimeout(Function<void(ScriptExecutionContext&)>&& lambda, Seconds timeout);
 
     template<typename... Arguments>
     void postCrossThreadTask(Arguments&&... arguments)
@@ -216,6 +194,8 @@ public:
     }
 
     BunBroadcastChannelRegistry& broadcastChannelRegistry() { return m_broadcastChannelRegistry; }
+
+    static ScriptExecutionContext* getMainThreadScriptExecutionContext();
 
 private:
     JSC::VM* m_vm = nullptr;

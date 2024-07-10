@@ -1,4 +1,4 @@
-import { define } from "../scripts/class-definitions";
+import { define } from "../../codegen/class-definitions";
 
 export default [
   define({
@@ -93,6 +93,12 @@ export default [
     finalize: true,
     klass: {},
     JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",
@@ -229,6 +235,12 @@ export default [
     finalize: true,
     klass: {},
     JSType: "0b11101110",
+
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice_",
@@ -379,6 +391,11 @@ export default [
 
     klass: {},
 
+    // TODO: generate-classes needs to handle Object.create properly when
+    // functions are used. The functions need a fallback implementation to use
+    // getters.
+    supportsObjectCreate: true,
+
     proto: {
       isBlockDevice: {
         fn: "isBlockDevice",
@@ -412,12 +429,22 @@ export default [
         getter: "getName",
         cache: true,
       },
+      path: {
+        getter: "getPath",
+        cache: true,
+      },
+      parentPath: {
+        // @since node v20.12.x
+        getter: "getPath",
+        cache: true,
+      },
     },
   }),
   define({
     name: "NodeJSFS",
     construct: true,
-    finalize: false,
+    noConstructor: true,
+    finalize: true,
 
     klass: {},
     proto: {

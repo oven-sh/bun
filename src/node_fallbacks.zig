@@ -1,10 +1,9 @@
 const std = @import("std");
 const string = @import("./string_types.zig").string;
 const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const Fs = @import("./fs.zig");
 const bun = @import("root").bun;
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 
 const assert_code: string = @embedFile("./node-fallbacks/out/assert.js");
 const buffer_code: string = @embedFile("./node-fallbacks/out/buffer.js");
@@ -389,30 +388,30 @@ pub const FallbackModule = struct {
     };
 };
 
-pub const Map = ComptimeStringMap(FallbackModule, .{
-    &.{ "assert", FallbackModule.assert },
-    &.{ "buffer", FallbackModule.buffer },
-    &.{ "console", FallbackModule.console },
-    &.{ "constants", FallbackModule.constants },
-    &.{ "crypto", FallbackModule.crypto },
-    &.{ "domain", FallbackModule.domain },
-    &.{ "events", FallbackModule.events },
-    &.{ "http", FallbackModule.http },
-    &.{ "https", FallbackModule.https },
-    &.{ "net", FallbackModule.net },
-    &.{ "os", FallbackModule.os },
-    &.{ "path", FallbackModule.path },
-    &.{ "process", FallbackModule.process },
-    &.{ "punycode", FallbackModule.punycode },
-    &.{ "querystring", FallbackModule.querystring },
-    &.{ "stream", FallbackModule.stream },
-    &.{ "string_decoder", FallbackModule.string_decoder },
-    &.{ "sys", FallbackModule.sys },
-    &.{ "timers", FallbackModule.timers },
-    &.{ "tty", FallbackModule.tty },
-    &.{ "url", FallbackModule.url },
-    &.{ "util", FallbackModule.util },
-    &.{ "zlib", FallbackModule.zlib },
+pub const Map = bun.ComptimeStringMap(FallbackModule, .{
+    .{ "assert", FallbackModule.assert },
+    .{ "buffer", FallbackModule.buffer },
+    .{ "console", FallbackModule.console },
+    .{ "constants", FallbackModule.constants },
+    .{ "crypto", FallbackModule.crypto },
+    .{ "domain", FallbackModule.domain },
+    .{ "events", FallbackModule.events },
+    .{ "http", FallbackModule.http },
+    .{ "https", FallbackModule.https },
+    .{ "net", FallbackModule.net },
+    .{ "os", FallbackModule.os },
+    .{ "path", FallbackModule.path },
+    .{ "process", FallbackModule.process },
+    .{ "punycode", FallbackModule.punycode },
+    .{ "querystring", FallbackModule.querystring },
+    .{ "stream", FallbackModule.stream },
+    .{ "string_decoder", FallbackModule.string_decoder },
+    .{ "sys", FallbackModule.sys },
+    .{ "timers", FallbackModule.timers },
+    .{ "tty", FallbackModule.tty },
+    .{ "url", FallbackModule.url },
+    .{ "util", FallbackModule.util },
+    .{ "zlib", FallbackModule.zlib },
 });
 
 pub fn contentsFromPath(path: string) ?string {

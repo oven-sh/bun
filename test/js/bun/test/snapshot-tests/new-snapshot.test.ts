@@ -1,11 +1,9 @@
 import fs from "fs";
-import { bunExe } from "harness";
-import { tmpdir } from "os";
-
+import { bunExe, tmpdirSync } from "harness";
 import { it, test, expect, describe } from "bun:test";
 
 test("it will create a snapshot file and directory if they don't exist", () => {
-  const tempDir = tmpdir() + "/new-snapshot";
+  const tempDir = tmpdirSync();
   fs.rmSync(tempDir, { force: true, recursive: true });
   fs.mkdirSync(tempDir, { recursive: true });
 

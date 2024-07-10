@@ -27,8 +27,8 @@
 
 #include "IDLTypes.h"
 #include "JSDOMConvertBase.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "wtf/WallTime.h"
+#include <JavaScriptCore/JSGlobalObject.h>
+#include <wtf/WallTime.h>
 
 namespace WebCore {
 

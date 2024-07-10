@@ -8,7 +8,7 @@ The `Bun.file()` function accepts a path and returns a `BunFile` instance. Use t
 const path = "/path/to/package.json";
 const file = Bun.file(path);
 
-file.exists(); // boolean;
+await file.exists(); // boolean;
 ```
 
 ---

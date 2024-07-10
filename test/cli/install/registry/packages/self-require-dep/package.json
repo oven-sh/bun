@@ -1,0 +1,42 @@
+{
+	"name": "self-require-dep",
+	"versions": {
+		"1.0.0": {
+			"name": "self-require-dep",
+			"version": "1.0.0",
+			"dependencies": {
+				"various-requires": "1.0.0"
+			},
+			"_id": "self-require-dep@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-VexoGtAvm1beh1VSREVM/59yS835MjMzVaVeSKfzW2OckfjxRX/FmNOWEan5KRNBMyvSHyWnKLCQvH8j5ZF5IQ==",
+				"shasum": "954673ae61f443072e9e0c61bb510dd1574337d6",
+				"tarball": "http://localhost:4873/self-require-dep/-/self-require-dep-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:32.159Z",
+		"created": "2023-11-01T22:05:32.159Z",
+		"1.0.0": "2023-11-01T22:05:32.159Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"self-require-dep-1.0.0.tgz": {
+			"shasum": "954673ae61f443072e9e0c61bb510dd1574337d6",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-9ec70d44d03d6665",
+	"_id": "self-require-dep",
+	"readme": "ERROR: No README data found!"
+}

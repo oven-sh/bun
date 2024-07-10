@@ -2,6 +2,7 @@ const bun = @import("root").bun;
 const logger = bun.logger;
 const Environment = @import("../env.zig");
 const Install = @import("./install.zig");
+const PackageManager = Install.PackageManager;
 const ExternalStringList = Install.ExternalStringList;
 const Features = Install.Features;
 const PackageNameHash = Install.PackageNameHash;
@@ -25,9 +26,9 @@ const URI = union(Tag) {
         }
 
         if (@as(Tag, lhs) == .local) {
-            return strings.eql(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf));
+            return strings.eqlLong(lhs.local.slice(lhs_buf), rhs.local.slice(rhs_buf), true);
         } else {
-            return strings.eql(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf));
+            return strings.eqlLong(lhs.remote.slice(lhs_buf), rhs.remote.slice(rhs_buf), true);
         }
     }
 
@@ -49,10 +50,10 @@ version: Dependency.Version = .{},
 /// - `peerDependencies`
 /// Technically, having the same package name specified under multiple fields is invalid
 /// But we don't want to allocate extra arrays for them. So we use a bitfield instead.
-behavior: Behavior = .uninitialized,
+behavior: Behavior = Behavior.uninitialized,
 
 /// Sorting order for dependencies is:
-/// 1. [`dependencies`, `devDependencies`, `optionalDependencies`, `peerDependencies`]
+/// 1. [ `peerDependencies`, `optionalDependencies`, `devDependencies`, `dependencies` ]
 /// 2. name ASC
 /// "name" must be ASC so that later, when we rebuild the lockfile
 /// we insert it back in reverse order without an extra sorting pass
@@ -92,6 +93,7 @@ pub fn cloneWithDifferentBuffers(this: *const Dependency, name_buf: []const u8, 
         .version = Dependency.parseWithTag(
             builder.lockfile.allocator,
             new_name,
+            String.Builder.stringHash(new_name.slice(out_slice)),
             new_literal.slice(out_slice),
             this.version.tag,
             &sliced,
@@ -144,11 +146,12 @@ pub fn toDependency(
     const name = String{
         .bytes = this[0..8].*,
     };
+    const name_hash: u64 = @bitCast(this[8..16].*);
     return Dependency{
         .name = name,
-        .name_hash = @as(u64, @bitCast(this[8..16].*)),
-        .behavior = @as(Dependency.Behavior, @enumFromInt(this[16])),
-        .version = Dependency.Version.toVersion(name, this[17..this.len].*, ctx),
+        .name_hash = name_hash,
+        .behavior = @bitCast(this[16]),
+        .version = Dependency.Version.toVersion(name, name_hash, this[17..this.len].*, ctx),
     };
 }
 
@@ -156,7 +159,7 @@ pub fn toExternal(this: Dependency) External {
     var bytes: External = undefined;
     bytes[0..this.name.bytes.len].* = this.name.bytes;
     bytes[8..16].* = @as([8]u8, @bitCast(this.name_hash));
-    bytes[16] = @intFromEnum(this.behavior);
+    bytes[16] = @bitCast(this.behavior);
     bytes[17..bytes.len].* = this.version.toExternal();
     return bytes;
 }
@@ -184,29 +187,35 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     return false;
 }
 
+/// `isGitHubShorthand` from npm
+/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
 pub inline fn isGitHubRepoPath(dependency: string) bool {
     // Shortest valid expression: u/r
     if (dependency.len < 3) return false;
 
     var hash_index: usize = 0;
-    var slash_index: usize = 0;
+
+    // the branch could have slashes
+    // - oven-sh/bun#brach/name
+    var first_slash_index: usize = 0;
 
     for (dependency, 0..) |c, i| {
         switch (c) {
             '/' => {
                 if (i == 0) return false;
-                if (slash_index > 0) return false;
-                slash_index = i;
+                if (first_slash_index == 0) {
+                    first_slash_index = i;
+                }
             },
             '#' => {
                 if (i == 0) return false;
                 if (hash_index > 0) return false;
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
                 hash_index = i;
             },
             // Not allowed in username
             '.', '_' => {
-                if (slash_index == 0) return false;
+                if (first_slash_index == 0) return false;
             },
             // Must be alphanumeric
             '-', 'a'...'z', 'A'...'Z', '0'...'9' => {},
@@ -214,7 +223,31 @@ pub inline fn isGitHubRepoPath(dependency: string) bool {
         }
     }
 
-    return hash_index != dependency.len - 1 and slash_index > 0 and slash_index != dependency.len - 1;
+    return hash_index != dependency.len - 1 and first_slash_index > 0 and first_slash_index != dependency.len - 1;
+}
+
+/// Github allows for the following format of URL:
+/// https://github.com/<org>/<repo>/tarball/<ref>
+/// This is a legacy (but still supported) method of retrieving a tarball of an
+/// entire source tree at some git reference. (ref = branch, tag, etc. Note: branch
+/// can have arbitrary number of slashes)
+///
+/// This also checks for a github url that ends with ".tar.gz"
+pub inline fn isGitHubTarballPath(dependency: string) bool {
+    if (isTarball(dependency)) return true;
+
+    var parts = strings.split(dependency, "/");
+
+    var n_parts: usize = 0;
+
+    while (parts.next()) |part| {
+        n_parts += 1;
+        if (n_parts == 3) {
+            return strings.eqlComptime(part, "tarball");
+        }
+    }
+
+    return false;
 }
 
 // This won't work for query string params, but I'll let someone file an issue
@@ -223,10 +256,41 @@ pub inline fn isTarball(dependency: string) bool {
     return strings.endsWithComptime(dependency, ".tgz") or strings.endsWithComptime(dependency, ".tar.gz");
 }
 
+/// the input is assumed to be either a remote or local tarball
+pub inline fn isRemoteTarball(dependency: string) bool {
+    return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
+}
+
+/// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
+pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[0..second_at_index], if (second_at_index + 1 < str.len) str[second_at_index + 1 ..] else null };
+    }
+
+    return .{ str, null };
+}
+
+pub fn unscopedPackageName(name: []const u8) []const u8 {
+    if (name[0] != '@') return name;
+    var name_ = name;
+    name_ = name[1..];
+    return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
+}
+
 pub const Version = struct {
-    tag: Dependency.Version.Tag = .uninitialized,
+    tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
+
+    pub inline fn npm(this: *const Version) ?NpmInfo {
+        return if (this.tag == .npm) this.value.npm else null;
+    }
 
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
@@ -253,7 +317,7 @@ pub const Version = struct {
     }
 
     pub fn isLessThan(string_buf: []const u8, lhs: Dependency.Version, rhs: Dependency.Version) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(lhs.tag == rhs.tag);
+        if (comptime Environment.allow_assert) bun.assert(lhs.tag == rhs.tag);
         return strings.cmpStringsAsc({}, lhs.literal.slice(string_buf), rhs.literal.slice(string_buf));
     }
 
@@ -269,6 +333,7 @@ pub const Version = struct {
 
     pub fn toVersion(
         alias: String,
+        alias_hash: PackageNameHash,
         bytes: Version.External,
         ctx: Dependency.Context,
     ) Dependency.Version {
@@ -278,6 +343,7 @@ pub const Version = struct {
         return Dependency.parseWithTag(
             ctx.allocator,
             alias,
+            alias_hash,
             sliced.slice,
             tag,
             sliced,
@@ -305,7 +371,7 @@ pub const Version = struct {
         return switch (lhs.tag) {
             // if the two versions are identical as strings, it should often be faster to compare that than the actual semver version
             // semver ranges involve a ton of pointer chasing
-            .npm => strings.eql(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf)) or
+            .npm => strings.eqlLong(lhs.literal.slice(lhs_buf), rhs.literal.slice(rhs_buf), true) or
                 lhs.value.npm.eql(rhs.value.npm, lhs_buf, rhs_buf),
             .folder, .dist_tag => lhs.literal.eql(rhs.literal, lhs_buf, rhs_buf),
             .git => lhs.value.git.eql(&rhs.value.git, lhs_buf, rhs_buf),
@@ -358,6 +424,12 @@ pub const Version = struct {
         pub fn infer(dependency: string) Tag {
             // empty string means `latest`
             if (dependency.len == 0) return .dist_tag;
+
+            if (strings.startsWithWindowsDriveLetter(dependency) and (std.fs.path.isSep(dependency[2]))) {
+                if (isTarball(dependency)) return .tarball;
+                return .folder;
+            }
+
             switch (dependency[0]) {
                 // =1
                 // >1.2
@@ -489,8 +561,37 @@ pub const Version = struct {
                                 },
                                 else => {},
                             }
+
                             if (strings.hasPrefixComptime(url, "github.com/")) {
-                                if (isGitHubRepoPath(url["github.com/".len..])) return .github;
+                                const path = url["github.com/".len..];
+                                if (isGitHubTarballPath(path)) return .tarball;
+                                if (isGitHubRepoPath(path)) return .github;
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
+                            }
+
+                            return .tarball;
+                        }
+                    }
+                },
+                's' => {
+                    if (strings.hasPrefixComptime(dependency, "ssh")) {
+                        var url = dependency["ssh".len..];
+                        if (url.len > 2) {
+                            if (url[0] == ':') {
+                                if (strings.hasPrefixComptime(url, "://")) {
+                                    url = url["://".len..];
+                                }
+                            }
+
+                            if (url.len > 4 and strings.eqlComptime(url[0.."git@".len], "git@")) {
+                                url = url["git@".len..];
+                            }
+
+                            if (strings.indexOfChar(url, '.')) |dot| {
+                                if (Repository.Hosts.has(url[0..dot])) return .git;
                             }
                         }
                     }
@@ -545,6 +646,11 @@ pub const Version = struct {
                     if (dependency.len == 1) return .npm;
                     if (dependency[1] == '.') return .npm;
                 },
+                'p' => {
+                    // TODO(dylan-conway): apply .patch files on packages. In the future this could
+                    // return `Tag.git` or `Tag.npm`.
+                    if (strings.hasPrefixComptime(dependency, "patch:")) return .npm;
+                },
                 else => {},
             }
 
@@ -557,20 +663,26 @@ pub const Version = struct {
             // git@example.com:path/to/repo.git
             if (isSCPLikePath(dependency)) return .git;
             // beta
-            return .dist_tag;
+
+            if (!strings.containsChar(dependency, '|')) {
+                return .dist_tag;
+            }
+
+            return .npm;
         }
     };
 
-    const NpmInfo = struct {
+    pub const NpmInfo = struct {
         name: String,
         version: Semver.Query.Group,
+        is_alias: bool = false,
 
         fn eql(this: NpmInfo, that: NpmInfo, this_buf: []const u8, that_buf: []const u8) bool {
             return this.name.eql(that.name, this_buf, that_buf) and this.version.eql(that.version);
         }
     };
 
-    const TagInfo = struct {
+    pub const TagInfo = struct {
         name: String,
         tag: String,
 
@@ -579,7 +691,7 @@ pub const Version = struct {
         }
     };
 
-    const TarballInfo = struct {
+    pub const TarballInfo = struct {
         uri: URI,
         package_name: String = .{},
 
@@ -614,19 +726,39 @@ pub fn eql(
     return a.name_hash == b.name_hash and a.name.len() == b.name.len() and a.version.eql(&b.version, lhs_buf, rhs_buf);
 }
 
+pub fn isWindowsAbsPathWithLeadingSlashes(dep: string) ?string {
+    var i: usize = 0;
+    if (dep.len > 2 and dep[i] == '/') {
+        while (dep[i] == '/') {
+            i += 1;
+
+            // not possible to have windows drive letter and colon
+            if (i > dep.len - 3) return null;
+        }
+        if (strings.startsWithWindowsDriveLetter(dep[i..])) {
+            return dep[i..];
+        }
+    }
+
+    return null;
+}
+
 pub inline fn parse(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     sliced: *const SlicedString,
     log: ?*logger.Log,
 ) ?Version {
-    return parseWithOptionalTag(allocator, alias, dependency, null, sliced, log);
+    const dep = std.mem.trimLeft(u8, dependency, " \t\n\r");
+    return parseWithTag(allocator, alias, alias_hash, dep, Version.Tag.infer(dep), sliced, log);
 }
 
 pub fn parseWithOptionalTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: ?Dependency.Version.Tag,
     sliced: *const SlicedString,
@@ -636,6 +768,7 @@ pub fn parseWithOptionalTag(
     return parseWithTag(
         allocator,
         alias,
+        alias_hash,
         dep,
         tag orelse Version.Tag.infer(dep),
         sliced,
@@ -646,29 +779,39 @@ pub fn parseWithOptionalTag(
 pub fn parseWithTag(
     allocator: std.mem.Allocator,
     alias: String,
+    alias_hash: ?PackageNameHash,
     dependency: string,
     tag: Dependency.Version.Tag,
     sliced: *const SlicedString,
     log_: ?*logger.Log,
 ) ?Version {
-    alias.assertDefined();
-
     switch (tag) {
         .npm => {
             var input = dependency;
-            const name = if (strings.hasPrefixComptime(input, "npm:")) sliced.sub(brk: {
-                var str = input["npm:".len..];
-                var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
 
-                while (i < str.len) : (i += 1) {
-                    if (str[i] == '@') {
-                        input = str[i + 1 ..];
-                        break :brk str[0..i];
+            var is_alias = false;
+            const name = brk: {
+                if (strings.hasPrefixComptime(input, "npm:")) {
+                    is_alias = true;
+                    var str = input["npm:".len..];
+                    var i: usize = @intFromBool(str.len > 0 and str[0] == '@');
+
+                    while (i < str.len) : (i += 1) {
+                        if (str[i] == '@') {
+                            input = str[i + 1 ..];
+                            break :brk sliced.sub(str[0..i]).value();
+                        }
                     }
+
+                    input = str[i..];
+
+                    break :brk sliced.sub(str[0..i]).value();
                 }
-                input = str[i..];
-                break :brk str[0..i];
-            }).value() else alias;
+
+                break :brk alias;
+            };
+
+            is_alias = is_alias and alias_hash != null;
 
             // Strip single leading v
             // v1.0.0 -> 1.0.0
@@ -682,20 +825,40 @@ pub fn parseWithTag(
                 input,
                 sliced.sub(input),
             ) catch |err| {
-                if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "{s} parsing dependency \"{s}\"", .{ @errorName(err), dependency }) catch unreachable;
+                if (log_) |log| log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    allocator,
+                    "{s} parsing version \"{s}\"",
+                    .{
+                        @errorName(err),
+                        dependency,
+                    },
+                ) catch unreachable;
                 return null;
             };
 
-            return .{
+            const result = Version{
                 .literal = sliced.value(),
                 .value = .{
                     .npm = .{
+                        .is_alias = is_alias,
                         .name = name,
                         .version = version,
                     },
                 },
                 .tag = .npm,
             };
+
+            if (is_alias) {
+                PackageManager.instance.known_npm_aliases.put(
+                    allocator,
+                    alias_hash.?,
+                    result,
+                ) catch unreachable;
+            }
+
+            return result;
         },
         .dist_tag => {
             var tag_to_use = sliced.value();
@@ -724,7 +887,7 @@ pub fn parseWithTag(
                 alias;
 
             // name should never be empty
-            if (comptime Environment.allow_assert) std.debug.assert(!actual.isEmpty());
+            if (comptime Environment.allow_assert) bun.assert(!actual.isEmpty());
 
             return .{
                 .literal = sliced.value(),
@@ -792,7 +955,7 @@ pub fn parseWithTag(
                 }
             }
 
-            if (comptime Environment.allow_assert) std.debug.assert(isGitHubRepoPath(input));
+            if (comptime Environment.allow_assert) bun.assert(isGitHubRepoPath(input));
 
             var hash_index: usize = 0;
             var slash_index: usize = 0;
@@ -827,7 +990,7 @@ pub fn parseWithTag(
             };
         },
         .tarball => {
-            if (strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://")) {
+            if (isRemoteTarball(dependency)) {
                 return .{
                     .tag = .tarball,
                     .literal = sliced.value(),
@@ -838,6 +1001,12 @@ pub fn parseWithTag(
                     .tag = .tarball,
                     .literal = sliced.value(),
                     .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[7..]).value() } } },
+                };
+            } else if (strings.hasPrefixComptime(dependency, "file:")) {
+                return .{
+                    .tag = .tarball,
+                    .literal = sliced.value(),
+                    .value = .{ .tarball = .{ .uri = .{ .local = sliced.sub(dependency[5..]).value() } } },
                 };
             } else if (strings.contains(dependency, "://")) {
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "invalid or unsupported dependency \"{s}\"", .{dependency}) catch unreachable;
@@ -853,12 +1022,81 @@ pub fn parseWithTag(
         .folder => {
             if (strings.indexOfChar(dependency, ':')) |protocol| {
                 if (strings.eqlComptime(dependency[0..protocol], "file")) {
-                    if (dependency.len <= protocol) {
-                        if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "\"file\" dependency missing a path", .{}) catch unreachable;
-                        return null;
+                    const folder = folder: {
+
+                        // from npm:
+                        //
+                        // turn file://../foo into file:../foo
+                        // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L269
+                        //
+                        // something like this won't behave the same
+                        // file://bar/../../foo
+                        const maybe_dot_dot = maybe_dot_dot: {
+                            if (dependency.len > protocol + 1 and dependency[protocol + 1] == '/') {
+                                if (dependency.len > protocol + 2 and dependency[protocol + 2] == '/') {
+                                    if (dependency.len > protocol + 3 and dependency[protocol + 3] == '/') {
+                                        break :maybe_dot_dot dependency[protocol + 4 ..];
+                                    }
+                                    break :maybe_dot_dot dependency[protocol + 3 ..];
+                                }
+                                break :maybe_dot_dot dependency[protocol + 2 ..];
+                            }
+                            break :folder dependency[protocol + 1 ..];
+                        };
+
+                        if (maybe_dot_dot.len > 1 and maybe_dot_dot[0] == '.' and maybe_dot_dot[1] == '.') {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(maybe_dot_dot).value() },
+                                .tag = .folder,
+                            };
+                        }
+
+                        break :folder dependency[protocol + 1 ..];
+                    };
+
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (comptime Environment.isWindows) {
+                        if (isWindowsAbsPathWithLeadingSlashes(folder)) |dep| {
+                            return .{
+                                .literal = sliced.value(),
+                                .value = .{ .folder = sliced.sub(dep).value() },
+                                .tag = .folder,
+                            };
+                        }
                     }
 
-                    return .{ .literal = sliced.value(), .value = .{ .folder = sliced.sub(dependency[protocol + 1 ..]).value() }, .tag = .folder };
+                    return .{
+                        .literal = sliced.value(),
+                        .value = .{ .folder = sliced.sub(folder).value() },
+                        .tag = .folder,
+                    };
+                }
+
+                // check for absolute windows paths
+                if (comptime Environment.isWindows) {
+                    if (protocol == 1 and strings.startsWithWindowsDriveLetter(dependency)) {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dependency).value() },
+                            .tag = .folder,
+                        };
+                    }
+
+                    // from npm:
+                    //
+                    // turn /C:/blah info just C:/blah on windows
+                    // https://github.com/npm/cli/blob/fc6e291e9c2154c2e76636cb7ebf0a17be307585/node_modules/npm-package-arg/lib/npa.js#L277
+                    if (isWindowsAbsPathWithLeadingSlashes(dependency)) |dep| {
+                        return .{
+                            .literal = sliced.value(),
+                            .value = .{ .folder = sliced.sub(dep).value() },
+                            .tag = .folder,
+                        };
+                    }
                 }
 
                 if (log_) |log| log.addErrorFmt(null, logger.Loc.Empty, allocator, "Unsupported protocol {s}", .{dependency}) catch unreachable;
@@ -901,78 +1139,91 @@ pub fn parseWithTag(
     }
 }
 
-pub const Behavior = enum(u8) {
-    uninitialized = 0,
-    _,
+pub const Behavior = packed struct(u8) {
+    pub const uninitialized: Behavior = .{};
 
-    pub const normal: u8 = 1 << 1;
-    pub const optional: u8 = 1 << 2;
-    pub const dev: u8 = 1 << 3;
-    pub const peer: u8 = 1 << 4;
-    pub const workspace: u8 = 1 << 5;
+    // these padding fields are to have compatibility
+    // with older versions of lockfile v2
+    _unused_1: u1 = 0,
+
+    normal: bool = false,
+    optional: bool = false,
+    dev: bool = false,
+    peer: bool = false,
+    workspace: bool = false,
+
+    _unused_2: u2 = 0,
+
+    pub const normal = Behavior{ .normal = true };
+    pub const optional = Behavior{ .optional = true };
+    pub const dev = Behavior{ .dev = true };
+    pub const peer = Behavior{ .peer = true };
+    pub const workspace = Behavior{ .workspace = true };
 
     pub inline fn isNormal(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.normal) != 0;
+        return this.normal;
     }
 
     pub inline fn isOptional(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.optional) != 0 and !this.isPeer();
+        return this.optional and !this.isPeer();
+    }
+
+    pub inline fn isOptionalPeer(this: Behavior) bool {
+        return this.optional and this.isPeer();
     }
 
     pub inline fn isDev(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.dev) != 0;
+        return this.dev;
     }
 
     pub inline fn isPeer(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.peer) != 0;
+        return this.peer;
     }
 
     pub inline fn isWorkspace(this: Behavior) bool {
-        return (@intFromEnum(this) & Behavior.workspace) != 0;
+        return this.workspace;
+    }
+
+    pub inline fn isWorkspaceOnly(this: Behavior) bool {
+        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
     }
 
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.normal));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.normal));
-        }
+        var b = this;
+        b.normal = value;
+        return b;
     }
 
     pub inline fn setOptional(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.optional));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.optional));
-        }
+        var b = this;
+        b.optional = value;
+        return b;
     }
 
     pub inline fn setDev(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.dev));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.dev));
-        }
+        var b = this;
+        b.dev = value;
+        return b;
     }
 
     pub inline fn setPeer(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.peer));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.peer));
-        }
+        var b = this;
+        b.peer = value;
+        return b;
     }
 
     pub inline fn setWorkspace(this: Behavior, value: bool) Behavior {
-        if (value) {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) | Behavior.workspace));
-        } else {
-            return @as(Behavior, @enumFromInt(@intFromEnum(this) & ~Behavior.workspace));
-        }
+        var b = this;
+        b.workspace = value;
+        return b;
+    }
+
+    pub inline fn eq(lhs: Behavior, rhs: Behavior) bool {
+        return @as(u8, @bitCast(lhs)) == @as(u8, @bitCast(rhs));
     }
 
     pub inline fn cmp(lhs: Behavior, rhs: Behavior) std.math.Order {
-        if (@intFromEnum(lhs) == @intFromEnum(rhs)) {
+        if (eq(lhs, rhs)) {
             return .eq;
         }
 
@@ -1023,6 +1274,39 @@ pub const Behavior = enum(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            this.isWorkspace();
+            (features.workspaces and this.isWorkspaceOnly());
+    }
+
+    pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const fields = .{
+            "normal",
+            "optional",
+            "dev",
+            "peer",
+            "workspace",
+        };
+
+        var first = true;
+        inline for (fields) |field| {
+            if (@field(self, field)) {
+                if (!first) {
+                    try writer.writeAll(" | ");
+                }
+                try writer.writeAll(field);
+                first = false;
+            }
+        }
+
+        if (first) {
+            try writer.writeAll("-");
+        }
+    }
+
+    comptime {
+        bun.assert(@as(u8, @bitCast(Behavior.normal)) == (1 << 1));
+        bun.assert(@as(u8, @bitCast(Behavior.optional)) == (1 << 2));
+        bun.assert(@as(u8, @bitCast(Behavior.dev)) == (1 << 3));
+        bun.assert(@as(u8, @bitCast(Behavior.peer)) == (1 << 4));
+        bun.assert(@as(u8, @bitCast(Behavior.workspace)) == (1 << 5));
     }
 };

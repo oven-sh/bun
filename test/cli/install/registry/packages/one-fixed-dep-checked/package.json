@@ -1,0 +1,45 @@
+{
+	"name": "one-fixed-dep-checked",
+	"versions": {
+		"1.0.0": {
+			"name": "one-fixed-dep-checked",
+			"version": "1.0.0",
+			"scripts": {
+				"install": "node check"
+			},
+			"dependencies": {
+				"no-deps-checked": "1.0.0"
+			},
+			"_id": "one-fixed-dep-checked@1.0.0",
+			"gitHead": "a1a4e001e700c5f4df4af0cdc3af489dbfabf78f",
+			"_nodeVersion": "20.8.0",
+			"_npmVersion": "10.1.0",
+			"dist": {
+				"integrity": "sha512-JvhSYL8Nxumb4U+BL0NwBfn7Jz7bHTdUegIsb7k6WxOX1y8wpRXwrQjBpqnniPc9a7H5qLs4E7XfYJxNdii3mg==",
+				"shasum": "0664e98d8366d4be6db17bbefe7e8b328ca232cf",
+				"tarball": "http://localhost:4873/one-fixed-dep-checked/-/one-fixed-dep-checked-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2023-11-01T22:05:25.521Z",
+		"created": "2023-11-01T22:05:25.521Z",
+		"1.0.0": "2023-11-01T22:05:25.521Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"one-fixed-dep-checked-1.0.0.tgz": {
+			"shasum": "0664e98d8366d4be6db17bbefe7e8b328ca232cf",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "3-c98b03eb7a81f098",
+	"_id": "one-fixed-dep-checked",
+	"readme": "ERROR: No README data found!"
+}

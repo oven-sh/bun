@@ -1,0 +1,84 @@
+name: lint-cpp
+
+permissions:
+  contents: read
+env:
+  LLVM_VERSION: 16
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
+
+on:
+  workflow_call:
+    inputs:
+      pr-number:
+        required: true
+        type: number
+
+jobs:
+  lint-cpp:
+    name: Lint C++
+    runs-on: ${{ github.repository_owner == 'oven-sh' && 'macos-13-xlarge' || 'macos-12' }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+      - name: Setup Bun
+        uses: ./.github/actions/setup-bun
+        with:
+          bun-version: latest
+      - name: Install Dependencies
+        env:
+          HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK: 1
+          HOMEBREW_NO_AUTO_UPDATE: 1
+          HOMEBREW_NO_INSTALL_CLEANUP: 1
+        run: |
+          brew install \
+            llvm@${{ env.LLVM_VERSION }} \
+            ninja \
+            coreutils \
+            openssl@1.1 \
+            libiconv \
+            gnu-sed --force --overwrite
+          echo "$(brew --prefix coreutils)/libexec/gnubin" >> $GITHUB_PATH
+          echo "$(brew --prefix llvm@$LLVM_VERSION)/bin" >> $GITHUB_PATH
+          brew link --overwrite llvm@$LLVM_VERSION
+      - name: Bun install
+        run: |
+          bun install
+      - name: clang-tidy
+        id: format
+        env:
+          CPU_TARGET: native
+          BUN_SILENT: 1
+        run: |
+          rm -f did_fail format.log
+          echo "${{ inputs.pr-number }}" > pr-number.txt
+          echo "pr_number=$(cat pr-number.txt)" >> $GITHUB_OUTPUT
+          bun run --silent build:tidy &> >(tee -p format.log) && echo 0 > did_succeed.txt
+          # Upload format.log as github artifact for the workflow
+          if [ -f did_succeed.txt ]; then
+            echo "0" > did_fail.txt
+          else
+            echo "1" > did_fail.txt
+          fi
+          echo "did_fail=$(cat did_fail.txt)" >> $GITHUB_OUTPUT
+
+      - name: Upload format.log
+        uses: actions/upload-artifact@v2
+        with:
+          name: format.log
+          path: format.log
+      - name: Upload PR
+        uses: actions/upload-artifact@v2
+        with:
+          name: pr-number.txt
+          path: pr-number.txt
+      - name: Upload PR
+        uses: actions/upload-artifact@v2
+        with:
+          name: did_fail.txt
+          path: did_fail.txt
+      - name: Fail if formatting failed
+        if: ${{ steps.format.outputs.did_fail == '1' }}
+        run: exit 1

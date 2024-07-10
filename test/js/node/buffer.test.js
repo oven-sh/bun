@@ -2560,6 +2560,7 @@ it("Buffer.latin1Slice() on a Uint8Array", () => {
   expect(() => latin1Slice.call(buf, 1, 4)).toThrow(RangeError);
   expect(() => latin1Slice.call(buf, 4, 1)).toThrow(RangeError);
   expect(() => latin1Slice.call(buf, 4, 0)).toThrow(RangeError);
+  expect(() => latin1Slice.call(buf, 3, 999999)).toThrow(RangeError);
 
   expect(latin1Slice.call(buf, 3)).toStrictEqual("");
   expect(latin1Slice.call(buf, 3, 1)).toStrictEqual("");
@@ -2587,6 +2588,7 @@ it("Buffer.latin1Write() on a Uint8Array", () => {
   expect(latin1Write.call(buf, "í", 28)).toBe(1);
   expect(latin1Write.call(buf, "é", 30)).toBe(1);
   expect(latin1Write.call(buf, "ò", 32)).toBe(1);
+  expect(latin1Write.call(buf, "ò", 32, 999999)).toBe(1);
 
   expect(buf).toStrictEqual(
     new Uint8Array(Buffer.from("6f6c64206d63646f6e616c6420686164206120666172e920ed20e920ed20e920f2", "hex")),

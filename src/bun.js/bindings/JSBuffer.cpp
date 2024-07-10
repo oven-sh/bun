@@ -1,7 +1,6 @@
-
-
 #include "root.h"
 
+#include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
 #include "JavaScriptCore/JSCell.h"
@@ -1621,29 +1620,32 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringBody(JSC::JS
 
 // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/node_buffer.cc#L544
 template<BufferEncodingType encoding>
-static inline JSC::EncodedJSValue jsBufferPrototypeFunction_toStringWithEncodingBody(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+static inline JSC::EncodedJSValue jsBufferPrototypeFunction_SliceWithEncoding(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
 {
     auto& vm = JSC::getVM(lexicalGlobalObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = JSC::jsDynamicCast<JSC::JSArrayBufferView*>(callFrame->thisValue());
+    const JSValue startValue = callFrame->argument(0);
+    const JSValue endValue = callFrame->argument(1);
 
     if (UNLIKELY(!castedThis)) {
         throwTypeError(lexicalGlobalObject, scope, "Expected ArrayBufferView"_s);
         return {};
     }
 
-    size_t length = castedThis->byteLength();
+    const size_t length = castedThis->byteLength();
+    if (UNLIKELY(length == 0)) {
+        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
+    }
+
     size_t start = 0;
     size_t end = length;
 
-    if (end == 0)
-        return JSC::JSValue::encode(JSC::jsEmptyString(vm));
-
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(0), start, "start must be a positive integer"_s))) {
+    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, startValue, start, "start must be a positive integer"_s))) {
         return {};
     }
 
-    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, callFrame->argument(1), end, "end must be a positive integer"_s))) {
+    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, endValue, end, "end must be a positive integer"_s))) {
         return {};
     }
 
@@ -1700,7 +1702,7 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JS
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    if (!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, length, "length must be > 0"_s)) {
+    if (!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, max, "length must be > 0"_s)) {
         return {};
     }
 
@@ -2060,31 +2062,31 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexWrite, (JSGlobalObject * l
 
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf8Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::utf8>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::utf8>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_utf16leSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::utf16le>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::utf16le>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_latin1Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::latin1>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::latin1>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_asciiSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::ascii>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::ascii>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64Slice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::base64>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::base64>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_base64urlSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::base64url>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::base64url>(lexicalGlobalObject, callFrame);
 }
 JSC_DEFINE_HOST_FUNCTION(jsBufferPrototypeFunction_hexSlice, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
-    return jsBufferPrototypeFunction_toStringWithEncodingBody<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
+    return jsBufferPrototypeFunction_SliceWithEncoding<WebCore::BufferEncodingType::hex>(lexicalGlobalObject, callFrame);
 }
 
 /* */

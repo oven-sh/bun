@@ -279,8 +279,8 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        js_ast.Stmt.Data.Store.create(allocator);
-        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create();
+        js_ast.Expr.Data.Store.create();
         defer {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();

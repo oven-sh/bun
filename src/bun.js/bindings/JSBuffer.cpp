@@ -1693,16 +1693,16 @@ static inline JSC::EncodedJSValue jsBufferPrototypeFunction_writeEncodingBody(JS
     size_t max = length;
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    if (!parseArrayIndex(scope, lexicalGlobalObject, offsetValue, offset, "offset must be > 0"_s)) {
+    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, offsetValue, offset, "offset must be > 0"_s))) {
         return {};
     }
 
-    if (offset > max) {
+    if (UNLIKELY(offset > max)) {
         throwNodeRangeError(lexicalGlobalObject, scope, "offset is out of bounds"_s);
         return JSC::JSValue::encode(jsUndefined());
     }
 
-    if (!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, max, "length must be > 0"_s)) {
+    if (UNLIKELY(!parseArrayIndex(scope, lexicalGlobalObject, lengthValue, max, "length must be > 0"_s))) {
         return {};
     }
 

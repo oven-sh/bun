@@ -392,15 +392,15 @@ WTF::String Bun::formatStackTrace(
 
                 // If it's not a Zig::GlobalObject, don't bother source-mapping it.
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
+                    // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
                         remappedFrame.source_url = Bun::toString(sourceURLForFrame);
-                    } else {
-                        // https://github.com/oven-sh/bun/issues/3595
-                        remappedFrame.source_url = BunStringEmpty;
-                    }
 
-                    // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                        // This ensures the lifetime of the sourceURL is accounted for correctly
+                        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
+                    }
                 }
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
@@ -495,15 +495,15 @@ WTF::String Bun::formatStackTrace(
 
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
             if (globalObject) {
+                // https://github.com/oven-sh/bun/issues/3595
                 if (!sourceURLForFrame.isEmpty()) {
                     remappedFrame.source_url = Bun::toString(sourceURLForFrame);
-                } else {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    remappedFrame.source_url = BunStringEmpty;
-                }
 
-                // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
+                }
             }
 
             if (!hasSet) {

@@ -127,6 +127,16 @@ pub const SavedSourceMap = struct {
 
     pub const vlq_offset = 24;
 
+    pub inline fn lock(map: *SavedSourceMap) void {
+        map.mutex.lock();
+        map.map.unlockPointers();
+    }
+
+    pub inline fn unlock(map: *SavedSourceMap) void {
+        map.map.lockPointers();
+        map.mutex.unlock();
+    }
+
     // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
@@ -209,8 +219,8 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
 
         const entry = this.map.getEntry(bun.hash(path)) orelse return;
         const old_value = Value.from(entry.value_ptr.*);
@@ -239,8 +249,8 @@ pub const SavedSourceMap = struct {
 
     pub fn deinit(this: *SavedSourceMap) void {
         {
-            this.mutex.lock();
-            defer this.mutex.unlock();
+            this.lock();
+            defer this.unlock();
 
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
@@ -257,6 +267,7 @@ pub const SavedSourceMap = struct {
             }
         }
 
+        this.map.unlockPointers();
         this.map.deinit();
     }
 
@@ -265,8 +276,9 @@ pub const SavedSourceMap = struct {
     }
 
     fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
+
         const entry = try this.map.getOrPut(bun.hash(path));
         if (entry.found_existing) {
             var old_value = Value.from(entry.value_ptr.*);
@@ -288,6 +300,7 @@ pub const SavedSourceMap = struct {
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
+        this.mutex.assertLocked();
         const hash = bun.hash(path);
         const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
@@ -333,6 +346,8 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
+        this.lock();
+        defer this.unlock();
         return this.getWithContent(path, .mappings_only).map;
     }
 
@@ -343,8 +358,8 @@ pub const SavedSourceMap = struct {
         column: i32,
         source_handling: SourceMap.SourceContentHandling,
     ) ?SourceMap.Mapping.Lookup {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
 
         const parse = this.getWithContent(path, switch (source_handling) {
             .no_source_contents => .mappings_only,
@@ -655,11 +670,12 @@ pub const VirtualMachine = struct {
     default_tls_reject_unauthorized: ?bool = null,
     default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 
-    /// Do not access this field directly
-    /// It exists in the VirtualMachine struct so that
-    /// we don't accidentally make a stack copy of it
-    /// only use it through
-    /// source_mappings
+    /// Do not access this field directly!
+    ///
+    /// It exists in the VirtualMachine struct so that we don't accidentally
+    /// make a stack copy of it only use it through source_mappings.
+    ///
+    /// This proposal could let us safely move it back https://github.com/ziglang/zig/issues/7769
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
     source_mappings: SavedSourceMap = undefined,
 
@@ -1447,6 +1463,7 @@ pub const VirtualMachine = struct {
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.map.lockPointers();
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1561,6 +1578,7 @@ pub const VirtualMachine = struct {
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.map.lockPointers();
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -2945,7 +2963,6 @@ pub const VirtualMachine = struct {
                 .no_source_contents,
             )) |lookup| {
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
-                    frame.source_url.deref();
                     frame.source_url = source_url;
                 }
                 const mapping = lookup.mapping;

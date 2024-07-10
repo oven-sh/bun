@@ -2574,6 +2574,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (!startMap(inMap))
                 break;
             JSMapIterator* iterator = JSMapIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
             m_gcBuffer.appendWithCrashOnOverflow(inMap);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
             mapIteratorStack.append(iterator);
@@ -2620,6 +2622,8 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             if (!startSet(inSet))
                 break;
             JSSetIterator* iterator = JSSetIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+            if (UNLIKELY(scope.exception()))
+                return SerializationReturnCode::ExistingExceptionError;
             m_gcBuffer.appendWithCrashOnOverflow(inSet);
             m_gcBuffer.appendWithCrashOnOverflow(iterator);
             setIteratorStack.append(iterator);

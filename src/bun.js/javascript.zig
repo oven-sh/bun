@@ -295,17 +295,21 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn getWithContent(
+    fn getWithContent(
         this: *SavedSourceMap,
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
-        this.mutex.assertLocked();
+        this.lock();
+        defer this.unlock();
+
         const hash = bun.hash(path);
         const mapping = this.map.getEntry(hash) orelse return .{};
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
+                const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
+                map.lock.lock();
+                return .{ .map = map };
             },
             Value.Tag.SavedMappings => {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
@@ -316,6 +320,7 @@ pub const SavedSourceMap = struct {
                     return .{};
                 };
                 mapping.value_ptr.* = Value.init(result).ptr();
+                result.ref();
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
@@ -324,6 +329,7 @@ pub const SavedSourceMap = struct {
                 if (ptr.getSourceMap(path, .none, hint)) |parse|
                     if (parse.map) |map| {
                         mapping.value_ptr.* = Value.init(map).ptr();
+                        map.lock.lock();
                         return parse;
                     };
 
@@ -346,8 +352,6 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn get(this: *SavedSourceMap, path: string) ?*ParsedSourceMap {
-        this.lock();
-        defer this.unlock();
         return this.getWithContent(path, .mappings_only).map;
     }
 
@@ -358,14 +362,12 @@ pub const SavedSourceMap = struct {
         column: i32,
         source_handling: SourceMap.SourceContentHandling,
     ) ?SourceMap.Mapping.Lookup {
-        this.lock();
-        defer this.unlock();
-
         const parse = this.getWithContent(path, switch (source_handling) {
             .no_source_contents => .mappings_only,
             .source_contents => .{ .all = .{ .line = line, .column = column } },
         });
         const map = parse.map orelse return null;
+
         const mapping = parse.mapping orelse
             SourceMap.Mapping.find(map.mappings, line, column) orelse
             return null;

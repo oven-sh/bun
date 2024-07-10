@@ -262,7 +262,7 @@ pub const Mapping = struct {
 
             if (std.fs.path.isAbsolute(base_filename)) {
                 const dir = bun.path.dirname(base_filename, .auto);
-                return bun.String.init(bun.path.joinAbs(dir, .auto, name));
+                return bun.String.createUTF8(bun.path.joinAbs(dir, .auto, name));
             }
 
             return bun.String.init(name);
@@ -597,7 +597,7 @@ pub const Mapping = struct {
         /// maps `source_index` to the correct filename.
         external_source_names: []const []const u8 = &.{},
         /// In order to load source contents from a source-map after the fact,
-        /// a handle to the underying source provider is stored. Within this pointer,
+        // / a handle to the underlying source provider is stored. Within this pointer,
         /// a flag is stored if it is known to be an inline or external source map.
         ///
         /// Source contents are large, we don't preserve them in memory. This has
@@ -605,6 +605,8 @@ pub const Mapping = struct {
         /// are emitted (specifically with Bun.inspect / unhandled; the ones that
         /// rely on source contents)
         underlying_provider: SourceContentPtr = .{ .data = 0 },
+        // todo write a comment
+        lock: bun.Lock = .{},
 
         const SourceContentPtr = packed struct(u64) {
             load_hint: SourceMapLoadHint = .none,

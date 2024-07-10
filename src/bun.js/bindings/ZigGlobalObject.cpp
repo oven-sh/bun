@@ -20,8 +20,6 @@
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/GetterSetter.h"
 #include "JavaScriptCore/GlobalObjectMethodTable.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
 #include "JavaScriptCore/Heap.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/InitializeThreading.h"
@@ -857,7 +855,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
             // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
             // JSC::Heap::PreventCollectionScope(vm.heap);
-            oldMap->clear(vm);
+            oldMap->clear(globalObject);
             JSC::gcUnprotect(oldMap);
             // vm.heap.completeAllJITPlans();
 
@@ -3659,8 +3657,8 @@ void GlobalObject::reload()
         this,
         Identifier::fromString(this->vm(), "registry"_s)));
 
-    registry->clear(this->vm());
-    this->requireMap()->clear(this->vm());
+    registry->clear(this);
+    this->requireMap()->clear(this);
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.

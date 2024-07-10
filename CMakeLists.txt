@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.19")
-set(WEBKIT_TAG 615e8585f96aa718b0f5158210259b83fe8440ea)
+set(WEBKIT_TAG c61accd7316919f65b050f8448d5fbf52202268a)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -778,6 +778,8 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal/util/*.js"
+        "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/node/*.js"
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"

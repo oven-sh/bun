@@ -2101,8 +2101,8 @@ pub const AsyncHTTP = struct {
             assert(active_requests > 0);
         }
 
-        if (AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
-            http_thread.drainEvents();
+        if (!http_thread.queued_tasks.isEmpty() and AsyncHTTP.active_requests_count.load(.monotonic) < AsyncHTTP.max_simultaneous_requests.load(.monotonic)) {
+            http_thread.loop.loop.wakeup();
         }
     }
 
@@ -2314,7 +2314,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
 
     // Aborted before connecting
     if (this.signals.get(.aborted)) {
-        this.fail(error.Aborted);
+        this.fail(error.AbortedBeforeConnecting);
         return;
     }
 
@@ -3132,7 +3132,7 @@ pub const HTTPClientResult = struct {
     }
 
     pub fn isAbort(this: *const HTTPClientResult) bool {
-        return if (this.fail) |e| e == error.Aborted else false;
+        return if (this.fail) |e| (e == error.Aborted or e == error.AbortedBeforeConnecting) else false;
     }
 
     pub const Callback = struct {

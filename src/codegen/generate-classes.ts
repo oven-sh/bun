@@ -1474,7 +1474,7 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<${name}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }

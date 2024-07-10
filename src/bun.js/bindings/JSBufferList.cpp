@@ -126,7 +126,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, str);
     }
     if (n < len) {
@@ -152,7 +152,7 @@ JSC::JSValue JSBufferList::_getString(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         }
         if (!ropeBuilder.append(str))
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len)
             break;
         n -= len;
@@ -178,7 +178,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
     size_t n = total;
 
     if (n == len) {
-        m_deque.removeFirst();
+        this->removeFirst();
         RELEASE_AND_RETURN(throwScope, array);
     }
     if (n < len) {
@@ -219,7 +219,7 @@ JSC::JSValue JSBufferList::_getBuffer(JSC::VM& vm, JSC::JSGlobalObject* lexicalG
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, offset, array, 0, len, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);
         }
-        m_deque.removeFirst();
+        this->removeFirst();
         if (n == len) {
             offset += len;
             break;
@@ -253,8 +253,10 @@ void JSBufferList::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     JSBufferList* buffer = jsCast<JSBufferList*>(cell);
     ASSERT_GC_OBJECT_INHERITS(buffer, info());
     Base::visitChildren(buffer, visitor);
+    buffer->lock();
     for (auto& val : buffer->m_deque)
         visitor.append(val);
+    buffer->unlock();
 }
 DEFINE_VISIT_CHILDREN(JSBufferList);
 

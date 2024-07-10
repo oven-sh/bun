@@ -208,6 +208,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             return;
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
+            defer mappings.deref();
             const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
@@ -895,12 +896,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = .{
-                    .task = JSC.Task.init(this),
-                    .auto_delete = true,
-                };
-                this.vm().enqueueTaskConcurrent(concurrent_task);
+                this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn onPoll(this: *Queue) void {

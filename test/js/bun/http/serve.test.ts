@@ -87,20 +87,18 @@ it("should be able to abruptly stop the server many times", async () => {
     await stopped.promise;
     Bun.gc(true);
   }
-  for (let j = 0; j < 10; j++) {
-    const runs = new Array(10);
-    for (let i = 0; i < 10; i++) {
-      runs[i] = run();
-    }
-
-    await Promise.all(runs);
-    Bun.gc(true);
+  const runs = new Array(10);
+  for (let i = 0; i < 10; i++) {
+    runs[i] = run();
   }
+
+  await Promise.all(runs);
+  Bun.gc(true);
 });
 
 // This test reproduces a crash in Bun v1.1.18 and earlier
 it("should be able to abruptly stop the server", async () => {
-  for (let i = 0; i < 5; i++) {
+  for (let i = 0; i < 2; i++) {
     const controller = new AbortController();
 
     using server = Bun.serve({

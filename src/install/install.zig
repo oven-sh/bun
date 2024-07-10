@@ -7560,6 +7560,12 @@ pub const PackageManager = struct {
             current_package_json: *Expr,
             options: EditOptions,
         ) !void {
+            // using data store is going to result in undefined memory issues as
+            // the store is cleared in some workspace situations. the solution
+            // is to always avoid the store
+            Expr.Disabler.disable();
+            defer Expr.Disabler.enable();
+
             const allocator = manager.allocator;
 
             inline for (dependency_groups) |group| {
@@ -7613,13 +7619,9 @@ pub const PackageManager = struct {
                                     else
                                         allocator.dupe(u8, "latest") catch bun.outOfMemory();
 
-                                    dep.value = Expr.init(
-                                        E.String,
-                                        E.String{
-                                            .data = temp_version,
-                                        },
-                                        logger.Loc.Empty,
-                                    ).clone(allocator) catch bun.outOfMemory();
+                                    dep.value = Expr.allocate(allocator, E.String, .{
+                                        .data = temp_version,
+                                    }, logger.Loc.Empty);
                                 }
                             }
                         } else {
@@ -7690,29 +7692,21 @@ pub const PackageManager = struct {
                                                 // negative because the real package might have a scope
                                                 // e.g. "dep": "npm:@foo/bar@1.2.3"
                                                 if (strings.lastIndexOfChar(dep_literal, '@')) |at_index| {
-                                                    dep.value = try Expr.init(
-                                                        E.String,
-                                                        E.String{
-                                                            .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
-                                                                dep_literal[0..at_index],
-                                                                new_version,
-                                                            }),
-                                                        },
-                                                        logger.Loc.Empty,
-                                                    ).clone(allocator);
+                                                    dep.value = Expr.allocate(allocator, E.String, .{
+                                                        .data = try std.fmt.allocPrint(allocator, "{s}@{s}", .{
+                                                            dep_literal[0..at_index],
+                                                            new_version,
+                                                        }),
+                                                    }, logger.Loc.Empty);
                                                     break :updated;
                                                 }
 
                                                 // fallthrough and replace entire version.
                                             }
 
-                                            dep.value = try Expr.init(
-                                                E.String,
-                                                E.String{
-                                                    .data = new_version,
-                                                },
-                                                logger.Loc.Empty,
-                                            ).clone(allocator);
+                                            dep.value = Expr.allocate(allocator, E.String, .{
+                                                .data = new_version,
+                                            }, logger.Loc.Empty);
                                             break :updated;
                                         }
                                     }
@@ -7733,6 +7727,12 @@ pub const PackageManager = struct {
             dependency_list: string,
             options: EditOptions,
         ) !void {
+            // using data store is going to result in undefined memory issues as
+            // the store is cleared in some workspace situations. the solution
+            // is to always avoid the store
+            Expr.Disabler.disable();
+            defer Expr.Disabler.enable();
+
             const allocator = manager.allocator;
             var remaining = updates.len;
             var replacing: usize = 0;
@@ -7874,13 +7874,9 @@ pub const PackageManager = struct {
                         while (i > 0) {
                             i -= 1;
                             if (deps[i].data == .e_missing) {
-                                deps[i] = try Expr.init(
-                                    E.String,
-                                    E.String{
-                                        .data = package_name,
-                                    },
-                                    logger.Loc.Empty,
-                                ).clone(allocator);
+                                deps[i] = Expr.allocate(allocator, E.String, .{
+                                    .data = package_name,
+                                }, logger.Loc.Empty);
                                 break;
                             }
                         }
@@ -7940,27 +7936,19 @@ pub const PackageManager = struct {
                         }
 
                         if (new_dependencies[k].key == null) {
-                            new_dependencies[k].key = try JSAst.Expr.init(
-                                JSAst.E.String,
-                                JSAst.E.String{
-                                    .data = try allocator.dupe(u8, if (request.is_aliased)
-                                        request.name
-                                    else if (request.resolved_name.isEmpty())
-                                        request.version.literal.slice(request.version_buf)
-                                    else
-                                        request.resolved_name.slice(request.version_buf)),
-                                },
-                                logger.Loc.Empty,
-                            ).clone(allocator);
+                            new_dependencies[k].key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                                .data = try allocator.dupe(u8, if (request.is_aliased)
+                                    request.name
+                                else if (request.resolved_name.isEmpty())
+                                    request.version.literal.slice(request.version_buf)
+                                else
+                                    request.resolved_name.slice(request.version_buf)),
+                            }, logger.Loc.Empty);
 
-                            new_dependencies[k].value = try JSAst.Expr.init(
-                                JSAst.E.String,
-                                JSAst.E.String{
-                                    // we set it later
-                                    .data = "",
-                                },
-                                logger.Loc.Empty,
-                            ).clone(allocator);
+                            new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                                // we set it later
+                                .data = "",
+                            }, logger.Loc.Empty);
 
                             request.e_string = new_dependencies[k].value.?.data.e_string;
 
@@ -7979,13 +7967,9 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    break :brk JSAst.Expr.init(
-                        JSAst.E.Object,
-                        JSAst.E.Object{
-                            .properties = JSAst.G.Property.List.init(new_dependencies),
-                        },
-                        logger.Loc.Empty,
-                    );
+                    break :brk JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
+                        .properties = JSAst.G.Property.List.init(new_dependencies),
+                    }, logger.Loc.Empty);
                 };
 
                 dependencies_object.data.e_object.properties = JSAst.G.Property.List.init(new_dependencies);
@@ -8005,13 +7989,9 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    break :brk Expr.init(
-                        E.Array,
-                        E.Array{
-                            .items = JSAst.ExprNodeList.init(new_trusted_deps),
-                        },
-                        logger.Loc.Empty,
-                    );
+                    break :brk Expr.allocate(allocator, E.Array, .{
+                        .items = JSAst.ExprNodeList.init(new_trusted_deps),
+                    }, logger.Loc.Empty);
                 };
 
                 if (options.add_trusted_dependencies and trusted_dependencies_to_add > 0) {
@@ -8024,81 +8004,55 @@ pub const PackageManager = struct {
                 if (current_package_json.data != .e_object or current_package_json.data.e_object.properties.len == 0) {
                     var root_properties = try allocator.alloc(JSAst.G.Property, if (options.add_trusted_dependencies) 2 else 1);
                     root_properties[0] = JSAst.G.Property{
-                        .key = JSAst.Expr.init(
-                            JSAst.E.String,
-                            JSAst.E.String{
-                                .data = dependency_list,
-                            },
-                            logger.Loc.Empty,
-                        ),
+                        .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                            .data = dependency_list,
+                        }, logger.Loc.Empty),
                         .value = dependencies_object,
                     };
 
                     if (options.add_trusted_dependencies) {
                         root_properties[1] = JSAst.G.Property{
-                            .key = Expr.init(
-                                E.String,
-                                E.String{
-                                    .data = trusted_dependencies_string,
-                                },
-                                logger.Loc.Empty,
-                            ),
+                            .key = Expr.allocate(allocator, E.String, .{
+                                .data = trusted_dependencies_string,
+                            }, logger.Loc.Empty),
                             .value = trusted_dependencies_array,
                         };
                     }
 
-                    current_package_json.* = JSAst.Expr.init(
-                        JSAst.E.Object,
-                        JSAst.E.Object{ .properties = JSAst.G.Property.List.init(root_properties) },
-                        logger.Loc.Empty,
-                    );
+                    current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
+                        .properties = JSAst.G.Property.List.init(root_properties),
+                    }, logger.Loc.Empty);
                 } else {
                     if (needs_new_dependency_list and needs_new_trusted_dependencies_list) {
                         var root_properties = try allocator.alloc(G.Property, current_package_json.data.e_object.properties.len + 2);
                         @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                         root_properties[root_properties.len - 2] = .{
-                            .key = Expr.init(E.String, E.String{
+                            .key = Expr.allocate(allocator, E.String, E.String{
                                 .data = dependency_list,
                             }, logger.Loc.Empty),
                             .value = dependencies_object,
                         };
                         root_properties[root_properties.len - 1] = .{
-                            .key = Expr.init(
-                                E.String,
-                                E.String{
-                                    .data = trusted_dependencies_string,
-                                },
-                                logger.Loc.Empty,
-                            ),
+                            .key = Expr.allocate(allocator, E.String, .{
+                                .data = trusted_dependencies_string,
+                            }, logger.Loc.Empty),
                             .value = trusted_dependencies_array,
                         };
-                        current_package_json.* = Expr.init(
-                            E.Object,
-                            E.Object{
-                                .properties = G.Property.List.init(root_properties),
-                            },
-                            logger.Loc.Empty,
-                        );
+                        current_package_json.* = Expr.allocate(allocator, E.Object, .{
+                            .properties = G.Property.List.init(root_properties),
+                        }, logger.Loc.Empty);
                     } else if (needs_new_dependency_list or needs_new_trusted_dependencies_list) {
                         var root_properties = try allocator.alloc(JSAst.G.Property, current_package_json.data.e_object.properties.len + 1);
                         @memcpy(root_properties[0..current_package_json.data.e_object.properties.len], current_package_json.data.e_object.properties.slice());
                         root_properties[root_properties.len - 1] = .{
-                            .key = JSAst.Expr.init(
-                                JSAst.E.String,
-                                JSAst.E.String{
-                                    .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
-                                },
-                                logger.Loc.Empty,
-                            ),
+                            .key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
+                                .data = if (needs_new_dependency_list) dependency_list else trusted_dependencies_string,
+                            }, logger.Loc.Empty),
                             .value = if (needs_new_dependency_list) dependencies_object else trusted_dependencies_array,
                         };
-                        current_package_json.* = JSAst.Expr.init(
-                            JSAst.E.Object,
-                            JSAst.E.Object{
-                                .properties = JSAst.G.Property.List.init(root_properties),
-                            },
-                            logger.Loc.Empty,
-                        );
+                        current_package_json.* = JSAst.Expr.allocate(allocator, JSAst.E.Object, .{
+                            .properties = JSAst.G.Property.List.init(root_properties),
+                        }, logger.Loc.Empty);
                     }
                 }
             }

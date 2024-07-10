@@ -102,7 +102,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn init() *Store {
-            log("Store.init", .{});
+            log("init", .{});
             const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
 
             prealloc.first_block.bytes_used = 0;
@@ -116,6 +116,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn deinit(store: *Store) void {
+            log("deinit", .{});
             var it = store.firstBlock().next; // do not free `store.head`
             while (it) |next| {
                 if (Environment.isDebug)
@@ -130,7 +131,8 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
         }
 
         pub fn reset(store: *Store) void {
-            log("Data Store Reset", .{});
+            store.debug_lock.assertUnlocked();
+            log("reset", .{});
 
             if (Environment.isDebug) {
                 var it: ?*Block = store.firstBlock();
@@ -176,6 +178,9 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
         pub inline fn append(store: *Store, comptime T: type, data: T) *T {
             const ptr = store.allocate(T);
+            if (Environment.isDebug) {
+                log("append({s}) -> 0x{x}", .{ bun.meta.typeName(T), @intFromPtr(ptr) });
+            }
             ptr.* = data;
             return ptr;
         }
@@ -3167,13 +3172,9 @@ pub const Stmt = struct {
                     return allocator.append(T, value);
                 }
 
+                Disabler.assert();
                 return instance.?.append(T, value);
             }
-
-            // pub fn toOwnedSlice() []*StoreType.Block {
-            //     if (instance or StoreType._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
-            //     return instance.reclaim();
-            // }
         };
     };
 
@@ -5970,13 +5971,9 @@ pub const Expr = struct {
                     return allocator.append(T, value);
                 }
 
+                Disabler.assert();
                 return instance.?.append(T, value);
             }
-
-            // pub fn toOwnedSlice() []*StoreType.Block {
-            //     if (instance or StoreType._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
-            //     return instance.reclaim();
-            // }
         };
 
         pub inline fn isStringValue(self: Data) bool {

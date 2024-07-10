@@ -55,7 +55,8 @@ Allows you to set options for a specific registry:
 
 //http://localhost:4873/:_password=${NPM_PASSWORD}
 
-# or use _auth, which is $username:$password, but base64 encoded
+# or use _auth, which is your username and password
+# combined into a single string, which is then base 64 encoded
 //http://localhost:4873/:_auth=${NPM_AUTH}
 ```
 
@@ -64,7 +65,7 @@ The following options are supported:
 - `_authToken`
 - `username`
 - `_password` (base64 encoded password)
-- `_auth` (base64 encoded username:password)
+- `_auth` (base64 encoded username:password, e.g. `btoa(username + ":" + password)`)
 
 The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/docs/runtime/bunfig#install-registry):
 

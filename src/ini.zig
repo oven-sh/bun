@@ -708,7 +708,7 @@ pub const ConfigIterator = struct {
         loc: Loc,
 
         pub const Opt = enum {
-            /// username:password encoded in base64
+            /// `${username}:${password}` encoded in base64
             _auth,
 
             /// authentication string
@@ -878,8 +878,9 @@ pub fn loadNpmrcFromFile(
     install: *bun.Schema.Api.BunInstall,
     env: *bun.DotEnv.Loader,
     auto_loaded: bool,
-    log: *bun.logger.Log,
-) !void {
+) void {
+    var log = bun.logger.Log.init(allocator);
+    defer log.deinit();
     const npmrc_file = switch (bun.sys.openat(bun.FD.cwd(), ".npmrc", bun.O.RDONLY, 0)) {
         .result => |fd| fd,
         .err => |err| {
@@ -905,7 +906,13 @@ pub fn loadNpmrcFromFile(
     };
     defer allocator.free(source.contents);
 
-    return loadNpmrc(allocator, install, env, auto_loaded, log, &source);
+    loadNpmrc(allocator, install, env, auto_loaded, &log, &source) catch {
+        if (log.errors == 1)
+            Output.warn("Encountered an error while reading <b>.npmrc<r>:\n", .{})
+        else
+            Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
+    };
+    log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
 }
 
 pub fn loadNpmrc(
@@ -1209,13 +1216,13 @@ fn @"handle _auth"(
             source,
             conf_item.loc,
             allocator,
-            "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got an empty string",
+            "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got an empty string",
             .{},
         ) catch bun.outOfMemory();
         return;
     }
     const decode_len = bun.base64.decodeLen(conf_item.value);
-    var decoded = allocator.alloc(u8, decode_len) catch bun.outOfMemory();
+    const decoded = allocator.alloc(u8, decode_len) catch bun.outOfMemory();
     const result = bun.base64.decode(decoded[0..], conf_item.value);
     if (!result.isSuccessful()) {
         defer allocator.free(decoded);
@@ -1225,13 +1232,13 @@ fn @"handle _auth"(
     const @"username:password" = decoded[0..result.count];
     const colon_idx = std.mem.indexOfScalar(u8, @"username:password", ':') orelse {
         defer allocator.free(decoded);
-        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base 64, but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
         return;
     };
     const username = @"username:password"[0..colon_idx];
     if (colon_idx + 1 >= @"username:password".len) {
         defer allocator.free(decoded);
-        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to decode to \\<username\\>:\\<password\\> but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
+        log.addErrorFmt(source, conf_item.loc, allocator, "invalid _auth value, expected it to be \"\\<username\\>:\\<password\\>\" encoded in base64, but got:\n\n{s}", .{decoded}) catch bun.outOfMemory();
         return;
     }
     const password = @"username:password"[colon_idx + 1 ..];

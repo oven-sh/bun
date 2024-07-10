@@ -39,6 +39,13 @@ else()
     message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
 endif()
 
+if (WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
+    # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
+    # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
+    # as part of some file paths
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(DEFAULT_ZIG_OPTIMIZE "Debug")
@@ -112,7 +119,11 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-set(LLVM_VERSION 16)
+if(WIN32)
+    set(LLVM_VERSION 18)
+else()
+    set(LLVM_VERSION 16)
+endif()
 
 macro(BUN_FIND_LLVM)
     find_program(

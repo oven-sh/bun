@@ -235,15 +235,15 @@ it("fetch timeout works on tls", async () => {
     async fetch() {
       async function* body() {
         yield "Hello, ";
-        await Bun.sleep(2000);
+        await Bun.sleep(200);
         yield "World!";
       }
       return new Response(body);
     },
   });
   const start = performance.now();
-  const TIMEOUT = 1000;
-  const THRESHOLD = 200;
+  const TIMEOUT = 50;
+  const THRESHOLD = 50;
 
   try {
     await fetch(server.url, {

@@ -117,9 +117,25 @@ pub const Lock = struct {
         this.mutex.release();
     }
 
-    pub inline fn assertUnlocked(this: *Lock, comptime message: []const u8) void {
+    pub inline fn releaseAssertUnlocked(this: *Lock, comptime message: []const u8) void {
         if (this.mutex.state.load(.monotonic) != 0) {
             @panic(message);
+        }
+    }
+
+    pub inline fn assertUnlocked(this: *Lock) void {
+        if (std.debug.runtime_safety) {
+            if (this.mutex.state.load(.monotonic) != 0) {
+                @panic("Mutex is expected to be unlocked");
+            }
+        }
+    }
+
+    pub inline fn assertLocked(this: *Lock) void {
+        if (std.debug.runtime_safety) {
+            if (this.mutex.state.load(.monotonic) == 0) {
+                @panic("Mutex is expected to be locked");
+            }
         }
     }
 };

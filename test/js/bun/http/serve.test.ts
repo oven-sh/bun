@@ -47,6 +47,84 @@ afterAll(() => {
   }
 });
 
+it("should be able to abruptly stop the server many times", async () => {
+  async function run() {
+    const stopped = Promise.withResolvers();
+    const server = Bun.serve({
+      port: 0,
+      error() {
+        return new Response("Error", { status: 500 });
+      },
+      async fetch(req, server) {
+        await Bun.sleep(50);
+        server.stop(true);
+        await Bun.sleep(50);
+        server = undefined;
+        if (stopped.resolve) {
+          stopped.resolve();
+          stopped.resolve = undefined;
+        }
+
+        return new Response("Hello, World!");
+      },
+    });
+    const url = server.url;
+
+    async function request() {
+      try {
+        await fetch(url, { keepalive: true }).then(res => res.text());
+        expect.unreachable();
+      } catch (e) {
+        expect(e.code).toBe("ConnectionClosed");
+      }
+    }
+
+    const requests = new Array(20);
+    for (let i = 0; i < 20; i++) {
+      requests[i] = request();
+    }
+    await Promise.all(requests);
+    await stopped.promise;
+    Bun.gc(true);
+  }
+  for (let j = 0; j < 10; j++) {
+    const runs = new Array(10);
+    for (let i = 0; i < 10; i++) {
+      runs[i] = run();
+    }
+
+    await Promise.all(runs);
+    Bun.gc(true);
+  }
+});
+
+// This test reproduces a crash in Bun v1.1.18 and earlier
+it("should be able to abruptly stop the server", async () => {
+  for (let i = 0; i < 5; i++) {
+    const controller = new AbortController();
+
+    using server = Bun.serve({
+      port: 0,
+      error() {
+        return new Response("Error", { status: 500 });
+      },
+      async fetch(req, server) {
+        server.stop(true);
+        await Bun.sleep(10);
+        return new Response();
+      },
+    });
+
+    await fetch(server.url, {
+      signal: controller.signal,
+    })
+      .then(res => {
+        return res.blob();
+      })
+      .catch(() => {});
+  }
+});
+
 describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream", () => {
   for (let isDirect of [true, false] as const) {
     it(

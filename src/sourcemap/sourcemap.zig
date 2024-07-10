@@ -192,12 +192,11 @@ pub fn parseJSON(
             .fail => |fail| return fail.err,
         };
 
-        const ptr = bun.default_allocator.create(Mapping.ParsedSourceMap) catch bun.outOfMemory();
-        ptr.* = map_data;
+        const ptr = Mapping.ParsedSourceMap.new(map_data);
         ptr.external_source_names = source_paths_slice.?;
         break :map ptr;
     } else null;
-    errdefer if (map) |m| m.deinit(bun.default_allocator);
+    errdefer if (map) |m| m.deref();
 
     const mapping, const source_index = switch (hint) {
         .source_only => |index| .{ null, index },
@@ -605,8 +604,10 @@ pub const Mapping = struct {
         /// are emitted (specifically with Bun.inspect / unhandled; the ones that
         /// rely on source contents)
         underlying_provider: SourceContentPtr = .{ .data = 0 },
-        // todo write a comment
-        lock: bun.Lock = .{},
+
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+        pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
 
         const SourceContentPtr = packed struct(u64) {
             load_hint: SourceMapLoadHint = .none,
@@ -625,7 +626,11 @@ pub const Mapping = struct {
             return psm.external_source_names.len != 0;
         }
 
-        pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
+        fn deinitFn(this: *ParsedSourceMap) void {
+            this.deinitWithAllocator(bun.default_allocator);
+        }
+
+        fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
             this.mappings.deinit(allocator);
 
             if (this.external_source_names.len > 0) {
@@ -634,7 +639,7 @@ pub const Mapping = struct {
                 allocator.free(this.external_source_names);
             }
 
-            allocator.destroy(this);
+            this.destroy();
         }
 
         pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
@@ -728,6 +733,7 @@ pub const SourceProviderMap = opaque {
         var sfb = std.heap.stackFallback(65536, bun.default_allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
         defer arena.deinit();
+        const allocator = arena.allocator();
 
         const new_load_hint: SourceMapLoadHint, const parsed = parsed: {
             var inline_err: ?anyerror = null;
@@ -739,9 +745,9 @@ pub const SourceProviderMap = opaque {
                 bun.assert(source.tag == .ZigString);
 
                 const found_url = (if (source.is8Bit())
-                    findSourceMappingURL(u8, source.latin1(), arena.allocator())
+                    findSourceMappingURL(u8, source.latin1(), allocator)
                 else
-                    findSourceMappingURL(u16, source.utf16(), arena.allocator())) orelse
+                    findSourceMappingURL(u16, source.utf16(), allocator)) orelse
                     break :try_inline;
                 defer found_url.deinit();
 
@@ -749,7 +755,7 @@ pub const SourceProviderMap = opaque {
                     .is_inline_map,
                     parseUrl(
                         bun.default_allocator,
-                        arena.allocator(),
+                        allocator,
                         found_url.slice(),
                         result,
                     ) catch |err| {
@@ -768,7 +774,7 @@ pub const SourceProviderMap = opaque {
                 @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
 
                 const load_path = load_path_buf[0 .. source_filename.len + 4];
-                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, arena.allocator())) {
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, allocator)) {
                     .err => break :try_external,
                     .result => |data| data,
                 };
@@ -777,7 +783,7 @@ pub const SourceProviderMap = opaque {
                     .is_external_map,
                     parseJSON(
                         bun.default_allocator,
-                        arena.allocator(),
+                        allocator,
                         data,
                         result,
                     ) catch |err| {

@@ -232,8 +232,8 @@ pub const SavedSourceMap = struct {
         } else if (old_value.get(ParsedSourceMap)) |map| {
             if (map.underlying_provider.provider()) |prov| {
                 if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
-                    map.deinit(default_allocator);
                     this.map.removeByPtr(entry.key_ptr);
+                    map.deref();
                 }
             }
         }
@@ -255,9 +255,8 @@ pub const SavedSourceMap = struct {
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
-                if (value.get(ParsedSourceMap)) |source_map_| {
-                    var source_map: *ParsedSourceMap = source_map_;
-                    source_map.deinit(default_allocator);
+                if (value.get(ParsedSourceMap)) |source_map| {
+                    source_map.deref();
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
@@ -284,7 +283,7 @@ pub const SavedSourceMap = struct {
             var old_value = Value.from(entry.value_ptr.*);
             if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
                 var source_map: *ParsedSourceMap = parsed_source_map;
-                source_map.deinit(default_allocator);
+                source_map.deref();
             } else if (old_value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
@@ -300,39 +299,54 @@ pub const SavedSourceMap = struct {
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
-        this.lock();
-        defer this.unlock();
-
         const hash = bun.hash(path);
-        const mapping = this.map.getEntry(hash) orelse return .{};
+
+        // This lock is for the hash table
+        this.lock();
+
+        // This mapping entry is only valid while the mutex is locked
+        const mapping = this.map.getEntry(hash) orelse {
+            this.unlock();
+            return .{};
+        };
+
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
+                defer this.unlock();
                 const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
-                map.lock.lock();
+                map.ref();
                 return .{ .map = map };
             },
             Value.Tag.SavedMappings => {
+                defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = default_allocator.create(ParsedSourceMap) catch unreachable;
-                result.* = saved.toMapping(default_allocator, path) catch {
+                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
-                };
+                });
                 mapping.value_ptr.* = Value.init(result).ptr();
                 result.ref();
+
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                this.unlock();
 
-                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                // Do not lock the mutex while we're parsing JSON!
+                if (ptr.getSourceMap(path, .none, hint)) |parse| {
                     if (parse.map) |map| {
-                        mapping.value_ptr.* = Value.init(map).ptr();
-                        map.lock.lock();
-                        return parse;
-                    };
+                        map.ref();
+                        // The mutex is not locked. We have to check the hash table again.
+                        this.putValue(path, Value.init(map)) catch bun.outOfMemory();
 
+                        return parse;
+                    }
+                }
+
+                this.lock();
+                defer this.unlock();
                 // does not have a valid source map. let's not try again
                 _ = this.map.remove(hash);
 
@@ -2964,7 +2978,9 @@ pub const VirtualMachine = struct {
                 @max(frame.position.column.zeroBased(), 0),
                 .no_source_contents,
             )) |lookup| {
+                defer lookup.source_map.deref();
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
+                    frame.source_url.deref();
                     frame.source_url = source_url;
                 }
                 const mapping = lookup.mapping;
@@ -3088,6 +3104,7 @@ pub const VirtualMachine = struct {
 
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
+            defer lookup.source_map.deref();
 
             if (!top.remapped) {
                 if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
@@ -3154,6 +3171,7 @@ pub const VirtualMachine = struct {
                     @max(frame.position.column.zeroBased(), 0),
                     .no_source_contents,
                 )) |lookup| {
+                    defer lookup.source_map.deref();
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
                         frame.source_url.deref();
                         frame.source_url = src;

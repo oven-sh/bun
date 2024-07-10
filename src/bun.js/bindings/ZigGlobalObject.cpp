@@ -394,7 +394,7 @@ WTF::String Bun::formatStackTrace(
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
                     // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toString(sourceURLForFrame);
+                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                         // This ensures the lifetime of the sourceURL is accounted for correctly
                         Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
@@ -497,7 +497,7 @@ WTF::String Bun::formatStackTrace(
             if (globalObject) {
                 // https://github.com/oven-sh/bun/issues/3595
                 if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
                     // This ensures the lifetime of the sourceURL is accounted for correctly
                     Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
@@ -589,7 +589,7 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
         ZigStackFrame remappedFrames[framesCount];
         for (int i = 0; i < framesCount; i++) {
             remappedFrames[i] = {};
-            remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+            remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -2495,7 +2495,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     for (int i = 0; i < framesCount; i++) {
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-        remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+        remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
             remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
             remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();

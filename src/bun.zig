@@ -3036,9 +3036,68 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         pub inline fn new(t: T) *T {
             const ptr = bun.new(T, t);
 
-            if (Environment.allow_assert) {
+            if (Environment.enable_logs) {
                 if (ptr.ref_count != 1) {
                     Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
+                }
+            }
+
+            return ptr;
+        }
+    };
+}
+
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+    }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (Environment.allow_assert) {
+                assert(self.ref_count.load(.seq_cst) == 0);
+            }
+
+            bun.destroy(self);
+        }
+
+        pub fn ref(self: *T) void {
+            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            bun.debugAssert(ref_count > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (Environment.enable_logs) {
+                if (ptr.ref_count.load(.seq_cst) != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
                 }
             }
 

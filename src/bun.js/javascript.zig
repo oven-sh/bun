@@ -2978,7 +2978,8 @@ pub const VirtualMachine = struct {
                 @max(frame.position.column.zeroBased(), 0),
                 .no_source_contents,
             )) |lookup| {
-                defer lookup.source_map.deref();
+                const source_map = lookup.source_map;
+                defer if (source_map) |map| map.deref();
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
                     frame.source_url.deref();
                     frame.source_url = source_url;
@@ -3090,9 +3091,8 @@ pub const VirtualMachine = struct {
                     },
                     .source_index = 0,
                 },
-                // undefined is fine, because these two values are never read if `top.remapped == true`
-                .source_map = undefined,
-                .prefetched_source_code = undefined,
+                .source_map = null,
+                .prefetched_source_code = null,
             }
         else
             this.source_mappings.resolveMapping(
@@ -3104,7 +3104,8 @@ pub const VirtualMachine = struct {
 
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
-            defer lookup.source_map.deref();
+            const source_map = lookup.source_map;
+            defer if (source_map) |map| map.deref();
 
             if (!top.remapped) {
                 if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
@@ -3114,7 +3115,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
-                if (!top.remapped and lookup.source_map.isExternal()) {
+                if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;
                     }
@@ -3171,7 +3172,7 @@ pub const VirtualMachine = struct {
                     @max(frame.position.column.zeroBased(), 0),
                     .no_source_contents,
                 )) |lookup| {
-                    defer lookup.source_map.deref();
+                    defer if (lookup.source_map) |map| map.deref();
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
                         frame.source_url.deref();
                         frame.source_url = src;

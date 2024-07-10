@@ -17,6 +17,7 @@ const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
 
 const SourceMap = @This();
+const debug = bun.Output.scoped(.SourceMap, false);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -118,16 +119,19 @@ pub fn parseJSON(
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
-    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
-        return error.InvalidJSON;
-    };
-
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
+    bun.JSAst.Expr.Data.Store.reset();
+    bun.JSAst.Stmt.Data.Store.reset();
     defer {
+        // the allocator given to the JS parser is not respected for all parts
+        // of the parse, so we need to remember to reset the ast store
         bun.JSAst.Expr.Data.Store.reset();
         bun.JSAst.Stmt.Data.Store.reset();
     }
+    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
+        return error.InvalidJSON;
+    };
 
     if (json.get("version")) |version| {
         if (version.data != .e_number or version.data.e_number.value != 3.0) {
@@ -243,7 +247,7 @@ pub const Mapping = struct {
 
     pub const Lookup = struct {
         mapping: Mapping,
-        source_map: *ParsedSourceMap,
+        source_map: ?*ParsedSourceMap = null,
         /// Owned by default_allocator always
         /// use `getSourceCode` to access this as a Slice
         prefetched_source_code: ?[]const u8,
@@ -251,13 +255,14 @@ pub const Mapping = struct {
         /// This creates a bun.String if the source remap *changes* the source url,
         /// a case that happens only when the source map points to another file.
         pub fn displaySourceURLIfNeeded(lookup: Lookup, base_filename: []const u8) ?bun.String {
+            const source_map = lookup.source_map orelse return null;
             // See doc comment on `external_source_names`
-            if (lookup.source_map.external_source_names.len == 0)
+            if (source_map.external_source_names.len == 0)
                 return null;
-            if (lookup.mapping.source_index >= lookup.source_map.external_source_names.len)
+            if (lookup.mapping.source_index >= source_map.external_source_names.len)
                 return null;
 
-            const name = lookup.source_map.external_source_names[@intCast(lookup.mapping.source_index)];
+            const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
 
             if (std.fs.path.isAbsolute(base_filename)) {
                 const dir = bun.path.dirname(base_filename, .auto);
@@ -271,28 +276,30 @@ pub const Mapping = struct {
         /// This has the possibility of invoking a call to the filesystem.
         pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
             const bytes = bytes: {
-                assert(lookup.source_map.isExternal());
                 if (lookup.prefetched_source_code) |code| {
                     break :bytes code;
                 }
 
-                const provider = lookup.source_map.underlying_provider.provider() orelse
+                const source_map = lookup.source_map orelse return null;
+                assert(source_map.isExternal());
+
+                const provider = source_map.underlying_provider.provider() orelse
                     return null;
 
                 const index = lookup.mapping.source_index;
 
                 if (provider.getSourceMap(
                     base_filename,
-                    lookup.source_map.underlying_provider.load_hint,
+                    source_map.underlying_provider.load_hint,
                     .{ .source_only = @intCast(index) },
                 )) |parsed|
                     if (parsed.source_contents) |contents|
                         break :bytes contents;
 
-                if (index >= lookup.source_map.external_source_names.len)
+                if (index >= source_map.external_source_names.len)
                     return null;
 
-                const name = lookup.source_map.external_source_names[@intCast(index)];
+                const name = source_map.external_source_names[@intCast(index)];
 
                 var buf: bun.PathBuffer = undefined;
                 const normalized = bun.path.joinAbsStringBufZ(

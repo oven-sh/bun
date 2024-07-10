@@ -1055,3 +1055,16 @@ it("fs.createReadStream(filename) should be able to break inside async loop", as
     expect(true).toBe(true);
   }
 });
+
+test.each([
+  "readableStreamToArray",
+  "readableStreamToText",
+  "readableStreamToArrayBuffer",
+  "readableStreamToBytes",
+  "readableStreamToFormData",
+  "readableStreamToJSON",
+  "readableStreamToBlob",
+])("passing %s an empty object throws descriptive error", name => {
+  const fn = Bun[name];
+  expect(() => fn({})).toThrow(`${name} expects a ReadableStream`);
+});

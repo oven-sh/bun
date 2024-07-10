@@ -107,6 +107,10 @@ export function initializeReadableStream(
 
 $linkTimeConstant;
 export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToArray expects a ReadableStream");
+  }
+
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -117,7 +121,11 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
 
 $linkTimeConstant;
 export function readableStreamToText(stream: ReadableStream): Promise<string> {
-  // this is a direct stream
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToText expects a ReadableStream");
+  }
+
+  // Direct streams do not have underlyingSource set
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
     return $readableStreamToTextDirect(stream, underlyingSource);
@@ -127,9 +135,12 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
 
 $linkTimeConstant;
 export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>): Promise<ArrayBuffer> | ArrayBuffer {
-  // this is a direct stream
-  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToArrayBuffer expects a ReadableStream");
+  }
 
+  // Direct streams do not have underlyingSource set
+  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
@@ -146,9 +157,12 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 
 $linkTimeConstant;
 export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
-  // this is a direct stream
-  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToBytes expects a ReadableStream");
+  }
 
+  // Direct streams do not have underlyingSource set
+  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
   }
@@ -168,18 +182,28 @@ export function readableStreamToFormData(
   stream: ReadableStream<ArrayBuffer>,
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
-  return Bun.readableStreamToBlob(stream).then(blob => {
-    return FormData.from(blob, contentType);
-  });
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToFormData expects a ReadableStream");
+  }
+
+  return Bun.readableStreamToBlob(stream).then(blob => FormData.from(blob, contentType));
 }
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToJSON expects a ReadableStream");
+  }
+
   return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
+  if (!(stream instanceof ReadableStream)) {
+    throw new Error("readableStreamToBlob expects a ReadableStream");
+  }
+
   return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
 }
 

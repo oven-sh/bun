@@ -2635,7 +2635,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.setAbortHandler();
         }
 
-        fn isAborted(this: *RequestContext) bool {
+        fn isAborted(this: *const RequestContext) bool {
             // aborted or server.stop(true)
             return this.flags.aborted or this.server.flags.terminated;
         }

@@ -1299,7 +1299,7 @@ extern fn dump_zone_malloc_stats() void;
 
 fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
-    if (comptime bun.is_heap_breakdown_enabled) {
+    if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
     return .undefined;
@@ -2246,13 +2246,7 @@ pub const Crypto = struct {
                 };
                 this.ref = .{};
                 this.promise.strong = .{};
-
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = JSC.ConcurrentTask{
-                    .task = JSC.Task.init(&result.task),
-                    .auto_delete = true,
-                };
-                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
         };
@@ -2488,13 +2482,7 @@ pub const Crypto = struct {
                 };
                 this.ref = .{};
                 this.promise.strong = .{};
-
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = JSC.ConcurrentTask{
-                    .task = JSC.Task.init(&result.task),
-                    .auto_delete = true,
-                };
-                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
         };

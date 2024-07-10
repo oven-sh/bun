@@ -61,7 +61,7 @@ To do anything interesting we need a construct known as a "view". A view is a cl
 
 The `DataView` class is a lower-level interface for reading and manipulating the data in an `ArrayBuffer`.
 
-Below we create a new `DataView` and set the first byte to 5.
+Below we create a new `DataView` and set the first byte to 3.
 
 ```ts
 const buf = new ArrayBuffer(4);

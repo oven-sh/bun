@@ -2537,6 +2537,60 @@ it("Buffer.latin1Slice()", () => {
   expect(buf.latin1Slice()).toStrictEqual("âéö");
   expect(buf.latin1Slice(1)).toStrictEqual("éö");
   expect(buf.latin1Slice(1, 2)).toStrictEqual("é");
+
+  expect(() => buf.latin1Slice(1, 4)).toThrow(RangeError);
+  expect(() => buf.latin1Slice(4, 1)).toThrow(RangeError);
+  expect(() => buf.latin1Slice(4, 0)).toThrow(RangeError);
+
+  expect(buf.latin1Slice(3)).toStrictEqual("");
+  expect(buf.latin1Slice(3, 1)).toStrictEqual("");
+  expect(buf.latin1Slice(2, 1)).toStrictEqual("");
+  expect(buf.latin1Slice(1, 1)).toStrictEqual("");
+  expect(buf.latin1Slice(1, 0)).toStrictEqual("");
+});
+
+it("Buffer.latin1Slice() on a Uint8Array", () => {
+  const buf = new Uint8Array(Buffer.from("âéö", "latin1"));
+  const latin1Slice = Buffer.prototype.latin1Slice;
+
+  expect(latin1Slice.call(buf)).toStrictEqual("âéö");
+  expect(latin1Slice.call(buf, 1)).toStrictEqual("éö");
+  expect(latin1Slice.call(buf, 1, 2)).toStrictEqual("é");
+
+  expect(() => latin1Slice.call(buf, 1, 4)).toThrow(RangeError);
+  expect(() => latin1Slice.call(buf, 4, 1)).toThrow(RangeError);
+  expect(() => latin1Slice.call(buf, 4, 0)).toThrow(RangeError);
+
+  expect(latin1Slice.call(buf, 3)).toStrictEqual("");
+  expect(latin1Slice.call(buf, 3, 1)).toStrictEqual("");
+  expect(latin1Slice.call(buf, 2, 1)).toStrictEqual("");
+  expect(latin1Slice.call(buf, 1, 1)).toStrictEqual("");
+  expect(latin1Slice.call(buf, 1, 0)).toStrictEqual("");
+});
+
+it("Buffer.latin1Slice() on non-ArrayBufferView fails", () => {
+  const buf = new Array(new Uint8Array(Buffer.from("âéö", "latin1")));
+  const latin1Slice = Buffer.prototype.latin1Slice;
+
+  expect(() => latin1Slice.call(buf)).toThrow(TypeError);
+  expect(() => latin1Slice.call(buf, 1)).toThrow(TypeError);
+  expect(() => latin1Slice.call(Symbol("wat"), 1)).toThrow(TypeError);
+});
+
+it("Buffer.latin1Write() on a Uint8Array", () => {
+  const buf = new Uint8Array(Buffer.from("old mcdonald had a farm é í é í ò", "latin1"));
+  const latin1Write = Buffer.prototype.latin1Write;
+
+  expect(latin1Write.call(buf, "é", 22)).toBe(1);
+  expect(latin1Write.call(buf, "í", 24)).toBe(1);
+  expect(latin1Write.call(buf, "é", 26)).toBe(1);
+  expect(latin1Write.call(buf, "í", 28)).toBe(1);
+  expect(latin1Write.call(buf, "é", 30)).toBe(1);
+  expect(latin1Write.call(buf, "ò", 32)).toBe(1);
+
+  expect(buf).toStrictEqual(
+    new Uint8Array(Buffer.from("6f6c64206d63646f6e616c6420686164206120666172e920ed20e920ed20e920f2", "hex")),
+  );
 });
 
 it("Buffer.utf8Slice()", () => {

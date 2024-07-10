@@ -49,7 +49,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
             return throwTypeError(lexicalGlobalObject, throwScope, "concat can only be called when all buffers are Uint8Array"_s);
         }
         if (UNLIKELY(array->byteLength() > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         RELEASE_AND_RETURN(throwScope, array);
     }
@@ -68,7 +69,8 @@ JSC::JSValue JSBufferList::concat(JSC::VM& vm, JSC::JSGlobalObject* lexicalGloba
         }
         const size_t length = array->byteLength();
         if (UNLIKELY(i + length > n)) {
-            return throwRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "specified size too small to fit all buffers"_s);
+            return {};
         }
         if (UNLIKELY(!uint8Array->setFromTypedArray(lexicalGlobalObject, i, array, 0, length, JSC::CopyType::Unobservable))) {
             return throwOutOfMemoryError(lexicalGlobalObject, throwScope);

@@ -5668,6 +5668,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                     bun.default_allocator,
                     ctx,
                     false,
+                    .zero,
                 );
             } else {
                 const fetch_error = JSC.WebCore.Fetch.fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));

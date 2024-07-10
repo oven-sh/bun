@@ -563,7 +563,7 @@ pub const Request = struct {
             if (value_type == .DOMWrapper) {
                 if (value.asDirect(Request)) |request| {
                     if (values_to_try.len == 1) {
-                        request.cloneIntoForRequestConstructor(&req, globalThis.allocator(), globalThis, fields.contains(.url), value);
+                        request.cloneInto(&req, globalThis.allocator(), globalThis, fields.contains(.url), value);
                         success = true;
                         return req;
                     }
@@ -747,9 +747,9 @@ pub const Request = struct {
     pub fn doClone(
         this: *Request,
         globalThis: *JSC.JSGlobalObject,
-        _: *JSC.CallFrame,
+        callframe: *JSC.CallFrame,
     ) JSC.JSValue {
-        var cloned = this.clone(getAllocator(globalThis), globalThis);
+        var cloned = this.clone(getAllocator(globalThis), globalThis, callframe.this());
         return cloned.toJS(globalThis);
     }
 
@@ -840,36 +840,6 @@ pub const Request = struct {
         allocator: std.mem.Allocator,
         globalThis: *JSGlobalObject,
         preserve_url: bool,
-    ) void {
-        _ = allocator;
-        this.ensureURL() catch {};
-
-        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
-            globalThis.throw("Failed to clone request", .{});
-            return;
-        };
-        const original_url = req.url;
-
-        req.* = Request{
-            .body = body,
-            .url = if (preserve_url) original_url else this.url.dupeRef(),
-            .method = this.method,
-            ._headers = this.cloneHeaders(globalThis),
-        };
-
-        if (this.signal) |signal| {
-            req.signal = signal.ref();
-        }
-    }
-
-    // TODO: we will keep this private and for use of new Request(existing_request) for now. Can replace external cloneInto with it when we have more tests to ensure it
-    // doesn't break existing external uses of request.clone
-    fn cloneIntoForRequestConstructor(
-        this: *Request,
-        req: *Request,
-        allocator: std.mem.Allocator,
-        globalThis: *JSGlobalObject,
-        preserve_url: bool,
         req_jsvalue: JSC.JSValue,
     ) void {
         _ = allocator;
@@ -913,7 +883,6 @@ pub const Request = struct {
                             break :brk Body.Value{
                                 .Locked = .{
                                     .readable = JSC.WebCore.ReadableStream.Strong.init(teed[1], globalThis),
-                                    //                                    .readable = teed[1],
                                     .global = globalThis,
                                 },
                             };
@@ -942,9 +911,9 @@ pub const Request = struct {
         }
     }
 
-    pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
+    pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject, this_jsvalue: JSC.JSValue) *Request {
         const req = allocator.create(Request) catch unreachable;
-        this.cloneInto(req, allocator, globalThis, false);
+        this.cloneInto(req, allocator, globalThis, false, this_jsvalue);
         return req;
     }
 };

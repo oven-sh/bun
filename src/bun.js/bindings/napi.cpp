@@ -33,8 +33,6 @@
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/ExceptionScope.h>
 #include <JavaScriptCore/FunctionConstructor.h>
-#include <JavaScriptCore/HashMapImpl.h>
-#include <JavaScriptCore/HashMapImplInlines.h>
 #include <JavaScriptCore/Heap.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/InitializeThreading.h>

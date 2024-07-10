@@ -59,7 +59,6 @@
 #include <JavaScriptCore/JSModuleLoader.h>
 #include <JavaScriptCore/DeferredWorkTimer.h>
 #include "MessageEvent.h"
-#include <JavaScriptCore/HashMapImplInlines.h>
 #include "BunWorkerGlobalScope.h"
 #include "CloseEvent.h"
 #include "JSMessagePort.h"

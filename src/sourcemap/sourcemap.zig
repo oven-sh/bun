@@ -77,7 +77,9 @@ pub fn parseUrl(
 ) !ParseUrl {
     const json_bytes = json_bytes: {
         const data_prefix = "data:application/json";
+
         if (bun.strings.hasPrefixComptime(source, data_prefix) and source.len > (data_prefix.len + 1)) try_data_url: {
+            debug("parse (data url, {d} bytes)", .{source.len});
             switch (source[data_prefix.len]) {
                 ';' => {
                     const encoding = bun.sliceTo(source[data_prefix.len + 1 ..], ',');
@@ -129,6 +131,7 @@ pub fn parseJSON(
         bun.JSAst.Expr.Data.Store.reset();
         bun.JSAst.Stmt.Data.Store.reset();
     }
+    debug("parse (JSON, {d} bytes)", .{source.len});
     var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
         return error.InvalidJSON;
     };
@@ -385,6 +388,8 @@ pub const Mapping = struct {
         sources_count: i32,
         input_line_count: usize,
     ) ParseResult {
+        debug("parse mappings ({d} bytes)", .{bytes.len});
+
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
             mapping.ensureTotalCapacity(allocator, count) catch unreachable;

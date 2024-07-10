@@ -3756,6 +3756,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
+        pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
         tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
@@ -3793,6 +3794,17 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn run(this: *HotReloadTask) void {
+                // Since we rely on the event loop for hot reloads, there can be
+                // a delay before the next reload begins. In the time between the
+                // last reload and the next one, we shouldn't schedule any more
+                // hot reloads. Since we reload literally everything, we don't
+                // need to worry about missing any changes.
+                //
+                // Note that we set the count _before_ we reload, so that if we
+                // get another hot reload request while we're reloading, we'll
+                // still enqueue it.
+                this.reloader.pending_count.store(0, .monotonic);
+
                 this.reloader.ctx.reload();
             }
 
@@ -3809,14 +3821,15 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
+                if (this.reloader.pending_count.fetchAdd(1, .monotonic) == 0) {
+                    BunDebugger__willHotReload();
+                    var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
 
-                BunDebugger__willHotReload();
-                var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
-
-                that.* = this.*;
-                this.count = 0;
-                that.concurrent_task.task = Task.init(that);
-                this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
+                    that.* = this.*;
+                    this.count = 0;
+                    that.concurrent_task.task = Task.init(that);
+                    this.reloader.enqueueTaskConcurrent(&that.concurrent_task);
+                }
             }
 
             pub fn deinit(this: *HotReloadTask) void {

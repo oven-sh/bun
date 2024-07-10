@@ -780,7 +780,7 @@ pub fn normalizePathWindows(
         return .{ .result = norm };
     }
 
-    if (bun.strings.indexOfAny(T, path_, &.{ '\\', '/', '.' }) == null) {
+    if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
         if (buf.len < path.len) {
             return .{
                 .err = .{

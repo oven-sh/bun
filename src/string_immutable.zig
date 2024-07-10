@@ -119,9 +119,15 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
-    for (self, 0..) |c, i| {
-        inline for (str) |a| {
+    return indexOfAnyT(u16, self, str);
+}
+
+pub fn indexOfAnyT(comptime T: type, str: []const T, comptime chars: anytype) ?OptionalUsize {
+    if (T == u8) return indexOfAny(str, chars);
+    for (str, 0..) |c, i| {
+        inline for (chars) |a| {
             if (c == a) {
                 return @as(OptionalUsize, @intCast(i));
             }
@@ -130,6 +136,7 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub inline fn containsComptime(self: string, comptime str: string) bool {
     if (comptime str.len == 0) @compileError("Don't call this with an empty string plz.");
 

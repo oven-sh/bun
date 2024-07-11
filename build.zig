@@ -264,6 +264,7 @@ pub fn build(b: *Build) !void {
                 const check_target = b.resolveTargetQuery(.{
                     .os_tag = OperatingSystem.stdOSTag(check.os),
                     .cpu_arch = check.arch,
+                    .cpu_model = if (check.os == .linux and check.arch == .aarch64) .{ .explicit = &std.Target.aarch64.cpu.cortex_a35 } else .{ .determined_by_cpu_arch = {} },
                     .os_version_min = getOSVersionMin(check.os),
                     .glibc_version = getOSGlibCVersion(check.os),
                 });
@@ -307,7 +308,6 @@ pub fn build(b: *Build) !void {
                     .os = check.os,
                     .arch = check_target.result.cpu.arch,
                     .optimize = mode,
-
                     .canary_revision = build_options.canary_revision,
                     .sha = build_options.sha,
                     .tracy_callstack_depth = build_options.tracy_callstack_depth,

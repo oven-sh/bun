@@ -31,6 +31,7 @@ env:
   BUN_VERSION: 1.1.8
   LC_CTYPE: "en_US.UTF-8"
   LC_ALL: "en_US.UTF-8"
+  BUN_ENABLE_LTO: "1"
 
 jobs:
   build-submodules:

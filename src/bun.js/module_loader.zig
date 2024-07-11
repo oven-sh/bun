@@ -208,6 +208,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             return;
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
+            defer mappings.deref();
             const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
@@ -807,8 +808,6 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",
@@ -895,12 +894,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = .{
-                    .task = JSC.Task.init(this),
-                    .auto_delete = true,
-                };
-                this.vm().enqueueTaskConcurrent(concurrent_task);
+                this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn onPoll(this: *Queue) void {
@@ -1230,6 +1224,8 @@ pub const ModuleLoader = struct {
             }
             log.deinit();
 
+            debug("fulfill: {any}", .{specifier});
+
             Bun__onFulfillAsyncModule(
                 globalThis,
                 promise,
@@ -1309,19 +1305,19 @@ pub const ModuleLoader = struct {
 
             var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
             if (result.url.len > 0)
-                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
             const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
-                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
             }
             error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
             if (this.referrer.len > 0 and !strings.eqlComptime(this.referrer, "undefined")) {
-                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toJS(globalThis));
             }
 
             const promise_value = this.promise.swap();
@@ -1400,21 +1396,21 @@ pub const ModuleLoader = struct {
 
             var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
             if (result.url.len > 0)
-                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
             if (this.specifier.len > 0 and !strings.eqlComptime(this.specifier, "undefined")) {
-                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
             }
 
             const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
                 this.parse_result.ast.import_records.at(import_record_id).path.text,
-            ).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            ).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
-                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
             }
             error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
 
@@ -1826,7 +1822,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global, .{}) catch @panic("Unexpected JS error"),
                         .tag = .exports_object,
                     };
                 }
@@ -2513,6 +2509,14 @@ pub const ModuleLoader = struct {
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
+                .@"bun:sql" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis and !bun.FeatureFlags.postgresql)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"bun:sql", specifier);
+                },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
                 .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
@@ -2711,6 +2715,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
+    @"bun:sql",
     @"bun:sqlite",
     @"bun:internal-for-testing",
     @"detect-libc",
@@ -2788,6 +2793,7 @@ pub const HardcodedModule = enum {
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
+            .{ "bun:sql", HardcodedModule.@"bun:sql" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -3000,6 +3006,7 @@ pub const HardcodedModule = enum {
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:sql", .{ .path = "bun:sql" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },

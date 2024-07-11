@@ -69,8 +69,8 @@ static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_createObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLConstructorFunction_revokeObjectURL);
 static JSC_DECLARE_HOST_FUNCTION(jsDOMURLPrototypeFunction_toString);
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
-extern "C" JSC_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
+BUN_DECLARE_HOST_FUNCTION(Bun__createObjectURL);
+BUN_DECLARE_HOST_FUNCTION(Bun__revokeObjectURL);
 
 // Attributes
 
@@ -789,7 +789,7 @@ void JSDOMURL::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSDOMURL*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -830,18 +830,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<DOMURL>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7DOMURL@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore6DOMURLE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore6DOMURLE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // DOMURL has subclasses. If DOMURL has subclasses that get passed
         // to toJS() we currently require DOMURL you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<DOMURL>(globalObject, WTFMove(impl));

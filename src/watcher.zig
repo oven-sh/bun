@@ -595,7 +595,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 this.running = false;
             } else {
                 // if the mutex is locked, then that's now a UAF.
-                this.mutex.assertUnlocked("Internal consistency error: watcher mutex is locked when it should not be.");
+                this.mutex.releaseAssertUnlocked("Internal consistency error: watcher mutex is locked when it should not be.");
 
                 if (close_descriptors and this.running) {
                     const fds = this.watchlist.items(.fd);

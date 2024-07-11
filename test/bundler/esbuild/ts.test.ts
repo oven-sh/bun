@@ -1,6 +1,6 @@
 import assert from "assert";
-import { itBundled, testForFile } from "../expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "../expectBundled";
+import { describe, expect } from "bun:test";
 
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_ts_test.go
@@ -226,9 +226,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/ConstEnumComments", {
-    // When it comes time to implement this inlining, we may decide we do NOT
-    // want to insert helper comments.
-    todo: true,
     files: {
       "/bar.ts": /* ts */ `
         export const enum Foo {
@@ -383,12 +380,11 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/MinifyEnum", {
-    todo: true,
     files: {
       "/a.ts": `enum Foo { A, B, C = Foo }\ncapture(Foo)`,
-      // "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
+      "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
-    entryPoints: ["/a.ts"],
+    entryPoints: ["/a.ts", "./b.ts"],
     minifySyntax: true,
     minifyWhitespace: true,
     minifyIdentifiers: true,
@@ -396,20 +392,20 @@ describe("bundler", () => {
     onAfterBundle(api) {
       const a = api.readFile("/out.js");
       api.writeFile("/out.edited.js", a.replace(/capture\((.*?)\)/, `export const Foo = $1`));
-      // const b = api.readFile("/out/b.js");
+      const b = api.readFile("/out/b.js");
 
       // make sure the minification trick "enum[enum.K=V]=K" is used, but `enum`
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.A=0]=["']A["']/), "should be using enum minification trick (1)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.B=1]=["']B["']/), "should be using enum minification trick (2)");
       assert(a.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.C=[a-zA-Z$]]=["']C["']/), "should be using enum minification trick (3)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
-      // assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.X=0]=["']X["']/), "should be using enum minification trick (4)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Y=1]=["']Y["']/), "should be using enum minification trick (5)");
+      assert(b.match(/\b[a-zA-Z$]\[[a-zA-Z$]\.Z=[a-zA-Z$]]=["']Z["']/), "should be using enum minification trick (6)");
     },
     runtimeFiles: {
       "/test.js": /* js */ `
         import {Foo as FooA} from './out/a.edited.js'
-        // import {Foo as FooB} from './out/b.js'
+        import {Foo as FooB} from './out/b.js'
         import assert from 'assert';
         assert.strictEqual(FooA.A, 0, 'a.ts Foo.A')
         assert.strictEqual(FooA.B, 1, 'a.ts Foo.B')
@@ -417,17 +413,16 @@ describe("bundler", () => {
         assert.strictEqual(FooA[0], 'A', 'a.ts Foo[0]')
         assert.strictEqual(FooA[1], 'B', 'a.ts Foo[1]')
         assert.strictEqual(FooA[FooA], 'C', 'a.ts Foo[Foo]')
-        // assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
-        // assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
-        // assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
-        // assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
-        // assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
-        // assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
+        assert.strictEqual(FooB.X, 0, 'b.ts Foo.X')
+        assert.strictEqual(FooB.Y, 1, 'b.ts Foo.Y')
+        assert.strictEqual(FooB.Z, FooB, 'b.ts Foo.Z')
+        assert.strictEqual(FooB[0], 'X', 'b.ts Foo[0]')
+        assert.strictEqual(FooB[1], 'Y', 'b.ts Foo[1]')
+        assert.strictEqual(FooB[FooB], 'Z', 'b.ts Foo[Foo]')
       `,
     },
   });
   itBundled("ts/MinifyEnumExported", {
-    todo: true,
     files: {
       "/b.ts": `export enum Foo { X, Y, Z = Foo }`,
     },
@@ -831,7 +826,6 @@ describe("bundler", () => {
       stdout: '[123,{"test":true}]',
     },
   });
-  // TODO: all situations with decorators are currently not runtime-checked. as of writing bun crashes when hitting them at all.
   itBundled("ts/TypeScriptDecoratorsSimpleCase", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1782,7 +1776,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceLet", {
-    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export let y = 123 }
@@ -1800,7 +1793,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceFunction", {
-    todo: true,
     files: {
       "/function.ts": /* ts */ `
         export namespace x { export function y() {} }
@@ -1818,14 +1810,13 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceClass", {
-    todo: true,
     files: {
       "/let.ts": /* ts */ `
         export namespace x { export class y {} }
         export namespace x { export let z = y }
       `,
     },
-    entryPoints: ["/function.ts"],
+    entryPoints: ["/let.ts"],
     bundling: false,
     runtimeFiles: {
       "/test.js": /* js */ `
@@ -1836,7 +1827,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceNamespace", {
-    todo: true,
     files: {
       "/namespace.ts": /* ts */ `
         export namespace x { export namespace y { 0 } }
@@ -1854,7 +1844,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/SiblingNamespaceEnum", {
-    todo: true,
     files: {
       "/enum.ts": /* ts */ `
         export namespace x { export enum y {} }
@@ -1870,10 +1859,9 @@ describe("bundler", () => {
         assert(m.x === m.z, "it worked.ts worked")
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
   });
   itBundled("ts/SiblingEnum", {
-    todo: true,
-    // GENERATED
     files: {
       "/number.ts": /* ts */ `
         (0, eval)('globalThis.y = 1234');
@@ -1965,9 +1953,9 @@ describe("bundler", () => {
       { file: "/out/nested-string.js", stdout: "1234 2345\na a" },
       { file: "/out/nested-propagation.js", stdout: "100 100 100 625 625 625" },
     ],
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
   });
   itBundled("ts/EnumTreeShaking", {
-    todo: true,
     files: {
       "/simple-member.ts": /* ts */ `
         enum x_DROP { y_DROP = 123 }
@@ -2033,8 +2021,11 @@ describe("bundler", () => {
       { file: "/out/namespace-before.js", stdout: "{} 1234" },
       { file: "/out/namespace-after.js", stdout: '{"123":"y","y":123} 1234' },
     ],
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
   });
   itBundled("ts/EnumJSX", {
+    // Blocking:
+    // - jsx bugs (configuration does not seem to be respected)
     todo: true,
     files: {
       "/element.tsx": /* tsx */ `
@@ -2074,6 +2065,7 @@ describe("bundler", () => {
         export const create = (tag, props, ...children) => [tag, props, children]
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     run: [
       { file: "/out/element.js", stdout: '["div",null,[]]' },
       { file: "/out/fragment.js", stdout: '["div",null,["test"]]' },
@@ -2085,17 +2077,17 @@ describe("bundler", () => {
     todo: true,
     files: {
       "/entry.ts": `
-        enum a { b = 123, c = d }
-        console.log(a.b, a.c)
+      enum a { b = 123, c = d }
+      console.log(a.b, a.c)
       `,
     },
     define: {
       d: "b",
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     run: { stdout: "123 123" },
   });
   itBundled("ts/EnumSameModuleInliningAccess", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         enum a_drop { x = 123 }
@@ -2113,10 +2105,10 @@ describe("bundler", () => {
       `,
     },
     dce: true,
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     run: { stdout: '[123,123,123,123,{"123":"x","x":123}]' },
   });
   itBundled("ts/EnumCrossModuleInliningAccess", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { drop_a, drop_b, c, d, e } from './enums'
@@ -2136,14 +2128,14 @@ describe("bundler", () => {
         export enum e { x = 123 }
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     dce: true,
   });
   itBundled("ts/EnumCrossModuleInliningDefinitions", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import { a } from './enums'
-        (0, eval)('globalThis.capture = x => x');
+        (0, eval)('globalThis.["captu" + "re"] = x => x');
         console.log(JSON.stringify([
           capture(a.implicit_number),
           capture(a.explicit_number),
@@ -2162,12 +2154,12 @@ describe("bundler", () => {
         }
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     onAfterBundle(api) {
       expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(["0", "123", '"xyz"']);
     },
   });
   itBundled("ts/EnumCrossModuleInliningReExport", {
-    todo: true,
     files: {
       "/entry.js": /* js */ `
         import { a } from './re-export'
@@ -2187,12 +2179,12 @@ describe("bundler", () => {
         export enum c { x = 'c' }
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     onAfterBundle(api) {
       expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(['"a"', '"b"', '"c"']);
     },
   });
   itBundled("ts/EnumCrossModuleTreeShaking", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2229,6 +2221,7 @@ describe("bundler", () => {
         export let e = {}           // non-enum properties should be kept
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     onAfterBundle(api) {
       expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
         "1",
@@ -2243,7 +2236,6 @@ describe("bundler", () => {
     },
   });
   itBundled("ts/EnumExportClause", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         import {
@@ -2268,23 +2260,12 @@ describe("bundler", () => {
         export { B, D as d }
       `,
     },
+    minifySyntax: false, // intentionally disabled. enum inlining always happens
     onAfterBundle(api) {
       expect(api.captureFile("/out.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual(["1", "2", "3", "4"]);
     },
   });
-  // itBundled("ts/CommonJSVariableInESMTypeModule", {
-  //   // GENERATED
-  //   files: {
-  //     "/entry.ts": `module.exports = null`,
-  //     "/package.json": `{ "type": "module" }`,
-  //   },
-  //   /* TODO FIX expectedScanLog: `entry.ts: WARNING: The CommonJS "module" variable is treated as a global variable in an ECMAScript module and may not work as expected
-  // package.json: NOTE: This file is considered to be an ECMAScript module because the enclosing "package.json" file sets the type of this file to "module":
-  // NOTE: Node's package format requires that CommonJS files in a "type": "module" package use the ".cjs" file extension. If you are using TypeScript, you can use the ".cts" file extension with esbuild instead.
-  // `, */
-  // });
   itBundled("ts/EnumRulesFrom_TypeScript_5_0", {
-    // GENERATED
     files: {
       "/supported.ts":
         `
@@ -2424,43 +2405,42 @@ describe("bundler", () => {
         ]))
       `,
       "/not-supported.ts": /* ts */ `
-        (0, eval)('globalThis.capture = x => x');
+        (0, eval)('globalThis["captu" + "re"] = x => x');
 
-        const enum NonIntegerNumberToString {
-          SUPPORTED = '' + 1,
-          UNSUPPORTED = '' + 1.5,
+        const enum NumberToString {
+          DROP_One = '' + 1,
+          DROP_OnePointFive = '' + 1.5,
+          DROP_Other = '' + 4132879497321892437432187943789312894378237491578123414321431,
+          DROP_Billion = '' + 1_000_000_000,
+          DROP_Trillion = '' + 1_000_000_000_000,
         }
         console.log(
-          capture(NonIntegerNumberToString.SUPPORTED),
-          capture(NonIntegerNumberToString.UNSUPPORTED),
+          capture(NumberToString.DROP_One),
+          capture(NumberToString.DROP_OnePointFive),
+          capture(NumberToString.DROP_Other),
+          capture(NumberToString.DROP_Billion),
+          capture(NumberToString.DROP_Trillion),
         )
 
-        const enum OutOfBoundsNumberToString {
-          SUPPORTED = '' + 1_000_000_000,
-          UNSUPPORTED = '' + 1_000_000_000_000,
-        }
-        console.log(
-          capture(OutOfBoundsNumberToString.SUPPORTED),
-          capture(OutOfBoundsNumberToString.UNSUPPORTED),
-        )
-
-        const enum TemplateExpressions {
+        const enum DROP_TemplateExpressions {
           // TypeScript enums don't handle any of these
           NULL = '' + null,
           TRUE = '' + true,
           FALSE = '' + false,
           BIGINT = '' + 123n,
+          BIGINT_2 = '' + 4132879497321892437432187943789312894378237491578123414321431n,
         }
 
         console.log(
-          capture(TemplateExpressions.NULL),
-          capture(TemplateExpressions.TRUE),
-          capture(TemplateExpressions.FALSE),
-          capture(TemplateExpressions.BIGINT),
+          capture(DROP_TemplateExpressions.NULL),
+          capture(DROP_TemplateExpressions.TRUE),
+          capture(DROP_TemplateExpressions.FALSE),
+          capture(DROP_TemplateExpressions.BIGINT),
+          capture(DROP_TemplateExpressions.BIGINT_2),
         )
       `,
     },
-    // dce: true,
+    dce: true,
     entryPoints: ["/supported.ts", "/not-supported.ts"],
     run: [
       {
@@ -2471,27 +2451,27 @@ describe("bundler", () => {
       {
         file: "/out/not-supported.js",
         stdout: `
-          1 1.5
-          1000000000 1000000000000
-          null true false 123
+          1 1.5 4.1328794973218926e+60 1000000000 1000000000000
+          null true false 123 4132879497321892437432187943789312894378237491578123414321431
         `,
       },
     ],
     onAfterBundle(api) {
-      // expect(api.captureFile("/out/not-supported.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
-      //   '"1"',
-      //   "NonIntegerNumberToString.UNSUPPORTED",
-      //   '"1000000000"',
-      //   "OutOfBoundsNumberToString.UNSUPPORTED",
-      //   "TemplateExpressions.NULL",
-      //   "TemplateExpressions.TRUE",
-      //   "TemplateExpressions.FALSE",
-      //   "TemplateExpressions.BIGINT",
-      // ]);
+      expect(api.captureFile("/out/not-supported.js").map(x => x.replace(/\/\*.*\*\//g, "").trim())).toEqual([
+        '"1"',
+        '"1.5"',
+        '"4.1328794973218926e+60"',
+        '"1000000000"',
+        '"1000000000000"',
+        '"null"',
+        '"true"',
+        '"false"',
+        '"123"',
+        '"4132879497321892437432187943789312894378237491578123414321431"',
+      ]);
     },
   });
   itBundled("ts/EnumUseBeforeDeclare", {
-    todo: true,
     files: {
       "/entry.ts": /* ts */ `
         before();

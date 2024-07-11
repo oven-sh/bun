@@ -45,8 +45,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 pub const Version = struct {
@@ -133,7 +133,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -442,7 +442,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
@@ -1000,7 +1000,7 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
@@ -1054,7 +1054,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

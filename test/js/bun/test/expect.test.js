@@ -2232,11 +2232,10 @@ describe("expect()", () => {
       expect(thisFile).toHaveLength(Bun.file(__filename).size);
 
       // empty file should have length 0
-      require("fs").writeFileSync("/tmp/empty.txt", "");
-      expect(Bun.file("/tmp/empty.txt")).toHaveLength(0);
+      expect(Bun.file(tmpFile(true))).toHaveLength(0);
 
       // if a file doesn't exist, it should throw (not return 0 size)
-      expect(() => expect(Bun.file("/does-not-exist/file.txt")).toHaveLength(0)).toThrow();
+      expect(() => expect(Bun.file(tmpFile(false))).toHaveLength(0)).toThrow();
 
       // Blob
       expect(new Blob(ANY([1, 2, 3]))).toHaveLength(3);
@@ -3470,14 +3469,11 @@ describe("expect()", () => {
     if (isBun) {
       values.push({
         label: `Bun.file()`,
-        value: Bun.file("/tmp/empty.txt"),
+        value: Bun.file(tmpFile(true)),
       });
     }
     for (const { label, value } of values) {
       test(label, () => {
-        if (value instanceof Blob) {
-          require("fs").writeFileSync("/tmp/empty.txt", "");
-        }
         expect(value).toBeEmpty();
       });
     }
@@ -4676,3 +4672,15 @@ describe("expect()", () => {
     expect(" ").toContain("");
   });
 });
+
+function tmpFile(exists) {
+  const { join } = require("path");
+  const { tmpdir } = require("os");
+  const { mkdtempSync, writeFileSync } = require("fs");
+  const tmpDir = mkdtempSync(join(tmpdir(), "expect-"));
+  const tmpFile = join(tmpDir, "empty.txt");
+  if (exists) {
+    writeFileSync(tmpFile, "");
+  }
+  return tmpFile;
+}

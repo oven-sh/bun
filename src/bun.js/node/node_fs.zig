@@ -189,7 +189,7 @@ pub const Async = struct {
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
-                this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.create(JSC.Task.init(this)));
+                this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn runFromJSThread(this: *Task) void {
@@ -5044,7 +5044,10 @@ pub const NodeFS = struct {
         const dir = fd.asDir();
         const is_u16 = comptime Environment.isWindows and (ExpectedType == bun.String or ExpectedType == Dirent);
 
-        var dirent_path: ?bun.String = null;
+        var dirent_path: bun.String = bun.String.dead;
+        defer {
+            dirent_path.deref();
+        }
 
         var iterator = DirIterator.iterate(dir, comptime if (is_u16) .u16 else .u8);
         var entry = iterator.next();
@@ -5075,7 +5078,7 @@ pub const NodeFS = struct {
             .result => |ent| ent,
         }) |current| : (entry = iterator.next()) {
             if (ExpectedType == Dirent) {
-                if (dirent_path == null) {
+                if (dirent_path.isEmpty()) {
                     dirent_path = bun.String.createUTF8(basename);
                 }
             }
@@ -5083,10 +5086,10 @@ pub const NodeFS = struct {
                 const utf8_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
-                        dirent_path.?.ref();
+                        dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = dirent_path.?,
+                            .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5102,10 +5105,10 @@ pub const NodeFS = struct {
                 const utf16_name = current.name.slice();
                 switch (ExpectedType) {
                     Dirent => {
-                        dirent_path.?.ref();
+                        dirent_path.ref();
                         entries.append(.{
                             .name = bun.String.createUTF16(utf16_name),
-                            .path = dirent_path.?,
+                            .path = dirent_path,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5115,9 +5118,6 @@ pub const NodeFS = struct {
                     else => @compileError("unreachable"),
                 }
             }
-        }
-        if (dirent_path) |*p| {
-            p.deref();
         }
 
         return Maybe(void).success;
@@ -5177,7 +5177,10 @@ pub const NodeFS = struct {
 
         var iterator = DirIterator.iterate(fd.asDir(), .u8);
         var entry = iterator.next();
-        var dirent_path_prev: ?bun.String = null;
+        var dirent_path_prev: bun.String = bun.String.empty;
+        defer {
+            dirent_path_prev.deref();
+        }
 
         while (switch (entry) {
             .err => |err| {
@@ -5231,13 +5234,15 @@ pub const NodeFS = struct {
             switch (comptime ExpectedType) {
                 Dirent => {
                     const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
-                    if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                    if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
+                        dirent_path_prev.deref();
                         dirent_path_prev = bun.String.createUTF8(path_u8);
                     }
-                    dirent_path_prev.?.ref();
+                    dirent_path_prev.ref();
+
                     entries.append(.{
                         .name = bun.String.createUTF8(utf8_name),
-                        .path = dirent_path_prev.?,
+                        .path = dirent_path_prev,
                         .kind = current.kind,
                     }) catch bun.outOfMemory();
                 },
@@ -5249,9 +5254,6 @@ pub const NodeFS = struct {
                 },
                 else => bun.outOfMemory(),
             }
-        }
-        if (dirent_path_prev) |*p| {
-            p.deref();
         }
 
         return Maybe(void).success;
@@ -5330,7 +5332,10 @@ pub const NodeFS = struct {
 
             var iterator = DirIterator.iterate(fd.asDir(), .u8);
             var entry = iterator.next();
-            var dirent_path_prev: ?bun.String = null;
+            var dirent_path_prev: bun.String = bun.String.dead;
+            defer {
+                dirent_path_prev.deref();
+            }
 
             while (switch (entry) {
                 .err => |err| {
@@ -5370,13 +5375,14 @@ pub const NodeFS = struct {
                 switch (comptime ExpectedType) {
                     Dirent => {
                         const path_u8 = bun.path.dirname(bun.path.join(&[_]string{ root_basename, name_to_copy }, .auto), .auto);
-                        if (dirent_path_prev == null or bun.strings.eql(dirent_path_prev.?.byteSlice(), path_u8)) {
+                        if (dirent_path_prev.isEmpty() or !bun.strings.eql(dirent_path_prev.byteSlice(), path_u8)) {
+                            dirent_path_prev.deref();
                             dirent_path_prev = bun.String.createUTF8(path_u8);
                         }
-                        dirent_path_prev.?.ref();
+                        dirent_path_prev.ref();
                         entries.append(.{
                             .name = bun.String.createUTF8(utf8_name),
-                            .path = dirent_path_prev.?,
+                            .path = dirent_path_prev,
                             .kind = current.kind,
                         }) catch bun.outOfMemory();
                     },
@@ -5388,9 +5394,6 @@ pub const NodeFS = struct {
                     },
                     else => @compileError("Impossible"),
                 }
-            }
-            if (dirent_path_prev) |*p| {
-                p.deref();
             }
         }
 
@@ -5755,26 +5758,15 @@ pub const NodeFS = struct {
             }
         }
 
-        if (Environment.isWindows) {
-            if (args.flag == .a) {
-                return Maybe(Return.WriteFile).success;
-            }
-
-            const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
-            if (rc == 0) {
-                return .{
-                    .err = Syscall.Error{
-                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                        .syscall = .SetEndOfFile,
-                        .fd = fd,
-                    },
-                };
-            }
-        } else {
-            // https://github.com/oven-sh/bun/issues/2931
-            // https://github.com/oven-sh/bun/issues/10222
-            // only truncate if we're not appending and writing to a path
-            if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
+        // https://github.com/oven-sh/bun/issues/2931
+        // https://github.com/oven-sh/bun/issues/10222
+        // Only truncate if we're not appending and writing to a path
+        if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
+            // If this errors, we silently ignore it.
+            // Not all files are seekable (and thus, not all files can be truncated).
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+            } else {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }

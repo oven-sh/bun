@@ -569,10 +569,12 @@ const Scanner = struct {
                 bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-                const child_dir = bun.openDirAbsolute(path2) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
+                const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
+                const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;
+                _ = this.readDirWithName(
+                    this.fs.dirname_store.append(string, path2) catch bun.outOfMemory(),
+                    child_dir,
+                ) catch bun.outOfMemory();
             }
         }
     }
@@ -739,7 +741,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         bun.JSC.initialize();
-        HTTPThread.init() catch {};
+        HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
@@ -780,8 +782,8 @@ pub const TestCommand = struct {
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var vm = try JSC.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,

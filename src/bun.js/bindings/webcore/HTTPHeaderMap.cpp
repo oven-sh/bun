@@ -174,7 +174,7 @@ void HTTPHeaderMap::add(const String& name, const String& value)
     if (index == notFound)
         m_uncommonHeaders.append(UncommonHeader { name, value });
     else
-        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", ", value);
+        m_uncommonHeaders[index].value = makeString(m_uncommonHeaders[index].value, ", "_s, value);
 }
 
 void HTTPHeaderMap::append(const String& name, const String& value)
@@ -303,7 +303,7 @@ void HTTPHeaderMap::add(HTTPHeaderName name, const String& value)
         return header.key == name;
     });
     if (index != notFound)
-        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, ", ", value);
+        m_commonHeaders[index].value = makeString(m_commonHeaders[index].value, ", "_s, value);
     else
         m_commonHeaders.append(CommonHeader { name, value });
 }

@@ -244,7 +244,7 @@ pub const Arguments = struct {
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
@@ -279,8 +279,8 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        js_ast.Stmt.Data.Store.create(allocator);
-        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create();
+        js_ast.Expr.Data.Store.create();
         defer {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();

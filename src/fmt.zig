@@ -946,7 +946,7 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
     }
 
     /// Function for testing in highlighter.test.ts
-    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
         const args = callframe.arguments(1);
         if (args.len < 1) {
             globalThis.throwNotEnoughArguments("code", 1, 0);

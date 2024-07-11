@@ -7,6 +7,8 @@
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const builtin = @import("builtin");
 const std = @import("std");
+const bun = @This();
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
@@ -15,6 +17,12 @@ pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
     @import("./memory_allocator.zig").c_allocator;
+
+/// Zeroing memory allocator
+pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -59,6 +67,7 @@ pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWi
 
 pub const glob = @import("./glob.zig");
 pub const patch = @import("./patch.zig");
+pub const ini = @import("./ini.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -366,6 +375,51 @@ pub const StringHashMapUnowned = struct {
 };
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
+pub const OffsetByteList = struct {
+    head: u32 = 0,
+    byte_list: ByteList = .{},
+
+    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
+        return OffsetByteList{
+            .head = head,
+            .byte_list = byte_list,
+        };
+    }
+
+    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+        _ = try self.byte_list.write(allocator, bytes);
+    }
+
+    pub fn slice(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[0..this.head];
+    }
+
+    pub fn remaining(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[this.head..];
+    }
+
+    pub fn consume(self: *OffsetByteList, bytes: u32) void {
+        self.head +|= bytes;
+        if (self.head >= self.byte_list.len) {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+    }
+
+    pub fn len(self: *const OffsetByteList) u32 {
+        return self.byte_list.len - self.head;
+    }
+
+    pub fn clear(self: *OffsetByteList) void {
+        self.head = 0;
+        self.byte_list.len = 0;
+    }
+
+    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
+        self.byte_list.deinitWithAllocator(allocator);
+        self.* = .{};
+    }
+};
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.allow_assert) {
@@ -394,29 +448,10 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
-    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
-
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    assert(input.len > 0);
-    assert(output.len > 0);
-
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
-
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
-        C.memmove(output.ptr, input.ptr, input.len);
-    } else {
-        for (input, output) |input_byte, *out| {
-            out.* = input_byte;
-        }
-    }
+    return memmove(output, input);
 }
 
 pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
@@ -733,9 +768,9 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
     }
 }
 
-pub fn openDirNoRenamingOrDeletingWindows(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
+pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
     if (comptime !Environment.isWindows) @compileError("use openDir!");
-    const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
     return res.asDir();
 }
 
@@ -800,7 +835,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlInsensitive(line[0..key_end], key)) {
+            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -810,6 +845,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
+}
+
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
 }
 
 pub const FDHashMapContext = struct {
@@ -1228,15 +1268,11 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    comptime {
-        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
-        var i: usize = 0;
-        for (std.enums.values(T)) |value| {
-            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
-            i += 1;
-        }
-        return ComptimeStringMap(T, entries);
+    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    for (std.enums.values(T), &entries) |value, *entry| {
+        entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
+    return ComptimeStringMap(T, entries);
 }
 
 /// Write 0's for every byte in Type
@@ -1277,7 +1313,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+pub fn getFdPath(fd_: anytype, buf: *[MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
@@ -1617,7 +1653,6 @@ pub fn reloadProcess(
     }
 
     Output.Source.Stdio.restore();
-    const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
@@ -1955,10 +1990,10 @@ pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
+
 pub inline fn assertComptime() void {
-    if (comptime !@inComptime()) {
-        @compileError("This function can only be called in comptime.");
-    }
+    var x = 0; // if you hit an error on this line, you are not in a comptime context
+    _ = &x;
 }
 
 const TODO_LOG = Output.scoped(.TODO, false);
@@ -1989,7 +2024,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         }).encode();
     } else {
         // TODO: remove intCast. we should not be casting u32 -> i32
-        // even though file descriptors are always positive, linux/mac repesents them as signed integers
+        // even though file descriptors are always positive, linux/mac represents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
             sys.File => fd.handle,
@@ -2578,7 +2613,7 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         var buf: [literal.len:0]u8 = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;
@@ -2593,7 +2628,7 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
         var buf: [literal.len:0]OSPathChar = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
-            std.debug.assert(buf[i] != 0 and buf[i] < 128);
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
         const final = buf[0..buf.len :0].*;
@@ -2880,15 +2915,15 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
+/// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
-pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
-
-pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
@@ -2897,71 +2932,54 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
-pub inline fn new(comptime T: type, t: T) *T {
-    if (comptime @hasDecl(T, "is_bun.New()")) {
-        // You will get weird memory bugs in debug builds if you use the wrong allocator.
-        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
-    }
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t;
-        return ptr;
+pub inline fn new(comptime T: type, init: T) *T {
+    const ptr = if (heap_breakdown.enabled)
+        heap_breakdown.getZone(T).create(T, init)
+    else ptr: {
+        const ptr = default_allocator.create(T) catch outOfMemory();
+        ptr.* = init;
+        break :ptr ptr;
+    };
+
+    if (comptime Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t;
     return ptr;
 }
 
-pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
-pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+/// Free a globally-allocated a value from `bun.new()`. Using this with
+/// pointers allocated from other means may cause crashes.
+pub inline fn destroy(ptr: anytype) void {
+    const T = std.meta.Child(@TypeOf(ptr));
 
-pub inline fn dupe(comptime T: type, t: *T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t.*;
-        return ptr;
+    if (Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t.*;
-    return ptr;
+    if (heap_breakdown.enabled) {
+        heap_breakdown.getZone(T).destroy(T, ptr);
+    } else {
+        default_allocator.destroy(ptr);
+    }
+}
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
+    return new(T, t.*);
 }
 
 pub fn New(comptime T: type) type {
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-        pub const @"is_bun.New()" = true;
+        pub const ban_standard_library_allocator = true;
 
         pub inline fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
-                allocation_logger("destroy({*})", .{self});
-            }
-
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
-                if (comptime Environment.allow_assert) {
-                    allocation_logger("new() = {*}", .{ptr});
-                }
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                allocation_logger("new() = {*}", .{ptr});
-            }
-            return ptr;
+            return bun.new(T, t);
         }
     };
 }
@@ -2987,28 +3005,23 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     const log = Output.scoped(output_name, true);
 
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-
         pub fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
+            if (Environment.allow_assert) {
                 assert(self.ref_count == 0);
-                allocation_logger("destroy() = {*}", .{self});
             }
 
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub fn ref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -3021,26 +3034,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
+            const ptr = bun.new(T, t);
 
-                if (comptime Environment.allow_assert) {
-                    if (ptr.ref_count != 1) {
-                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
-                    }
-                    allocation_logger("new() = {*}", .{ptr});
+            if (Environment.enable_logs) {
+                if (ptr.ref_count != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
                 }
-
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                assert(ptr.ref_count == 1);
-                allocation_logger("new() = {*}", .{ptr});
             }
 
             return ptr;
@@ -3048,18 +3047,63 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     };
 }
 
-/// Free a globally-allocated a value.
-///
-/// Must have used `new` to allocate the value.
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroy(t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
-    } else {
-        default_allocator.destroy(t);
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
     }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (Environment.allow_assert) {
+                assert(self.ref_count.load(.seq_cst) == 0);
+            }
+
+            bun.destroy(self);
+        }
+
+        pub fn ref(self: *T) void {
+            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            bun.debugAssert(ref_count > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (Environment.enable_logs) {
+                if (ptr.ref_count.load(.seq_cst) != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
+                }
+            }
+
+            return ptr;
+        }
+    };
 }
 
 pub fn exitThread() noreturn {
@@ -3546,3 +3590,27 @@ pub fn OrdinalT(comptime Int: type) type {
 
 /// ABI-equivalent of WTF::OrdinalNumber
 pub const Ordinal = OrdinalT(c_int);
+
+pub fn memmove(output: []u8, input: []const u8) void {
+    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len and output.len > 0);
+    }
+
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+
+    if (!does_input_or_output_overlap) {
+        @memcpy(output[0..input.len], input);
+    } else if (comptime Environment.isNative) {
+        C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
+    }
+}
+
+pub const hmac = @import("./hmac.zig");

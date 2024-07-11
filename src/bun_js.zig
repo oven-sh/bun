@@ -49,8 +49,8 @@ pub const Run = struct {
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
@@ -145,17 +145,17 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(ctx, entry_path);
             Global.exitWide(exit_code);
             return;
         }
 
-        // The shell does not need to initialize JSC.
-        // JSC initialization costs 1-3ms
         bun.JSC.initialize();
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         run = .{
@@ -437,7 +437,7 @@ pub const Run = struct {
     }
 };
 
-pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
@@ -445,7 +445,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 
-pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);

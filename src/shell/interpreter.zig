@@ -665,7 +665,7 @@ pub const ParsedShellScript = struct {
 
     pub fn finalize(
         this: *ParsedShellScript,
-    ) callconv(.C) void {
+    ) void {
         this.this_jsvalue = .zero;
         log("ParsedShellScript(0x{x}) finalize", .{@intFromPtr(this)});
         if (this.export_env) |*env| env.deinit();
@@ -677,7 +677,7 @@ pub const ParsedShellScript = struct {
         bun.destroy(this);
     }
 
-    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setCwd(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const str_js = arguments.nextEat() orelse {
@@ -689,13 +689,13 @@ pub const ParsedShellScript = struct {
         return .undefined;
     }
 
-    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setQuiet(this: *ParsedShellScript, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.quiet = true;
         return .undefined;
     }
 
-    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setEnv(this: *ParsedShellScript, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         var env =
             if (this.export_env) |*env|
         brk: {
@@ -742,7 +742,7 @@ pub const ParsedShellScript = struct {
     pub fn createParsedShellScript(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var shargs = ShellArgs.init();
 
         const arguments_ = callframe.arguments(2);
@@ -1195,7 +1195,7 @@ pub const Interpreter = struct {
         fn toJSC(this: ShellErrorCtx, globalThis: *JSGlobalObject) JSValue {
             return switch (this) {
                 .syscall => |err| err.toJSC(globalThis),
-                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                .other => |err| bun.JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
             };
         }
     };
@@ -1203,7 +1203,7 @@ pub const Interpreter = struct {
     pub fn createShellInterpreter(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const allocator = bun.default_allocator;
         const arguments_ = callframe.arguments(3);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
@@ -1647,7 +1647,7 @@ pub const Interpreter = struct {
         return Maybe(void).success;
     }
 
-    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn runFromJS(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = callframe; // autofix
 
         if (this.setupIOBeforeRun().asErr()) |e| {
@@ -1777,13 +1777,13 @@ pub const Interpreter = struct {
         this.allocator.destroy(this);
     }
 
-    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setQuiet(this: *ThisInterpreter, _: *JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         log("Interpreter(0x{x}) setQuiet()", .{@intFromPtr(this)});
         this.flags.quiet = true;
         return .undefined;
     }
 
-    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setCwd(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const value = callframe.argument(0);
         const str = bun.String.fromJS(value, globalThis);
 
@@ -1799,7 +1799,7 @@ pub const Interpreter = struct {
         return .undefined;
     }
 
-    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setEnv(this: *ThisInterpreter, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const value1 = callframe.argument(0);
         if (!value1.isObject()) {
             globalThis.throwInvalidArguments("env must be an object", .{});
@@ -1840,7 +1840,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
@@ -1851,7 +1851,7 @@ pub const Interpreter = struct {
         this: *ThisInterpreter,
         globalThis: *JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         _ = globalThis; // autofix
         _ = callframe; // autofix
 
@@ -1874,12 +1874,12 @@ pub const Interpreter = struct {
 
     pub fn finalize(
         this: *ThisInterpreter,
-    ) callconv(.C) void {
+    ) void {
         log("Interpreter(0x{x}) finalize", .{@intFromPtr(this)});
         this.deinitFromFinalizer();
     }
 
-    pub fn hasPendingActivity(this: *ThisInterpreter) callconv(.C) bool {
+    pub fn hasPendingActivity(this: *ThisInterpreter) bool {
         @fence(.seq_cst);
         return this.has_pending_activity.load(.seq_cst) > 0;
     }
@@ -2666,7 +2666,7 @@ pub const Interpreter = struct {
                 pub fn toJSC(this: Err, globalThis: *JSGlobalObject) JSValue {
                     return switch (this) {
                         .syscall => |err| err.toJSC(globalThis),
-                        .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toValueGC(globalThis),
+                        .unknown => |err| JSC.ZigString.fromBytes(@errorName(err)).toJS(globalThis),
                     };
                 }
             };
@@ -10524,8 +10524,8 @@ pub const Interpreter = struct {
             /// threadpool.
             const EbusyState = struct {
                 tasks: std.ArrayListUnmanaged(*ShellCpTask) = .{},
-                absolute_targets: std.StringArrayHashMapUnmanaged(void) = .{},
-                absolute_srcs: std.StringArrayHashMapUnmanaged(void) = .{},
+                absolute_targets: bun.StringArrayHashMapUnmanaged(void) = .{},
+                absolute_srcs: bun.StringArrayHashMapUnmanaged(void) = .{},
 
                 pub fn deinit(this: *EbusyState) void {
                     // The tasks themselves are freed in `ignoreEbusyErrorIfPossible()`
@@ -12063,8 +12063,8 @@ fn closefd(fd: bun.FileDescriptor) void {
 }
 
 const CmdEnvIter = struct {
-    env: *const std.StringArrayHashMap([:0]const u8),
-    iter: std.StringArrayHashMap([:0]const u8).Iterator,
+    env: *const bun.StringArrayHashMap([:0]const u8),
+    iter: bun.StringArrayHashMap([:0]const u8).Iterator,
 
     const Entry = struct {
         key: Key,
@@ -12091,7 +12091,7 @@ const CmdEnvIter = struct {
         }
     };
 
-    pub fn fromEnv(env: *const std.StringArrayHashMap([:0]const u8)) CmdEnvIter {
+    pub fn fromEnv(env: *const bun.StringArrayHashMap([:0]const u8)) CmdEnvIter {
         const iter = env.iterator();
         return .{
             .env = env,

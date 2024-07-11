@@ -5,10 +5,12 @@
 //    That way, if the developer changes a file, we will see the change.
 //
 // 2. Checks the file descriptor count to make sure we're not leaking any files between re-builds.
+
 import { tmpdir } from "os";
 import { realpathSync, unlinkSync } from "fs";
 import { join } from "path";
 import { openSync, closeSync } from "fs";
+
 const tmp = realpathSync(tmpdir());
 const input = join(tmp, "input.js");
 const mutate = join(tmp, "mutate.js");

@@ -1574,7 +1574,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 );
                 ctx.defer_deinit_until_callback_completes = original_state;
                 // we try to deinit inside runErrorHandler so we just return here and let it deinit
-                if (should_deinit_context){
+                if (should_deinit_context) {
                     ctx.deinit();
                     return;
                 }
@@ -6351,7 +6351,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 ctx.renderMissing();
                 return;
             }
-            
+
             ctx.toAsync(req, request_object);
         }
 

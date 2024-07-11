@@ -19,7 +19,7 @@ const OperatingSystem = @import("src/env.zig").OperatingSystem;
 const pathRel = fs.path.relative;
 
 /// Do not rename this constant. It is scanned by some scripts to determine which zig version to install.
-const recommended_zig_version = "0.13.0";
+const recommended_zig_version = "0.14.0-dev.171+9d61c6bb6";
 
 comptime {
     if (!std.mem.eql(u8, builtin.zig_version_string, recommended_zig_version)) {
@@ -103,11 +103,16 @@ pub fn getOSVersionMin(os: OperatingSystem) ?Target.Query.OsVersion {
             .semver = .{ .major = 11, .minor = 0, .patch = 0 },
         },
 
+        .openbsd => .{
+            .semver = .{ .major = 7, .minor = 5, .patch = 0 },
+        },
+
         // Windows 10 1809 is the minimum supported version
         // One case where this is specifically required is in `deleteOpenedFile`
         .windows => .{
             .windows = .win10_rs5,
         },
+
         else => null,
     };
 }
@@ -141,6 +146,7 @@ pub fn build(b: *Build) !void {
             .macos => .mac,
             .linux => .linux,
             .windows => .windows,
+            .openbsd => .openbsd,
             else => |t| std.debug.panic("Unsupported OS tag {}", .{t}),
         };
         break :brk .{ os, arch };
@@ -392,37 +398,7 @@ fn exists(path: []const u8) bool {
 
 fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
     const os = opts.os;
-    
-    const io_path = switch (os) {
-        .mac => "src/io/io_darwin.zig",
-        .linux => "src/io/io_linux.zig",
-        .windows => "src/io/io_windows.zig",
-        else => "src/io/io_stub.zig",
-    };
-    obj.root_module.addAnonymousImport("async_io", .{
-        .root_source_file = b.path(io_path),
-    });
 
-    const zlib_internal_path = switch (os) {
-        .windows => "src/deps/zlib.win32.zig",
-        .linux, .mac => "src/deps/zlib.posix.zig",
-        else => null,
-    };
-    if (zlib_internal_path) |path| {
-        obj.root_module.addAnonymousImport("zlib-internal", .{
-            .root_source_file = b.path(path),
-        });
-    }
-
-    const async_path = switch (os) {
-        .linux, .mac => "src/async/posix_event_loop.zig",
-        .windows => "src/async/windows_event_loop.zig",
-        else => "src/async/stub_event_loop.zig",
-    };
-    obj.root_module.addAnonymousImport("async", .{
-        .root_source_file = b.path(async_path),
-    });
-    
     const zig_generated_classes_path = b.pathJoin(&.{ opts.generated_code_dir, "ZigGeneratedClasses.zig" });
     validateGeneratedPath(zig_generated_classes_path);
     obj.root_module.addAnonymousImport("ZigGeneratedClasses", .{

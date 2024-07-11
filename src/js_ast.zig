@@ -36,189 +36,165 @@ const MimeType = bun.http.MimeType;
 /// although it may contain no statements if there is nothing to export.
 pub const namespace_export_part_index = 0;
 
-pub fn NewBaseStore(comptime Union: anytype, comptime count: usize) type {
-    var max_size = 0;
-    var max_align = 1;
-    for (Union) |kind| {
-        max_size = @max(@sizeOf(kind), max_size);
-        max_align = if (@sizeOf(kind) == 0) max_align else @max(@alignOf(kind), max_align);
-    }
+/// This "Store" is a specialized memory allocation strategy very similar to an
+/// arena, used for allocating expression and statement nodes during JavaScript
+/// parsing and visiting. Allocations are grouped into large blocks, where each
+/// block is treated as a fixed-buffer allocator. When a block runs out of
+/// space, a new one is created; all blocks are joined as a linked list.
+///
+/// Similarly to an arena, you can call .reset() to reset state, reusing memory
+/// across operations.
+pub fn NewStore(comptime types: []const type, comptime count: usize) type {
+    const largest_size, const largest_align = brk: {
+        var largest_size = 0;
+        var largest_align = 1;
+        for (types) |T| {
+            if (@sizeOf(T) == 0) {
+                @compileError("NewStore does not support 0 size type: " ++ @typeName(T));
+            }
+            largest_size = @max(@sizeOf(T), largest_size);
+            largest_align = @max(@alignOf(T), largest_align);
+        }
+        break :brk .{ largest_size, largest_align };
+    };
 
-    const UnionValueType = [max_size]u8;
-    const SizeType = std.math.IntFittingRange(0, (count + 1));
-    const MaxAlign = max_align;
+    const backing_allocator = bun.default_allocator;
+
+    const log = Output.scoped(.Store, false);
 
     return struct {
-        const Allocator = std.mem.Allocator;
-        const Self = @This();
-        pub const WithBase = struct {
-            head: Block = Block{},
-            store: Self,
-        };
+        const Store = @This();
+
+        current: *Block,
+        debug_lock: std.debug.SafetyLock = .{},
 
         pub const Block = struct {
-            used: SizeType = 0,
-            items: [count]UnionValueType align(MaxAlign) = undefined,
+            pub const size = largest_size * count * 2;
+            pub const Size = std.math.IntFittingRange(0, size + largest_size);
 
-            pub inline fn isFull(block: *const Block) bool {
-                return block.used >= @as(SizeType, count);
-            }
+            buffer: [size]u8 align(largest_align) = undefined,
+            bytes_used: Size = 0,
+            next: ?*Block = null,
 
-            pub fn append(block: *Block, comptime ValueType: type, value: ValueType) *UnionValueType {
-                if (comptime Environment.allow_assert) bun.assert(block.used < count);
-                const index = block.used;
-                block.items[index][0..value.len].* = value.*;
-                block.used +|= 1;
-                return &block.items[index];
+            pub fn tryAlloc(block: *Block, comptime T: type) ?*T {
+                const start = std.mem.alignForward(usize, block.bytes_used, @alignOf(T));
+                if (start + @sizeOf(T) > block.buffer.len) return null;
+                defer block.bytes_used = @intCast(start + @sizeOf(T));
+
+                // it's simpler to use @ptrCast, but as a sanity check, we also
+                // try to compute the slice. Zig will report an out of bounds
+                // panic if the null detection logic above is wrong
+                if (Environment.isDebug) {
+                    _ = block.buffer[block.bytes_used..][0..@sizeOf(T)];
+                }
+
+                return @alignCast(@ptrCast(&block.buffer[start]));
             }
         };
 
-        const Overflow = struct {
-            const max = 4096 * 3;
-            const UsedSize = std.math.IntFittingRange(0, max + 1);
-            used: UsedSize = 0,
-            allocated: UsedSize = 0,
-            allocator: Allocator = default_allocator,
-            ptrs: [max]*Block = undefined,
-
-            pub fn tail(this: *Overflow) *Block {
-                if (this.ptrs[this.used].isFull()) {
-                    this.used +%= 1;
-                    if (this.allocated > this.used) {
-                        this.ptrs[this.used].used = 0;
-                    }
-                }
-
-                if (this.allocated <= this.used) {
-                    var new_ptrs = this.allocator.alloc(Block, 2) catch unreachable;
-                    new_ptrs[0] = Block{};
-                    new_ptrs[1] = Block{};
-                    this.ptrs[this.allocated] = &new_ptrs[0];
-                    this.ptrs[this.allocated + 1] = &new_ptrs[1];
-                    this.allocated +%= 2;
-                }
-
-                return this.ptrs[this.used];
-            }
-
-            pub inline fn slice(this: *Overflow) []*Block {
-                return this.ptrs[0..this.used];
-            }
+        const PreAlloc = struct {
+            metadata: Store,
+            first_block: Block,
         };
 
-        overflow: Overflow = Overflow{},
+        pub fn firstBlock(store: *Store) *Block {
+            return &@as(*PreAlloc, @fieldParentPtr("metadata", store)).first_block;
+        }
 
-        pub threadlocal var _self: ?*Self = null;
+        pub fn init() *Store {
+            log("init", .{});
+            const prealloc = backing_allocator.create(PreAlloc) catch bun.outOfMemory();
 
-        pub fn reclaim() []*Block {
-            var overflow = &_self.?.overflow;
+            prealloc.first_block.bytes_used = 0;
+            prealloc.first_block.next = null;
 
-            if (overflow.used == 0) {
-                if (overflow.allocated == 0 or overflow.ptrs[0].used == 0) {
-                    return &.{};
+            prealloc.metadata = .{
+                .current = &prealloc.first_block,
+            };
+
+            return &prealloc.metadata;
+        }
+
+        pub fn deinit(store: *Store) void {
+            log("deinit", .{});
+            var it = store.firstBlock().next; // do not free `store.head`
+            while (it) |next| {
+                if (Environment.isDebug)
+                    @memset(next.buffer, undefined);
+                it = next.next;
+                backing_allocator.destroy(next);
+            }
+
+            const prealloc: PreAlloc = @fieldParentPtr("metadata", store);
+            bun.assert(&prealloc.first_block == store.head);
+            backing_allocator.destroy(prealloc);
+        }
+
+        pub fn reset(store: *Store) void {
+            store.debug_lock.assertUnlocked();
+            log("reset", .{});
+
+            if (Environment.isDebug) {
+                var it: ?*Block = store.firstBlock();
+                while (it) |next| : (it = next.next) {
+                    next.bytes_used = undefined;
+                    @memset(&next.buffer, undefined);
                 }
             }
 
-            var to_move = overflow.ptrs[0..overflow.allocated][overflow.used..];
+            store.current = store.firstBlock();
+            store.current.bytes_used = 0;
+        }
 
-            // This returns the list of maxed out blocks
-            var used_list = overflow.slice();
+        fn allocate(store: *Store, comptime T: type) *T {
+            comptime bun.assert(@sizeOf(T) > 0); // don't allocate!
+            comptime if (!supportsType(T)) {
+                @compileError("Store does not know about type: " ++ @typeName(T));
+            };
 
-            // The last block may be partially used.
-            if (overflow.allocated > overflow.used and to_move.len > 0 and to_move.ptr[0].used > 0) {
-                to_move = to_move[1..];
-                used_list.len += 1;
+            store.debug_lock.assertUnlocked();
+
+            if (store.current.tryAlloc(T)) |ptr|
+                return ptr;
+
+            // a new block is needed
+            const next_block = if (store.current.next) |next| brk: {
+                next.bytes_used = 0;
+                break :brk next;
+            } else brk: {
+                const new_block = backing_allocator.create(Block) catch
+                    bun.outOfMemory();
+                new_block.next = null;
+                new_block.bytes_used = 0;
+                store.current.next = new_block;
+                break :brk new_block;
+            };
+
+            store.current = next_block;
+
+            return next_block.tryAlloc(T) orelse
+                unreachable; // newly initialized blocks must have enough space for at least one
+        }
+
+        pub inline fn append(store: *Store, comptime T: type, data: T) *T {
+            const ptr = store.allocate(T);
+            if (Environment.isDebug) {
+                log("append({s}) -> 0x{x}", .{ bun.meta.typeName(T), @intFromPtr(ptr) });
             }
-
-            const used = overflow.allocator.dupe(*Block, used_list) catch unreachable;
-
-            for (to_move, overflow.ptrs[0..to_move.len]) |b, *out| {
-                b.* = Block{
-                    .items = undefined,
-                    .used = 0,
-                };
-                out.* = b;
-            }
-
-            overflow.allocated = @as(Overflow.UsedSize, @truncate(to_move.len));
-            overflow.used = 0;
-
-            return used;
+            ptr.* = data;
+            return ptr;
         }
 
-        /// Reset all AST nodes, allowing the memory to be reused for the next parse.
-        /// Only call this when we're done with ALL AST nodes, or you risk
-        /// undefined memory bugs.
-        ///
-        /// Nested parsing should either use the same store, or call
-        /// Store.reclaim.
-        pub fn reset() void {
-            const blocks = _self.?.overflow.slice();
-            for (blocks) |b| {
-                if (comptime Environment.isDebug) {
-                    // ensure we crash if we use a freed value
-                    const bytes = std.mem.asBytes(&b.items);
-                    @memset(bytes, undefined);
-                }
-                b.used = 0;
-            }
-            _self.?.overflow.used = 0;
+        pub fn lock(store: *Store) void {
+            store.debug_lock.lock();
         }
 
-        pub fn init(allocator: std.mem.Allocator) *Self {
-            var base = allocator.create(WithBase) catch unreachable;
-            base.* = WithBase{ .store = .{ .overflow = Overflow{ .allocator = allocator } } };
-            var instance = &base.store;
-            instance.overflow.ptrs[0] = &base.head;
-            instance.overflow.allocated = 1;
-
-            _self = instance;
-
-            return _self.?;
+        pub fn unlock(store: *Store) void {
+            store.debug_lock.unlock();
         }
 
-        pub fn onThreadExit(_: *anyopaque) callconv(.C) void {
-            deinit();
-        }
-
-        fn deinit() void {
-            if (_self) |this| {
-                _self = null;
-                const sliced = this.overflow.slice();
-                var allocator = this.overflow.allocator;
-
-                if (sliced.len > 1) {
-                    var i: usize = 1;
-                    const end = sliced.len;
-                    while (i < end) {
-                        const ptrs = @as(*[2]Block, @ptrCast(sliced[i]));
-                        allocator.free(ptrs);
-                        i += 2;
-                    }
-                    this.overflow.allocated = 1;
-                }
-                var base_store: *WithBase = @fieldParentPtr("store", this);
-                if (this.overflow.ptrs[0] == &base_store.head) {
-                    allocator.destroy(base_store);
-                }
-            }
-        }
-
-        pub fn append(comptime Disabler: type, comptime ValueType: type, value: ValueType) *ValueType {
-            Disabler.assert();
-            return _self.?._append(ValueType, value);
-        }
-
-        inline fn _append(self: *Self, comptime ValueType: type, value: ValueType) *ValueType {
-            const bytes = std.mem.asBytes(&value);
-            const BytesAsSlice = @TypeOf(bytes);
-
-            var block = self.overflow.tail();
-
-            return @as(
-                *ValueType,
-                @ptrCast(@alignCast(block.append(BytesAsSlice, bytes))),
-            );
+        fn supportsType(T: type) bool {
+            return std.mem.indexOfScalar(type, types, T) != null;
         }
     };
 }
@@ -3129,7 +3105,7 @@ pub const Stmt = struct {
         s_lazy_export: Expr.Data,
 
         pub const Store = struct {
-            const Union = [_]type{
+            const StoreType = NewStore(&.{
                 S.Block,
                 S.Break,
                 S.Class,
@@ -3157,53 +3133,47 @@ pub const Stmt = struct {
                 S.Switch,
                 S.Throw,
                 S.Try,
-                S.TypeScript,
                 S.While,
                 S.With,
-            };
-            const All = NewBaseStore(Union, 128);
-            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
+            }, 128);
 
-            threadlocal var has_inited = false;
+            pub threadlocal var instance: ?*StoreType = null;
+            pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited or memory_allocator != null) {
+
+            pub fn create() void {
+                if (instance != null or memory_allocator != null) {
                     return;
                 }
 
-                has_inited = true;
-                _ = All.init(allocator);
+                instance = StoreType.init();
             }
 
             pub fn reset() void {
                 if (disable_reset or memory_allocator != null) return;
-                All.reset();
+                instance.?.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited or memory_allocator != null) return;
-                All.deinit();
-                has_inited = false;
+                if (instance == null or memory_allocator != null) return;
+                instance.?.deinit();
+                instance = null;
             }
 
             pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
-                    if (!has_inited and memory_allocator == null)
+                    if (instance == null and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
-            pub fn append(comptime ValueType: type, value: anytype) *ValueType {
+            pub fn append(comptime T: type, value: T) *T {
                 if (memory_allocator) |allocator| {
-                    return allocator.append(ValueType, value);
+                    return allocator.append(T, value);
                 }
 
-                return All.append(Disabler, ValueType, value);
-            }
-
-            pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset) return &[_]*Store.All.Block{};
-                return Store.All.reclaim();
+                Disabler.assert();
+                return instance.?.append(T, value);
             }
         };
     };
@@ -5937,83 +5907,72 @@ pub const Expr = struct {
         }
 
         pub const Store = struct {
-            const often = 512;
-            const medium = 256;
-            const rare = 24;
+            const StoreType = NewStore(&.{
+                E.Array,
+                E.Arrow,
+                E.Await,
+                E.BigInt,
+                E.Binary,
+                E.Call,
+                E.Class,
+                E.Dot,
+                E.Function,
+                E.If,
+                E.Import,
+                E.Index,
+                E.InlinedEnum,
+                E.JSXElement,
+                E.New,
+                E.Number,
+                E.Object,
+                E.PrivateIdentifier,
+                E.RegExp,
+                E.Spread,
+                E.String,
+                E.Template,
+                E.TemplatePart,
+                E.Unary,
+                E.UTF8String,
+                E.Yield,
+            }, 512);
 
-            const All = NewBaseStore(
-                &([_]type{
-                    E.Array,
-                    E.Unary,
-                    E.Binary,
-                    E.Class,
-                    E.New,
-                    E.Function,
-                    E.Call,
-                    E.Dot,
-                    E.Index,
-                    E.Arrow,
-                    E.RegExp,
-
-                    E.PrivateIdentifier,
-                    E.JSXElement,
-                    E.Number,
-                    E.BigInt,
-                    E.Object,
-                    E.Spread,
-                    E.String,
-                    E.TemplatePart,
-                    E.Template,
-                    E.Await,
-                    E.Yield,
-                    E.If,
-                    E.Import,
-                }),
-                512,
-            );
-
+            pub threadlocal var instance: ?*StoreType = null;
             pub threadlocal var memory_allocator: ?*ASTMemoryAllocator = null;
-
-            threadlocal var has_inited = false;
             pub threadlocal var disable_reset = false;
-            pub fn create(allocator: std.mem.Allocator) void {
-                if (has_inited or memory_allocator != null) {
+
+            pub fn create() void {
+                if (instance != null or memory_allocator != null) {
                     return;
                 }
 
-                has_inited = true;
-                _ = All.init(allocator);
+                instance = StoreType.init();
             }
 
             pub fn reset() void {
                 if (disable_reset or memory_allocator != null) return;
-                All.reset();
+                instance.?.reset();
             }
 
             pub fn deinit() void {
-                if (!has_inited or memory_allocator != null) return;
-                All.deinit();
-                has_inited = false;
+                if (instance == null or memory_allocator != null) return;
+                instance.?.deinit();
+                instance = null;
             }
 
             pub inline fn assert() void {
                 if (comptime Environment.allow_assert) {
-                    if (!has_inited and memory_allocator == null)
+                    if (instance == null and memory_allocator == null)
                         bun.unreachablePanic("Store must be init'd", .{});
                 }
             }
 
-            pub fn append(comptime ValueType: type, value: ValueType) *ValueType {
+            pub fn append(comptime T: type, value: T) *T {
                 if (memory_allocator) |allocator| {
-                    return allocator.append(ValueType, value);
+                    return allocator.append(T, value);
                 }
 
-                return All.append(Disabler, ValueType, value);
-            }
-
-            pub fn toOwnedSlice() []*Store.All.Block {
-                if (!has_inited or Store.All._self.?.overflow.used == 0 or disable_reset or memory_allocator != null) return &[_]*Store.All.Block{};
-                return Store.All.reclaim();
+                Disabler.assert();
+                return instance.?.append(T, value);
             }
         };
 

@@ -3848,7 +3848,7 @@ pub const Package = extern struct {
 
                                 var workspace = Package{};
 
-                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(allocator, log, source, .{}).unwrap() catch break :brk false;
+                                const json = PackageManager.instance.workspace_package_json_cache.getWithSource(bun.default_allocator, log, source, .{}).unwrap() catch break :brk false;
 
                                 try workspace.parseWithJSON(
                                     to_lockfile,
@@ -4396,6 +4396,7 @@ pub const Package = extern struct {
                 abs_package_json_path,
                 log,
             ) catch |err| {
+                bun.handleErrorReturnTrace(err, @errorReturnTrace());
                 switch (err) {
                     error.EISNOTDIR, error.EISDIR, error.EACCESS, error.EPERM, error.ENOENT, error.FileNotFound => {
                         log.addErrorFmt(
@@ -4531,6 +4532,8 @@ pub const Package = extern struct {
                         abs_package_json_path,
                         log,
                     ) catch |err| {
+                        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
                         const entry_base: []const u8 = Path.basename(matched_path);
                         switch (err) {
                             error.FileNotFound, error.PermissionDenied => continue,

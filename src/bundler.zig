@@ -439,11 +439,10 @@ pub const Bundler = struct {
         opts: Api.TransformOptions,
         env_loader_: ?*DotEnv.Loader,
     ) !Bundler {
-        js_ast.Expr.Data.Store.create(allocator);
-        js_ast.Stmt.Data.Store.create(allocator);
-        const fs = try Fs.FileSystem.init(
-            opts.absolute_working_dir,
-        );
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
+
+        const fs = try Fs.FileSystem.init(opts.absolute_working_dir);
         const bundle_options = try options.BundleOptions.fromApi(
             allocator,
             fs,
@@ -576,8 +575,8 @@ pub const Bundler = struct {
 
         this.options.jsx.setProduction(this.env.isProduction());
 
-        js_ast.Expr.Data.Store.create(this.allocator);
-        js_ast.Stmt.Data.Store.create(this.allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer js_ast.Expr.Data.Store.reset();
         defer js_ast.Stmt.Data.Store.reset();

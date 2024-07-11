@@ -45,8 +45,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 pub const Version = struct {

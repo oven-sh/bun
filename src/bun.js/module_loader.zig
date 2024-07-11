@@ -808,8 +808,6 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",

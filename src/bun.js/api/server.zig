@@ -1564,8 +1564,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const resp = ctx.resp.?;
-            resp.clearAborted();
-
             const has_responded = resp.hasResponded();
             if (!has_responded) {
                 var should_deinit_context = false;
@@ -1745,8 +1743,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.clearOnData();
                 }
                 resp.end(data, closeConnection);
-                resp.clearAborted();
-                this.resp = null;
+                this.detachResponse();
             }
         }
 
@@ -1763,8 +1760,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // We cannot call this function if the Content-Length header was previously set
                 if (resp.state().isResponsePending())
                     resp.endStream(closeConnection);
-                resp.clearAborted();
-                this.resp = null;
+                this.detachResponse();
             }
         }
 
@@ -1775,8 +1771,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.clearOnData();
                 }
                 resp.endWithoutBody(closeConnection);
-                resp.clearAborted();
-                this.resp = null;
+                this.detachResponse();
             }
         }
 
@@ -2028,11 +2023,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.flags.has_marked_complete) this.server.onRequestComplete();
             this.flags.has_marked_complete = true;
 
-            // cleanup abort handler and response
-            if (this.resp) |resp| {
-                resp.clearAborted();
-                this.resp = null;
-            }
+            this.detachResponse();
 
             if (this.defer_deinit_until_callback_completes) |defer_deinit| {
                 defer_deinit.* = true;
@@ -2650,6 +2641,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.pathname = request_object.url.clone();
             }
             ctx.setAbortHandler();
+        }
+        /// Clean the abort handler and the response
+        fn detachResponse(this: *RequestContext) void {
+            if (this.resp) |resp| {
+                resp.clearAborted();
+                this.resp = null;
+            }
         }
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {

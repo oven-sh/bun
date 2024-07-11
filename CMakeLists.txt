@@ -1236,12 +1236,15 @@ endif()
 
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
-    # add_custom_command(
-    # TARGET ${bun}
-    # POST_BUILD
-    # COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
-    # COMMENT "Stripping Symbols"
-    # )
+    if(CI AND APPLE)
+        add_custom_command(
+            TARGET ${bun}
+            POST_BUILD
+            COMMAND ${DSYMUTIL} --flat -z -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
+            COMMENT "Generating .dSYM"
+        )
+    endif()
+
     add_custom_command(
         TARGET ${bun}
         POST_BUILD

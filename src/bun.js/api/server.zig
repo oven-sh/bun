@@ -1567,18 +1567,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const resp = ctx.resp.?;
-            resp.clearAborted();
             const has_responded = resp.hasResponded();
             if (!has_responded)
                 ctx.runErrorHandler(
                     value,
                 );
 
-            // check again in case it get aborted after runErrorHandler
-            if (ctx.isAbortedOrEnded()) {
-                ctx.finalizeForAbort();
-                return;
-            }
+            // // check again in case it get aborted after runErrorHandler
+            // if (ctx.isAbortedOrEnded()) {
+            //     ctx.finalizeForAbort();
+            //     return;
+            // }
 
             // I don't think this case happens?
             if (ctx.didUpgradeWebSocket()) {
@@ -2020,6 +2019,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctxLog("deinit<d> ({*})<r> waiting request", .{this});
                 return;
             }
+            // cleanup abort handler and response
+            if (this.resp) |resp| {
+                resp.clearAborted();
+                this.resp = null;
+            }
+
             if (this.defer_deinit_until_callback_completes) |defer_deinit| {
                 defer_deinit.* = true;
                 ctxLog("deferred deinit <d> ({*})<r>", .{this});
@@ -2641,7 +2646,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {
             // resp == null or aborted or server.stop(true)
-            return this.resp == null or this.flags.aborted or this.server.flags.terminated;
+            return this.resp == null or this.flags.aborted or this.flags.has_marked_complete or this.server.flags.terminated;
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".

@@ -11689,7 +11689,11 @@ pub const PackageManager = struct {
 
                 // globally linked packages shouls always belong to the root
                 // tree (0).
-                const global = if (tree_id != 0) false else global: {
+                const global = if (!this.manager.options.global)
+                    false
+                else if (tree_id != 0)
+                    false
+                else global: {
                     for (this.manager.update_requests) |request| {
                         if (request.package_id == package_id) {
                             break :global true;

@@ -1070,7 +1070,7 @@ pub fn loadNpmrc(
                             source,
                             iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
                             allocator,
-                            "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
+                            "The following .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we currently don't support the <b>{s}<r> option.",
                             .{
                                 conf_item,
                                 @tagName(conf_item.optname),
@@ -1130,7 +1130,7 @@ pub fn loadNpmrc(
                         source,
                         iter.config.properties.at(iter.prop_idx - 1).key.?.loc,
                         allocator,
-                        "The follwing .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
+                        "The following .npmrc registry option was not applied:\n\n  <b>{s}<r>\n\nBecause we couldn't find the registry: <b>{s}<r>.",
                         .{
                             conf_item,
                             conf_item.registry_url,

@@ -111,6 +111,7 @@ pub const Features = struct {
     pub var WebSocket: usize = 0;
     pub var no_avx: usize = 0;
     pub var no_avx2: usize = 0;
+    pub var binlinks: usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
 
     pub fn formatter() Formatter {

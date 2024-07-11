@@ -1283,6 +1283,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         has_marked_pending: bool = false,
         has_abort_handler: bool = false,
         has_sendfile_ctx: bool = false,
+        has_pending_read: bool = false,
         has_called_error_handler: bool = false,
         needs_content_length: bool = false,
         needs_content_range: bool = false,
@@ -1826,7 +1827,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
-            if (this.pending_promises_for_abort > 0) return false;
+            if (this.pending_promises_for_abort > 0 or this.flags.has_pending_read) return false;
 
             if (this.promise != null) {
                 return false;
@@ -2335,10 +2336,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             this.setAbortHandler();
+            this.flags.has_pending_read = true;
             this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
         }
 
         pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
+            this.flags.has_pending_read = false;
             if (this.flags.aborted or this.resp == null) {
                 this.finalizeForAbort();
                 return;

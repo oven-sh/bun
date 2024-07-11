@@ -1740,7 +1740,6 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
     loop_ssl_data->ssl_socket = &s->s;
 
     loop_ssl_data->msg_more = 0;
-    
     // sets SSL_SENT_SHUTDOWN no matter what (not actually true if error!)
     int ret = SSL_shutdown(s->ssl);
     if (ret == 0) {

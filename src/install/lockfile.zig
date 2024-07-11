@@ -1029,8 +1029,6 @@ pub fn cleanWithLogger(
     if (updates.len > 0) {
         const string_buf = new.buffers.string_bytes.items;
         const slice = new.packages.slice();
-        const names = slice.items(.name);
-        const resolutions = slice.items(.resolution);
 
         // updates might be applied to the root package.json or one
         // of the workspace package.json files.
@@ -1042,14 +1040,13 @@ pub fn cleanWithLogger(
         const resolved_ids: []const PackageID = res_list.get(new.buffers.resolutions.items);
 
         request_updated: for (updates) |*update| {
-            if (update.resolution.tag == .uninitialized) {
+            if (update.package_id == invalid_package_id) {
                 for (resolved_ids, workspace_deps) |package_id, dep| {
                     if (update.matches(dep, string_buf)) {
                         if (package_id > new.packages.len) continue;
                         update.version_buf = string_buf;
                         update.version = dep.version;
-                        update.resolution = resolutions[package_id];
-                        update.resolved_name = names[package_id];
+                        update.package_id = package_id;
 
                         continue :request_updated;
                     }

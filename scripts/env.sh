@@ -31,14 +31,11 @@ export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidd
 export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 
 if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
-  export CFLAGS="$CFLAGS -mcpu=armv8-a -mtune=ampere1 "
-  export CXXFLAGS="$CXXFLAGS -mcpu=armv8-a -mtune=ampere1 "
+  export CFLAGS="$CFLAGS -mcpu=cortex-a72 -mtune=ampere1 "
+  export CXXFLAGS="$CXXFLAGS -mcpu=cortex-a72 -mtune=ampere1 "
 fi
 
-if [[ "${BUN_ENABLE_LTO:-}" == "1" ]]; then
-  export CFLAGS="$CFLAGS -flto "
-  export CXXFLAGS="$CXXFLAGS -flto "
-fi
+
 
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"

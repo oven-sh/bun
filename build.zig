@@ -264,7 +264,7 @@ pub fn build(b: *Build) !void {
                 const check_target = b.resolveTargetQuery(.{
                     .os_tag = OperatingSystem.stdOSTag(check.os),
                     .cpu_arch = check.arch,
-                    .cpu_model = if (check.os == .linux and check.arch == .aarch64) .{ .explicit = &std.Target.aarch64.cpu.cortex_a53 } else .{ .determined_by_cpu_arch = {} },
+                    .cpu_model = if (check.os == .linux and check.arch == .aarch64) .{ .explicit = &std.Target.aarch64.cpu.cortex_a35 } else .{ .determined_by_cpu_arch = {} },
                     .os_version_min = getOSVersionMin(check.os),
                     .glibc_version = getOSGlibCVersion(check.os),
                 });

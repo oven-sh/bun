@@ -29,7 +29,7 @@ BREW_PREFIX_PATH = /opt/homebrew
 DEFAULT_MIN_MACOS_VERSION = 11.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
 ifeq ($(OS_NAME),linux)
-MARCH_NATIVE = -mcpu=cortex-a72 -mtune=ampere1
+MARCH_NATIVE = -mcpu=cortex-a35 -mtune=ampere1
 endif
 else
 ARCH_NAME = x64

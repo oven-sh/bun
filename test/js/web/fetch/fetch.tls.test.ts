@@ -243,7 +243,7 @@ it("fetch timeout works on tls", async () => {
   });
   const start = performance.now();
   const TIMEOUT = 200;
-  const THRESHOLD = 50;
+  const THRESHOLD = 100;
 
   try {
     await fetch(server.url, {

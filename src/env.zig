@@ -108,6 +108,7 @@ pub const OperatingSystem = enum {
 
     pub fn stdOSTag(self: OperatingSystem) std.Target.Os.Tag {
         return switch (self) {
+            .openbsd => .openbsd,
             .mac => .macos,
             .linux => .linux,
             .windows => .windows,
@@ -122,6 +123,7 @@ pub const OperatingSystem = enum {
             .linux => "linux",
             .windows => "windows",
             .wasm => "wasm",
+            .openbsd => "openbsd",
         };
     }
 };

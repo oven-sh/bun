@@ -686,7 +686,7 @@ pub fn init() void {
         .windows => {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
-        .mac, .linux => {
+        .mac, .linux, .openbsd => {
             var act = std.posix.Sigaction{
                 .handler = .{ .sigaction = handleSegfaultPosix },
                 .mask = std.posix.empty_sigset,

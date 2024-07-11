@@ -320,7 +320,7 @@ const PosixFutex = struct {
         }
     };
 
-    const List = std.TailQueue(struct {
+    const List = std.DoublyLinkedList(struct {
         address: ?usize,
         state: State = .empty,
         cond: std.c.pthread_cond_t = .{},
@@ -352,7 +352,7 @@ const PosixFutex = struct {
             var ts_ptr: ?*const std.posix.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
+                std.posix.clock_gettime(std.posix.CLOCK.REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {

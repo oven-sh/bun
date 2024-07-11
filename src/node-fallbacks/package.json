@@ -5,8 +5,8 @@
   "main": "index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
-    "build-gen": "bash -c 'esbuild --bundle *.js --outdir=bun --format=esm --platform=system --external:buffer --external:stream --external:util --external:util/ --external:assert'",
-    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify '"
+    "build-gen": "bash -c 'esbuild --bundle *.js --outdir=bun --format=esm --platform=node --external:buffer --external:stream --external:util --external:util/ --external:assert'",
+    "build": "bash -c 'esbuild --bundle *.js --outdir=out --platform=node --format=esm --minify '"
   },
   "author": "",
   "license": "ISC",
@@ -18,7 +18,7 @@
     "constants-browserify": "^1.0.0",
     "crypto-browserify": "^3.12.0",
     "domain-browser": "^5.7.0",
-    "esbuild": "^0.15.18",
+    "esbuild": "^0.23.0",
     "events": "^3.3.0",
     "https-browserify": "^1.0.0",
     "os-browserify": "^0.3.0",

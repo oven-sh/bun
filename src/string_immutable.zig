@@ -80,7 +80,7 @@ fn literalLength(comptime T: type, comptime str: string) usize {
 pub const toUTF16LiteralZ = toUTF16Literal;
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
-pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
+pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
     switch (comptime str.len) {
         0 => @compileError("str cannot be empty"),
         1 => return indexOfChar(slice, str[0]),

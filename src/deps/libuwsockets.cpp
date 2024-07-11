@@ -1264,7 +1264,7 @@ extern "C"
       }
       else
       {
-        uwsRes->onAborted(nullptr);
+        uwsRes->clearOnAborted();
       }
     }
     else
@@ -1278,7 +1278,7 @@ extern "C"
       }
       else
       {
-        uwsRes->onAborted(nullptr);
+        uwsRes->clearOnAborted();
       }
     }
   }

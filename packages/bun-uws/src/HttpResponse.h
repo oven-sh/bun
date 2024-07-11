@@ -581,6 +581,12 @@ public:
         return this;
     }
 
+    HttpResponse* clearOnAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onAborted = nullptr;
+        return this;
+    }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
     void onData(MoveOnlyFunction<void(std::string_view, bool)> &&handler) {
         HttpResponseData<SSL> *data = getHttpResponseData();

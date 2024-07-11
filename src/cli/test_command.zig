@@ -45,7 +45,7 @@ const Test = TestRunner.Test;
 const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
 const uws = bun.uws;
 
-fn fmtStatusTextIndicator(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
+fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
     comptime {
         // emoji and color might be split into two different options in the future
         // some terminals support color, but not emoji.
@@ -69,11 +69,11 @@ fn fmtStatusTextIndicator(comptime status: @Type(.EnumLiteral), comptime emoji_o
     }
 }
 
-fn writeTestStatusIndicator(comptime status: @Type(.EnumLiteral), writer: anytype) void {
+fn writeTestStatusLine(comptime status: @Type(.EnumLiteral), writer: anytype) void {
     if (Output.enable_ansi_colors_stderr)
-        writer.print(fmtStatusTextIndicator(status, true), .{}) catch unreachable
+        writer.print(fmtStatusTextLine(status, true), .{}) catch unreachable
     else
-        writer.print(fmtStatusTextIndicator(status, false), .{}) catch unreachable;
+        writer.print(fmtStatusTextLine(status, false), .{}) catch unreachable;
 }
 
 pub const CommandLineReporter = struct {
@@ -110,7 +110,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestStart(_: *TestRunner.Callback, _: Test.ID) void {}
 
-    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype, comptime status: @Type(.EnumLiteral)) void {
+    fn printTestLine(label: string, elapsed_ns: u64, parent: ?*jest.DescribeScope, comptime skip: bool, writer: anytype) void {
         var scopes_stack = std.BoundedArray(*jest.DescribeScope, 64).init(0) catch unreachable;
         var parent_ = parent;
 
@@ -130,36 +130,26 @@ pub const CommandLineReporter = struct {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;
+                writer.writeAll(" ") catch unreachable;
 
                 writer.print(comptime Output.prettyFmt("<r>" ++ color_code, true), .{}) catch unreachable;
-                if (!scope.has_printed) {
-                    for (1..i) |_|
-                        writer.writeAll("  ") catch unreachable;
-                    writer.print(comptime Output.prettyFmt("{s}\n", true), .{scope.label}) catch unreachable;
-                    scope.has_printed = true;
-                }
+                writer.writeAll(scope.label) catch unreachable;
                 writer.print(comptime Output.prettyFmt("<d>", true), .{}) catch unreachable;
+                writer.writeAll(" >") catch unreachable;
             }
         } else {
             for (scopes, 0..) |_, i| {
                 const index = (scopes.len - 1) - i;
                 const scope = scopes[index];
                 if (scope.label.len == 0) continue;
-
-                if (!scope.has_printed) {
-                    for (1..i) |_|
-                        writer.writeAll("  ") catch unreachable;
-                    writer.print(comptime Output.prettyFmt("{s}\n", false), .{scope.label}) catch unreachable;
-                    scope.has_printed = true;
-                }
+                writer.writeAll(" ") catch unreachable;
+                writer.writeAll(scope.label) catch unreachable;
+                writer.writeAll(" >") catch unreachable;
             }
         }
-        for (1..scopes.len) |_|
-            writer.writeAll("  ") catch unreachable;
 
         const line_color_code = if (comptime skip) "<r><d>" else "<r><b>";
 
-        writeTestStatusIndicator(status, writer);
         if (Output.enable_ansi_colors_stderr)
             writer.print(comptime Output.prettyFmt(line_color_code ++ " {s}<r>", true), .{display_label}) catch unreachable
         else
@@ -180,12 +170,14 @@ pub const CommandLineReporter = struct {
     pub fn handleTestPass(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         const writer_ = Output.errorWriter();
         var buffered_writer = std.io.bufferedWriter(writer_);
-        const writer = buffered_writer.writer();
+        var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
 
         var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
-        printTestLine(label, elapsed_ns, parent, false, writer, .pass);
+        writeTestStatusLine(.pass, &writer);
+
+        printTestLine(label, elapsed_ns, parent, false, writer);
 
         this.jest.tests.items(.status)[id] = TestRunner.Test.Status.pass;
         this.summary.pass += 1;
@@ -201,7 +193,8 @@ pub const CommandLineReporter = struct {
         const initial_length = this.failures_to_repeat_buf.items.len;
         var writer = this.failures_to_repeat_buf.writer(bun.default_allocator);
 
-        printTestLine(label, elapsed_ns, parent, false, writer, .fail);
+        writeTestStatusLine(.fail, &writer);
+        printTestLine(label, elapsed_ns, parent, false, writer);
 
         // We must always reset the colors because (skip) will have set them to <d>
         if (Output.enable_ansi_colors_stderr) {
@@ -233,9 +226,10 @@ pub const CommandLineReporter = struct {
             // when the tests skip, we want to repeat the failures at the end
             // so that you can see them better when there are lots of tests that ran
             const initial_length = this.skips_to_repeat_buf.items.len;
-            const writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
+            var writer = this.skips_to_repeat_buf.writer(bun.default_allocator);
 
-            printTestLine(label, elapsed_ns, parent, true, writer, .skip);
+            writeTestStatusLine(.skip, &writer);
+            printTestLine(label, elapsed_ns, parent, true, writer);
 
             writer_.writeAll(this.skips_to_repeat_buf.items[initial_length..]) catch unreachable;
             Output.flush();
@@ -255,9 +249,10 @@ pub const CommandLineReporter = struct {
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
         const initial_length = this.todos_to_repeat_buf.items.len;
-        const writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
+        var writer = this.todos_to_repeat_buf.writer(bun.default_allocator);
 
-        printTestLine(label, elapsed_ns, parent, true, writer, .todo);
+        writeTestStatusLine(.todo, &writer);
+        printTestLine(label, elapsed_ns, parent, true, writer);
 
         writer_.writeAll(this.todos_to_repeat_buf.items[initial_length..]) catch unreachable;
         Output.flush();

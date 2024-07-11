@@ -1125,6 +1125,11 @@ else()
         # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
         target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
     endif()
+
+    if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
+        # on arm64 linux, we set a minimum of armv8
+        target_compile_options(${bun} PUBLIC "-mcpu=armv8-a -mtune=ampere1 ")
+    endif()
 endif()
 
 target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})

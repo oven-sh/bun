@@ -132,15 +132,9 @@ async function generateRegistryUser(username: string, password: string): Promise
   }
 }
 
-/**
- * Important:
- *
- * Any tests here that check that authentication actually works, are done by publishing a package
- *
- * The verdaccio.yaml config specifies that publishing requires users to be authenticated
- * so we can test that our authentication works by publishing a package
- */
 describe("npmrc", async () => {
+  const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
+
   it("works with empty file", async () => {
     console.log("package dir", packageDir);
     await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
@@ -213,7 +207,7 @@ registry=http://localhost:\${PORT}/
   });
 
   async function makeTest(
-    options: [option: string, value: string | (() => Promise<string>)][],
+    options: [option: string, value: string][],
     check: (result: {
       default_registry_url: string;
       default_registry_token: string;
@@ -221,12 +215,16 @@ registry=http://localhost:\${PORT}/
       default_registry_password: string;
     }) => void,
   ) {
-    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${await val}`));
+    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
     test(optionName.join(" "), async () => {
       await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
 
       const iniInner = await Promise.all(
-        options.map(async ([option, value]) => `//registry.npmjs.org/:${option}=${await value}`),
+        options.map(async ([option, value]) => {
+          let finalValue = value;
+          finalValue = isBase64Encoded(option) ? Buffer.from(finalValue).toString("base64") : finalValue;
+          return `//registry.npmjs.org/:${option}=${finalValue}`;
+        }),
       );
 
       const ini = /* ini */ `
@@ -250,22 +248,22 @@ ${iniInner.join("\n")}
     });
   }
 
-  // await makeTest([["_authToken", "skibidi"]], result => {
-  //   expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-  //   expect(result.default_registry_token).toEqual("Default registry token: skibidi");
-  // });
+  await makeTest([["_authToken", "skibidi"]], result => {
+    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_token).toEqual("skibidi");
+  });
 
-  // await makeTest(
-  //   [
-  //     ["username", "zorp"],
-  //     ["_password", "skibidi"],
-  //   ],
-  //   result => {
-  //     expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
-  //     expect(result.default_registry_username).toEqual("zorp");
-  //     expect(result.default_registry_password).toEqual("skibidi");
-  //   },
-  // );
+  await makeTest(
+    [
+      ["username", "zorp"],
+      ["_password", "skibidi"],
+    ],
+    result => {
+      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_username).toEqual("zorp");
+      expect(result.default_registry_password).toEqual("skibidi");
+    },
+  );
 
   it("authentication works", async () => {
     await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
@@ -277,82 +275,81 @@ registry = http://localhost:${port}/
 
     await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
     await Bun.$`echo ${JSON.stringify({
-      name: "private-pkg-dont-touch",
+      name: "hi",
       main: "index.js",
       version: "1.0.0",
-      dependencies: {},
+      dependencies: {
+        "@needs-auth/test-pkg": "1.0.0",
+      },
       "publishConfig": {
         "registry": `http://localhost:${port}`,
       },
     })} > package.json`.cwd(packageDir);
 
-    const code = /* js */ `
-module.exports = function lmao() {
-  return 'lmao'
-}`;
-
-    await Bun.$`echo ${code} > index.js`.cwd(packageDir);
-
-    const { stdout, stderr: stderrBuf } = Bun.spawnSync(["npm", "publish", "--registry", `http://localhost:${port}/`], {
-      cwd: packageDir,
-    });
-
-    const stderr = stderrBuf.toString();
-    expect(stderr).not.toContain("ERR!");
-    expect(stderr).not.toContain("code E401");
-    expect(stderr).not.toContain("Unable to authenticate");
+    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
   });
+
+  type EnvMap =
+    | Omit<
+        {
+          [key: string]: string;
+        },
+        "dotEnv"
+      >
+    | { dotEnv?: Record<string, string> };
 
   function registryConfigOptionTest(
     name: string,
     _opts: Record<string, string> | (() => Promise<Record<string, string>>),
-    _env?: Record<string, string> | (() => Promise<Record<string, string>>),
+    _env?: EnvMap | (() => Promise<EnvMap>),
+    check?: (stdout: string, stderr: string) => void,
   ) {
     it(`sets scoped registry option: ${name}`, async () => {
+      console.log("PACKAGE DIR", packageDir);
       await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
 
-      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
-
-      const env = _env ? (typeof _env === "function" ? await _env() : _env) : {};
+      const { dotEnv, ...restOfEnv } = _env
+        ? typeof _env === "function"
+          ? await _env()
+          : _env
+        : { dotEnv: undefined };
       const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
+      const dotEnvInner = dotEnv
+        ? Object.entries(dotEnv)
+            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
+            .join("\n")
+        : "";
 
       const ini = /* ini */ `
 registry = http://localhost:${port}/
 ${Object.keys(opts)
-  .map(k => `//localhost:${port}/${k}=${opts[k]}`)
+  .map(
+    k =>
+      `//localhost:${port}/:${k}=${isBase64Encoded(k) && !opts[k].includes("${") ? Buffer.from(opts[k]).toString("base64") : opts[k]}`,
+  )
   .join("\n")}
 `;
 
+      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
       await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
       await Bun.$`echo ${JSON.stringify({
-        name: "private-pkg-dont-touch",
+        name: "hi",
         main: "index.js",
         version: "1.0.0",
-        dependencies: {},
+        dependencies: {
+          "@needs-auth/test-pkg": "1.0.0",
+        },
         "publishConfig": {
           "registry": `http://localhost:${port}`,
         },
       })} > package.json`.cwd(packageDir);
 
-      const code = /* js */ `
-module.exports = function lmao() {
-  return 'lmao'
-}`;
+      const { stdout, stderr } = await Bun.$`${bunExe()} install`
+        .env({ ...env, ...restOfEnv })
+        .cwd(packageDir)
+        .throws(check === undefined);
 
-      await Bun.$`echo ${code} > index.js`.cwd(packageDir);
-
-      const { stdout, stderr: stderrBuf } = Bun.spawnSync(
-        ["npm", "publish", "--registry", `http://localhost:${port}/`],
-        {
-          cwd: packageDir,
-          env,
-        },
-      );
-
-      const stderr = stderrBuf.toString();
-      expect(stderr).not.toContain("ERR!");
-      expect(stderr).not.toContain("code E401");
-      expect(stderr).not.toContain("Unable to authenticate");
+      if (check) check(stdout.toString(), stderr.toString());
     });
   }
 
@@ -365,17 +362,58 @@ module.exports = function lmao() {
     async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
   );
   registryConfigOptionTest("username and password", async () => {
-    await generateRegistryUser("gandalf420", "verysecure");
-    return { username: "gandalf420", _password: "verysecure" };
+    await generateRegistryUser("gandalf429", "verysecure");
+    return { username: "gandalf429", _password: "verysecure" };
   });
   registryConfigOptionTest(
     "username and password with env variable password",
     async () => {
-      await generateRegistryUser("gandalf421", "verysecure");
-      return { username: "gandalf420", _password: "${SUPER_SECRET_PASSWORD}" };
+      await generateRegistryUser("gandalf422", "verysecure");
+      return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
     },
     {
-      SUPER_SECRET_PASSWORD: "verysecure",
+      SUPER_SECRET_PASSWORD: Buffer.from("verysecure").toString("base64"),
+    },
+  );
+  registryConfigOptionTest(
+    "username and password with .env variable password",
+    async () => {
+      await generateRegistryUser("gandalf421", "verysecure");
+      return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
+    },
+    {
+      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
+    },
+  );
+
+  registryConfigOptionTest("_auth", async () => {
+    await generateRegistryUser("linus", "verysecure");
+    const _auth = "linus:verysecure";
+    return { _auth };
+  });
+
+  registryConfigOptionTest(
+    "_auth from .env variable",
+    async () => {
+      await generateRegistryUser("zack", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "zack:verysecure" },
+    },
+  );
+
+  registryConfigOptionTest(
+    "_auth from .env variable with no value",
+    async () => {
+      await generateRegistryUser("zack420", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "" },
+    },
+    (stdout: string, stderr: string) => {
+      expect(stderr).toContain("got an empty string");
     },
   );
 });
@@ -1034,6 +1072,46 @@ describe("peerDependency index out of bounds", async () => {
       });
     }
   }
+
+  // Install 2 dependencies, one is a normal dependency, the other is a dependency with a optional
+  // peer dependency on the first dependency. Delete node_modules and cache, then update the dependency
+  // with the optional peer to a new version. Doing this will cause the peer dependency to get enqueued
+  // internally, testing for index out of bounds. It's also important cache is deleted to ensure a tarball
+  // task is created for it.
+  test("optional", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "optional-peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    // update version and delete node_modules and cache
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "optional-peer-deps": "1.0.1",
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+
+    // this install would trigger the index out of bounds error
+    await runBunInstall(env, packageDir);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
 });
 
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {

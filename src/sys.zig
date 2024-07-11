@@ -776,6 +776,17 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        // handle the special "nul" device
+        // we technically should handle the other DOS devices too.
+        if (path_.len >= "\\nul".len and
+            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+        {
+            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+            buf[bun.strings.w("\\??\\NUL").len] = 0;
+            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        }
+
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
         return .{ .result = norm };
     }

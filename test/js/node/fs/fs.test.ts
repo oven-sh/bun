@@ -62,6 +62,18 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("fs.writeFile(1, data) should work when its inherited", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
+});
+
+it("fs.writeFile(2, data) should work when its inherited", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"]).toRun();
+});
+
+it("fs.writeFile(/dev/null, data) should work", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull]).toRun();
+});
+
 it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });

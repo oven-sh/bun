@@ -60,7 +60,7 @@ pub fn NewStore(comptime types: []const type, comptime count: usize) type {
 
     const backing_allocator = bun.default_allocator;
 
-    const log = Output.scoped(.Store, false);
+    const log = Output.scoped(.Store, true);
 
     return struct {
         const Store = @This();

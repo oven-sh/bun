@@ -102,4 +102,28 @@ describe("escapeHTML", () => {
       escapeHTML(String.fromCodePoint(0xd800) + "\xff".repeat(i));
     }
   });
+
+  it("fuzz latin1", () => {
+    for (let i = 0; i < 256; i++) {
+      const initial = Buffer.alloc(i + 1, "a");
+      for (let j = 0; j < i; j++) {
+        const clone = Buffer.from(initial);
+        clone[j] = ">".charCodeAt(0);
+        Bun.escapeHTML(clone.toString());
+      }
+    }
+  });
+
+  it("fuzz utf16", () => {
+    for (let i = 0; i < 256; i++) {
+      const initial = new Uint16Array(i);
+      initial.fill("a".charCodeAt(0));
+
+      for (let j = 0; j < i; j++) {
+        const clone = Buffer.from(initial);
+        clone[j] = ">".charCodeAt(0);
+        Bun.escapeHTML(clone.toString("utf16le"));
+      }
+    }
+  });
 });

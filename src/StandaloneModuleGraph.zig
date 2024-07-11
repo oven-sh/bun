@@ -74,31 +74,30 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: []const u8 = "",
         sourcemap: LazySourceMap,
-        blob_: ?*bun.JSC.WebCore.Blob = null,
+        cached_blob: ?*bun.JSC.WebCore.Blob = null,
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
-            if (this.blob_ == null) {
+            if (this.cached_blob == null) {
                 var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
-                var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch bun.outOfMemory();
-                blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
-                blob_.allocator = bun.default_allocator;
+                const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
+                b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
-                    blob_.content_type = mime.value;
-                    blob_.content_type_was_set = true;
-                    blob_.content_type_allocated = false;
+                    b.content_type = mime.value;
+                    b.content_type_was_set = true;
+                    b.content_type_allocated = false;
                 }
 
                 store.data.bytes.stored_name = bun.PathString.init(this.name);
 
-                this.blob_ = blob_;
+                this.cached_blob = b;
             }
 
-            return this.blob_.?;
+            return this.cached_blob.?;
         }
     };
 
@@ -288,7 +287,7 @@ pub const StandaloneModuleGraph = struct {
                 out_buf[zname.len] = 0;
                 const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out) catch |err| {
+                bun.copyFile(in, out).unwrap() catch |err| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
@@ -388,7 +387,7 @@ pub const StandaloneModuleGraph = struct {
 
             defer _ = Syscall.close(self_fd);
 
-            bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
+            bun.copyFile(self_fd.cast(), fd.cast()).unwrap() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);

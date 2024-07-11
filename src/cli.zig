@@ -242,11 +242,13 @@ pub const Arguments = struct {
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
@@ -275,8 +277,8 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        js_ast.Stmt.Data.Store.create(allocator);
-        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create();
+        js_ast.Expr.Data.Store.create();
         defer {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
@@ -437,6 +439,24 @@ pub const Arguments = struct {
 
             if (!ctx.test_options.coverage.enabled) {
                 ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
+            if (args.options("--coverage-reporter").len > 0) {
+                ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                for (args.options("--coverage-reporter")) |reporter| {
+                    if (bun.strings.eqlComptime(reporter, "text")) {
+                        ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(reporter, "lcov")) {
+                        ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                        Global.exit(1);
+                    }
+                }
+            }
+
+            if (args.option("--coverage-dir")) |dir| {
+                ctx.test_options.coverage.reports_directory = dir;
             }
 
             if (args.option("--bail")) |bail| {

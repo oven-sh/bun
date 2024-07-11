@@ -50,6 +50,8 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -277,7 +279,7 @@ pub fn crashHandler(
             report(trace_str_buf.slice());
 
             if (bun.auto_reload_on_crash and
-                // Do not reload if the panic arised FROM the reload function.
+                // Do not reload if the panic arose FROM the reload function.
                 !bun.isProcessReloadInProgressOnAnotherThread())
             {
                 // attempt to prevent a double panic
@@ -288,7 +290,7 @@ pub fn crashHandler(
                 });
                 Output.flush();
 
-                comptime std.debug.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
+                comptime bun.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
                 bun.reloadProcess(bun.default_allocator, false, true);
             }
         },
@@ -621,7 +623,7 @@ else
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun {s}v{s} {s} {s}{s}\n",
     .{
-        if (bun.Environment.is_canary) "Canary " else "",
+        if (bun.Environment.isDebug) "Debug " else if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
@@ -633,7 +635,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const an
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        else => unreachable,
+        else => @compileError(unreachable),
     };
 
     crashHandler(
@@ -736,6 +738,8 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
+extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
@@ -743,6 +747,25 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
+        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const cpu_features = CPUFeatures.get();
+        if (bun.Environment.isLinux) {
+            // TODO: musl
+            const version = gnu_get_libc_version() orelse "";
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            if (platform.os == .wsl) {
+                try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            } else {
+                try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            }
+        } else if (bun.Environment.isMac) {
+            try writer.print("macOS v{s}\n", .{platform.version});
+        }
+
+        if (!cpu_features.isEmpty()) {
+            try writer.print("CPU: {}\n", .{cpu_features});
+        }
+
         try writer.print("Args: ", .{});
         var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {
@@ -1472,17 +1495,17 @@ pub const js_bindings = struct {
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) JSValue {
         if (!bun.Environment.isMac) return .undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .undefined;
         const base_address = @intFromPtr(header);
         const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
 
-        return bun.JSC.JSValue.jsNumber(base_address - vmaddr_slide);
+        return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         @setRuntimeSafety(false);
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
@@ -1490,19 +1513,19 @@ pub const js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.outOfMemory();
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
@@ -1512,7 +1535,7 @@ pub const js_bindings = struct {
         return bun.String.createLatin1(buf.slice()).toJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
@@ -1523,7 +1546,7 @@ pub const js_bindings = struct {
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
         obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
-        obj.put(global, JSC.ZigString.static("generated_at"), bun.JSC.JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
+        obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };

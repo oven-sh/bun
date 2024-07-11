@@ -1370,7 +1370,7 @@ pub const BundleV2 = struct {
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
 
-                // An error ocurred, prevent spinning the event loop forever
+                // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
@@ -1389,7 +1389,7 @@ pub const BundleV2 = struct {
                 log.errors += @as(usize, @intFromBool(err.kind == .err));
                 log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
-                // An error ocurred, prevent spinning the event loop forever
+                // An error occurred, prevent spinning the event loop forever
                 _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .pending, .consumed => unreachable,
@@ -1567,13 +1567,9 @@ pub const BundleV2 = struct {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                    concurrent_task.* = JSC.ConcurrentTask{
-                        .auto_delete = true,
-                        .task = completion.task.task(),
-                        .next = null,
-                    };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+                    completion.jsc_event_loop.enqueueTaskConcurrent(
+                        JSC.ConcurrentTask.create(completion.task.task()),
+                    );
                 };
                 has_bundled = true;
             }
@@ -1682,16 +1678,10 @@ pub const BundleV2 = struct {
             },
         };
 
-        const concurrent_task = try bun.default_allocator.create(JSC.ConcurrentTask);
-        concurrent_task.* = JSC.ConcurrentTask{
-            .auto_delete = true,
-            .task = completion.task.task(),
-            .next = null,
-        };
         var out_log = Logger.Log.init(bun.default_allocator);
         this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
     }
 
     pub fn deinit(this: *BundleV2) void {
@@ -2797,11 +2787,11 @@ pub const ParseTask = struct {
                     else
                         null,
                 ) catch |err| {
-                    const source_ = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
+                    const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
                         error.ENOENT, error.FileNotFound => {
                             log.addErrorFmt(
-                                source_,
+                                source,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -2810,7 +2800,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                source_,
+                                source,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",
@@ -2875,7 +2865,6 @@ pub const ParseTask = struct {
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
-        opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
@@ -3202,7 +3191,7 @@ pub const Graph = struct {
 
     use_directive_entry_points: UseDirective.List = .{},
 
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    // const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
 
     estimated_file_loader_count: usize = 0,
 
@@ -3315,6 +3304,13 @@ const LinkerGraph = struct {
     ast: MultiArrayList(JSAst) = .{},
     meta: MultiArrayList(JSMeta) = .{},
 
+    /// We should avoid traversing all files in the bundle, because the linker
+    /// should be able to run a linking operation on a large bundle where only
+    /// a few files are needed (e.g. an incremental compilation scenario). This
+    /// holds all files that could possibly be reached through the entry points.
+    /// If you need to iterate over all files in the linking operation, iterate
+    /// over this array. This array is also sorted in a deterministic ordering
+    /// to help ensure deterministic builds (source indices are random).
     reachable_files: []Index = &[_]Index{},
 
     stable_source_indices: []const u32 = &[_]u32{},
@@ -3324,7 +3320,10 @@ const LinkerGraph = struct {
     has_client_components: bool = false,
     has_server_components: bool = false,
 
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    /// This is for cross-module inlining of detected inlinable constants
+    // const_values: js_ast.Ast.ConstValuesMap = .{},
+    /// This is for cross-module inlining of TypeScript enum constants
+    ts_enums: js_ast.Ast.TsEnumsMap = .{},
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
         return LinkerGraph{
@@ -3708,24 +3707,40 @@ const LinkerGraph = struct {
             this.symbols = js_ast.Symbol.Map.initList(symbols);
         }
 
+        // TODO: const_values
+        // {
+        //     var const_values = this.const_values;
+        //     var count: usize = 0;
+
+        //     for (this.ast.items(.const_values)) |const_value| {
+        //         count += const_value.count();
+        //     }
+
+        //     if (count > 0) {
+        //         try const_values.ensureTotalCapacity(this.allocator, count);
+        //         for (this.ast.items(.const_values)) |const_value| {
+        //             for (const_value.keys(), const_value.values()) |key, value| {
+        //                 const_values.putAssumeCapacityNoClobber(key, value);
+        //             }
+        //         }
+        //     }
+
+        //     this.const_values = const_values;
+        // }
+
         {
-            var const_values = this.const_values;
             var count: usize = 0;
-
-            for (this.ast.items(.const_values)) |const_value| {
-                count += const_value.count();
+            for (this.ast.items(.ts_enums)) |ts_enums| {
+                count += ts_enums.count();
             }
-
             if (count > 0) {
-                try const_values.ensureTotalCapacity(this.allocator, @as(u32, @truncate(count)));
-                for (this.ast.items(.const_values)) |const_value| {
-                    for (const_value.keys(), const_value.values()) |key, value| {
-                        const_values.putAssumeCapacityNoClobber(key, value);
+                try this.ts_enums.ensureTotalCapacity(this.allocator, count);
+                for (this.ast.items(.ts_enums)) |ts_enums| {
+                    for (ts_enums.keys(), ts_enums.values()) |key, value| {
+                        this.ts_enums.putAssumeCapacityNoClobber(key, value);
                     }
                 }
             }
-
-            this.const_values = const_values;
         }
 
         const in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
@@ -4671,7 +4686,7 @@ const LinkerContext = struct {
                     const other_kind = exports_kind[other_file];
 
                     switch (record.kind) {
-                        ImportKind.stmt => {
+                        .stmt => {
                             // Importing using ES6 syntax from a file without any ES6 syntax
                             // causes that module to be considered CommonJS-style, even if it
                             // doesn't have any CommonJS exports.
@@ -4707,7 +4722,7 @@ const LinkerContext = struct {
                                 flags[other_file].wrap = .cjs;
                             }
                         },
-                        ImportKind.require =>
+                        .require =>
                         // Files that are imported with require() must be CommonJS modules
                         {
                             if (other_kind == .esm) {
@@ -4718,7 +4733,7 @@ const LinkerContext = struct {
                                 exports_kind[other_file] = .cjs;
                             }
                         },
-                        ImportKind.dynamic => {
+                        .dynamic => {
                             if (!this.graph.code_splitting) {
                                 // If we're not splitting, then import() is just a require() that
                                 // returns a promise, so the imported file must be a CommonJS module
@@ -5469,8 +5484,8 @@ const LinkerContext = struct {
         const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
 
         const stmts_count =
-            // 2 statements for every export
-            export_aliases.len * 2 +
+            // 1 statement for every export
+            export_aliases.len +
             // + 1 if there are non-zero exports
             @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
@@ -5520,20 +5535,15 @@ const LinkerContext = struct {
                 );
             };
 
-            const block = stmts.eat1(
-                js_ast.Stmt.allocate(allocator_, js_ast.S.Block, .{
-                    .stmts = stmts.eat1(
-                        js_ast.Stmt.allocate(
-                            allocator_,
-                            js_ast.S.Return,
-                            .{ .value = value },
-                            loc,
-                        ),
-                    ),
-                }, loc),
-            );
             const fn_body = js_ast.G.FnBody{
-                .stmts = block,
+                .stmts = stmts.eat1(
+                    js_ast.Stmt.allocate(
+                        allocator_,
+                        js_ast.S.Return,
+                        .{ .value = value },
+                        loc,
+                    ),
+                ),
                 .loc = loc,
             };
             properties.appendAssumeCapacity(
@@ -5683,20 +5693,20 @@ const LinkerContext = struct {
         const id = source_index;
         if (id > c.graph.meta.len) return;
 
-        var worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
+        const worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
         defer worker.unget();
 
         // we must use this allocator here
-        const allocator_ = worker.allocator;
+        const allocator = worker.allocator;
 
-        var resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
+        const resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
-        var aliases = std.ArrayList(string).initCapacity(allocator_, resolved_exports.count()) catch unreachable;
+        var aliases = std.ArrayList(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
         var alias_iter = resolved_exports.iterator();
-        var imports_to_bind = c.graph.meta.items(.imports_to_bind);
-        var probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
+        const imports_to_bind = c.graph.meta.items(.imports_to_bind);
+        const probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
 
         // counting in here saves us an extra pass through the array
         var re_exports_count: usize = 0;
@@ -5743,7 +5753,7 @@ const LinkerContext = struct {
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
         c.createExportsForFile(
-            allocator_,
+            allocator,
             id,
             resolved_exports,
             imports_to_bind,
@@ -5752,60 +5762,103 @@ const LinkerContext = struct {
         );
 
         // Each part tracks the other parts it depends on within this file
-        var local_dependencies = std.AutoHashMap(u32, u32).init(allocator_);
+        var local_dependencies = std.AutoHashMap(u32, u32).init(allocator);
         defer local_dependencies.deinit();
-        var parts = &c.graph.ast.items(.parts)[id];
-        const parts_slice: []js_ast.Part = parts.slice();
-        var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
+
+        const parts_slice: []js_ast.Part = c.graph.ast.items(.parts)[id].slice();
+        const named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
+
+        const our_imports_to_bind = imports_to_bind[id];
         outer: for (parts_slice, 0..) |*part, part_index| {
+            // Now that all files have been parsed, determine which property
+            // accesses off of imported symbols are inlined enum values and
+            // which ones aren't
+            for (
+                part.import_symbol_property_uses.keys(),
+                part.import_symbol_property_uses.values(),
+            ) |ref, properties| {
+                const use = part.symbol_uses.getPtr(ref).?;
 
-            // TODO: inline const TypeScript enum here
+                // Rare path: this import is a TypeScript enum
+                if (our_imports_to_bind.get(ref)) |import_data| {
+                    const import_ref = import_data.data.import_ref;
+                    if (c.graph.symbols.get(import_ref)) |symbol| {
+                        if (symbol.kind == .ts_enum) {
+                            if (c.graph.ts_enums.get(import_ref)) |enum_data| {
+                                var found_non_inlined_enum = false;
 
-            // TODO: inline function calls here
+                                var it = properties.iterator();
+                                while (it.next()) |next| {
+                                    const name = next.key_ptr.*;
+                                    const prop_use = next.value_ptr;
 
-            // Inline cross-module constants
-            if (c.graph.const_values.count() > 0) {
-                // First, find any symbol usage that points to a constant value.
-                // This will be pretty rare.
-                const first_constant_i: ?usize = brk: {
-                    for (part.symbol_uses.keys(), 0..) |ref, j| {
-                        if (c.graph.const_values.contains(ref)) {
-                            break :brk j;
-                        }
-                    }
+                                    if (enum_data.get(name) == null) {
+                                        found_non_inlined_enum = true;
+                                        use.count_estimate += prop_use.count_estimate;
+                                    }
+                                }
 
-                    break :brk null;
-                };
-                if (first_constant_i) |j| {
-                    var end_i: usize = 0;
-                    // symbol_uses is an array
-                    var keys = part.symbol_uses.keys()[j..];
-                    var values = part.symbol_uses.values()[j..];
-                    for (keys, values) |ref, val| {
-                        if (c.graph.const_values.contains(ref)) {
+                                if (!found_non_inlined_enum) {
+                                    _ = part.symbol_uses.swapRemove(ref);
+                                }
+                            }
                             continue;
                         }
-
-                        keys[end_i] = ref;
-                        values[end_i] = val;
-                        end_i += 1;
                     }
-                    part.symbol_uses.entries.len = end_i + j;
+                }
 
-                    if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
-                        part.tag = .dead_due_to_inlining;
-                        part.dependencies.len = 0;
-                        continue :outer;
-                    }
-
-                    part.symbol_uses.reIndex(allocator_) catch unreachable;
+                // Common path: this import isn't a TypeScript enum
+                var it = properties.valueIterator();
+                while (it.next()) |prop_use| {
+                    use.count_estimate += prop_use.count_estimate;
                 }
             }
 
-            const symbol_uses = part.symbol_uses.keys();
+            // TODO: inline function calls here
+
+            // TODO: Inline cross-module constants
+            // if (c.graph.const_values.count() > 0) {
+            //     // First, find any symbol usage that points to a constant value.
+            //     // This will be pretty rare.
+            //     const first_constant_i: ?usize = brk: {
+            //         for (part.symbol_uses.keys(), 0..) |ref, j| {
+            //             if (c.graph.const_values.contains(ref)) {
+            //                 break :brk j;
+            //             }
+            //         }
+
+            //         break :brk null;
+            //     };
+            //     if (first_constant_i) |j| {
+            //         var end_i: usize = 0;
+            //         // symbol_uses is an array
+            //         var keys = part.symbol_uses.keys()[j..];
+            //         var values = part.symbol_uses.values()[j..];
+            //         for (keys, values) |ref, val| {
+            //             if (c.graph.const_values.contains(ref)) {
+            //                 continue;
+            //             }
+
+            //             keys[end_i] = ref;
+            //             values[end_i] = val;
+            //             end_i += 1;
+            //         }
+            //         part.symbol_uses.entries.len = end_i + j;
+
+            //         if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
+            //             part.tag = .dead_due_to_inlining;
+            //             part.dependencies.len = 0;
+            //             continue :outer;
+            //         }
+
+            //         part.symbol_uses.reIndex(allocator) catch unreachable;
+            //     }
+            // }
+            if (false) break :outer; // this `if` is here to preserve the unused
+            //                          block label from the above commented code.
 
             // Now that we know this, we can determine cross-part dependencies
-            for (symbol_uses, 0..) |ref, j| {
+            for (part.symbol_uses.keys(), 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
@@ -5818,7 +5871,7 @@ const LinkerContext = struct {
                         local.value_ptr.* = @as(u32, @intCast(part_index));
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
-                            allocator_,
+                            allocator,
                             .{
                                 .source_index = Index.source(source_index),
                                 .part_index = other_part_index,
@@ -5829,7 +5882,7 @@ const LinkerContext = struct {
 
                 // Also map from imports to parts that use them
                 if (named_imports.getPtr(ref)) |existing| {
-                    existing.local_parts_with_uses.push(allocator_, @as(u32, @intCast(part_index))) catch unreachable;
+                    existing.local_parts_with_uses.push(allocator, @as(u32, @intCast(part_index))) catch unreachable;
                 }
             }
         }
@@ -6703,8 +6756,8 @@ const LinkerContext = struct {
         const c = ctx.c;
         bun.assert(chunk.content == .javascript);
 
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
@@ -6722,12 +6775,11 @@ const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            const indent: usize = 0;
             // TODO: IIFE indent
 
             const print_options = js_printer.Options{
-                // TODO: IIFE
-                .indent = indent,
+                // TODO: IIFE indent
+                .indent = .{},
                 .has_run_symbol_renamer = true,
 
                 .allocator = worker.allocator,
@@ -6735,7 +6787,7 @@ const LinkerContext = struct {
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
-                .const_values = c.graph.const_values,
+                // .const_values = c.graph.const_values,
             };
 
             var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
@@ -7068,12 +7120,12 @@ const LinkerContext = struct {
             \\  "sourcesContent": [
         );
 
-        const source_indicies_for_contents = source_id_map.keys();
-        if (source_indicies_for_contents.len > 0) {
+        const source_indices_for_contents = source_id_map.keys();
+        if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indicies_for_contents[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
 
-            for (source_indicies_for_contents[1..]) |index| {
+            for (source_indices_for_contents[1..]) |index| {
                 j.pushStatic(",\n    ");
                 j.pushStatic(quoted_source_map_contents[index]);
             }
@@ -7615,8 +7667,8 @@ const LinkerContext = struct {
         }
 
         const print_options = js_printer.Options{
-            // TODO: IIFE
-            .indent = 0,
+            // TODO: IIFE indent
+            .indent = .{},
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
@@ -7626,7 +7678,7 @@ const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .const_values = c.graph.const_values,
+            // .const_values = c.graph.const_values,
         };
 
         return .{
@@ -7950,7 +8002,7 @@ const LinkerContext = struct {
 
         for (part_stmts) |stmt_| {
             var stmt = stmt_;
-            proccess_stmt: {
+            process_stmt: {
                 switch (stmt.data) {
                     .s_import => |s| {
                         // "import * as ns from 'path'"
@@ -8005,12 +8057,12 @@ const LinkerContext = struct {
                                 continue;
                             }
 
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         // "export * from 'path'"
                         if (!shouldStripExports) {
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         const record = ast.import_records.at(s.import_record_index);
@@ -8896,12 +8948,13 @@ const LinkerContext = struct {
 
         const print_options = js_printer.Options{
             // TODO: IIFE
-            .indent = 0,
-
+            .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
-            .const_values = c.graph.const_values,
+            // .const_values = c.graph.const_values,
+            .ts_enums = c.graph.ts_enums,
+
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
             .module_type = c.options.output_format,
@@ -9067,7 +9120,7 @@ const LinkerContext = struct {
             const DuplicateEntry = struct {
                 sources: std.ArrayListUnmanaged(*Chunk) = .{},
             };
-            var duplicates_map: std.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
+            var duplicates_map: bun.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
 
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing
@@ -11427,7 +11480,7 @@ pub const Chunk = struct {
     };
 
     pub const OutputPiece = struct {
-        // layed out like this so it takes up the same amount of space as a []const u8
+        // laid out like this so it takes up the same amount of space as a []const u8
         data_ptr: [*]const u8 = undefined,
         data_len: u32 = 0,
 

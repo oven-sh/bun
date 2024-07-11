@@ -1301,13 +1301,8 @@ pub fn spawnProcessPosix(
                             else => "spawn_stdio_generic",
                         };
 
-                        // We use the linux syscall api because the glibc requirement is 2.27, which is a little close for comfort.
-                        const rc = std.os.linux.memfd_create(label, 0);
-                        if (bun.C.getErrno(rc) != .SUCCESS) {
-                            break :use_memfd;
-                        }
+                        const fd = bun.sys.memfd_create(label, 0).unwrap() catch break :use_memfd;
 
-                        const fd = bun.toFD(@as(u32, @intCast(rc)));
                         to_close_on_error.append(fd) catch {};
                         to_set_cloexec.append(fd) catch {};
                         try actions.dup2(fd, fileno);
@@ -1518,8 +1513,10 @@ pub fn spawnProcessWindows(
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
-    const cwd = try allocator.dupeZ(u8, options.cwd);
-    defer allocator.free(cwd);
+    var cwd_buf: bun.PathBuffer = undefined;
+    @memcpy(cwd_buf[0..options.cwd.len], options.cwd);
+    cwd_buf[options.cwd.len] = 0;
+    const cwd = cwd_buf[0..options.cwd.len :0];
 
     uv_process_options.cwd = cwd.ptr;
 

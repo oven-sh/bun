@@ -80,7 +80,7 @@ fn literalLength(comptime T: type, comptime str: string) usize {
 pub const toUTF16LiteralZ = toUTF16Literal;
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
-pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
+pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
     switch (comptime str.len) {
         0 => @compileError("str cannot be empty"),
         1 => return indexOfChar(slice, str[0]),
@@ -119,9 +119,15 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
-    for (self, 0..) |c, i| {
-        inline for (str) |a| {
+    return indexOfAnyT(u16, self, str);
+}
+
+pub fn indexOfAnyT(comptime T: type, str: []const T, comptime chars: anytype) ?OptionalUsize {
+    if (T == u8) return indexOfAny(str, chars);
+    for (str, 0..) |c, i| {
+        inline for (chars) |a| {
             if (c == a) {
                 return @as(OptionalUsize, @intCast(i));
             }
@@ -130,15 +136,21 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub inline fn containsComptime(self: string, comptime str: string) bool {
-    var remain = self;
+    if (comptime str.len == 0) @compileError("Don't call this with an empty string plz.");
+
+    const start = std.mem.indexOfScalar(u8, self, str[0]) orelse return false;
+    var remain = self[start..];
     const Int = std.meta.Int(.unsigned, str.len * 8);
 
     while (remain.len >= comptime str.len) {
         if (@as(Int, @bitCast(remain.ptr[0..str.len].*)) == @as(Int, @bitCast(str.ptr[0..str.len].*))) {
             return true;
         }
-        remain = remain[str.len..];
+
+        const next_start = std.mem.indexOfScalar(u8, remain[1..], str[0]) orelse return false;
+        remain = remain[1 + next_start ..];
     }
 
     return false;
@@ -193,11 +205,6 @@ pub inline fn isNPMPackageName(target: string) bool {
     }
 
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
-}
-
-pub inline fn indexAny(in: anytype, target: string) ?usize {
-    for (in, 0..) |str, i| if (indexOf(str, target) != null) return i;
-    return null;
 }
 
 pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
@@ -744,8 +751,12 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
-pub inline fn eqlInsensitive(self: string, other: anytype) bool {
-    return std.ascii.eqlIgnoreCase(self, other);
+pub fn eqlComptimeT(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    if (T == u16) {
+        return eqlComptimeUTF16(self, alt);
+    }
+
+    return eqlComptime(self, alt);
 }
 
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
@@ -1736,7 +1747,9 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
-            isWindowsAbsolutePathMissingDriveLetter(T, path))
+            isWindowsAbsolutePathMissingDriveLetter(T, path) and
+            // is it a null device path? that's not an error. it's just a weird file path.
+            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL"))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
                 if (T == u8) path else bun.fmt.utf16(path),
@@ -2565,8 +2578,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @intFromPtr(remaining.ptr) - @intFromPtr(latin1.ptr);
-                        @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
-                        buf.items.len = copy_len;
+                        buf.appendSliceAssumeCapacity(latin1[0..copy_len]);
                         any_needs_escape = true;
                         inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {

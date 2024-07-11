@@ -194,6 +194,7 @@ pub const Tag = enum(u8) {
     mkdir,
     mkdtemp,
     fnctl,
+    memfd_create,
     mmap,
     munmap,
     open,
@@ -378,6 +379,10 @@ pub const Error = struct {
         return "UNKNOWN";
     }
 
+    pub fn toZigErr(this: Error) anyerror {
+        return bun.errnoToZigErr(this.errno);
+    }
+
     pub fn toSystemError(this: Error) SystemError {
         var err = SystemError{
             .errno = @as(c_int, this.errno) * -1,
@@ -481,6 +486,15 @@ pub fn fchmodat(fd: bun.FileDescriptor, path: [:0]const u8, mode: bun.Mode, flag
     if (comptime Environment.isWindows) @compileError("Use fchmod instead");
 
     return Maybe(void).errnoSys(C.fchmodat(fd.cast(), path.ptr, mode, flags), .fchmodat) orelse
+        Maybe(void).success;
+}
+
+pub fn chmod(path: [:0]const u8, mode: bun.Mode) Maybe(void) {
+    if (comptime Environment.isWindows) {
+        return sys_uv.chmod(path, mode);
+    }
+
+    return Maybe(void).errnoSysP(C.chmod(path.ptr, mode), .chmod, path) orelse
         Maybe(void).success;
 }
 
@@ -762,8 +776,37 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        // handle the special "nul" device
+        // we technically should handle the other DOS devices too.
+        if (path_.len >= "\\nul".len and
+            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+        {
+            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+            buf[bun.strings.w("\\??\\NUL").len] = 0;
+            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        }
+
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
         return .{ .result = norm };
+    }
+
+    if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
+        if (buf.len < path.len) {
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .syscall = .open,
+                },
+            };
+        }
+
+        // Skip the system call to get the final path name if it doesn't have any of the above characters.
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        return .{
+            .result = buf[0..path.len :0],
+        };
     }
 
     const base_fd = if (dir_fd == bun.invalid_fd)
@@ -1731,14 +1774,14 @@ pub fn readlink(in: [:0]const u8, buf: []u8) Maybe([:0]u8) {
 
 pub fn readlinkat(fd: bun.FileDescriptor, in: [:0]const u8, buf: []u8) Maybe([:0]const u8) {
     while (true) {
-        const rc = sys.readlinkat(fd, in, buf.ptr, buf.len);
+        const rc = sys.readlinkat(fd.cast(), in, buf.ptr, buf.len);
 
-        if (Maybe(usize).errnoSys(rc, .readlink)) |err| {
+        if (Maybe([:0]const u8).errnoSys(rc, .readlink)) |err| {
             if (err.getErrno() == .INTR) continue;
             return err;
         }
         buf[@intCast(rc)] = 0;
-        return Maybe(usize){ .result = buf[0..@intCast(rc)] };
+        return Maybe([:0]const u8){ .result = buf[0..@intCast(rc) :0] };
     }
 }
 
@@ -1791,8 +1834,31 @@ pub const RenameAt2Flags = packed struct {
     }
 };
 
-// NOTE: that this _does not_ handle moving across filesystems. For that, check if the return error is XDEV and then use `bun.C.moveFileZWithHandle`
-pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8, to_dir_fd: bun.FileDescriptor, to: [:0]const u8) Maybe(void) {
+pub fn renameatConcurrently(
+    from_dir_fd: bun.FileDescriptor,
+    from: [:0]const u8,
+    to_dir_fd: bun.FileDescriptor,
+    to: [:0]const u8,
+    comptime opts: struct { move_fallback: bool = false },
+) Maybe(void) {
+    switch (renameatConcurrentlyWithoutFallback(from_dir_fd, from, to_dir_fd, to)) {
+        .result => return Maybe(void).success,
+        .err => |e| {
+            if (opts.move_fallback and e.getErrno() == bun.C.E.XDEV) {
+                bun.Output.debugWarn("renameatConcurrently() failed with E.XDEV, falling back to moveFileZSlowMaybe()", .{});
+                return bun.C.moveFileZSlowMaybe(from_dir_fd, from, to_dir_fd, to);
+            }
+            return .{ .err = e };
+        },
+    }
+}
+
+pub fn renameatConcurrentlyWithoutFallback(
+    from_dir_fd: bun.FileDescriptor,
+    from: [:0]const u8,
+    to_dir_fd: bun.FileDescriptor,
+    to: [:0]const u8,
+) Maybe(void) {
     var did_atomically_replace = false;
 
     attempt_atomic_rename_and_fallback_to_racy_delete: {
@@ -1806,29 +1872,29 @@ pub fn renameatConcurrently(from_dir_fd: bun.FileDescriptor, from: [:0]const u8,
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 
-            // Fallback path: the folder exists in the cache dir, it might be in a strange state
-            // let's attempt to atomically replace it with the temporary folder's version
-            if (if (comptime bun.Environment.isPosix) switch (err.getErrno()) {
-                .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
-                else => false,
-            } else switch (err.getErrno()) {
-                .EXIST, .NOTEMPTY => true,
-                else => false,
-            }) {
-                did_atomically_replace = true;
-                switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
-                    .exchange = true,
-                })) {
-                    .err => {},
-                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+            // Windows doesn't have any equivalent with renameat with swap
+            if (!bun.Environment.isWindows) {
+                // Fallback path: the folder exists in the cache dir, it might be in a strange state
+                // let's attempt to atomically replace it with the temporary folder's version
+                if (switch (err.getErrno()) {
+                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
+                    else => false,
+                }) {
+                    did_atomically_replace = true;
+                    switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
+                        .exchange = true,
+                    })) {
+                        .err => {},
+                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
+                    }
+                    did_atomically_replace = false;
                 }
-                did_atomically_replace = false;
             }
         }
 
         //  sad path: let's try to delete the folder and then rename it
         var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(from) catch {};
+        to_dir.deleteTree(to) catch {};
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };
@@ -2215,6 +2281,17 @@ pub fn munmap(memory: []align(mem.page_size) const u8) Maybe(void) {
     } else return Maybe(void).success;
 }
 
+pub fn memfd_create(name: [:0]const u8, flags: u32) Maybe(bun.FileDescriptor) {
+    if (comptime !Environment.isLinux) @compileError("linux only!");
+
+    const rc = std.os.linux.memfd_create(name, flags);
+
+    log("memfd_create({s}, {d}) = {d}", .{ name, flags, rc });
+
+    return Maybe(bun.FileDescriptor).errnoSys(rc, .memfd_create) orelse
+        .{ .result = bun.toFD(@as(c_int, @intCast(rc))) };
+}
+
 pub fn setPipeCapacityOnLinux(fd: bun.FileDescriptor, capacity: usize) Maybe(usize) {
     if (comptime !Environment.isLinux) @compileError("Linux-only");
     bun.assert(capacity > 0);
@@ -2452,7 +2529,8 @@ pub fn directoryExistsAt(dir_: anytype, subpath: anytype) JSC.Maybe(bool) {
         }
 
         const is_dir = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0;
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY != 0 and
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0;
         syslog("NtQueryAttributesFile({}, {}, O_DIRECTORY | O_RDONLY, 0) = {d}", .{ dir_fd, bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_dir) });
 
         return .{
@@ -2518,7 +2596,10 @@ pub fn existsAt(fd: bun.FileDescriptor, subpath: [:0]const u8) bool {
         }
 
         const is_regular_file = basic_info.FileAttributes != kernel32.INVALID_FILE_ATTRIBUTES and
-            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_NORMAL != 0;
+            // from libuv: directories cannot be read-only
+            // https://github.com/libuv/libuv/blob/eb5af8e3c0ea19a6b0196d5db3212dae1785739b/src/win/fs.c#L2144-L2146
+            (basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_DIRECTORY == 0 or
+            basic_info.FileAttributes & kernel32.FILE_ATTRIBUTE_READONLY == 0);
         syslog("NtQueryAttributesFile({}, O_RDONLY, 0) = {d}", .{ bun.fmt.fmtOSPath(path, .{}), @intFromBool(is_regular_file) });
 
         return is_regular_file;
@@ -2917,6 +2998,13 @@ pub const File = struct {
         };
     }
 
+    pub fn openatOSPath(other: anytype, path: bun.OSPathSliceZ, flags: bun.Mode, mode: bun.Mode) Maybe(File) {
+        return switch (This.openatOSPath(bun.toFD(other), path, flags, mode)) {
+            .result => |fd| .{ .result = .{ .handle = fd } },
+            .err => |err| .{ .err = err },
+        };
+    }
+
     pub fn from(other: anytype) File {
         const T = @TypeOf(other);
 
@@ -2981,6 +3069,23 @@ pub const File = struct {
         return .{ .result = {} };
     }
 
+    pub fn writeFile(
+        relative_dir_or_cwd: anytype,
+        path: bun.OSPathSliceZ,
+        data: []const u8,
+    ) Maybe(void) {
+        const file = switch (File.openatOSPath(relative_dir_or_cwd, path, bun.O.WRONLY | bun.O.CREAT | bun.O.TRUNC, 0o664)) {
+            .err => |err| return .{ .err = err },
+            .result => |fd| fd,
+        };
+        defer file.close();
+        switch (file.writeAll(data)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
+        return .{ .result = {} };
+    }
+
     pub const ReadError = anyerror;
 
     pub fn closeAndMoveTo(this: File, src: [:0]const u8, dest: [:0]const u8) !void {
@@ -3042,6 +3147,52 @@ pub const File = struct {
 
     pub fn stat(self: File) Maybe(bun.Stat) {
         return fstat(self.handle);
+    }
+
+    /// Be careful about using this on Linux or macOS.
+    ///
+    /// This calls stat() internally.
+    pub fn kind(self: File) Maybe(std.fs.File.Kind) {
+        if (Environment.isWindows) {
+            const rt = windows.GetFileType(self.handle.cast());
+            if (rt == windows.FILE_TYPE_UNKNOWN) {
+                switch (bun.windows.GetLastError()) {
+                    .SUCCESS => {},
+                    else => |err| {
+                        return .{ .err = Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN).toE(), .fstat) };
+                    },
+                }
+            }
+
+            return .{
+                .result = switch (rt) {
+                    windows.FILE_TYPE_CHAR => .character_device,
+                    windows.FILE_TYPE_REMOTE, windows.FILE_TYPE_DISK => .file,
+                    windows.FILE_TYPE_PIPE => .named_pipe,
+                    windows.FILE_TYPE_UNKNOWN => .unknown,
+                    else => .file,
+                },
+            };
+        }
+
+        const st = switch (self.stat()) {
+            .err => |err| return .{ .err = err },
+            .result => |s| s,
+        };
+
+        const m = st.mode & posix.S.IFMT;
+        switch (m) {
+            posix.S.IFBLK => return .{ .result = .block_device },
+            posix.S.IFCHR => return .{ .result = .character_device },
+            posix.S.IFDIR => return .{ .result = .directory },
+            posix.S.IFIFO => return .{ .result = .named_pipe },
+            posix.S.IFLNK => return .{ .result = .sym_link },
+            posix.S.IFREG => return .{ .result = .file },
+            posix.S.IFSOCK => return .{ .result = .unix_domain_socket },
+            else => {
+                return .{ .result = .file };
+            },
+        }
     }
 
     pub const ReadToEndResult = struct {

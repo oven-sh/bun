@@ -298,7 +298,7 @@ pub const ExternalModules = struct {
         "zlib",
     };
 
-    pub const NodeBuiltinsMap = std.StaticStringMap(void).initComptime(.{
+    pub const NodeBuiltinsMap = bun.ComptimeStringMap(void, .{
         .{ "_http_agent", {} },
         .{ "_http_client", {} },
         .{ "_http_common", {} },
@@ -370,7 +370,7 @@ pub const ModuleType = enum {
     cjs,
     esm,
 
-    pub const List = std.StaticStringMap(ModuleType).initComptime(.{
+    pub const List = bun.ComptimeStringMap(ModuleType, .{
         .{ "commonjs", ModuleType.cjs },
         .{ "module", ModuleType.esm },
     });
@@ -1754,7 +1754,6 @@ pub const BundleOptions = struct {
         opts.polyfill_node_globals = opts.target == .browser;
 
         Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
-        Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
@@ -2023,7 +2022,6 @@ pub const OutputFile = struct {
 
         const fd_out = file_out.handle;
         var do_close = false;
-        // TODO: close file_out on error
         const fd_in = (try std.fs.openFileAbsolute(file.src_path.text, .{ .mode = .read_only })).handle;
 
         if (Environment.isWindows) {
@@ -2037,12 +2035,12 @@ pub const OutputFile = struct {
 
         defer {
             if (do_close) {
-                std.posix.close(fd_out);
-                std.posix.close(fd_in);
+                _ = bun.sys.close(bun.toFD(fd_out));
+                _ = bun.sys.close(bun.toFD(fd_in));
             }
         }
 
-        try bun.copyFile(fd_in, fd_out);
+        try bun.copyFile(fd_in, fd_out).unwrap();
     }
 
     pub fn toJS(

@@ -46,7 +46,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -99,7 +98,7 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceMark");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceMark"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto markName = convert<IDLDOMString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
@@ -108,13 +107,13 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceMarkDOMConstruct
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = PerformanceMark::create(*castedThis->globalObject(), *context, WTFMove(markName), WTFMove(markOptions));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceMark>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<PerformanceMark>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceMarkDOMConstructorConstruct, JSPerformanceMarkDOMConstructor::construct);
@@ -137,8 +136,7 @@ template<> void JSPerformanceMarkDOMConstructor::initializeProperties(VM& vm, JS
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceMarkPrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceMarkPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMarkConstructor, 0 } },
     { "detail"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceMark_detail, 0 } },
 };
@@ -178,7 +176,7 @@ JSValue JSPerformanceMark::getConstructor(VM& vm, const JSGlobalObject* globalOb
     return getDOMConstructor<JSPerformanceMarkDOMConstructor, DOMConstructorID::PerformanceMark>(vm, *jsCast<const JSDOMGlobalObject*>(globalObject));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMarkConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMarkConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -196,24 +194,24 @@ static inline JSValue jsPerformanceMark_detailGetter(JSGlobalObject& lexicalGlob
         return cachedValue;
     auto& impl = thisObject.wrapped();
     JSValue result = toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.detail(*jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject)));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     thisObject.m_detail.set(JSC::getVM(&lexicalGlobalObject), &thisObject, result);
     return result;
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMark_detail, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceMark_detail, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceMark>::get<jsPerformanceMark_detailGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceMark::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceMark.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMark = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceMark.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMark = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceMark, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceMark.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceMark = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceMark.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceMark = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>
@@ -232,16 +230,20 @@ void JSPerformanceMark::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceMark*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7PerformanceMark@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7PerformanceMark@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore15PerformanceMarkE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore15PerformanceMarkE[];
+}
 #endif
 #endif
 
@@ -250,18 +252,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<PerformanceMark>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7PerformanceMark@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore15PerformanceMarkE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore15PerformanceMarkE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // PerformanceMark has subclasses. If PerformanceMark has subclasses that get passed
         // to toJS() we currently require PerformanceMark you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<PerformanceMark>(globalObject, WTFMove(impl));
@@ -271,6 +273,5 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
 {
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
-
 
 }

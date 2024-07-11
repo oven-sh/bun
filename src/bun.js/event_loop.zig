@@ -319,8 +319,11 @@ pub const JSCScheduler = struct {
     export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
         JSC.markBinding(@src());
         var loop = jsc_vm.eventLoop();
-        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
-        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
+        loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
+            .task = Task.init(task),
+            .next = null,
+            .auto_delete = true,
+        }));
     }
 
     comptime {
@@ -486,19 +489,18 @@ pub const ConcurrentTask = struct {
     auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
+    pub usingnamespace bun.New(@This());
 
     pub const AutoDeinit = enum {
         manual_deinit,
         auto_deinit,
     };
     pub fn create(task: Task) *ConcurrentTask {
-        const created = bun.default_allocator.create(ConcurrentTask) catch bun.outOfMemory();
-        created.* = .{
+        return ConcurrentTask.new(.{
             .task = task,
             .next = null,
             .auto_delete = true,
-        };
-        return created;
+        });
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
@@ -1257,8 +1259,7 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
-    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
-        JSC.markBinding(@src());
+    fn updateCounts(this: *EventLoop) void {
         const delta = this.concurrent_ref.swap(0, .monotonic);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
@@ -1276,6 +1277,10 @@ pub const EventLoop = struct {
                 loop.active -= @intCast(-delta);
             }
         }
+    }
+
+    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        this.updateCounts();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1296,8 +1301,8 @@ pub const EventLoop = struct {
 
         while (iter.next()) |task| {
             if (to_destroy) |dest| {
-                bun.default_allocator.destroy(dest);
                 to_destroy = null;
+                dest.destroy();
             }
 
             if (task.auto_delete) {
@@ -1311,7 +1316,7 @@ pub const EventLoop = struct {
         }
 
         if (to_destroy) |dest| {
-            bun.default_allocator.destroy(dest);
+            dest.destroy();
         }
 
         return this.tasks.count - start_count;
@@ -1576,11 +1581,14 @@ pub const EventLoop = struct {
         }
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrent({s})", .{task.task.typeName() orelse "[unknown]"});
         }
 
         this.concurrent_tasks.push(task);
@@ -1588,11 +1596,14 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.Batch) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrentBatch({d})", .{batch.count});
         }
 
         this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
@@ -1922,9 +1933,8 @@ pub const MiniEventLoop = struct {
 
     pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stderr_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
-            const fd = if (comptime Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {
@@ -1933,7 +1943,7 @@ pub const MiniEventLoop = struct {
                 .err => {},
             }
 
-            store.* = JSC.WebCore.Blob.Store{
+            const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
@@ -1945,7 +1955,7 @@ pub const MiniEventLoop = struct {
                         .mode = mode,
                     },
                 },
-            };
+            });
 
             this.stderr_store = store;
             break :brk store;
@@ -1954,7 +1964,6 @@ pub const MiniEventLoop = struct {
 
     pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stdout_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
             const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
 
@@ -1965,7 +1974,7 @@ pub const MiniEventLoop = struct {
                 .err => {},
             }
 
-            store.* = JSC.WebCore.Blob.Store{
+            const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
@@ -1977,7 +1986,7 @@ pub const MiniEventLoop = struct {
                         .mode = mode,
                     },
                 },
-            };
+            });
 
             this.stdout_store = store;
             break :brk store;

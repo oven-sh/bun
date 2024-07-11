@@ -1,9 +1,13 @@
+#include "JSFFIFunction.h"
 #include "root.h"
-
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/NumberObject.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSGlobalObject.h"
+#include "JavaScriptCore/JSPromiseConstructor.h"
 #include "JavaScriptCore/DeleteAllCodeEffort.h"
-
+#include "JavaScriptCore/BooleanObject.h"
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -92,8 +96,6 @@
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
 
@@ -195,7 +197,6 @@ static constexpr int FLAG_NOT = (1 << 2);
 
 #pragma clang diagnostic pop
 
-extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value);
 extern "C" bool ExpectCustomAsymmetricMatcher__execute(void* self, JSC__JSValue thisValue, JSC__JSGlobalObject* globalObject, JSC__JSValue leftValue);
 
 enum class AsymmetricMatcherResult : uint8_t {
@@ -204,10 +205,85 @@ enum class AsymmetricMatcherResult : uint8_t {
     NOT_MATCHER,
 };
 
-bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value)
+enum class AsymmetricMatcherConstructorType : uint8_t {
+    none = 0,
+    Symbol = 1,
+    String = 2,
+    Object = 3,
+    Array = 4,
+    BigInt = 5,
+    Boolean = 6,
+    Number = 7,
+    Promise = 8,
+    InstanceOf = 9,
+};
+
+extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value, AsymmetricMatcherConstructorType* constructorType);
+
+extern "C" uint8_t AsymmetricMatcherConstructorType__fromJS(JSC__JSGlobalObject* globalObject, JSC__JSValue encodedValue)
+{
+    JSValue value = JSValue::decode(encodedValue);
+    if (value.isObject()) {
+        JSObject* object = value.getObject();
+        JSC::VM& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+        if (globalObject->numberObjectConstructor() == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Number);
+        }
+
+        if (globalObject->booleanObjectConstructor() == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Boolean);
+        }
+
+        auto stringConstructorValue = globalObject->stringPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (stringConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::String);
+        }
+
+        auto symbolConstructorValue = globalObject->symbolPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (symbolConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Symbol);
+        }
+
+        auto bigIntConstructorValue = globalObject->bigIntPrototype()->getIfPropertyExists(globalObject, vm.propertyNames->constructor);
+        RETURN_IF_EXCEPTION(scope, static_cast<uint8_t>(AsymmetricMatcherConstructorType::none));
+
+        if (bigIntConstructorValue == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::BigInt);
+        }
+
+        JSObject* promiseConstructor = globalObject->promiseConstructor();
+
+        if (promiseConstructor == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Promise);
+        }
+
+        JSObject* array = globalObject->arrayConstructor();
+
+        if (array == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Array);
+        }
+
+        JSObject* obj = globalObject->objectConstructor();
+
+        if (obj == object) {
+            return static_cast<uint8_t>(AsymmetricMatcherConstructorType::Object);
+        }
+
+        return static_cast<uint8_t>(AsymmetricMatcherConstructorType::InstanceOf);
+    }
+
+    return static_cast<uint8_t>(AsymmetricMatcherConstructorType::none);
+}
+
+bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGlobalObject* globalObject, JSValue& value, AsymmetricMatcherConstructorType& constructorType)
 {
     JSC::EncodedJSValue valueEncoded = JSValue::encode(value);
-    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded)) {
+    if (Expect_readFlagsAndProcessPromise(JSValue::encode(instanceValue), globalObject, &flags, &valueEncoded, &constructorType)) {
         value = JSValue::decode(valueEncoded);
         return true;
     }
@@ -216,11 +292,11 @@ bool readFlagsAndProcessPromise(JSValue& instanceValue, ExpectFlags& flags, JSGl
 
 AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* globalObject, JSValue matcherProp, JSValue otherProp, ThrowScope* throwScope, ExpectFlags& flags)
 {
-    VM& vm = globalObject->vm();
     JSCell* matcherPropCell = matcherProp.asCell();
+    AsymmetricMatcherConstructorType constructorType = AsymmetricMatcherConstructorType::none;
 
     if (auto* expectAnything = jsDynamicCast<JSExpectAnything*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         if (otherProp.isUndefinedOrNull()) {
@@ -229,46 +305,95 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::PASS;
     } else if (auto* expectAny = jsDynamicCast<JSExpectAny*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue constructorValue = expectAny->m_constructorValue.get();
         JSObject* constructorObject = constructorValue.getObject();
 
-        if (otherProp.isPrimitive()) {
-            if (otherProp.isNumber() && globalObject->numberObjectConstructor() == constructorObject) {
+        switch (constructorType) {
+        case AsymmetricMatcherConstructorType::Symbol: {
+            if (otherProp.isSymbol()) {
                 return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isBoolean() && globalObject->booleanObjectConstructor() == constructorObject) {
-                return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isSymbol() && globalObject->symbolObjectConstructor() == constructorObject) {
-                return AsymmetricMatcherResult::PASS;
-            } else if (otherProp.isString()) {
-                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
-                    String name = constructorFunction->name(vm);
-                    if (name == "String"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
-                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
-                    String name = internalConstructorFunction->name();
-                    if (name == "String"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+            }
+            break;
+        }
+        case AsymmetricMatcherConstructorType::String: {
+            if (otherProp.isCell()) {
+                JSCell* cell = otherProp.asCell();
+                switch (cell->type()) {
+                case JSC::StringType:
+                case JSC::StringObjectType:
+                case JSC::DerivedStringObjectType: {
+                    return AsymmetricMatcherResult::PASS;
                 }
-            } else if (otherProp.isBigInt()) {
-                if (auto* constructorFunction = jsDynamicCast<JSFunction*>(constructorObject)) {
-                    String name = constructorFunction->name(vm);
-                    if (name == "BigInt"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
-                } else if (auto* internalConstructorFunction = jsDynamicCast<InternalFunction*>(constructorObject)) {
-                    String name = internalConstructorFunction->name();
-                    if (name == "BigInt"_s) {
-                        return AsymmetricMatcherResult::PASS;
-                    }
+                default: {
+                    break;
+                }
                 }
             }
+            break;
+        }
 
-            return AsymmetricMatcherResult::FAIL;
+        case AsymmetricMatcherConstructorType::BigInt: {
+            if (otherProp.isBigInt()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Boolean: {
+            if (otherProp.isBoolean()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            if (auto* booleanObject = jsDynamicCast<BooleanObject*>(otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Number: {
+            if (otherProp.isNumber()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            if (auto* numberObject = jsDynamicCast<NumberObject*>(otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Promise: {
+            if (otherProp.isCell() && otherProp.asCell()->type() == JSPromiseType) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Array: {
+            if (JSC::isArray(globalObject, otherProp)) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::Object: {
+            if (otherProp.isObject()) {
+                return AsymmetricMatcherResult::PASS;
+            }
+            break;
+        }
+
+        case AsymmetricMatcherConstructorType::InstanceOf: {
+            break;
+        }
+        case AsymmetricMatcherConstructorType::none: {
+            ASSERT_NOT_REACHED_WITH_MESSAGE("Invalid constructor type");
+            break;
+        }
         }
 
         if (constructorObject->hasInstance(globalObject, otherProp)) {
@@ -277,7 +402,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringContaining = jsDynamicCast<JSExpectStringContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedSubstring = expectStringContaining->m_stringValue.get();
@@ -296,7 +421,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectStringMatching = jsDynamicCast<JSExpectStringMatching*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedTestValue = expectStringMatching->m_testValue.get();
@@ -324,7 +449,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectArrayContaining = jsDynamicCast<JSExpectArrayContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue expectedArrayValue = expectArrayContaining->m_arrayValue.get();
@@ -369,7 +494,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectObjectContaining = jsDynamicCast<JSExpectObjectContaining*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         JSValue patternObject = expectObjectContaining->m_objectValue.get();
@@ -384,7 +509,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
 
         return AsymmetricMatcherResult::FAIL;
     } else if (auto* expectCloseTo = jsDynamicCast<JSExpectCloseTo*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         if (!otherProp.isNumber()) {
@@ -412,7 +537,7 @@ AsymmetricMatcherResult matchAsymmetricMatcherAndGetFlags(JSGlobalObject* global
             return isClose ? AsymmetricMatcherResult::PASS : AsymmetricMatcherResult::FAIL;
         }
     } else if (auto* customMatcher = jsDynamicCast<JSExpectCustomAsymmetricMatcher*>(matcherPropCell)) {
-        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp))
+        if (!readFlagsAndProcessPromise(matcherProp, flags, globalObject, otherProp, constructorType))
             return AsymmetricMatcherResult::FAIL;
 
         // ignore the "not" flag here, because the custom matchers handle it themselves (accessing this.isNot)
@@ -437,7 +562,7 @@ AsymmetricMatcherResult matchAsymmetricMatcher(JSGlobalObject* globalObject, JSV
 }
 
 template<typename PromiseType, bool isInternal>
-static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, JSC__JSValue (*resolverFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame), JSC__JSValue (*rejecterFunction)(JSC__JSGlobalObject* arg0, JSC__CallFrame* callFrame))
+static void handlePromise(PromiseType* promise, JSC__JSGlobalObject* globalObject, JSC::EncodedJSValue ctx, Zig::FFIFunction resolverFunction, Zig::FFIFunction rejecterFunction)
 {
 
     auto globalThis = reinterpret_cast<Zig::GlobalObject*>(globalObject);
@@ -590,48 +715,48 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
+        // bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
 
-        // This code is loosely based on
-        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
-            auto* bucket = set1->head();
-            while (bucket) {
-                if (!bucket->deleted()) {
-                    auto key = bucket->key();
-                    RETURN_IF_EXCEPTION(*scope, false);
-                    auto** bucket2ptr = set2->findBucket(globalObject, key);
+        // // This code is loosely based on
+        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        // if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
+        //     auto* bucket = set1->head();
+        //     while (bucket) {
+        //         if (!bucket->deleted()) {
+        //             auto key = bucket->key();
+        //             RETURN_IF_EXCEPTION(*scope, false);
+        //             auto** bucket2ptr = set2->findBucket(globalObject, key);
 
-                    if (bucket2ptr && (*bucket2ptr)->deleted()) {
-                        bucket2ptr = nullptr;
-                    }
+        //             if (bucket2ptr && (*bucket2ptr)->deleted()) {
+        //                 bucket2ptr = nullptr;
+        //             }
 
-                    if (!bucket2ptr) {
-                        auto findDeepEqualKey = [&]() -> bool {
-                            auto* bucket = set2->head();
-                            while (bucket) {
-                                if (!bucket->deleted()) {
-                                    auto key2 = bucket->key();
-                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-                                        return true;
-                                    }
-                                }
-                                bucket = bucket->next();
-                            }
+        //             if (!bucket2ptr) {
+        //                 auto findDeepEqualKey = [&]() -> bool {
+        //                     auto* bucket = set2->head();
+        //                     while (bucket) {
+        //                         if (!bucket->deleted()) {
+        //                             auto key2 = bucket->key();
+        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+        //                                 return true;
+        //                             }
+        //                         }
+        //                         bucket = bucket->next();
+        //                     }
 
-                            return false;
-                        };
+        //                     return false;
+        //                 };
 
-                        if (!findDeepEqualKey()) {
-                            return false;
-                        }
-                    }
-                }
-                bucket = bucket->next();
-            }
+        //                 if (!findDeepEqualKey()) {
+        //                     return false;
+        //                 }
+        //             }
+        //         }
+        //         bucket = bucket->next();
+        //     }
 
-            return true;
-        }
+        //     return true;
+        // }
 
         // This code path can be triggered when it is a class that extends from Set.
         //
@@ -698,56 +823,56 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
+        // bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
 
-        // This code is loosely based on
-        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
-            auto* bucket = map1->head();
-            while (bucket) {
-                if (!bucket->deleted()) {
-                    auto key = bucket->key();
-                    auto value = bucket->value();
-                    RETURN_IF_EXCEPTION(*scope, false);
-                    auto** bucket2ptr = map2->findBucket(globalObject, key);
-                    JSMap::BucketType* bucket2 = nullptr;
+        // // This code is loosely based on
+        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        // if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
+        //     auto* bucket = map1->head();
+        //     while (bucket) {
+        //         if (!bucket->deleted()) {
+        //             auto key = bucket->key();
+        //             auto value = bucket->value();
+        //             RETURN_IF_EXCEPTION(*scope, false);
+        //             auto** bucket2ptr = map2->findBucket(globalObject, key);
+        //             JSMap::BucketType* bucket2 = nullptr;
 
-                    if (bucket2ptr) {
-                        bucket2 = *bucket2ptr;
+        //             if (bucket2ptr) {
+        //                 bucket2 = *bucket2ptr;
 
-                        if (bucket2->deleted()) {
-                            bucket2 = nullptr;
-                        }
-                    }
+        //                 if (bucket2->deleted()) {
+        //                     bucket2 = nullptr;
+        //                 }
+        //             }
 
-                    if (!bucket2) {
-                        auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
-                            auto* bucket = map2->head();
-                            while (bucket) {
-                                if (!bucket->deleted()) {
-                                    auto key2 = bucket->key();
-                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-                                        return bucket;
-                                    }
-                                }
-                                bucket = bucket->next();
-                            }
+        //             if (!bucket2) {
+        //                 auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
+        //                     auto* bucket = map2->head();
+        //                     while (bucket) {
+        //                         if (!bucket->deleted()) {
+        //                             auto key2 = bucket->key();
+        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+        //                                 return bucket;
+        //                             }
+        //                         }
+        //                         bucket = bucket->next();
+        //                     }
 
-                            return nullptr;
-                        };
+        //                     return nullptr;
+        //                 };
 
-                        bucket2 = findDeepEqualKey();
-                    }
+        //                 bucket2 = findDeepEqualKey();
+        //             }
 
-                    if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
-                        return false;
-                    }
-                }
-                bucket = bucket->next();
-            }
+        //             if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
+        //                 return false;
+        //             }
+        //         }
+        //         bucket = bucket->next();
+        //     }
 
-            return true;
-        }
+        //     return true;
+        // }
 
         // This code path can be triggered when it is a class that extends from Map.
         //
@@ -2073,7 +2198,7 @@ JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 }
 
 // TODO: prevent this from allocating so much memory
-void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue arg2, JSC__JSValue (*ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue (*ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1))
+void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue arg2, Zig::FFIFunction ArgFn3, Zig::FFIFunction ArgFn4)
 {
 
     auto* cell = JSC::JSValue::decode(JSValue0).asCell();
@@ -2741,11 +2866,6 @@ JSC__JSValue JSC__JSGlobalObject__createAggregateError(JSC__JSGlobalObject* glob
 // static JSC::JSNativeStdFunction* rejecterFunction;
 // static bool resolverFunctionInitialized = false;
 
-JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
-{
-    return JSC::JSValue::encode(JSC::JSValue(JSC::jsOwnedString(arg1->vm(), Zig::toString(*arg0))));
-}
-
 JSC__JSValue ZigString__toAtomicValue(const ZigString* arg0, JSC__JSGlobalObject* arg1)
 {
     if (arg0->len == 0) {
@@ -2834,13 +2954,13 @@ void JSC__JSValue__toZigString(JSC__JSValue JSValue0, ZigString* arg1, JSC__JSGl
 
     auto str = strValue->value(arg2);
 
-    if (str.is8Bit()) {
-        arg1->ptr = str.span8().data();
+    if (str->is8Bit()) {
+        arg1->ptr = str->span8().data();
     } else {
-        arg1->ptr = Zig::taggedUTF16Ptr(str.span16().data());
+        arg1->ptr = Zig::taggedUTF16Ptr(str->span16().data());
     }
 
-    arg1->len = str.length();
+    arg1->len = str->length();
 }
 
 JSC__JSValue ZigString__external(const ZigString* arg0, JSC__JSGlobalObject* arg1, void* arg2, void (*ArgFn3)(void* arg0, void* arg1, size_t arg2))
@@ -4064,18 +4184,18 @@ public:
         offset = end;
 
         // the proper singular spelling is parenthesis
-        auto openingParenthese = line.reverseFind('(');
-        auto closingParenthese = line.reverseFind(')');
+        auto openingParentheses = line.reverseFind('(');
+        auto closingParentheses = line.reverseFind(')');
 
-        if (openingParenthese > closingParenthese)
-            openingParenthese = WTF::notFound;
+        if (openingParentheses > closingParentheses)
+            openingParentheses = WTF::notFound;
 
-        if (closingParenthese == WTF::notFound || closingParenthese == WTF::notFound) {
+        if (closingParentheses == WTF::notFound || closingParentheses == WTF::notFound) {
             offset = stack.length();
             return false;
         }
 
-        auto lineInner = StringView_slice(line, openingParenthese + 1, closingParenthese);
+        auto lineInner = StringView_slice(line, openingParentheses + 1, closingParentheses);
 
         {
             auto marker1 = 0;
@@ -4148,7 +4268,7 @@ public:
         }
     done_block:
 
-        StringView functionName = line.substring(0, openingParenthese - 1);
+        StringView functionName = line.substring(0, openingParentheses - 1);
 
         if (functionName == "<anonymous>"_s) {
             functionName = StringView();
@@ -4814,9 +4934,12 @@ enum class BuiltinNamesMap : uint8_t {
     path,
     stream,
     asyncIterator,
+    name,
+    message,
+    error,
 };
 
-static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
+static const JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigned char name)
 {
     auto& vm = globalObject->vm();
     auto clientData = WebCore::clientData(vm);
@@ -4862,6 +4985,15 @@ static JSC::Identifier builtinNameMap(JSC::JSGlobalObject* globalObject, unsigne
     }
     case BuiltinNamesMap::asyncIterator: {
         return vm.propertyNames->asyncIteratorSymbol;
+    }
+    case BuiltinNamesMap::name: {
+        return vm.propertyNames->name;
+    }
+    case BuiltinNamesMap::message: {
+        return vm.propertyNames->message;
+    }
+    case BuiltinNamesMap::error: {
+        return vm.propertyNames->error;
     }
     default: {
         ASSERT_NOT_REACHED();
@@ -5409,6 +5541,57 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
         return PNaN;
 
     return date->internalNumber();
+}
+
+extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
+{
+    auto& vm = globalObject->vm();
+    return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
+}
+
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)
+{
+    double dateSeconds = WTF::parseDate(std::span<const LChar>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
+    JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
+
+    return JSValue::encode(date);
+}
+
+// this is largely copied from dateProtoFuncToISOString
+extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
+{
+    char buffer[28];
+    JSC::DateInstance* thisDateObj = JSC::jsDynamicCast<JSC::DateInstance*>(JSC::JSValue::decode(dateValue));
+    if (!thisDateObj)
+        return -1;
+
+    if (!std::isfinite(thisDateObj->internalNumber()))
+        return -1;
+
+    auto& vm = globalObject->vm();
+
+    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    if (!gregorianDateTime)
+        return -1;
+
+    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
+    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
+    if (ms < 0)
+        ms += msPerSecond;
+
+    int charactersWritten;
+    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+    else
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+
+    memcpy(buf, buffer, charactersWritten);
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
+    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
+        return -1;
+
+    return charactersWritten;
 }
 
 #pragma mark - WebCore::DOMFormData

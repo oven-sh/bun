@@ -1169,13 +1169,15 @@ pub const napi_node_version = extern struct {
     major: u32,
     minor: u32,
     patch: u32,
-    release: [*c]const u8,
+    release: [*:0]const u8,
+
+    const parsed_nodejs_version = std.SemanticVersion.parse(bun.Environment.reported_nodejs_version) catch @panic("Invalid reported Node.js version");
 
     pub const global: napi_node_version = .{
-        .major = 17,
-        .minor = 7,
-        .patch = 17,
-        .release = "Bun!!!",
+        .major = parsed_nodejs_version.major,
+        .minor = parsed_nodejs_version.minor,
+        .patch = parsed_nodejs_version.patch,
+        .release = "node",
     };
 };
 pub const struct_napi_async_cleanup_hook_handle__ = opaque {};

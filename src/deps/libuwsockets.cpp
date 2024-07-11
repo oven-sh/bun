@@ -1022,14 +1022,14 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->onAborted(nullptr);
+      uwsRes->clearOnAborted();
       uwsRes->end(std::string_view(data, length), close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->onAborted(nullptr);
+      uwsRes->clearOnAborted();
       uwsRes->end(std::string_view(data, length), close_connection);
     }
   }
@@ -1040,14 +1040,14 @@ extern "C"
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->onAborted(nullptr);
+      uwsRes->clearOnAborted();
       uwsRes->sendTerminatingChunk(close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->onAborted(nullptr);
+      uwsRes->clearOnAborted();
       uwsRes->sendTerminatingChunk(close_connection);
     }
   }
@@ -1562,7 +1562,7 @@ extern "C"
       auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
       if (pair.first) {
         uwsRes->getHttpResponseData()->onWritable = nullptr;
-        uwsRes->onAborted(nullptr);
+        uwsRes->clearOnAborted();
       }
 
       return pair.first;
@@ -1573,7 +1573,7 @@ extern "C"
       auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
       if (pair.first) {
         uwsRes->getHttpResponseData()->onWritable = nullptr;
-        uwsRes->onAborted(nullptr);
+        uwsRes->clearOnAborted();
       }
 
       return pair.first;

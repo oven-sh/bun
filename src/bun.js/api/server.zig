@@ -2644,10 +2644,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         /// Clean the abort handler and the response
         fn detachResponse(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                resp.clearAborted();
-                this.resp = null;
-            }
+            this.resp = null;
         }
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {

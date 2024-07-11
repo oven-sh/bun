@@ -829,7 +829,6 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
-    has_printed: bool = false,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1532,13 +1531,6 @@ pub const TestRunnerTask = struct {
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
-                var parent_: ?*DescribeScope = describe;
-                while (parent_) |scope| {
-                    if (describe != scope) {
-                        Output.prettyError("  ", .{});
-                    }
-                    parent_ = scope.parent;
-                }
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
                     test_id,

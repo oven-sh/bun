@@ -1513,8 +1513,10 @@ pub fn spawnProcessWindows(
     const allocator = stack_allocator.get();
     const loop = options.windows.loop.platformEventLoop().uv_loop;
 
-    const cwd = try allocator.dupeZ(u8, options.cwd);
-    defer allocator.free(cwd);
+    var cwd_buf: bun.PathBuffer = undefined;
+    @memcpy(cwd_buf[0..options.cwd.len], options.cwd);
+    cwd_buf[options.cwd.len] = 0;
+    const cwd = cwd_buf[0..options.cwd.len :0];
 
     uv_process_options.cwd = cwd.ptr;
 

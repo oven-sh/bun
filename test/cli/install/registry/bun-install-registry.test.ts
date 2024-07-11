@@ -1072,6 +1072,46 @@ describe("peerDependency index out of bounds", async () => {
       });
     }
   }
+
+  // Install 2 dependencies, one is a normal dependency, the other is a dependency with a optional
+  // peer dependency on the first dependency. Delete node_modules and cache, then update the dependency
+  // with the optional peer to a new version. Doing this will cause the peer dependency to get enqueued
+  // internally, testing for index out of bounds. It's also important cache is deleted to ensure a tarball
+  // task is created for it.
+  test("optional", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "optional-peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    // update version and delete node_modules and cache
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "optional-peer-deps": "1.0.1",
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+
+    // this install would trigger the index out of bounds error
+    await runBunInstall(env, packageDir);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
 });
 
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {

@@ -2767,7 +2767,7 @@ pub const Package = extern struct {
             items: [Lockfile.Scripts.names.len]?Lockfile.Scripts.Entry,
             first_index: u8,
             total: u8,
-            cwd: string,
+            cwd: stringZ,
             package_name: string,
 
             pub fn printScripts(
@@ -2955,7 +2955,7 @@ pub const Package = extern struct {
             this: *const Package.Scripts,
             lockfile: *Lockfile,
             lockfile_buf: []const u8,
-            cwd: string,
+            cwd_: string,
             package_name: string,
             resolution_tag: Resolution.Tag,
             add_node_gyp_rebuild_script: bool,
@@ -2963,11 +2963,26 @@ pub const Package = extern struct {
             const allocator = lockfile.allocator;
             const first_index, const total, const scripts = getScriptEntries(this, lockfile, lockfile_buf, resolution_tag, add_node_gyp_rebuild_script);
             if (first_index != -1) {
+                var cwd_buf: if (Environment.isWindows) bun.PathBuffer else void = undefined;
+
+                const cwd = if (comptime !Environment.isWindows)
+                    cwd_
+                else brk: {
+                    @memcpy(cwd_buf[0..cwd_.len], cwd_);
+                    cwd_buf[cwd_.len] = 0;
+                    const cwd_handle = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, cwd_buf[0..cwd_.len :0]) catch break :brk cwd_;
+
+                    var buf: bun.WPathBuffer = undefined;
+                    const new_cwd = bun.windows.GetFinalPathNameByHandle(cwd_handle.fd, .{}, &buf) catch break :brk cwd_;
+
+                    break :brk strings.convertUTF16toUTF8InBuffer(&cwd_buf, new_cwd) catch break :brk cwd_;
+                };
+
                 return .{
                     .items = scripts,
                     .first_index = @intCast(first_index),
                     .total = total,
-                    .cwd = allocator.dupe(u8, cwd) catch bun.outOfMemory(),
+                    .cwd = allocator.dupeZ(u8, cwd) catch bun.outOfMemory(),
                     .package_name = package_name,
                 };
             }

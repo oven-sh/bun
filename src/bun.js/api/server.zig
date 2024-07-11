@@ -1477,6 +1477,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             result.ensureStillAlive();
 
             ctx.pending_promises_for_abort -|= 1;
+
             if (ctx.isAbortedOrEnded()) {
                 ctx.finalizeForAbort();
                 return JSValue.jsUndefined();
@@ -1552,10 +1553,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctx.pending_promises_for_abort -|= 1;
 
-            if (ctx.isAbortedOrEnded()) {
-                ctx.finalizeForAbort();
-                return JSValue.jsUndefined();
-            }
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else JSC.JSValue.jsUndefined());
             return JSValue.jsUndefined();
         }
@@ -1567,11 +1564,22 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const resp = ctx.resp.?;
+            resp.clearAborted();
+
             const has_responded = resp.hasResponded();
-            if (!has_responded)
+            if (!has_responded) {
+                var should_deinit_context = false;
+                ctx.defer_deinit_until_callback_completes = &should_deinit_context;
                 ctx.runErrorHandler(
                     value,
                 );
+                ctx.defer_deinit_until_callback_completes = null;
+                // we try to deinit inside runErrorHandler so we just return here and let it deinit
+                if (ctx.flags.has_marked_complete) {
+                    ctx.deinit();
+                    return;
+                }
+            }
 
             // check again in case it get aborted after runErrorHandler
             if (ctx.isAbortedOrEnded()) {
@@ -1737,6 +1745,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.clearOnData();
                 }
                 resp.end(data, closeConnection);
+                resp.clearAborted();
                 this.resp = null;
             }
         }
@@ -1754,7 +1763,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // We cannot call this function if the Content-Length header was previously set
                 if (resp.state().isResponsePending())
                     resp.endStream(closeConnection);
-
+                resp.clearAborted();
                 this.resp = null;
             }
         }
@@ -1766,6 +1775,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.clearOnData();
                 }
                 resp.endWithoutBody(closeConnection);
+                resp.clearAborted();
                 this.resp = null;
             }
         }
@@ -1880,7 +1890,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if we can, free the request now.
             if (this.isDeadRequest()) {
                 this.finalizeWithoutDeinit();
-                this.markComplete();
                 this.deinit();
             } else {
                 this.pending_promises_for_abort = 0;
@@ -1922,11 +1931,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     any_js_calls = true;
                 }
             }
-        }
-
-        pub fn markComplete(this: *RequestContext) void {
-            if (!this.flags.has_marked_complete) this.server.onRequestComplete();
-            this.flags.has_marked_complete = true;
         }
 
         // This function may be called multiple times
@@ -2010,15 +2014,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn finalize(this: *RequestContext) void {
             ctxLog("finalize<d> ({*})<r>", .{this});
             this.finalizeWithoutDeinit();
-            this.markComplete();
             this.deinit();
         }
 
         pub fn deinit(this: *RequestContext) void {
+            ctxLog("deinit<d> ({*})<r>", .{this});
+
             if (!this.isDeadRequest()) {
                 ctxLog("deinit<d> ({*})<r> waiting request", .{this});
                 return;
             }
+
+            if (!this.flags.has_marked_complete) this.server.onRequestComplete();
+            this.flags.has_marked_complete = true;
+
             // cleanup abort handler and response
             if (this.resp) |resp| {
                 resp.clearAborted();
@@ -2038,7 +2047,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (comptime Environment.allow_assert)
                 assert(this.flags.has_marked_complete);
 
-            var server = this.server;
             this.request_body_buf.clearAndFree(this.allocator);
             this.response_buf_owned.clearAndFree(this.allocator);
 
@@ -2047,7 +2055,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.request_body = null;
             }
 
-            server.request_pool_allocator.put(this);
+            this.server.request_pool_allocator.put(this);
         }
 
         fn writeHeaders(
@@ -2646,7 +2654,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {
             // resp == null or aborted or server.stop(true)
-            return this.resp == null or this.flags.aborted or this.flags.has_marked_complete or this.server.flags.terminated;
+            return this.resp == null or this.flags.aborted or this.server.flags.terminated;
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".
@@ -6325,7 +6333,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
             }
-
+            const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
             ctx.onResponse(
@@ -6335,7 +6343,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 request_value,
                 response_value,
             );
-            ctx.defer_deinit_until_callback_completes = null;
+            ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
@@ -6394,6 +6402,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
             }
 
+            const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
             ctx.onResponse(
@@ -6403,7 +6412,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 request_value,
                 response_value,
             );
-            ctx.defer_deinit_until_callback_completes = null;
+            ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
                 request_object.request_context = JSC.API.AnyRequestContext.Null;

@@ -19162,7 +19162,6 @@ pub const SSL_CTX = opaque {
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
         _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
-        SSL_CTX_set_quiet_shutdown(ctx, 1);
     }
 
     pub inline fn setCustomVerify(this: *SSL_CTX, cb: ?VerifyCallback) void {

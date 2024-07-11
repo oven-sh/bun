@@ -1566,14 +1566,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const resp = ctx.resp.?;
             const has_responded = resp.hasResponded();
             if (!has_responded) {
+                const original_state = ctx.defer_deinit_until_callback_completes;
                 var should_deinit_context = false;
                 ctx.defer_deinit_until_callback_completes = &should_deinit_context;
                 ctx.runErrorHandler(
                     value,
                 );
-                ctx.defer_deinit_until_callback_completes = null;
+                ctx.defer_deinit_until_callback_completes = original_state;
                 // we try to deinit inside runErrorHandler so we just return here and let it deinit
-                if (ctx.flags.has_marked_complete) {
+                if (should_deinit_context){
                     ctx.deinit();
                     return;
                 }
@@ -6350,7 +6351,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 ctx.renderMissing();
                 return;
             }
-
+            
             ctx.toAsync(req, request_object);
         }
 

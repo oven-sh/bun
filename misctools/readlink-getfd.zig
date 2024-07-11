@@ -29,12 +29,12 @@ pub fn main() anyerror!void {
     const to_resolve = args[args.len - 1];
     const cwd = try bun.getcwdAlloc(allocator);
     var path: []u8 = undefined;
-    var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var out_buffer: bun.PathBuffer = undefined;
 
     var j: usize = 0;
     while (j < 1000) : (j += 1) {
         var parts = [1][]const u8{to_resolve};
-        var joined_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var joined_buf: bun.PathBuffer = undefined;
         var joined = path_handler.joinAbsStringBuf(
             cwd,
             &joined_buf,
@@ -42,11 +42,11 @@ pub fn main() anyerror!void {
             .loose,
         );
         joined_buf[joined.len] = 0;
-        const os = std.os;
+        const os = std.posix;
         const joined_z: [:0]const u8 = joined_buf[0..joined.len :0];
-        const O_PATH = if (@hasDecl(os.O, "PATH")) os.O.PATH else 0;
+        const O_PATH = if (@hasDecl(bun.O, "PATH")) bun.O.PATH else 0;
 
-        var file = std.os.openZ(joined_z, O_PATH | std.os.O.CLOEXEC, 0) catch |err| {
+        var file = std.posix.openZ(joined_z, O_PATH | bun.O.CLOEXEC, 0) catch |err| {
             switch (err) {
                 error.NotDir, error.FileNotFound => {
                     Output.prettyError("<r><red>404 Not Found<r>: <b>\"{s}\"<r>", .{joined_z});

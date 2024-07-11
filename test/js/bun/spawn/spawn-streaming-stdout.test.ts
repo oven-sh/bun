@@ -1,7 +1,7 @@
 import { spawn } from "bun";
 import { expect, test } from "bun:test";
 import { closeSync, openSync } from "fs";
-import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick } from "harness";
+import { bunEnv, bunExe, dumpStats, expectMaxObjectTypeCount, gcTick, getMaxFD } from "harness";
 import { devNull } from "os";
 
 test("spawn can read from stdout multiple chunks", async () => {
@@ -42,12 +42,10 @@ test("spawn can read from stdout multiple chunks", async () => {
     await Promise.all(promises);
     i += concurrency;
     if (maxFD === -1) {
-      maxFD = openSync(devNull, "w");
-      closeSync(maxFD);
+      maxFD = getMaxFD();
     }
   }
-  const newMaxFD = openSync(devNull, "w");
-  closeSync(newMaxFD);
+  const newMaxFD = getMaxFD();
   expect(newMaxFD).toBe(maxFD);
   clearInterval(interval);
   await expectMaxObjectTypeCount(expect, "ReadableStream", 10);

@@ -266,10 +266,22 @@ pub const StringImplAllocator = struct {
 };
 
 pub const Tag = enum(u8) {
+    /// String is not valid. Observed on some failed operations.
+    /// To prevent crashes, this value acts similarly to .Empty (such as length = 0)
     Dead = 0,
+    /// String is backed by a WTF::StringImpl from JavaScriptCore.
+    /// Can be in either `latin1` or `utf16le` encodings.
     WTFStringImpl = 1,
+    /// Memory has an unknown owner, likely in Bun's Zig codebase. If `isGloballyAllocated`
+    /// is set, then it is owned by mimalloc. When converted to JSValue it has to be cloned
+    /// into a WTF::String.
+    /// Can be in either `utf8` or `utf16le` encodings.
     ZigString = 2,
+    /// Static memory that is guarenteed to never be freed. When converted to WTF::String,
+    /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
+    /// Can be in either `utf8` or `utf16le` encodings.
     StaticZigString = 3,
+    /// String is ""
     Empty = 4,
 };
 
@@ -628,6 +640,17 @@ pub const String = extern struct {
         }
     }
 
+    pub fn fromJSRef(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) String {
+        JSC.markBinding(@src());
+
+        var out: String = String.dead;
+        if (BunString__fromJSRef(globalObject, value, &out)) {
+            return out;
+        } else {
+            return String.dead;
+        }
+    }
+
     pub fn tryFromJS(value: bun.JSC.JSValue, globalObject: *JSC.JSGlobalObject) ?String {
         JSC.markBinding(@src());
 
@@ -947,7 +970,14 @@ pub const String = extern struct {
     extern fn BunString__toJS(globalObject: *JSC.JSGlobalObject, in: *const String) JSC.JSValue;
     extern fn BunString__toJSWithLength(globalObject: *JSC.JSGlobalObject, in: *const String, usize) JSC.JSValue;
     extern fn BunString__toJSDOMURL(globalObject: *JSC.JSGlobalObject, in: *String) JSC.JSValue;
+    extern fn Bun__parseDate(*JSC.JSGlobalObject, *String) f64;
+    extern fn BunString__fromJSRef(globalObject: *JSC.JSGlobalObject, value: bun.JSC.JSValue, out: *String) bool;
     extern fn BunString__toWTFString(this: *String) void;
+
+    pub fn parseDate(this: *String, globalObject: *JSC.JSGlobalObject) f64 {
+        JSC.markBinding(@src());
+        return Bun__parseDate(globalObject, this);
+    }
 
     pub fn ref(this: String) void {
         switch (this.tag) {
@@ -1219,7 +1249,7 @@ pub const String = extern struct {
         return try concat(strings.len, allocator, strings);
     }
 
-    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub export fn jsGetStringWidth(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         const args = callFrame.arguments(1).slice();
 
         if (args.len == 0 or !args.ptr[0].isString()) {

@@ -422,66 +422,47 @@ const Socket = (function (InternalSocket) {
       process.nextTick(closeNT, connection);
     }
 
-    connect(port, host, connectListener) {
-      var path;
-      var connection = this.#socket;
-      var _checkServerIdentity = undefined;
-      if (typeof port === "string") {
-        path = port;
-        port = undefined;
+    connect(...args) {
+      const [options, connectListener] = normalizeArgs(args);
+      let connection = this.#socket;
 
-        if (typeof host === "function") {
-          connectListener = host;
-          host = undefined;
-        }
-      } else if (typeof host == "function") {
-        if (typeof port === "string") {
-          path = port;
-          port = undefined;
-        }
+      let {
+        fd,
+        port,
+        host,
+        path,
+        socket,
+        // TODOs
+        localAddress,
+        localPort,
+        family,
+        hints,
+        lookup,
+        noDelay,
+        keepAlive,
+        keepAliveInitialDelay,
+        requestCert,
+        rejectUnauthorized,
+        pauseOnConnect,
+        servername,
+        checkServerIdentity,
+        session,
+      } = options;
 
-        connectListener = host;
-        host = undefined;
+      this.servername = servername;
+
+      if (socket) {
+        connection = socket;
       }
-      if (typeof port == "object") {
-        var {
-          fd,
-          port,
-          host,
-          path,
-          socket,
-          // TODOs
-          localAddress,
-          localPort,
-          family,
-          hints,
-          lookup,
-          noDelay,
-          keepAlive,
-          keepAliveInitialDelay,
-          requestCert,
-          rejectUnauthorized,
-          pauseOnConnect,
-          servername,
-          checkServerIdentity,
-          session,
-        } = port;
-        _checkServerIdentity = checkServerIdentity;
-        this.servername = servername;
-        if (socket) {
-          connection = socket;
-        }
-        if (fd) {
-          bunConnect({
-            data: this,
-            fd,
-            socket: this.#handlers,
-            tls,
-          }).catch(error => {
-            this.emit("error", error);
-            this.emit("close");
-          });
-        }
+      if (fd) {
+        bunConnect({
+          data: this,
+          fd: fd,
+          socket: this.#handlers,
+        }).catch(error => {
+          this.emit("error", error);
+          this.emit("close");
+        });
       }
 
       this.pauseOnConnect = pauseOnConnect;
@@ -516,7 +497,7 @@ const Socket = (function (InternalSocket) {
           tls.requestCert = true;
           tls.session = session || tls.session;
           this.servername = tls.servername;
-          tls.checkServerIdentity = _checkServerIdentity || tls.checkServerIdentity;
+          tls.checkServerIdentity = checkServerIdentity || tls.checkServerIdentity;
           this[bunTLSConnectOptions] = tls;
           if (!connection && tls.socket) {
             connection = tls.socket;
@@ -1006,6 +987,43 @@ function createServer(options, connectionListener) {
   return new Server(options, connectionListener);
 }
 
+function normalizeArgs(args) {
+  while (args[args.length - 1] == null) args.pop();
+  let arr;
+
+  if (args.length === 0) {
+    arr = [{}, null];
+    return arr;
+  }
+
+  const arg0 = args[0];
+  let options: any = {};
+  if (typeof arg0 === "object" && arg0 !== null) {
+    options = arg0;
+  } else if (isPipeName(arg0)) {
+    options.path = arg0;
+  } else {
+    options.port = arg0;
+    if (args.length > 1 && typeof args[1] === "string") {
+      options.host = args[1];
+    }
+  }
+
+  const cb = args[args.length - 1];
+  if (typeof cb !== "function") arr = [options, null];
+  else arr = [options, cb];
+
+  return arr;
+}
+
+function isPipeName(s) {
+  return typeof s === "string" && toNumber(s) === false;
+}
+
+function toNumber(x) {
+  return (x = Number(x)) >= 0 ? x : false;
+}
+
 // TODO:
 class BlockList {
   constructor() {}
@@ -1027,6 +1045,7 @@ export default {
   isIPv6,
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
+  _normalizeArgs: normalizeArgs,
 
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),

@@ -2,6 +2,8 @@ name: Lint
 
 permissions:
   contents: read
+env:
+  LLVM_VERSION: 16
 
 on:
   workflow_call:

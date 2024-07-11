@@ -28,6 +28,7 @@ pub const Classes = struct {
     pub const FileSystemRouter = JSC.API.FileSystemRouter;
     pub const Glob = JSC.API.Glob;
     pub const ShellInterpreter = JSC.API.Shell.Interpreter;
+    pub const ParsedShellScript = JSC.API.Shell.ParsedShellScript;
     pub const Bundler = JSC.API.JSBundler;
     pub const JSBundler = Bundler;
     pub const Transpiler = JSC.API.JSTranspiler;
@@ -70,4 +71,8 @@ pub const Classes = struct {
     pub const FileInternalReadableStreamSource = JSC.WebCore.FileReader.Source;
     pub const BlobInternalReadableStreamSource = JSC.WebCore.ByteBlobLoader.Source;
     pub const BytesInternalReadableStreamSource = JSC.WebCore.ByteStream.Source;
+    pub const PostgresSQLConnection = JSC.Postgres.PostgresSQLConnection;
+    pub const PostgresSQLQuery = JSC.Postgres.PostgresSQLQuery;
+    pub const BrotliEncoder = JSC.API.BrotliEncoder;
+    pub const BrotliDecoder = JSC.API.BrotliDecoder;
 };

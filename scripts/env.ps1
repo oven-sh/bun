@@ -1,7 +1,12 @@
 param(
-  [switch]$Baseline = $False
+  [switch]$Baseline = $false
 )
-$ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
+
+if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
+  $Baseline = $true
+}
+
+$ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
 # it sets c compiler and flags
@@ -13,10 +18,14 @@ if ($env:VSINSTALLDIR -eq $null) {
   if (!(Test-Path $vswhere)) {
       throw "Visual Studio installer directory not found."
   }
-  $vsDir = (& $vswhere -latest -property installationPath)
+  $vsDir = (& $vswhere -prerelease -latest -property installationPath)
   if ($vsDir -eq $null) {
-      throw "Visual Studio directory not found."
-  } 
+      $vsDir = Get-ChildItem -Path "C:\Program Files\Microsoft Visual Studio\2022" -Directory
+      if ($vsDir -eq $null) {
+          throw "Visual Studio directory not found."
+      }
+      $vsDir = $vsDir.FullName;
+  }
   Push-Location $vsDir
   try {
     $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
@@ -29,33 +38,50 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
+$ENV:BUN_DEV_ENV_SET = "Baseline=$Baseline";
+
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
-$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
+$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_BASE_DIR 'build\bun-deps' }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
 
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2'
-# $CFLAGS = '/O2 /MT'
-$CXXFLAGS = '/O2'
-# $CXXFLAGS = '/O2 /MT'
+$CFLAGS = '/O2 /Zi '
+# $CFLAGS = '/O2 /Z7 /MT'
+$CXXFLAGS = '/O2 /Zi '
+# $CXXFLAGS = '/O2 /Z7 /MT'
 
-if ($Baseline) {
-  $CFLAGS += ' -march=nehalem'
-  $CXXFLAGS += ' -march=nehalem'
+if ($env:USE_LTO -eq "1") {
+  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
+  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
 }
+
+$CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
+$env:CPU_TARGET = $CPU_NAME
+
+$CFLAGS += " -march=${CPU_NAME}"
+$CXXFLAGS += " -march=${CPU_NAME}"
 
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
-  "-DCMAKE_C_FLAGS=`"$CFLAGS`"",
-  "-DCMAKE_CXX_FLAGS=`"$CXXFLAGS`""
+  "-DCMAKE_C_FLAGS=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
 )
+
+if ($env:USE_LTO -eq "1") {
+  if (Get-Command lld-lib -ErrorAction SilentlyContinue) { 
+    $AR = Get-Command lld-lib -ErrorAction SilentlyContinue
+    $env:AR = $AR
+    $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
+  }
+}
+
 $env:CC = "clang-cl"
 $env:CXX = "clang-cl"
 $env:CFLAGS = $CFLAGS
@@ -64,6 +90,16 @@ $env:CPUS = $CPUS
 
 if ($Baseline) {
   $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
+}
+
+if (Get-Command sccache -ErrorAction SilentlyContinue) {
+  # Continue with local compiler if sccache has an error
+  $env:SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
+
+  $CMAKE_FLAGS += "-DCMAKE_C_COMPILER_LAUNCHER=sccache"
+  $CMAKE_FLAGS += "-DCMAKE_CXX_COMPILER_LAUNCHER=sccache"
+  $CMAKE_FLAGS += "-DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded"
+  $CMAKE_FLAGS += "-DCMAKE_POLICY_CMP0141=NEW"
 }
 
 $null = New-Item -ItemType Directory -Force -Path $BUN_DEPS_OUT_DIR
@@ -79,9 +115,10 @@ function Run() {
   $command = $args[0]
   $commandArgs = @()
   if ($args.Count -gt 1) {
-    $commandArgs = $args[1..($args.Count - 1)]
+    $commandArgs = @($args[1..($args.Count - 1)] | % {$_})
   }
 
+  write-host "> $command $commandArgs"
   & $command $commandArgs
   $result = $LASTEXITCODE
 

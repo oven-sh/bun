@@ -25,7 +25,9 @@ ARG CMAKE_BUILD_TYPE=Release
 
 ARG NODE_VERSION="20"
 ARG LLVM_VERSION="16"
-ARG ZIG_VERSION="0.12.0-dev.1828+225fe6ddb"
+
+ARG ZIG_VERSION="0.13.0"
+ARG ZIG_VERSION_SHORT="0.13.0"
 
 ARG SCCACHE_BUCKET
 ARG SCCACHE_REGION
@@ -55,6 +57,8 @@ ENV CXX=clang++-${LLVM_VERSION}
 ENV CC=clang-${LLVM_VERSION}
 ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
 ENV LD=lld-${LLVM_VERSION}
+ENV LC_CTYPE=en_US.UTF-8
+ENV LC_ALL=en_US.UTF-8
 
 ENV SCCACHE_BUCKET=${SCCACHE_BUCKET}
 ENV SCCACHE_REGION=${SCCACHE_REGION}
@@ -137,6 +141,7 @@ RUN install_packages \
 FROM bun-base as bun-base-with-zig
 
 ARG ZIG_VERSION
+ARG ZIG_VERSION_SHORT
 ARG BUILD_MACHINE_ARCH
 ARG ZIG_FOLDERNAME=zig-linux-${BUILD_MACHINE_ARCH}-${ZIG_VERSION}
 ARG ZIG_FILENAME=${ZIG_FOLDERNAME}.tar.xz
@@ -254,15 +259,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN install_packages autoconf automake libtool pkg-config 
 
-COPY Makefile ${BUN_DIR}/Makefile
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/libarchive ${BUN_DIR}/src/deps/libarchive
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make libarchive \
-  && rm -rf src/deps/libarchive Makefile
+  && bash ./scripts/build-libarchive.sh && rm -rf src/deps/libarchive .scripts
 
 FROM bun-base as tinycc
 
@@ -294,19 +298,6 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   && make boringssl \
   && rm -rf src/deps/boringssl Makefile
 
-FROM bun-base as base64
-
-ARG BUN_DIR
-ARG CPU_TARGET
-ENV CPU_TARGET=${CPU_TARGET}
-
-COPY Makefile ${BUN_DIR}/Makefile
-COPY src/deps/base64 ${BUN_DIR}/src/deps/base64
-
-WORKDIR $BUN_DIR
-
-RUN cd $BUN_DIR && \
-  make base64 && rm -rf src/deps/base64 Makefile
 
 FROM bun-base as zstd
 
@@ -417,6 +408,7 @@ COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 COPY src/runtime ${BUN_DIR}/src/runtime
 COPY src/runtime.js src/runtime.bun.js ${BUN_DIR}/src/
 COPY packages/bun-error ${BUN_DIR}/packages/bun-error
+COPY packages/bun-types ${BUN_DIR}/packages/bun-types
 COPY src/fallback.ts ${BUN_DIR}/src/fallback.ts
 COPY src/api ${BUN_DIR}/src/api
 
@@ -454,7 +446,7 @@ COPY --from=bun-codegen-for-zig ${BUN_DIR}/packages/bun-error/dist ${BUN_DIR}/pa
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   mkdir -p build \
   && bun run $BUN_DIR/src/codegen/bundle-modules.ts --debug=OFF $BUN_DIR/build \
   && cd build \
@@ -468,7 +460,7 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   -DWEBKIT_DIR="omit" \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
-  -DBUN_ZIG_OBJ="/tmp/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="/tmp" \
   -DCANARY="${CANARY}" \
   -DZIG_COMPILER=system \
   -DZIG_LIB_DIR=$BUN_DIR/src/deps/zig/lib \
@@ -504,7 +496,6 @@ COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
@@ -520,12 +511,12 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_LTO=ON \
   -DUSE_DEBUG_JSC=${ASSERTIONS} \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
@@ -568,7 +559,6 @@ COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
-COPY --from=base64 ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
@@ -583,12 +573,12 @@ COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 WORKDIR $BUN_DIR/build
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
-    --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
+  --mount=type=cache,target=${ZIG_LOCAL_CACHE_DIR} \
   cmake .. \
   -G Ninja \
   -DCMAKE_BUILD_TYPE=Release \
   -DBUN_LINK_ONLY=1 \
-  -DBUN_ZIG_OBJ="${BUN_DIR}/build/bun-zig.o" \
+  -DBUN_ZIG_OBJ_DIR="${BUN_DIR}/build" \
   -DUSE_DEBUG_JSC=ON \
   -DBUN_CPP_ARCHIVE="${BUN_DIR}/build/bun-cpp-objects.a" \
   -DWEBKIT_DIR="${BUN_DIR}/bun-webkit" \

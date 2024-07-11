@@ -193,6 +193,13 @@ export default {
     page("install/overrides", "Overrides and resolutions", {
       description: "Specify version ranges for nested dependencies",
     }),
+    page("install/patch", "Patch dependencies", {
+      description:
+        "Patch dependencies in your project to fix bugs or add features without vendoring the entire package.",
+    }),
+    page("install/npmrc", ".npmrc support", {
+      description: "Bun supports loading some configuration options from .npmrc",
+    }),
     // page("install/utilities", "Utilities", {
     //   description: "Use `bun pm` to introspect your global module cache or project dependency tree.",
     // }),
@@ -342,9 +349,6 @@ export default {
     page("api/utils", "Utils", {
       description: `Bun implements a set of utilities that are commonly required by developers.`,
     }), // "`Bun.peek`"),
-    // page("api/dns", "DNS", {
-    //   description: `Resolve domain names to IP addresses.`,
-    // }), // "`bun:dns`"),
     page("api/node-api", "Node-API", {
       description: `Bun implements the Node-API spec for building native addons.`,
     }), // "`Node-API`"),
@@ -352,6 +356,10 @@ export default {
     page("api/glob", "Glob", {
       description: `Bun includes a fast native Glob implementation for matching file paths.`,
     }), // "`Glob`"),
+
+    page("api/dns", "DNS", {
+      description: `Resolve domain names to IP addresses.`,
+    }), // "`bun:dns`"),
 
     page("api/semver", "Semver", {
       description: `Bun's native Semver implementation is 20x faster than the popular \`node-semver\` package.`,

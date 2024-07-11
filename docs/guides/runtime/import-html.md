@@ -1,5 +1,5 @@
 ---
-name: Import HTML file as text
+name: Import a HTML file as text
 ---
 
 To import a `.html` file in Bun as a text file, use the `type: "text"` attribute in the import statement.

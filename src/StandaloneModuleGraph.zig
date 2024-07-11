@@ -55,7 +55,7 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
         if (Environment.isWindows) {
-            var normalized_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var normalized_buf: bun.PathBuffer = undefined;
             const normalized = bun.path.platformToPosixBuf(u8, name, &normalized_buf);
             return this.files.getPtr(normalized);
         }
@@ -74,31 +74,30 @@ pub const StandaloneModuleGraph = struct {
         loader: bun.options.Loader,
         contents: []const u8 = "",
         sourcemap: LazySourceMap,
-        blob_: ?*bun.JSC.WebCore.Blob = null,
+        cached_blob: ?*bun.JSC.WebCore.Blob = null,
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
-            if (this.blob_ == null) {
-                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator) catch @panic("out of memory");
+            if (this.cached_blob == null) {
+                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
-                var blob_ = bun.default_allocator.create(bun.JSC.WebCore.Blob) catch @panic("out of memory");
-                blob_.* = bun.JSC.WebCore.Blob.initWithStore(store, globalObject);
-                blob_.allocator = bun.default_allocator;
+                const b = bun.JSC.WebCore.Blob.initWithStore(store, globalObject).new();
+                b.allocator = bun.default_allocator;
 
                 if (bun.http.MimeType.byExtensionNoDefault(bun.strings.trimLeadingChar(std.fs.path.extension(this.name), '.'))) |mime| {
                     store.mime_type = mime;
-                    blob_.content_type = mime.value;
-                    blob_.content_type_was_set = true;
-                    blob_.content_type_allocated = false;
+                    b.content_type = mime.value;
+                    b.content_type_was_set = true;
+                    b.content_type_allocated = false;
                 }
 
                 store.data.bytes.stored_name = bun.PathString.init(this.name);
 
-                this.blob_ = blob_;
+                this.cached_blob = b;
             }
 
-            return this.blob_.?;
+            return this.cached_blob.?;
         }
     };
 
@@ -262,7 +261,7 @@ pub const StandaloneModuleGraph = struct {
         std.mem.page_size;
 
     pub fn inject(bytes: []const u8, self_exe: [:0]const u8) bun.FileDescriptor {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var zname: [:0]const u8 = bun.span(bun.fs.FileSystem.instance.tmpname("bun-build", &buf, @as(u64, @bitCast(std.time.milliTimestamp()))) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get temporary file name: {s}", .{@errorName(err)});
             Global.exit(1);
@@ -288,7 +287,7 @@ pub const StandaloneModuleGraph = struct {
                 out_buf[zname.len] = 0;
                 const out = out_buf[0..zname.len :0];
 
-                bun.copyFile(in, out) catch |err| {
+                bun.copyFile(in, out).unwrap() catch |err| {
                     Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                     Global.exit(1);
                 };
@@ -313,7 +312,7 @@ pub const StandaloneModuleGraph = struct {
                 // if we're on a mac, use clonefile() if we can
                 // failure is okay, clonefile is just a fast path.
                 if (Syscall.clonefile(self_exe, zname) == .result) {
-                    switch (Syscall.open(zname, std.os.O.RDWR | std.os.O.CLOEXEC, 0)) {
+                    switch (Syscall.open(zname, bun.O.RDWR | bun.O.CLOEXEC, 0)) {
                         .result => |res| break :brk res,
                         .err => {},
                     }
@@ -325,7 +324,7 @@ pub const StandaloneModuleGraph = struct {
             const fd = brk2: {
                 var tried_changing_abs_dir = false;
                 for (0..3) |retry| {
-                    switch (Syscall.open(zname, std.os.O.CLOEXEC | std.os.O.RDWR | std.os.O.CREAT, 0)) {
+                    switch (Syscall.open(zname, bun.O.CLOEXEC | bun.O.RDWR | bun.O.CREAT, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -346,7 +345,7 @@ pub const StandaloneModuleGraph = struct {
                                         std.fs.path.sep_str,
                                         zname,
                                         &.{0},
-                                    }) catch @panic("OOM");
+                                    }) catch bun.outOfMemory();
                                     zname = zname_z[0..zname_z.len -| 1 :0];
                                     continue;
                                 }
@@ -366,7 +365,7 @@ pub const StandaloneModuleGraph = struct {
             };
             const self_fd = brk2: {
                 for (0..3) |retry| {
-                    switch (Syscall.open(self_exe, std.os.O.CLOEXEC | std.os.O.RDONLY, 0)) {
+                    switch (Syscall.open(self_exe, bun.O.CLOEXEC | bun.O.RDONLY, 0)) {
                         .result => |res| break :brk2 res,
                         .err => |err| {
                             if (retry < 2) {
@@ -388,7 +387,7 @@ pub const StandaloneModuleGraph = struct {
 
             defer _ = Syscall.close(self_fd);
 
-            bun.copyFile(self_fd.cast(), fd.cast()) catch |err| {
+            bun.copyFile(self_fd.cast(), fd.cast()).unwrap() catch |err| {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to copy bun executable into temporary file: {s}", .{@errorName(err)});
                 cleanup(zname, fd);
                 Global.exit(1);
@@ -532,7 +531,7 @@ pub const StandaloneModuleGraph = struct {
             return;
         }
 
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         const temp_location = bun.getFdPath(fd, &buf) catch |err| {
             Output.prettyErrorln("<r><red>error<r><d>:<r> failed to get path for fd: {s}", .{@errorName(err)});
             Global.exit(1);
@@ -540,7 +539,7 @@ pub const StandaloneModuleGraph = struct {
 
         if (comptime Environment.isMac) {
             if (target.os == .mac) {
-                var signer = std.ChildProcess.init(
+                var signer = std.process.Child.init(
                     &.{
                         "codesign",
                         "--remove-signature",
@@ -564,9 +563,9 @@ pub const StandaloneModuleGraph = struct {
         bun.C.moveFileZWithHandle(
             fd,
             bun.FD.cwd(),
-            bun.sliceTo(&(try std.os.toPosixPath(temp_location)), 0),
+            bun.sliceTo(&(try std.posix.toPosixPath(temp_location)), 0),
             bun.toFD(root_dir.fd),
-            bun.sliceTo(&(try std.os.toPosixPath(std.fs.path.basename(outfile))), 0),
+            bun.sliceTo(&(try std.posix.toPosixPath(std.fs.path.basename(outfile))), 0),
         ) catch |err| {
             if (err == error.IsDir) {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> {} is a directory. Please choose a different --outfile or delete the directory", .{bun.fmt.quote(outfile)});
@@ -574,7 +573,7 @@ pub const StandaloneModuleGraph = struct {
                 Output.prettyErrorln("<r><red>error<r><d>:<r> failed to rename {s} to {s}: {s}", .{ temp_location, outfile, @errorName(err) });
             }
             _ = Syscall.unlink(
-                &(try std.os.toPosixPath(temp_location)),
+                &(try std.posix.toPosixPath(temp_location)),
             );
 
             Global.exit(1);
@@ -587,7 +586,7 @@ pub const StandaloneModuleGraph = struct {
         defer _ = Syscall.close(self_exe);
 
         var trailer_bytes: [4096]u8 = undefined;
-        std.os.lseek_END(self_exe.cast(), -4096) catch return null;
+        std.posix.lseek_END(self_exe.cast(), -4096) catch return null;
 
         var read_amount: usize = 0;
         while (read_amount < trailer_bytes.len) {
@@ -640,7 +639,7 @@ pub const StandaloneModuleGraph = struct {
         // if you have not a ton of code, we only do a single read() call
         if (Environment.allow_assert or offsets.byte_count > 1024 * 3) {
             const offset_from_end = trailer_bytes.len - (@intFromPtr(end) - @intFromPtr(@as([]u8, &trailer_bytes).ptr));
-            std.os.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
+            std.posix.lseek_END(self_exe.cast(), -@as(i64, @intCast(offset_from_end + offsets.byte_count))) catch return null;
 
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
@@ -727,7 +726,7 @@ pub const StandaloneModuleGraph = struct {
                 } else |_| {
                     if (bun.argv.len > 0) {
                         // The user doesn't have /proc/ mounted, so now we just guess and hope for the best.
-                        var whichbuf: [bun.MAX_PATH_BYTES]u8 = undefined;
+                        var whichbuf: bun.PathBuffer = undefined;
                         if (bun.which(
                             &whichbuf,
                             bun.getenvZ("PATH") orelse return error.FileNotFound,
@@ -741,7 +740,7 @@ pub const StandaloneModuleGraph = struct {
                     return error.FileNotFound;
                 }
             },
-            .mac => {
+            .openbsd, .mac => {
                 // Use of MAX_PATH_BYTES here is valid as the resulting path is immediately
                 // opened with no modification.
                 const self_exe_path = try bun.selfExePath();
@@ -750,7 +749,7 @@ pub const StandaloneModuleGraph = struct {
             },
             .windows => {
                 const image_path_unicode_string = std.os.windows.peb().ProcessParameters.ImagePathName;
-                const image_path = image_path_unicode_string.Buffer[0 .. image_path_unicode_string.Length / 2];
+                const image_path = image_path_unicode_string.Buffer.?[0 .. image_path_unicode_string.Length / 2];
 
                 var nt_path_buf: bun.WPathBuffer = undefined;
                 const nt_path = bun.strings.addNTPathPrefix(&nt_path_buf, image_path);

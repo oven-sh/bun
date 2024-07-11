@@ -1,4 +1,5 @@
 
+#include "helpers.h"
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/JSCJSValueInlines.h>
@@ -57,6 +58,14 @@ extern "C" bool BunString__fromJS(JSC::JSGlobalObject* globalObject, JSC::Encode
 {
     JSC::JSValue value = JSC::JSValue::decode(encodedValue);
     *bunString = Bun::toString(globalObject, value);
+    return bunString->tag != BunStringTag::Dead;
+}
+
+extern "C" bool BunString__fromJSRef(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encodedValue, BunString* bunString)
+{
+
+    JSC::JSValue value = JSC::JSValue::decode(encodedValue);
+    *bunString = Bun::toStringRef(globalObject, value);
     return bunString->tag != BunStringTag::Dead;
 }
 
@@ -194,6 +203,13 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     wtfString->ref();
 
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
+}
+
+BunString toStringView(StringView view) {
+    return {
+        BunStringTag::ZigString,
+        { .zig = toZigString(view) }
+    };
 }
 
 }

@@ -23,6 +23,8 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
@@ -74,6 +76,8 @@ pub fn closeAllListenSocketsForWatchMode(this: *RareData) void {
     this.listening_sockets_for_watch_mode_lock.lock();
     defer this.listening_sockets_for_watch_mode_lock.unlock();
     for (this.listening_sockets_for_watch_mode.items) |socket| {
+        // Prevent TIME_WAIT state
+        Syscall.disableLinger(socket);
         _ = Syscall.close(socket);
     }
     this.listening_sockets_for_watch_mode = .{};
@@ -91,7 +95,7 @@ pub fn mimeTypeFromString(this: *RareData, allocator: std.mem.Allocator, str: []
     if (this.mime_types == null) {
         this.mime_types = bun.http.MimeType.createHashTable(
             allocator,
-        ) catch @panic("Out of memory");
+        ) catch bun.outOfMemory();
     }
 
     return this.mime_types.?.get(str);
@@ -133,12 +137,12 @@ pub const HotMap = struct {
     }
 
     pub fn insert(this: *HotMap, key: []const u8, ptr: anytype) void {
-        const entry = this._map.getOrPut(key) catch @panic("Out of memory");
+        const entry = this._map.getOrPut(key) catch bun.outOfMemory();
         if (entry.found_existing) {
             @panic("HotMap already contains key");
         }
 
-        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch @panic("Out of memory");
+        entry.key_ptr.* = this._map.allocator.dupe(u8, key) catch bun.outOfMemory();
         entry.value_ptr.* = Entry.init(ptr);
     }
 
@@ -271,7 +275,6 @@ pub fn boringEngine(rare: *RareData) *BoringSSL.ENGINE {
 pub fn stderr(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stderr" += 1;
     return rare.stderr_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(2).encode() else bun.STDERR_FD;
 
@@ -282,7 +285,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
             .err => {},
         }
 
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
@@ -294,7 +297,7 @@ pub fn stderr(rare: *RareData) *Blob.Store {
                     .mode = mode,
                 },
             },
-        };
+        });
 
         rare.stderr_store = store;
         break :brk store;
@@ -304,7 +307,6 @@ pub fn stderr(rare: *RareData) *Blob.Store {
 pub fn stdout(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdout" += 1;
     return rare.stdout_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
 
@@ -314,7 +316,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
             },
             .err => {},
         }
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .ref_count = std.atomic.Value(u32).init(2),
             .allocator = default_allocator,
             .data = .{
@@ -326,7 +328,7 @@ pub fn stdout(rare: *RareData) *Blob.Store {
                     .mode = mode,
                 },
             },
-        };
+        });
         rare.stdout_store = store;
         break :brk store;
     };
@@ -335,7 +337,6 @@ pub fn stdout(rare: *RareData) *Blob.Store {
 pub fn stdin(rare: *RareData) *Blob.Store {
     bun.Analytics.Features.@"Bun.stdin" += 1;
     return rare.stdin_store orelse brk: {
-        const store = default_allocator.create(Blob.Store) catch unreachable;
         var mode: bun.Mode = 0;
         const fd = if (Environment.isWindows) FDImpl.fromUV(0).encode() else bun.STDIN_FD;
 
@@ -345,7 +346,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
             },
             .err => {},
         }
-        store.* = Blob.Store{
+        const store = Blob.Store.new(.{
             .allocator = default_allocator,
             .ref_count = std.atomic.Value(u32).init(2),
             .data = .{
@@ -353,11 +354,11 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .pathlike = .{
                         .fd = fd,
                     },
-                    .is_atty = if (bun.STDIN_FD.isValid()) std.os.isatty(bun.STDIN_FD.cast()) else false,
+                    .is_atty = if (bun.STDIN_FD.isValid()) std.posix.isatty(bun.STDIN_FD.cast()) else false,
                     .mode = mode,
                 },
             },
-        };
+        });
         rare.stdin_store = store;
         break :brk store;
     };

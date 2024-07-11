@@ -64,8 +64,8 @@ pub inline fn isSingleItemPtr(comptime T: type) bool {
 
 pub fn isExternContainer(comptime T: type) bool {
     return switch (@typeInfo(T)) {
-        .Struct => |s| s.layout == .Extern,
-        .Union => |u| u.layout == .Extern,
+        .Struct => |s| s.layout == .@"extern",
+        .Union => |u| u.layout == .@"extern",
         else => false,
     };
 }

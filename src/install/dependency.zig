@@ -187,6 +187,8 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     return false;
 }
 
+/// `isGitHubShorthand` from npm
+/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
 pub inline fn isGitHubRepoPath(dependency: string) bool {
     // Shortest valid expression: u/r
     if (dependency.len < 3) return false;
@@ -259,10 +261,36 @@ pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
 }
 
+/// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
+pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[0..second_at_index], if (second_at_index + 1 < str.len) str[second_at_index + 1 ..] else null };
+    }
+
+    return .{ str, null };
+}
+
+pub fn unscopedPackageName(name: []const u8) []const u8 {
+    if (name[0] != '@') return name;
+    var name_ = name;
+    name_ = name[1..];
+    return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
+}
+
 pub const Version = struct {
     tag: Tag = .uninitialized,
     literal: String = .{},
     value: Value = .{ .uninitialized = {} },
+
+    pub inline fn npm(this: *const Version) ?NpmInfo {
+        return if (this.tag == .npm) this.value.npm else null;
+    }
 
     pub fn deinit(this: *Version) void {
         switch (this.tag) {
@@ -556,6 +584,10 @@ pub const Version = struct {
                                 if (strings.hasPrefixComptime(url, "://")) {
                                     url = url["://".len..];
                                 }
+                            }
+
+                            if (url.len > 4 and strings.eqlComptime(url[0.."git@".len], "git@")) {
+                                url = url["git@".len..];
                             }
 
                             if (strings.indexOfChar(url, '.')) |dot| {
@@ -1152,6 +1184,10 @@ pub const Behavior = packed struct(u8) {
         return this.workspace;
     }
 
+    pub inline fn isWorkspaceOnly(this: Behavior) bool {
+        return this.workspace and !this.dev and !this.normal and !this.optional and !this.peer;
+    }
+
     pub inline fn setNormal(this: Behavior, value: bool) Behavior {
         var b = this;
         b.normal = value;
@@ -1238,36 +1274,31 @@ pub const Behavior = packed struct(u8) {
             (features.optional_dependencies and this.isOptional()) or
             (features.dev_dependencies and this.isDev()) or
             (features.peer_dependencies and this.isPeer()) or
-            this.isWorkspace();
+            (features.workspaces and this.isWorkspaceOnly());
     }
 
     pub fn format(self: Behavior, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        const fields = std.meta.fields(Behavior);
-        var num_fields: u8 = 0;
-        inline for (fields) |f| {
-            if (f.type == bool and @field(self, f.name)) {
-                num_fields += 1;
+        const fields = .{
+            "normal",
+            "optional",
+            "dev",
+            "peer",
+            "workspace",
+        };
+
+        var first = true;
+        inline for (fields) |field| {
+            if (@field(self, field)) {
+                if (!first) {
+                    try writer.writeAll(" | ");
+                }
+                try writer.writeAll(field);
+                first = false;
             }
         }
-        switch (num_fields) {
-            0 => try writer.writeAll("Behavior.uninitialized"),
-            1 => {
-                inline for (fields) |f| {
-                    if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll("Behavior." ++ f.name);
-                        break;
-                    }
-                }
-            },
-            else => {
-                try writer.writeAll("Behavior{");
-                inline for (fields) |f| {
-                    if (f.type == bool and @field(self, f.name)) {
-                        try writer.writeAll(" " ++ f.name);
-                    }
-                }
-                try writer.writeAll(" }");
-            },
+
+        if (first) {
+            try writer.writeAll("-");
         }
     }
 

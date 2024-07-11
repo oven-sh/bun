@@ -188,7 +188,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             prev: ?*OverflowBlock = null,
 
             pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
-                const index = this.used.fetchAdd(1, .AcqRel);
+                const index = this.used.fetchAdd(1, .acq_rel);
                 if (index >= ChunkSize) return error.OutOfMemory;
                 this.data[index] = item;
                 return &this.data[index];
@@ -347,7 +347,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.doAppend(AppendType, _value);
         }
 
-        threadlocal var lowercase_append_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();

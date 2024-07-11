@@ -725,13 +725,13 @@ pub fn HeaderGen(comptime first_import: type, comptime second_import: type, comp
                 all_types[0] = first_import;
                 all_types[1] = second_import;
                 var counter: usize = 2;
-                inline for (first_import.DOMCalls) |Type_| {
+                for (first_import.DOMCalls) |Type_| {
                     const Type = if (@typeInfo(@TypeOf(Type_)) == .Pointer)
                         @typeInfo(@TypeOf(Type_)).Pointer.child
                     else
                         @TypeOf(Type_);
 
-                    inline for (bun.meta.fieldNames(Type)) |static_function_name| {
+                    for (bun.meta.fieldNames(Type)) |static_function_name| {
                         const static_function = @field(Type_, static_function_name);
                         all_types[counter] = static_function;
                         counter += 1;

@@ -79,7 +79,7 @@ describe("Bun.build", () => {
   test("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "inherit",
@@ -261,34 +261,6 @@ describe("Bun.build", () => {
     );
     expect(x.logs[0].name).toBe("BuildMessage");
     expect(x.logs[0].position).toBeTruthy();
-  });
-
-  test("test bun target", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-      target: "bun",
-    });
-    expect(x.success).toBe(true);
-    const [blob] = x.outputs;
-    const content = await blob.text();
-
-    // use bun's ws
-    expect(content).toContain('import {WebSocket} from "ws"');
-    expect(content).not.toContain("var websocket = __toESM(require_websocket(), 1);");
-  });
-
-  test("test node target, issue #3844", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-      target: "node",
-    });
-    expect(x.success).toBe(true);
-    const [blob] = x.outputs;
-    const content = await blob.text();
-
-    expect(content).not.toContain('import {WebSocket} from "ws"');
-    // depends on the ws package in the test/node_modules.
-    expect(content).toContain("var websocket = __toESM(require_websocket(), 1);");
   });
 
   test("module() throws error", async () => {

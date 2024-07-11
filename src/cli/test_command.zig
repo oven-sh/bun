@@ -31,10 +31,10 @@ const Command = @import("../cli.zig").Command;
 const DotEnv = @import("../env_loader.zig");
 const which = @import("../which.zig").which;
 const Run = @import("../bun_js.zig").Run;
-var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
-var path_buf2: [bun.MAX_PATH_BYTES]u8 = undefined;
+var path_buf: bun.PathBuffer = undefined;
+var path_buf2: bun.PathBuffer = undefined;
 const PathString = bun.PathString;
-const is_bindgen = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen = false;
 const HTTPThread = bun.http.HTTPThread;
 
 const JSC = bun.JSC;
@@ -42,7 +42,7 @@ const jest = JSC.Jest;
 const TestRunner = JSC.Jest.TestRunner;
 const Snapshots = JSC.Snapshot.Snapshots;
 const Test = TestRunner.Test;
-
+const CodeCoverageReport = bun.sourcemap.CodeCoverageReport;
 const uws = bun.uws;
 
 fn fmtStatusTextLine(comptime status: @Type(.EnumLiteral), comptime emoji_or_color: bool) []const u8 {
@@ -173,7 +173,7 @@ pub const CommandLineReporter = struct {
         var writer = buffered_writer.writer();
         defer buffered_writer.flush() catch unreachable;
 
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         writeTestStatusLine(.pass, &writer);
 
@@ -186,7 +186,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestFail(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests fail, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -219,7 +219,7 @@ pub const CommandLineReporter = struct {
 
     pub fn handleTestSkip(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // If you do it.only, don't report the skipped tests because its pretty noisy
         if (jest.Jest.runner != null and !jest.Jest.runner.?.only) {
@@ -244,7 +244,7 @@ pub const CommandLineReporter = struct {
     pub fn handleTestTodo(cb: *TestRunner.Callback, id: Test.ID, _: string, label: string, expectations: u32, elapsed_ns: u64, parent: ?*jest.DescribeScope) void {
         var writer_ = Output.errorWriter();
 
-        var this: *CommandLineReporter = @fieldParentPtr(CommandLineReporter, "callback", cb);
+        var this: *CommandLineReporter = @fieldParentPtr("callback", cb);
 
         // when the tests skip, we want to repeat the failures at the end
         // so that you can see them better when there are lots of tests that ran
@@ -271,23 +271,17 @@ pub const CommandLineReporter = struct {
         Output.printStartEnd(bun.start_time, std.time.nanoTimestamp());
     }
 
-    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime enable_ansi_colors: bool) !void {
-        const trace = bun.tracy.traceNamed(@src(), "TestCommand.printCodeCoverage");
-        defer trace.end();
+    pub fn generateCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
+        if (comptime !reporters.text and !reporters.lcov) {
+            return;
+        }
 
-        _ = this;
         var map = bun.sourcemap.ByteRangeMapping.map orelse return;
         var iter = map.valueIterator();
-        var max_filepath_length: usize = "All files".len;
-        const relative_dir = vm.bundler.fs.top_level_dir;
-
         var byte_ranges = try std.ArrayList(bun.sourcemap.ByteRangeMapping).initCapacity(bun.default_allocator, map.count());
 
         while (iter.next()) |entry| {
-            const value: bun.sourcemap.ByteRangeMapping = entry.*;
-            const utf8 = value.source_url.slice();
-            byte_ranges.appendAssumeCapacity(value);
-            max_filepath_length = @max(bun.path.relative(relative_dir, utf8).len, max_filepath_length);
+            byte_ranges.appendAssumeCapacity(entry.*);
         }
 
         if (byte_ranges.items.len == 0) {
@@ -296,25 +290,65 @@ pub const CommandLineReporter = struct {
 
         std.sort.pdq(bun.sourcemap.ByteRangeMapping, byte_ranges.items, void{}, bun.sourcemap.ByteRangeMapping.isLessThan);
 
-        iter = map.valueIterator();
-        var writer = Output.errorWriter();
+        try this.printCodeCoverage(vm, opts, byte_ranges.items, reporters, enable_ansi_colors);
+    }
+
+    pub fn printCodeCoverage(this: *CommandLineReporter, vm: *JSC.VirtualMachine, opts: *TestCommand.CodeCoverageOptions, byte_ranges: []bun.sourcemap.ByteRangeMapping, comptime reporters: TestCommand.Reporters, comptime enable_ansi_colors: bool) !void {
+        _ = this; // autofix
+        const trace = bun.tracy.traceNamed(@src(), comptime brk: {
+            if (reporters.text and reporters.lcov) {
+                break :brk "TestCommand.printCodeCoverageLCovAndText";
+            }
+
+            if (reporters.text) {
+                break :brk "TestCommand.printCodeCoverageText";
+            }
+
+            if (reporters.lcov) {
+                break :brk "TestCommand.printCodeCoverageLCov";
+            }
+
+            @compileError("No reporters enabled");
+        });
+        defer trace.end();
+
+        if (comptime !reporters.text and !reporters.lcov) {
+            @compileError("No reporters enabled");
+        }
+
+        const relative_dir = vm.bundler.fs.top_level_dir;
+
+        // --- Text ---
+        const max_filepath_length: usize = if (reporters.text) brk: {
+            var len = "All files".len;
+            for (byte_ranges) |*entry| {
+                const utf8 = entry.source_url.slice();
+                len = @max(bun.path.relative(relative_dir, utf8).len, len);
+            }
+
+            break :brk len;
+        } else 0;
+
+        var console = Output.errorWriter();
         const base_fraction = opts.fractions;
         var failing = false;
 
-        writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
-        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
-        writer.writeAll("File") catch return;
-        writer.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
-        // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-        writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
-        writer.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
-        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        if (comptime reporters.text) {
+            console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors)) catch return;
+            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+            console.writeAll("File") catch return;
+            console.writeByteNTimes(' ', max_filepath_length - "File".len + 1) catch return;
+            // writer.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Blocks <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+            console.writeAll(Output.prettyFmt(" <d>|<r> % Funcs <d>|<r> % Lines <d>|<r> Uncovered Line #s\n", enable_ansi_colors)) catch return;
+            console.writeAll(Output.prettyFmt("<d>", enable_ansi_colors)) catch return;
+            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        }
 
-        var coverage_buffer = bun.MutableString.initEmpty(bun.default_allocator);
-        var coverage_buffer_buffer = coverage_buffer.bufferedWriter();
-        var coverage_writer = coverage_buffer_buffer.writer();
+        var console_buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        var console_buffer_buffer = console_buffer.bufferedWriter();
+        var console_writer = console_buffer_buffer.writer();
 
         var avg = bun.sourcemap.CoverageFraction{
             .functions = 0.0,
@@ -322,50 +356,149 @@ pub const CommandLineReporter = struct {
             .stmts = 0.0,
         };
         var avg_count: f64 = 0;
+        // --- Text ---
 
-        for (byte_ranges.items) |*entry| {
-            var report = bun.sourcemap.CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
-            defer report.deinit(bun.default_allocator);
-            var fraction = base_fraction;
-            report.writeFormat(max_filepath_length, &fraction, relative_dir, coverage_writer, enable_ansi_colors) catch continue;
-            avg.functions += fraction.functions;
-            avg.lines += fraction.lines;
-            avg.stmts += fraction.stmts;
-            avg_count += 1.0;
-            if (fraction.failing) {
-                failing = true;
-            }
+        // --- LCOV ---
+        var lcov_name_buf: bun.PathBuffer = undefined;
+        const lcov_file, const lcov_name, const lcov_buffered_writer, const lcov_writer = brk: {
+            if (comptime !reporters.lcov) break :brk .{ {}, {}, {}, {} };
 
-            coverage_writer.writeAll("\n") catch continue;
-        }
-
-        {
-            avg.functions /= avg_count;
-            avg.lines /= avg_count;
-            avg.stmts /= avg_count;
-
-            try bun.sourcemap.CodeCoverageReport.writeFormatWithValues(
-                "All files",
-                max_filepath_length,
-                avg,
-                base_fraction,
-                failing,
-                writer,
-                false,
-                enable_ansi_colors,
+            // Ensure the directory exists
+            var fs = bun.JSC.Node.NodeFS{};
+            _ = fs.mkdirRecursive(
+                .{
+                    .path = bun.JSC.Node.PathLike{
+                        .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(opts.reports_directory),
+                    },
+                    .always_return_none = true,
+                },
+                .sync,
             );
 
-            try writer.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+            // Write the lcov.info file to a temporary file we atomically rename to the final name after it succeeds
+            var base64_bytes: [8]u8 = undefined;
+            var shortname_buf: [512]u8 = undefined;
+            bun.rand(&base64_bytes);
+            const tmpname = std.fmt.bufPrintZ(&shortname_buf, ".lcov.info.{s}.tmp", .{bun.fmt.fmtSliceHexLower(&base64_bytes)}) catch unreachable;
+            const path = bun.path.joinAbsStringBufZ(relative_dir, &lcov_name_buf, &.{ opts.reports_directory, tmpname }, .auto);
+            const file = bun.sys.File.openat(
+                std.fs.cwd(),
+                path,
+                bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC | bun.O.CLOEXEC,
+                0o644,
+            );
+
+            switch (file) {
+                .err => |err| {
+                    Output.err(.lcovCoverageError, "Failed to create lcov file", .{});
+                    Output.printError("\n{s}", .{err});
+                    Global.exit(1);
+                },
+                .result => |f| {
+                    const buffered = buffered_writer: {
+                        const writer = f.writer();
+                        // Heap-allocate the buffered writer because we want a stable memory address + 64 KB is kind of a lot.
+                        const ptr = try bun.default_allocator.create(std.io.BufferedWriter(64 * 1024, bun.sys.File.Writer));
+                        ptr.* = .{
+                            .end = 0,
+                            .unbuffered_writer = writer,
+                        };
+                        break :buffered_writer ptr;
+                    };
+
+                    break :brk .{
+                        f,
+                        path,
+                        buffered,
+                        buffered.writer(),
+                    };
+                },
+            }
+        };
+        errdefer {
+            if (comptime reporters.lcov) {
+                lcov_file.close();
+                _ = bun.sys.unlink(
+                    lcov_name,
+                );
+            }
+        }
+        // --- LCOV ---
+
+        for (byte_ranges) |*entry| {
+            var report = CodeCoverageReport.generate(vm.global, bun.default_allocator, entry, opts.ignore_sourcemap) orelse continue;
+            defer report.deinit(bun.default_allocator);
+
+            if (comptime reporters.text) {
+                var fraction = base_fraction;
+                CodeCoverageReport.Text.writeFormat(&report, max_filepath_length, &fraction, relative_dir, console_writer, enable_ansi_colors) catch continue;
+                avg.functions += fraction.functions;
+                avg.lines += fraction.lines;
+                avg.stmts += fraction.stmts;
+                avg_count += 1.0;
+                if (fraction.failing) {
+                    failing = true;
+                }
+
+                console_writer.writeAll("\n") catch continue;
+            }
+
+            if (comptime reporters.lcov) {
+                CodeCoverageReport.Lcov.writeFormat(
+                    &report,
+                    relative_dir,
+                    lcov_writer,
+                ) catch continue;
+            }
         }
 
-        coverage_buffer_buffer.flush() catch return;
-        try writer.writeAll(coverage_buffer.list.items);
-        try writer.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
-        writer.writeByteNTimes('-', max_filepath_length + 2) catch return;
-        writer.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+        if (comptime reporters.text) {
+            {
+                avg.functions /= avg_count;
+                avg.lines /= avg_count;
+                avg.stmts /= avg_count;
 
-        opts.fractions.failing = failing;
-        Output.flush();
+                try CodeCoverageReport.Text.writeFormatWithValues(
+                    "All files",
+                    max_filepath_length,
+                    avg,
+                    base_fraction,
+                    failing,
+                    console,
+                    false,
+                    enable_ansi_colors,
+                );
+
+                try console.writeAll(Output.prettyFmt("<r><d> |<r>\n", enable_ansi_colors));
+            }
+
+            console_buffer_buffer.flush() catch return;
+            try console.writeAll(console_buffer.list.items);
+            try console.writeAll(Output.prettyFmt("<r><d>", enable_ansi_colors));
+            console.writeByteNTimes('-', max_filepath_length + 2) catch return;
+            console.writeAll(Output.prettyFmt("|---------|---------|-------------------<r>\n", enable_ansi_colors)) catch return;
+
+            opts.fractions.failing = failing;
+            Output.flush();
+        }
+
+        if (comptime reporters.lcov) {
+            try lcov_buffered_writer.flush();
+            lcov_file.close();
+            bun.C.moveFileZ(
+                bun.toFD(std.fs.cwd()),
+                lcov_name,
+                bun.toFD(std.fs.cwd()),
+                bun.path.joinAbsStringZ(
+                    relative_dir,
+                    &.{ opts.reports_directory, "lcov.info" },
+                    .auto,
+                ),
+            ) catch |err| {
+                Output.err(err, "Failed to save lcov.info file", .{});
+                Global.exit(1);
+            };
+        }
     }
 };
 
@@ -376,8 +509,8 @@ const Scanner = struct {
     dirs_to_scan: Fifo,
     results: *std.ArrayList(bun.PathString),
     fs: *FileSystem,
-    open_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
-    scan_dir_buf: [bun.MAX_PATH_BYTES]u8 = undefined,
+    open_dir_buf: bun.PathBuffer = undefined,
+    scan_dir_buf: bun.PathBuffer = undefined,
     options: *options.BundleOptions,
     has_iterated: bool = false,
     search_count: usize = 0,
@@ -436,10 +569,12 @@ const Scanner = struct {
                 bun.assert(bun.toFD(dir.fd) != bun.invalid_fd);
 
                 const parts2 = &[_]string{ entry.dir_path, entry.name.slice() };
-                var path2 = this.fs.absBuf(parts2, &this.open_dir_buf);
-                const child_dir = bun.openDirAbsolute(path2) catch continue;
-                path2 = this.fs.dirname_store.append(string, path2) catch bun.outOfMemory();
-                _ = this.readDirWithName(path2, child_dir) catch bun.outOfMemory();
+                const path2 = this.fs.absBufZ(parts2, &this.open_dir_buf);
+                const child_dir = bun.openDirNoRenamingOrDeletingWindows(bun.invalid_fd, path2) catch continue;
+                _ = this.readDirWithName(
+                    this.fs.dirname_store.append(string, path2) catch bun.outOfMemory(),
+                    child_dir,
+                ) catch bun.outOfMemory();
             }
         }
     }
@@ -572,10 +707,20 @@ pub const TestCommand = struct {
     pub const name = "test";
     pub const CodeCoverageOptions = struct {
         skip_test_files: bool = !Environment.allow_assert,
+        reporters: Reporters = .{ .text = true, .lcov = false },
+        reports_directory: string = "coverage",
         fractions: bun.sourcemap.CoverageFraction = .{},
         ignore_sourcemap: bool = false,
         enabled: bool = false,
         fail_on_low_coverage: bool = false,
+    };
+    pub const Reporter = enum {
+        text,
+        lcov,
+    };
+    const Reporters = struct {
+        text: bool,
+        lcov: bool,
     };
 
     pub fn exec(ctx: Command.Context) !void {
@@ -596,7 +741,7 @@ pub const TestCommand = struct {
             break :brk loader;
         };
         bun.JSC.initialize();
-        HTTPThread.init() catch {};
+        HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
         var snapshot_values = Snapshots.ValuesHashMap.init(ctx.allocator);
@@ -637,8 +782,8 @@ pub const TestCommand = struct {
         reporter.jest.callback = &reporter.callback;
         jest.Jest.runner = &reporter.jest;
         reporter.jest.test_options = &ctx.test_options;
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var vm = try JSC.VirtualMachine.init(
             .{
                 .allocator = ctx.allocator,
@@ -859,7 +1004,13 @@ pub const TestCommand = struct {
 
             if (coverage.enabled) {
                 switch (Output.enable_ansi_colors_stderr) {
-                    inline else => |colors| reporter.printCodeCoverage(vm, &coverage, colors) catch {},
+                    inline else => |colors| switch (coverage.reporters.text) {
+                        inline else => |console| switch (coverage.reporters.lcov) {
+                            inline else => |lcov| {
+                                try reporter.generateCodeCoverage(vm, &coverage, .{ .text = console, .lcov = lcov }, colors);
+                            },
+                        },
+                    },
                 }
             }
 
@@ -884,6 +1035,10 @@ pub const TestCommand = struct {
             }
 
             Output.prettyError(" {d:5>} fail<r>\n", .{reporter.summary.fail});
+            if (reporter.jest.unhandled_errors_between_tests > 0) {
+                Output.prettyError(" <r><red>{d:5>} error{s}<r>\n", .{ reporter.jest.unhandled_errors_between_tests, if (reporter.jest.unhandled_errors_between_tests > 1) "s" else "" });
+            }
+
             var print_expect_calls = reporter.summary.expectations > 0;
             if (reporter.jest.snapshots.total > 0) {
                 const passed = reporter.jest.snapshots.passed;
@@ -949,6 +1104,8 @@ pub const TestCommand = struct {
 
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
+        } else if (reporter.jest.unhandled_errors_between_tests > 0) {
+            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
         }
     }
 
@@ -973,6 +1130,7 @@ pub const TestCommand = struct {
                 if (files.len > 1) {
                     for (files[0 .. files.len - 1]) |file_name| {
                         TestCommand.run(reporter, vm, file_name.slice(), allocator, false) catch {};
+                        reporter.jest.default_timeout_override = std.math.maxInt(u32);
                         Global.mimalloc_cleanup(false);
                     }
                 }
@@ -1029,6 +1187,9 @@ pub const TestCommand = struct {
 
         const repeat_count = reporter.repeat_count;
         var repeat_index: u32 = 0;
+        vm.onUnhandledRejectionCtx = null;
+        vm.onUnhandledRejection = jest.TestRunnerTask.onUnhandledRejection;
+
         while (repeat_index < repeat_count) : (repeat_index += 1) {
             if (repeat_count > 1) {
                 Output.prettyErrorln("<r>\n{s}{s}: <d>(run #{d})<r>\n", .{ file_prefix, file_title, repeat_index + 1 });
@@ -1042,7 +1203,7 @@ pub const TestCommand = struct {
 
             switch (promise.status(vm.global.vm())) {
                 .Rejected => {
-                    vm.onError(vm.global, promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(vm.global, promise.result(vm.global.vm()), promise.asValue());
                     reporter.summary.fail += 1;
 
                     if (reporter.jest.bail == reporter.summary.fail) {
@@ -1127,7 +1288,7 @@ pub const TestCommand = struct {
         if (is_last) {
             if (jest.Jest.runner != null) {
                 if (jest.DescribeScope.runGlobalCallbacks(vm.global, .afterAll)) |err| {
-                    vm.onError(vm.global, err);
+                    _ = vm.uncaughtException(vm.global, err, true);
                 }
             }
         }

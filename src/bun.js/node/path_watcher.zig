@@ -51,27 +51,27 @@ pub const PathWatcherManager = struct {
     };
 
     fn refPendingTask(this: *PathWatcherManager) bool {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
         this.pending_tasks += 1;
-        this.has_pending_tasks.store(true, .Release);
+        this.has_pending_tasks.store(true, .release);
         return true;
     }
 
     fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_tasks.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_tasks.load(.acquire);
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
         if (this.deinit_on_last_task and this.pending_tasks == 0) {
-            this.has_pending_tasks.store(false, .Release);
+            this.has_pending_tasks.store(false, .release);
             this.deinit();
         }
     }
@@ -90,7 +90,7 @@ pub const PathWatcherManager = struct {
         }
 
         switch (switch (Environment.os) {
-            else => bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0),
+            else => bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0),
             // windows bun.sys.open does not pass iterable=true,
             .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
         }) {
@@ -132,9 +132,9 @@ pub const PathWatcherManager = struct {
     }
 
     const PathWatcherManagerError = std.mem.Allocator.Error ||
-        std.os.KQueueError ||
+        std.posix.KQueueError ||
         error{KQueueError} ||
-        std.os.INotifyInitError ||
+        std.posix.INotifyInitError ||
         std.Thread.SpawnError;
 
     pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
@@ -173,7 +173,7 @@ pub const PathWatcherManager = struct {
 
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
         var ctx = this.main_watcher;
         defer ctx.flushEvictions();
@@ -239,16 +239,8 @@ pub const PathWatcherManager = struct {
                                     if (path.len <= 1) {
                                         continue;
                                     }
-                                    if (path.len == 0) {
-                                        while (path.len > 0) {
-                                            if (bun.strings.startsWithChar(path, '/')) {
-                                                path = path[1..];
-                                                break;
-                                            } else {
-                                                path = path[1..];
-                                            }
-                                        }
-                                    } else {
+
+                                    if (bun.strings.startsWithChar(path, '/')) {
                                         // Skip forward slash
                                         path = path[1..];
                                     }
@@ -364,7 +356,7 @@ pub const PathWatcherManager = struct {
         watcher_list: bun.BabyList(*PathWatcher) = .{},
 
         pub fn callback(task: *JSC.WorkPoolTask) void {
-            var routine = @fieldParentPtr(@This(), "task", task);
+            var routine: *@This() = @fieldParentPtr("task", task);
             defer routine.deinit();
             routine.run();
         }
@@ -440,7 +432,7 @@ pub const PathWatcherManager = struct {
         fn processWatcher(
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
-            buf: *[bun.MAX_PATH_BYTES + 1]u8,
+            buf: *bun.PathBuffer,
         ) bun.JSC.Maybe(void) {
             if (Environment.isWindows) @compileError("use win_watcher.zig");
 
@@ -456,7 +448,9 @@ pub const PathWatcherManager = struct {
                         .errno = @truncate(@intFromEnum(switch (err) {
                             error.AccessDenied => bun.C.E.ACCES,
                             error.SystemResources => bun.C.E.NOMEM,
-                            error.Unexpected => bun.C.E.INVAL,
+                            error.Unexpected,
+                            error.InvalidUtf8,
+                            => bun.C.E.INVAL,
                         })),
                         .syscall = .watch,
                     },
@@ -524,7 +518,7 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
@@ -773,7 +767,7 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buffer: bun.PathBuffer = undefined;
                 const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
@@ -835,39 +829,39 @@ pub const PathWatcher = struct {
     }
 
     pub fn refPendingDirectory(this: *PathWatcher) bool {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
         this.pending_directories += 1;
-        this.has_pending_directories.store(true, .Release);
+        this.has_pending_directories.store(true, .release);
         return true;
     }
 
     pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_directories.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_directories.load(.acquire);
     }
 
     pub fn isClosed(this: *PathWatcher) bool {
-        @fence(.Acquire);
-        return this.closed.load(.Acquire);
+        @fence(.acquire);
+        return this.closed.load(.acquire);
     }
 
     pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        @fence(.Release);
-        this.closed.store(true, .Release);
+        @fence(.release);
+        this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
         if (this.isClosed() and this.pending_directories == 0) {
-            this.has_pending_directories.store(false, .Release);
+            this.has_pending_directories.store(false, .release);
             this.deinit();
         }
     }
@@ -993,6 +987,7 @@ pub fn watch(
                 error.NameTooLong,
                 error.BadPathName,
                 error.InvalidUtf8,
+                error.InvalidWtf8,
                 => bun.C.E.INVAL,
 
                 error.OutOfMemory,

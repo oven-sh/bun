@@ -1,14 +1,14 @@
 //! bun.sys.sys_uv is a polyfill of bun.sys but with libuv.
 //! TODO: Probably should merge this into bun.sys itself with isWindows checks
 const std = @import("std");
-const os = std.os;
+const posix = std.posix;
 const bun = @import("root").bun;
 
 const assertIsValidWindowsPath = bun.strings.assertIsValidWindowsPath;
 const fd_t = bun.FileDescriptor;
 const default_allocator = bun.default_allocator;
 const kernel32 = bun.windows;
-const linux = os.linux;
+const linux = posix.linux;
 const uv = bun.windows.libuv;
 
 const C = bun.C;
@@ -43,7 +43,7 @@ pub fn open(file_path: [:0]const u8, c_flags: bun.Mode, _perm: bun.Mode) Maybe(b
     var req: uv.fs_t = uv.fs_t.uninitialized;
     defer req.deinit();
 
-    const flags = uv.O.fromStd(c_flags);
+    const flags = uv.O.fromBunO(c_flags);
 
     var perm = _perm;
     if (perm == 0) {

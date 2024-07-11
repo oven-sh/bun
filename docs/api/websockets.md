@@ -321,7 +321,7 @@ namespace Bun {
         message: string | ArrayBuffer | Uint8Array,
       ) => void;
       open?: (ws: ServerWebSocket) => void;
-      close?: (ws: ServerWebSocket) => void;
+      close?: (ws: ServerWebSocket, code: number, reason: string) => void;
       error?: (ws: ServerWebSocket, error: Error) => void;
       drain?: (ws: ServerWebSocket) => void;
 

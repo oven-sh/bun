@@ -95,6 +95,10 @@ function generate(ssl) {
         fn: "end",
         length: 3,
       },
+      terminate: {
+        fn: "terminate",
+        length: 0,
+      },
 
       //   },
       listener: {
@@ -108,6 +112,11 @@ function generate(ssl) {
 
       flush: {
         fn: "flush",
+        length: 0,
+      },
+
+      "@@dispose": {
+        fn: "shutdown",
         length: 0,
       },
 
@@ -181,6 +190,10 @@ export default [
         fn: "stop",
         length: 1,
       },
+      "@@dispose": {
+        fn: "stop",
+        length: 0,
+      },
 
       ref: {
         fn: "ref",
@@ -236,6 +249,10 @@ export default [
         length: 3,
       },
       close: {
+        fn: "close",
+        length: 0,
+      },
+      "@@dispose": {
         fn: "close",
         length: 0,
       },

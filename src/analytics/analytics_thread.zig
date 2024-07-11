@@ -101,7 +101,6 @@ pub const Features = struct {
     pub var loaders: usize = 0;
     pub var lockfile_migration_from_package_lock: usize = 0;
     pub var macros: usize = 0;
-    pub var origin: usize = 0;
     pub var shell: usize = 0;
     pub var spawn: usize = 0;
     pub var standalone_shell: usize = 0;
@@ -110,7 +109,9 @@ pub const Features = struct {
     pub var tsconfig: usize = 0;
     pub var virtual_modules: usize = 0;
     pub var WebSocket: usize = 0;
-
+    pub var no_avx: usize = 0;
+    pub var no_avx2: usize = 0;
+    pub var binlinks: usize = 0;
     pub var builtin_modules = std.enums.EnumSet(bun.JSC.HardcodedModule).initEmpty();
 
     pub fn formatter() Formatter {
@@ -186,7 +187,7 @@ pub fn validateFeatureName(name: []const u8) void {
 
 pub const packed_features_list = brk: {
     const decls = std.meta.declarations(Features);
-    var names: [decls.len][]const u8 = undefined;
+    var names: [decls.len][:0]const u8 = undefined;
     var i = 0;
     for (decls) |decl| {
         if (@TypeOf(@field(Features, decl.name)) == usize) {
@@ -195,12 +196,12 @@ pub const packed_features_list = brk: {
             i += 1;
         }
     }
-    break :brk names[0..i];
+    break :brk names[0..i].*;
 };
 
 pub const PackedFeatures = @Type(.{
     .Struct = .{
-        .layout = .Packed,
+        .layout = .@"packed",
         .backing_integer = u64,
         .fields = brk: {
             var fields: [64]std.builtin.Type.StructField = undefined;
@@ -260,45 +261,47 @@ const platform_arch = if (Environment.isAarch64) Analytics.Architecture.arm else
 pub const GenerateHeader = struct {
     pub const GeneratePlatform = struct {
         var osversion_name: [32]u8 = undefined;
-        pub fn forMac() Analytics.Platform {
+        fn forMac() Analytics.Platform {
             @memset(&osversion_name, 0);
 
             var platform = Analytics.Platform{ .os = Analytics.OperatingSystem.macos, .version = &[_]u8{}, .arch = platform_arch };
             var len = osversion_name.len - 1;
-            if (std.c.sysctlbyname("kern.osrelease", &osversion_name, &len, null, 0) == -1) return platform;
+            // this previously used "kern.osrelease", which was the darwin xnu kernel version
+            // That is less useful than "kern.osproductversion", which is the macOS version
+            if (std.c.sysctlbyname("kern.osproductversion", &osversion_name, &len, null, 0) == -1) return platform;
 
             platform.version = bun.sliceTo(&osversion_name, 0);
             return platform;
         }
 
         pub var linux_os_name: std.c.utsname = undefined;
-        var platform_: ?Analytics.Platform = null;
+        var platform_: Analytics.Platform = undefined;
         pub const Platform = Analytics.Platform;
-
         var linux_kernel_version: Semver.Version = undefined;
+        var run_once = std.once(struct {
+            fn run() void {
+                if (comptime Environment.isMac) {
+                    platform_ = forMac();
+                } else if (comptime Environment.isPosix) {
+                    platform_ = forLinux();
+
+                    const release = bun.sliceTo(&linux_os_name.release, 0);
+                    const sliced_string = Semver.SlicedString.init(release, release);
+                    const result = Semver.Version.parse(sliced_string);
+                    linux_kernel_version = result.version.min();
+                } else if (Environment.isWindows) {
+                    platform_ = Platform{
+                        .os = Analytics.OperatingSystem.windows,
+                        .version = &[_]u8{},
+                        .arch = platform_arch,
+                    };
+                }
+            }
+        }.run);
 
         pub fn forOS() Analytics.Platform {
-            if (platform_ != null) return platform_.?;
-
-            if (comptime Environment.isMac) {
-                platform_ = forMac();
-                return platform_.?;
-            } else if (comptime Environment.isPosix) {
-                platform_ = forLinux();
-
-                const release = bun.sliceTo(&linux_os_name.release, 0);
-                const sliced_string = Semver.SlicedString.init(release, release);
-                const result = Semver.Version.parse(sliced_string);
-                linux_kernel_version = result.version.min();
-            } else {
-                platform_ = Platform{
-                    .os = Analytics.OperatingSystem.windows,
-                    .version = &[_]u8{},
-                    .arch = platform_arch,
-                };
-            }
-
-            return platform_.?;
+            run_once.call();
+            return platform_;
         }
 
         pub fn kernelVersion() Semver.Version {
@@ -307,23 +310,23 @@ pub const GenerateHeader = struct {
             }
             _ = forOS();
 
-            // we only care about major, minor, patch so we don't care about the string
             return linux_kernel_version;
         }
 
-        pub fn forLinux() Analytics.Platform {
+        fn forLinux() Analytics.Platform {
             linux_os_name = std.mem.zeroes(@TypeOf(linux_os_name));
 
             _ = std.c.uname(&linux_os_name);
 
+            // Confusingly, the "release" tends to contain the kernel version much more frequently than the "version" field.
             const release = bun.sliceTo(&linux_os_name.release, 0);
-            const version = std.mem.sliceTo(&linux_os_name.version, @as(u8, 0));
+
             // Linux DESKTOP-P4LCIEM 5.10.16.3-microsoft-standard-WSL2 #1 SMP Fri Apr 2 22:23:49 UTC 2021 x86_64 x86_64 x86_64 GNU/Linux
             if (std.mem.indexOf(u8, release, "microsoft") != null) {
-                return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = version, .arch = platform_arch };
+                return Analytics.Platform{ .os = Analytics.OperatingSystem.wsl, .version = release, .arch = platform_arch };
             }
 
-            return Analytics.Platform{ .os = Analytics.OperatingSystem.linux, .version = version, .arch = platform_arch };
+            return Analytics.Platform{ .os = Analytics.OperatingSystem.linux, .version = release, .arch = platform_arch };
         }
     };
 };

@@ -28,7 +28,9 @@ on:
 
 env:
   LLVM_VERSION: 16
-  BUN_VERSION: 1.1.2
+  BUN_VERSION: 1.1.8
+  LC_CTYPE: "en_US.UTF-8"
+  LC_ALL: "en_US.UTF-8"
 
 jobs:
   build-submodules:
@@ -263,7 +265,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release \
             -DUSE_LTO=ON \
             -DBUN_LINK_ONLY=1 \
-            -DBUN_ZIG_OBJ="${{ runner.temp }}/release/bun-zig.o" \
+            -DBUN_ZIG_OBJ_DIR="${{ runner.temp }}/release" \
             -DBUN_CPP_ARCHIVE="${{ runner.temp }}/bun-cpp-obj/bun-cpp-objects.a" \
             -DBUN_DEPS_OUT_DIR="${{ runner.temp }}/bun-deps" \
             -DNO_CONFIGURE_DEPENDS=1
@@ -274,6 +276,9 @@ jobs:
           chmod +x bun-profile bun
           mkdir -p bun-${{ inputs.tag }}-profile/ bun-${{ inputs.tag }}/
           mv bun-profile bun-${{ inputs.tag }}-profile/bun-profile
+          if [ -f bun.dSYM ]; then
+            mv bun.dSYM bun-${{ inputs.tag }}-profile/bun.dSYM
+          fi
           mv bun bun-${{ inputs.tag }}/bun
           zip -r bun-${{ inputs.tag }}-profile.zip bun-${{ inputs.tag }}-profile
           zip -r bun-${{ inputs.tag }}.zip bun-${{ inputs.tag }}

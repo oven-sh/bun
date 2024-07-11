@@ -63,8 +63,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: bun.PathBuffer = undefined;
+var cwd_buf: bun.PathBuffer = undefined;
 
 pub const Arguments = struct {
     url: URL,
@@ -198,7 +198,7 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
-    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .Monotonic);
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .monotonic);
     const Group = struct {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,

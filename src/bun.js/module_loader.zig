@@ -118,7 +118,7 @@ fn jsModuleFromFile(from_path: string, comptime input: string) string {
         };
     } else {
         var parts = [_]string{ from_path, "src/js/out/" ++ moduleFolder ++ "/" ++ input };
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
         var absolute_path_to_use = Fs.FileSystem.instance.absBuf(&parts, &buf);
         buf[absolute_path_to_use.len] = 0;
         file = std.fs.openFileAbsoluteZ(absolute_path_to_use[0..absolute_path_to_use.len :0], .{ .mode = .read_only }) catch {
@@ -154,11 +154,17 @@ inline fn jsSyntheticModule(comptime name: ResolvedSource.Tag, specifier: String
 ///
 /// This can technically fail if concurrent access across processes happens, or permission issues.
 /// Errors here should always be ignored.
-fn dumpSource(specifier: string, printer: anytype) void {
-    dumpSourceString(specifier, printer.ctx.getWritten());
+fn dumpSource(vm: *VirtualMachine, specifier: string, printer: anytype) void {
+    dumpSourceString(vm, specifier, printer.ctx.getWritten());
 }
 
-fn dumpSourceString(specifier: string, written: []const u8) void {
+fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8) void {
+    dumpSourceStringFailiable(vm, specifier, written) catch |e| {
+        Output.debugWarn("Failed to dump source string: {}", .{e});
+    };
+}
+
+fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
 
     const BunDebugHolder = struct {
@@ -174,7 +180,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/tmp/bun-debug-src/",
             .windows => brk: {
                 const temp = bun.fs.FileSystem.RealFS.platformTempDir();
-                var win_temp_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var win_temp_buffer: bun.PathBuffer = undefined;
                 @memcpy(win_temp_buffer[0..temp.len], temp);
                 const suffix = "\\bun-debug-src";
                 @memcpy(win_temp_buffer[temp.len .. temp.len + suffix.len], suffix);
@@ -182,10 +188,7 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
                 break :brk win_temp_buffer[0 .. temp.len + suffix.len :0];
             },
         };
-        const dir = std.fs.cwd().makeOpenPath(base_name, .{}) catch |e| {
-            Output.debug("Failed to dump source string: {}", .{e});
-            return;
-        };
+        const dir = try std.fs.cwd().makeOpenPath(base_name, .{});
         BunDebugHolder.dir = dir;
         break :dir dir;
     };
@@ -195,17 +198,53 @@ fn dumpSourceString(specifier: string, written: []const u8) void {
             else => "/".len,
             .windows => bun.path.windowsFilesystemRoot(dir_path).len,
         };
-        var parent = dir.makeOpenPath(dir_path[root_len..], .{}) catch |e| {
-            Output.debug("Failed to dump source string: makeOpenPath({s}[{d}..]) {}", .{ dir_path, root_len, e });
-            return;
-        };
+        var parent = try dir.makeOpenPath(dir_path[root_len..], .{});
         defer parent.close();
-        parent.writeFile(std.fs.path.basename(specifier), written) catch |e| {
-            Output.debug("Failed to dump source string: writeFile {}", .{e});
+        parent.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch |e| {
+            Output.debugWarn("Failed to dump source string: writeFile {}", .{e});
             return;
         };
+        if (vm.source_mappings.get(specifier)) |mappings| {
+            defer mappings.deref();
+            const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
+            defer bun.default_allocator.free(map_path);
+            const file = try parent.createFile(map_path, .{});
+            defer file.close();
+
+            const source_file = parent.readFileAlloc(
+                bun.default_allocator,
+                specifier,
+                std.math.maxInt(u64),
+            ) catch "";
+
+            var bufw = std.io.bufferedWriter(file.writer());
+            const w = bufw.writer();
+            try w.print(
+                \\{{
+                \\  "version": 3,
+                \\  "file": {},
+                \\  "sourceRoot": "",
+                \\  "sources": [{}],
+                \\  "sourcesContent": [{}],
+                \\  "names": [],
+                \\  "mappings": "{}"
+                \\}}
+            , .{
+                js_printer.formatJSONStringUTF8(std.fs.path.basename(specifier)),
+                js_printer.formatJSONStringUTF8(specifier),
+                js_printer.formatJSONStringUTF8(source_file),
+                mappings.formatVLQs(),
+            });
+            try bufw.flush();
+        }
     } else {
-        dir.writeFile(std.fs.path.basename(specifier), written) catch return;
+        dir.writeFile(.{
+            .sub_path = std.fs.path.basename(specifier),
+            .data = written,
+        }) catch return;
     }
 }
 
@@ -242,7 +281,7 @@ pub const RuntimeTranspilerStore = struct {
         } else {
             return;
         }
-        var vm = @fieldParentPtr(JSC.VirtualMachine, "transpiler_store", this);
+        var vm: *JSC.VirtualMachine = @fieldParentPtr("transpiler_store", this);
         const event_loop = vm.eventLoop();
         const global = vm.global;
         const jsc_vm = vm.jsc;
@@ -387,7 +426,7 @@ pub const RuntimeTranspilerStore = struct {
         }
 
         pub fn runFromWorkerThread(work_task: *JSC.WorkPoolTask) void {
-            @fieldParentPtr(TranspilerJob, "work_task", work_task).run();
+            @as(*TranspilerJob, @fieldParentPtr("work_task", work_task)).run();
         }
 
         pub fn run(this: *TranspilerJob) void {
@@ -396,13 +435,13 @@ pub const RuntimeTranspilerStore = struct {
             const allocator = arena.allocator();
 
             defer this.dispatchToMainThread();
-            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.Monotonic)) {
+            if (this.generation_number != this.vm.transpiler_store.generation_number.load(.monotonic)) {
                 this.parse_error = error.TranspilerJobGenerationMismatch;
                 return;
             }
 
             if (ast_memory_store == null) {
-                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch @panic("out of memory!");
+                ast_memory_store = bun.default_allocator.create(js_ast.ASTMemoryAllocator) catch bun.outOfMemory();
                 ast_memory_store.?.* = js_ast.ASTMemoryAllocator{
                     .allocator = allocator,
                     .previous = null,
@@ -562,7 +601,7 @@ pub const RuntimeTranspilerStore = struct {
                 }) catch {};
 
                 if (comptime Environment.dump_source) {
-                    dumpSourceString(specifier, entry.output_code.byteSlice());
+                    dumpSourceString(vm, specifier, entry.output_code.byteSlice());
                 }
 
                 this.resolved_source = ResolvedSource{
@@ -592,6 +631,7 @@ pub const RuntimeTranspilerStore = struct {
                     .source_code = bun.String.createLatin1(parse_result.source.contents),
                     .specifier = duped,
                     .source_url = duped.createIfDifferent(path.text),
+                    .already_bundled = true,
                     .hash = 0,
                 };
                 this.resolved_source.source_code.ensureHash();
@@ -661,7 +701,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(this.vm, specifier, &printer);
             }
 
             const duped = String.createUTF8(specifier);
@@ -731,7 +771,7 @@ pub const ModuleLoader = struct {
         }
 
         // atomically write to a tmpfile and then move it to the final destination
-        var tmpname_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var tmpname_buf: bun.PathBuffer = undefined;
         const tmpfilename = bun.sliceTo(bun.fs.FileSystem.instance.tmpname(extname, &tmpname_buf, bun.hash(file.name)) catch return null, 0);
 
         const tmpdir = bun.fs.FileSystem.instance.tmpdir() catch return null;
@@ -768,8 +808,6 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",
@@ -856,12 +894,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch @panic("OOM");
-                concurrent_task.* = .{
-                    .task = JSC.Task.init(this),
-                    .auto_delete = true,
-                };
-                this.vm().enqueueTaskConcurrent(concurrent_task);
+                this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn onPoll(this: *Queue) void {
@@ -991,7 +1024,7 @@ pub const ModuleLoader = struct {
 
             pub fn pollModules(this: *Queue) void {
                 var pm = this.vm().packageManager();
-                if (pm.pending_tasks.load(.Monotonic) > 0) return;
+                if (pm.pending_tasks.load(.monotonic) > 0) return;
 
                 var modules: []AsyncModule = this.map.items;
                 var i: usize = 0;
@@ -1036,7 +1069,9 @@ pub const ModuleLoader = struct {
                         const package = pm.lockfile.packages.get(package_id);
                         bun.assert(package.resolution.tag != .root);
 
-                        switch (pm.determinePreinstallState(package, pm.lockfile)) {
+                        var name_and_version_hash: ?u64 = null;
+                        var patchfile_hash: ?u64 = null;
+                        switch (pm.determinePreinstallState(package, pm.lockfile, &name_and_version_hash, &patchfile_hash)) {
                             .done => {
                                 // we are only truly done if all the dependencies are done.
                                 const current_tasks = pm.total_tasks;
@@ -1072,7 +1107,7 @@ pub const ModuleLoader = struct {
             }
 
             pub fn vm(this: *Queue) *VirtualMachine {
-                return @fieldParentPtr(VirtualMachine, "modules", this);
+                return @alignCast(@fieldParentPtr("modules", this));
             }
         };
 
@@ -1189,6 +1224,8 @@ pub const ModuleLoader = struct {
             }
             log.deinit();
 
+            debug("fulfill: {any}", .{specifier});
+
             Bun__onFulfillAsyncModule(
                 globalThis,
                 promise,
@@ -1268,19 +1305,19 @@ pub const ModuleLoader = struct {
 
             var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
             if (result.url.len > 0)
-                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
             const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
-            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
-                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
             }
             error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
             if (this.referrer.len > 0 and !strings.eqlComptime(this.referrer, "undefined")) {
-                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.referrer).withEncoding().toJS(globalThis));
             }
 
             const promise_value = this.promise.swap();
@@ -1359,21 +1396,21 @@ pub const ModuleLoader = struct {
 
             var error_instance = ZigString.init(msg).withEncoding().toErrorInstance(globalThis);
             if (result.url.len > 0)
-                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("url"), ZigString.init(result.url).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("name"), ZigString.init(name).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("pkg"), ZigString.init(result.name).withEncoding().toJS(globalThis));
             if (this.specifier.len > 0 and !strings.eqlComptime(this.specifier, "undefined")) {
-                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("referrer"), ZigString.init(this.specifier).withEncoding().toJS(globalThis));
             }
 
             const location = logger.rangeData(&this.parse_result.source, this.parse_result.ast.import_records.at(import_record_id).range, "").location.?;
             error_instance.put(globalThis, ZigString.static("specifier"), ZigString.init(
                 this.parse_result.ast.import_records.at(import_record_id).path.text,
-            ).withEncoding().toValueGC(globalThis));
-            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toValueGC(globalThis));
+            ).withEncoding().toJS(globalThis));
+            error_instance.put(globalThis, ZigString.static("sourceURL"), ZigString.init(this.parse_result.source.path.text).withEncoding().toJS(globalThis));
             error_instance.put(globalThis, ZigString.static("line"), JSValue.jsNumber(location.line));
             if (location.line_text) |line_text| {
-                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toValueGC(globalThis));
+                error_instance.put(globalThis, ZigString.static("lineText"), ZigString.init(line_text).withEncoding().toJS(globalThis));
             }
             error_instance.put(globalThis, ZigString.static("column"), JSValue.jsNumber(location.column));
 
@@ -1432,7 +1469,7 @@ pub const ModuleLoader = struct {
             }
 
             if (comptime Environment.dump_source) {
-                dumpSource(specifier, &printer);
+                dumpSource(jsc_vm, specifier, &printer);
             }
 
             const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -1785,7 +1822,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global) catch @panic("Unexpected JS error"),
+                        .jsvalue_for_export = parse_result.ast.parts.@"[0]"().stmts[0].data.s_expr.value.toJS(allocator, globalObject orelse jsc_vm.global, .{}) catch @panic("Unexpected JS error"),
                         .tag = .exports_object,
                     };
                 }
@@ -1796,7 +1833,7 @@ pub const ModuleLoader = struct {
                         .source_code = bun.String.createLatin1(parse_result.source.contents),
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
-
+                        .already_bundled = true,
                         .hash = 0,
                     };
                 }
@@ -1808,7 +1845,7 @@ pub const ModuleLoader = struct {
                     }) catch {};
 
                     if (comptime Environment.allow_assert) {
-                        dumpSourceString(specifier, entry.output_code.byteSlice());
+                        dumpSourceString(jsc_vm, specifier, entry.output_code.byteSlice());
                     }
 
                     return ResolvedSource{
@@ -1910,7 +1947,7 @@ pub const ModuleLoader = struct {
                 };
 
                 if (comptime Environment.dump_source) {
-                    dumpSource(specifier, &printer);
+                    dumpSource(jsc_vm, specifier, &printer);
                 }
 
                 const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
@@ -2244,9 +2281,16 @@ pub const ModuleLoader = struct {
             _specifier.slice(),
             &display_specifier,
         );
-        const path = Fs.Path.init(specifier);
+        var path = Fs.Path.init(specifier);
 
         var virtual_source: ?*logger.Source = null;
+        var virtual_source_to_use: ?logger.Source = null;
+        var blob_to_deinit: ?JSC.WebCore.Blob = null;
+        defer {
+            if (blob_to_deinit != null) {
+                blob_to_deinit.?.deinit();
+            }
+        }
 
         // Deliberately optional.
         // The concurrent one only handles javascript-like loaders right now.
@@ -2263,6 +2307,39 @@ pub const ModuleLoader = struct {
             }
         }
 
+        if (JSC.WebCore.ObjectURLRegistry.isBlobURL(specifier)) {
+            if (JSC.WebCore.ObjectURLRegistry.singleton().resolveAndDupe(specifier["blob:".len..])) |blob| {
+                blob_to_deinit = blob;
+
+                // "file:" loader makes no sense for blobs
+                // so let's default to tsx.
+                if (blob.getFileName()) |filename| {
+                    const current_path = Fs.Path.init(filename);
+
+                    // Only treat it as a file if is a Bun.file()
+                    if (blob.needsToReadFile()) {
+                        path = current_path;
+                    }
+
+                    loader = jsc_vm.bundler.options.loaders.get(current_path.name.ext) orelse .tsx;
+                } else {
+                    loader = .tsx;
+                }
+
+                if (!blob.needsToReadFile()) {
+                    virtual_source_to_use = logger.Source{
+                        .path = path,
+                        .contents = blob.sharedView(),
+                        .key_path = path,
+                    };
+                    virtual_source = &virtual_source_to_use.?;
+                }
+            } else {
+                ret.* = ErrorableResolvedSource.err(error.JSErrorObject, globalObject.createErrorInstanceWithCode(.MODULE_NOT_FOUND, "Blob not found", .{}).asVoid());
+                return null;
+            }
+        }
+
         if (type_attribute) |attribute| {
             if (attribute.eqlComptime("sqlite")) {
                 loader = .sqlite;
@@ -2274,6 +2351,14 @@ pub const ModuleLoader = struct {
                 loader = .toml;
             } else if (attribute.eqlComptime("file")) {
                 loader = .file;
+            } else if (attribute.eqlComptime("js")) {
+                loader = .js;
+            } else if (attribute.eqlComptime("jsx")) {
+                loader = .jsx;
+            } else if (attribute.eqlComptime("ts")) {
+                loader = .ts;
+            } else if (attribute.eqlComptime("tsx")) {
+                loader = .tsx;
             }
         }
 
@@ -2285,7 +2370,7 @@ pub const ModuleLoader = struct {
         //
         if (comptime bun.FeatureFlags.concurrent_transpiler) {
             const concurrent_loader = loader orelse .file;
-            if (allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
+            if (blob_to_deinit == null and allow_promise and (jsc_vm.has_loaded or jsc_vm.is_in_preload) and concurrent_loader.isJavaScriptLike() and
                 // Plugins make this complicated,
                 // TODO: allow running concurrently when no onLoad handlers match a plugin.
                 jsc_vm.plugin_runner == null and jsc_vm.transpiler_store.enabled)
@@ -2424,6 +2509,14 @@ pub const ModuleLoader = struct {
 
                 // These are defined in src/js/*
                 .@"bun:ffi" => return jsSyntheticModule(.@"bun:ffi", specifier),
+                .@"bun:sql" => {
+                    if (!Environment.isDebug) {
+                        if (!is_allowed_to_use_internal_testing_apis and !bun.FeatureFlags.postgresql)
+                            return null;
+                    }
+
+                    return jsSyntheticModule(.@"bun:sql", specifier);
+                },
                 .@"bun:sqlite" => return jsSyntheticModule(.@"bun:sqlite", specifier),
                 .@"detect-libc" => return jsSyntheticModule(if (Environment.isLinux) .@"detect-libc/linux" else .@"detect-libc", specifier),
                 .@"node:assert" => return jsSyntheticModule(.@"node:assert", specifier),
@@ -2622,6 +2715,7 @@ pub const HardcodedModule = enum {
     @"bun:jsc",
     @"bun:main",
     @"bun:test", // usually replaced by the transpiler but `await import("bun:" + "test")` has to work
+    @"bun:sql",
     @"bun:sqlite",
     @"bun:internal-for-testing",
     @"detect-libc",
@@ -2699,6 +2793,7 @@ pub const HardcodedModule = enum {
             .{ "bun:test", HardcodedModule.@"bun:test" },
             .{ "bun:sqlite", HardcodedModule.@"bun:sqlite" },
             .{ "bun:internal-for-testing", HardcodedModule.@"bun:internal-for-testing" },
+            .{ "bun:sql", HardcodedModule.@"bun:sql" },
             .{ "detect-libc", HardcodedModule.@"detect-libc" },
             .{ "node-fetch", HardcodedModule.@"node-fetch" },
             .{ "isomorphic-fetch", HardcodedModule.@"isomorphic-fetch" },
@@ -2911,6 +3006,7 @@ pub const HardcodedModule = enum {
             .{ "bun:ffi", .{ .path = "bun:ffi" } },
             .{ "bun:jsc", .{ .path = "bun:jsc" } },
             .{ "bun:sqlite", .{ .path = "bun:sqlite" } },
+            .{ "bun:sql", .{ .path = "bun:sql" } },
             .{ "bun:wrap", .{ .path = "bun:wrap" } },
             .{ "bun:internal-for-testing", .{ .path = "bun:internal-for-testing" } },
             .{ "ffi", .{ .path = "bun:ffi" } },

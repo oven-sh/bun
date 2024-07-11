@@ -18,14 +18,31 @@ describe("Bun.Transpiler", () => {
     },
     platform: "browser",
   });
+  const transpilerMinifySyntax = new Bun.Transpiler({
+    loader: "tsx",
+    define: {
+      "process.env.NODE_ENV": JSON.stringify("development"),
+      user_undefined: "undefined",
+      user_nested: "location.origin",
+      "hello.earth": "hello.mars",
+      "Math.log": "console.error",
+    },
+    macro: {
+      react: {
+        bacon: `${import.meta.dir}/macro-check.js`,
+      },
+    },
+    minify: { syntax: true },
+    platform: "browser",
+  });
 
   const ts = {
-    parsed: (code, trim = true, autoExport = false) => {
+    parsed: (code, trim = true, autoExport = false, minify = false) => {
       if (autoExport) {
         code = "export default (" + code + ")";
       }
 
-      var out = transpiler.transformSync(code, "ts");
+      var out = (minify ? transpilerMinifySyntax : transpiler).transformSync(code, "ts");
       if (autoExport && out.startsWith("export default ")) {
         out = out.substring("export default ".length);
       }
@@ -43,12 +60,20 @@ describe("Bun.Transpiler", () => {
       return out;
     },
 
+    parsedMin: (code, trim = true, autoExport = false) => {
+      return ts.parsed(code, trim, autoExport, true);
+    },
+
     expectPrinted: (code, out) => {
       expect(ts.parsed(code, true, true)).toBe(out);
     },
 
     expectPrinted_: (code, out) => {
       expect(ts.parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+    },
+
+    expectPrintedMin_: (code, out) => {
+      expect(ts.parsedMin(code, !out.endsWith(";\n"), false)).toBe(out);
     },
 
     expectParseError: (code, message) => {
@@ -89,17 +114,17 @@ describe("Bun.Transpiler", () => {
 
   describe("property access inlining", () => {
     it("bails out with spread", () => {
-      ts.expectPrinted_("const a = [...b][0];", "const a = [...b][0]");
-      ts.expectPrinted_("const a = {...b}[0];", "const a = { ...b }[0]");
+      ts.expectPrintedMin_("const a = [...b][0];", "const a = [...b][0]");
+      ts.expectPrintedMin_("const a = {...b}[0];", "const a = { ...b }[0]");
     });
     it("bails out with multiple items", () => {
-      ts.expectPrinted_("const a = [b, c][0];", "const a = [b, c][0]");
+      ts.expectPrintedMin_("const a = [b, c][0];", "const a = [b, c][0]");
     });
     it("works", () => {
-      ts.expectPrinted_('const a = ["hey"][0];', 'const a = "hey"');
+      ts.expectPrintedMin_('const a = ["hey"][0];', 'const a = "hey"');
     });
     it("works nested", () => {
-      ts.expectPrinted_('const a = ["hey"][0][0];', 'const a = "h"');
+      ts.expectPrintedMin_('const a = ["hey"][0][0];', 'const a = "h"');
     });
   });
 
@@ -905,12 +930,12 @@ export default class {
   export enum x { y }
 }`;
     const output1 = `var test;
-(function(test) {
+((test) => {
   let x;
-  (function(x) {
+  ((x) => {
     x[x["y"] = 0] = "y";
-  })(x = test.x || (test.x = {}));
-})(test || (test = {}))`;
+  })(x = test.x ||= {});
+})(test ||= {})`;
 
     it("namespace with exported enum", () => {
       ts.expectPrinted_(input1, output1);
@@ -920,12 +945,12 @@ export default class {
   export enum x { y }
 }`;
     const output2 = `export var test;
-(function(test) {
+((test) => {
   let x;
-  (function(x) {
+  ((x) => {
     x[x["y"] = 0] = "y";
-  })(x = test.x || (test.x = {}));
-})(test || (test = {}))`;
+  })(x = test.x ||= {});
+})(test ||= {})`;
 
     it("exported namespace with exported enum", () => {
       ts.expectPrinted_(input2, output2);
@@ -937,15 +962,15 @@ export default class {
   }
 }`;
     const output3 = `var first;
-(function(first) {
+((first) => {
   let second;
-  (function(second) {
+  ((second) => {
     let x;
-    (function(x) {
+    ((x) => {
       x[x["y"] = 0] = "y";
-    })(x || (x = {}));
-  })(second = first.second || (first.second = {}));
-})(first || (first = {}))`;
+    })(x ||= {});
+  })(second = first.second ||= {});
+})(first ||= {})`;
 
     it("exported inner namespace", () => {
       ts.expectPrinted_(input3, output3);
@@ -953,9 +978,9 @@ export default class {
 
     const input4 = `export enum x { y }`;
     const output4 = `export var x;
-(function(x) {
+((x) => {
   x[x["y"] = 0] = "y";
-})(x || (x = {}))`;
+})(x ||= {})`;
 
     it("exported enum", () => {
       ts.expectPrinted_(input4, output4);
@@ -1512,8 +1537,10 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
   });
 
   it("CommonJS", () => {
-    var nodeTranspiler = new Bun.Transpiler({ platform: "node" });
-    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi" + 123);\n');
+    var nodeTranspiler = new Bun.Transpiler({ platform: "node", minify: { syntax: false } });
+
+    // note: even if minify syntax is off, constant folding must happen within require calls
+    expect(nodeTranspiler.transformSync("module.require('hi' + 123)")).toBe('require("hi123");\n');
 
     expect(nodeTranspiler.transformSync("module.require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
     expect(nodeTranspiler.transformSync("require(1 ? 'foo' : 'bar')")).toBe('require("foo");\n');
@@ -1596,6 +1623,10 @@ export var ComponentThatHasSpreadCausesDeopt = <Hello {...spread} />
 
   const expectPrinted_ = (code, out) => {
     expect(parsed(code, !out.endsWith(";\n"), false)).toBe(out);
+  };
+
+  const expectPrintedMin_ = (code, out) => {
+    expect(parsed(code, !out.endsWith(";\n"), false, transpilerMinifySyntax)).toBe(out);
   };
 
   const expectPrintedNoTrim = (code, out) => {
@@ -1748,14 +1779,14 @@ console.log(a)
         `.trim(),
       );
 
-      expectPrinted_(`export const foo = "a" + "b";`, `export const foo = "ab"`);
-      expectPrinted_(
+      expectPrintedMin_(`export const foo = "a" + "b";`, `export const foo = "ab"`);
+      expectPrintedMin_(
         `export const foo = "F" + "0" + "F" + "0123456789" + "ABCDEF" + "0123456789ABCDEFF0123456789ABCDEF00" + "b";`,
         `export const foo = "F0F0123456789ABCDEF0123456789ABCDEFF0123456789ABCDEF00b"`,
       );
-      expectPrinted_(`export const foo = "a" + 1 + "b";`, `export const foo = "a" + 1 + "b"`);
-      expectPrinted_(`export const foo = "a" + "b" + 1 + "b";`, `export const foo = "ab" + 1 + "b"`);
-      expectPrinted_(`export const foo = "a" + "b" + 1 + "b" + "c";`, `export const foo = "ab" + 1 + "bc"`);
+      expectPrintedMin_(`export const foo = "a" + 1 + "b";`, `export const foo = "a1b"`);
+      expectPrintedMin_(`export const foo = "a" + "b" + 1 + "b";`, `export const foo = "ab1b"`);
+      expectPrintedMin_(`export const foo = "a" + "b" + 1 + "b" + "c";`, `export const foo = "ab1bc"`);
     });
 
     it("numeric constants", () => {
@@ -2866,6 +2897,10 @@ console.log(foo, array);
     });
 
     it("constant folding", () => {
+      const expectPrinted = (code, out) => {
+        expect(parsed(code, true, true, transpilerMinifySyntax)).toBe(out);
+      };
+
       // we have an optimization for numbers 0 - 100, -0 - -100 so we must test those specifically
       // https://github.com/oven-sh/bun/issues/2810
       for (let i = 1; i < 120; i++) {
@@ -2970,7 +3005,7 @@ console.log(foo, array);
       expectPrinted("x + 'a' + 'b'", 'x + "ab"');
       expectPrinted("x + 'a' + 'bc'", 'x + "abc"');
       expectPrinted("x + 'ab' + 'c'", 'x + "abc"');
-      expectPrinted("'a' + 1", '"a" + 1');
+      expectPrinted("'a' + 1", '"a1"');
       expectPrinted("x * 'a' + 'b'", 'x * "a" + "b"');
 
       // rope string push another rope string
@@ -3036,9 +3071,9 @@ console.log(foo, array);
       expectPrinted("NaN.toString()", "NaN.toString()");
       expectPrinted("NaN === NaN", "!1");
 
-      expectPrinted("Infinity", "Infinity");
-      expectPrinted("Infinity.toString()", "Infinity.toString()");
-      expectPrinted("(-Infinity).toString()", "(-Infinity).toString()");
+      expectPrinted("Infinity", "1 / 0");
+      expectPrinted("Infinity.toString()", "(1 / 0).toString()");
+      expectPrinted("(-Infinity).toString()", "(-1 / 0).toString()");
       expectPrinted("Infinity === Infinity", "!0");
       expectPrinted("Infinity === -Infinity", "!1");
 
@@ -3273,10 +3308,10 @@ console.log(foo, array);
     });
 
     it('`str` + "``"', () => {
-      expectPrinted_('const x = `str` + "``";', "const x = `str\\`\\``");
-      expectPrinted_('const x = `` + "`";', "const x = `\\``");
-      expectPrinted_('const x = `` + "``";', "const x = `\\`\\``");
-      expectPrinted_('const x = "``" + ``;', "const x = `\\`\\``");
+      expectPrintedMin_('const x = `str` + "``";', 'const x = "str``"');
+      expectPrintedMin_('const x = `` + "`";', 'const x = "`"');
+      expectPrintedMin_('const x = `` + "``";', 'const x = "``"');
+      expectPrintedMin_('const x = "``" + ``;', 'const x = "``"');
     });
   });
 

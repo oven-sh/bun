@@ -33,11 +33,10 @@ namespace WebCore {
 
 // Specialized by generated code for IDL enumeration conversion.
 template<typename T> std::optional<T> parseEnumeration(JSC::JSGlobalObject&, JSC::JSValue);
-template<typename T> const char* expectedEnumerationValues();
+template<typename T> ASCIILiteral expectedEnumerationValues();
 
 // Specialized by generated code for IDL enumeration conversion.
 template<typename T> JSC::JSString* convertEnumerationToJS(JSC::JSGlobalObject&, T);
-
 
 template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLEnumeration<T>> {
     template<typename ExceptionThrower = DefaultExceptionThrower>
@@ -47,11 +46,11 @@ template<typename T> struct Converter<IDLEnumeration<T>> : DefaultConverter<IDLE
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
         auto result = parseEnumeration<T>(lexicalGlobalObject, value);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
 
         if (UNLIKELY(!result)) {
             exceptionThrower(lexicalGlobalObject, throwScope);
-            return { };
+            return {};
         }
         return result.value();
     }

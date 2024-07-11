@@ -429,6 +429,15 @@ export default [
         getter: "getName",
         cache: true,
       },
+      path: {
+        getter: "getPath",
+        cache: true,
+      },
+      parentPath: {
+        // @since node v20.12.x
+        getter: "getPath",
+        cache: true,
+      },
     },
   }),
   define({

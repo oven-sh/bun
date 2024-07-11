@@ -61,18 +61,47 @@ it("async setInterval", async () => {
   });
 });
 
-it("setInterval if refreshed before run, should reschedule to run later", done => {
-  let start = Date.now();
+it("refreshed setInterval should not reschedule again", async () => {
+  let relative = performance.now();
+  let runCount = 0;
   let timer = setInterval(() => {
-    let end = Date.now();
-    clearInterval(timer);
-    expect(end - start).toBeGreaterThan(149);
-    done();
-  }, 100);
+    let end = performance.now();
 
-  setTimeout(() => {
+    // loop for 100
+    const spinloop = end;
+    while (performance.now() - spinloop < 100) {
+      end = performance.now();
+    }
+
     timer.refresh();
-  }, 50);
+
+    const elapsed = Math.round(end - relative);
+    console.log("Time since last run", elapsed);
+
+    runCount++;
+
+    switch (runCount) {
+      case 1: {
+        if (elapsed < 180) {
+          throw new Error("Expected elapsed time to be greater than 180");
+        }
+        break;
+      }
+      case 3:
+      case 2: {
+        if (elapsed > 180) {
+          throw new Error("Expected elapsed time to be less than 180");
+        }
+        break;
+      }
+    }
+
+    relative = end;
+
+    if (runCount === 3) {
+      clearInterval(timer);
+    }
+  }, 100);
 });
 
 it("setInterval runs with at least the delay time", () => {

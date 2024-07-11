@@ -49,8 +49,8 @@ pub const Run = struct {
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
@@ -145,17 +145,17 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(ctx, entry_path);
             Global.exitWide(exit_code);
             return;
         }
 
-        // The shell does not need to initialize JSC.
-        // JSC initialization costs 1-3ms
         bun.JSC.initialize();
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         run = .{
@@ -274,9 +274,9 @@ pub const Run = struct {
 
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
-                vm.onError(vm.global, promise.result(vm.global.vm()));
+                const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
-                if (vm.hot_reload != .none) {
+                if (vm.hot_reload != .none or handled) {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
@@ -284,6 +284,8 @@ pub const Run = struct {
                     vm.onExit();
 
                     if (run.any_unhandled) {
+                        bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
                         Output.prettyErrorln(
                             "<r>\n<d>{s}<r>",
                             .{Global.unhandled_error_bun_version_string},
@@ -315,6 +317,8 @@ pub const Run = struct {
                 vm.exit_handler.exit_code = 1;
                 vm.onExit();
                 if (run.any_unhandled) {
+                    bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
                     Output.prettyErrorln(
                         "<r>\n<d>{s}<r>",
                         .{Global.unhandled_error_bun_version_string},
@@ -338,7 +342,7 @@ pub const Run = struct {
             if (this.vm.isWatcherEnabled()) {
                 var prev_promise = this.vm.pending_internal_promise;
                 if (prev_promise.status(vm.global.vm()) == .Rejected) {
-                    vm.onError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
 
                 while (true) {
@@ -348,7 +352,7 @@ pub const Run = struct {
                         // Report exceptions in hot-reloaded modules
                         if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                             prev_promise = this.vm.pending_internal_promise;
-                            vm.onError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                            _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                             continue;
                         }
 
@@ -359,7 +363,7 @@ pub const Run = struct {
 
                     if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                         prev_promise = this.vm.pending_internal_promise;
-                        vm.onError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                        _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                     }
 
                     vm.eventLoop().tickPossiblyForever();
@@ -367,7 +371,7 @@ pub const Run = struct {
 
                 if (this.vm.pending_internal_promise.status(vm.global.vm()) == .Rejected and prev_promise != this.vm.pending_internal_promise) {
                     prev_promise = this.vm.pending_internal_promise;
-                    vm.onError(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()));
+                    _ = vm.unhandledRejection(this.vm.global, this.vm.pending_internal_promise.result(vm.global.vm()), this.vm.pending_internal_promise.asValue());
                 }
             } else {
                 while (vm.isEventLoopAlive()) {
@@ -417,6 +421,8 @@ pub const Run = struct {
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
 
+            bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
+
             Output.prettyErrorln(
                 "<r>\n<d>{s}<r>",
                 .{Global.unhandled_error_bun_version_string},
@@ -431,7 +437,7 @@ pub const Run = struct {
     }
 };
 
-pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
@@ -439,7 +445,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     return .undefined;
 }
 
-pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) noreturn {
+pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);

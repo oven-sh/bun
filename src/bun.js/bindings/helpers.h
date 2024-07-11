@@ -23,62 +23,6 @@ class GlobalObject;
 #pragma clang diagnostic push
 #pragma clang diagnostic ignored "-Wunused-function"
 
-template<class CppType, typename ZigType> class Wrap {
-public:
-    Wrap() {};
-
-    Wrap(ZigType zig)
-    {
-        result = zig;
-        cpp = static_cast<CppType*>(static_cast<void*>(&zig));
-    };
-
-    Wrap(ZigType* zig) { cpp = static_cast<CppType*>(static_cast<void*>(&zig)); };
-
-    Wrap(CppType _cpp)
-    {
-        auto buffer = alignedBuffer();
-        cpp = new (buffer) CppType(_cpp);
-    };
-
-    ~Wrap() {};
-
-    unsigned char* alignedBuffer()
-    {
-        return result.bytes + alignof(CppType) - reinterpret_cast<intptr_t>(result.bytes) % alignof(CppType);
-    }
-
-    ZigType result;
-    CppType* cpp;
-
-    static ZigType wrap(CppType obj) { return *static_cast<ZigType*>(static_cast<void*>(&obj)); }
-
-    static CppType unwrap(ZigType obj) { return *static_cast<CppType*>(static_cast<void*>(&obj)); }
-
-    static CppType* unwrap(ZigType* obj) { return static_cast<CppType*>(static_cast<void*>(obj)); }
-};
-
-template<class To, class From> To cast(From v)
-{
-    return *static_cast<To*>(static_cast<void*>(v));
-}
-
-template<class To, class From> To ccast(From v)
-{
-    return *static_cast<const To*>(static_cast<const void*>(v));
-}
-
-static const JSC::ArgList makeArgs(JSC__JSValue* v, size_t count)
-{
-    JSC::MarkedArgumentBuffer args = JSC::MarkedArgumentBuffer();
-    args.ensureCapacity(count);
-    for (size_t i = 0; i < count; ++i) {
-        args.append(JSC::JSValue::decode(v[i]));
-    }
-
-    return JSC::ArgList(args);
-}
-
 namespace Zig {
 
 // 8 bit byte
@@ -99,15 +43,6 @@ static void* untagVoid(const unsigned char* ptr)
 static void* untagVoid(const char16_t* ptr)
 {
     return untagVoid(reinterpret_cast<const unsigned char*>(ptr));
-}
-
-static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
-{
-    if (str.len == 0 || str.ptr == nullptr) {
-        return JSC::Identifier::EmptyIdentifier;
-    }
-
-    return JSC::Identifier::fromString(global->vm(), { untag(str.ptr), str.len });
 }
 
 static bool isTaggedUTF16Ptr(const unsigned char* ptr)
@@ -389,6 +324,16 @@ static JSC::JSValue getRangeErrorInstance(const ZigString* str, JSC__JSGlobalObj
     JSC::EnsureStillAliveScope ensureAlive(result);
 
     return JSC::JSValue(result);
+}
+
+static const JSC::Identifier toIdentifier(ZigString str, JSC::JSGlobalObject* global)
+{
+    if (str.len == 0 || str.ptr == nullptr) {
+        return JSC::Identifier::EmptyIdentifier;
+    }
+    WTF::String wtfstr = Zig::isTaggedExternalPtr(str.ptr) ? toString(str) : Zig::toStringCopy(str);
+    JSC::Identifier id = JSC::Identifier::fromString(global->vm(), wtfstr);
+    return id;
 }
 
 }; // namespace Zig

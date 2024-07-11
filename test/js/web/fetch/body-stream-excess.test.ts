@@ -90,11 +90,10 @@ describe("http response does not include an extraneous terminating 0\\r\\n\\r\\n
   ];
   for (let i = 0; i < scenarios.length; i++) {
     test("scenario " + i, async () => {
-      const server = Bun.serve(scenarios[i]);
+      using server = Bun.serve(scenarios[i]);
       const { stdout, stderr } = await $`curl ${server.url} --verbose`.quiet();
       expect(stdout.toString()).toBe("hello");
       expect(stderr.toString()).toContain("left intact");
-      server.stop(true);
     });
   }
 });

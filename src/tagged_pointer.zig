@@ -76,7 +76,7 @@ pub fn TagTypeEnumWithTypeMap(comptime Types: anytype) struct {
     inline for (Types, 0..) |field, i| {
         const name = comptime typeBaseName(@typeName(field));
         enumFields[i] = .{
-            .name = name,
+            .name = name[0..name.len :0],
             .value = 1024 - i,
         };
         typeMap[i] = .{ .value = 1024 - i, .ty = field, .name = name };
@@ -126,6 +126,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return null;
         }
 
+        pub fn typeName(this: This) ?[]const u8 {
+            return @tagName(this.tag());
+        }
+
         const This = @This();
         pub fn assert_type(comptime Type: type) void {
             const name = comptime typeBaseName(@typeName(Type));
@@ -133,7 +137,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
         }
-        pub inline fn get(this: This, comptime Type: anytype) ?*Type {
+        pub inline fn get(this: This, comptime Type: type) ?*Type {
             comptime assert_type(Type);
 
             return if (this.is(Type)) this.as(Type) else null;

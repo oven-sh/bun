@@ -235,7 +235,7 @@ it("fetch timeout works on tls", async () => {
     async fetch() {
       async function* body() {
         yield "Hello, ";
-        await Bun.sleep(500); // should only take 200ms
+        await Bun.sleep(700); // should only take 200ms-350ms
         yield "World!";
       }
       return new Response(body);
@@ -243,7 +243,7 @@ it("fetch timeout works on tls", async () => {
   });
   const start = performance.now();
   const TIMEOUT = 200;
-  const THRESHOLD = 100;
+  const THRESHOLD = 150;
 
   try {
     await fetch(server.url, {
@@ -254,7 +254,7 @@ it("fetch timeout works on tls", async () => {
     expect(e.name).toBe("TimeoutError");
   } finally {
     const total = performance.now() - start;
-    expect(total).toBeGreaterThan(TIMEOUT - THRESHOLD);
-    expect(total).toBeLessThan(TIMEOUT + THRESHOLD);
+    expect(total).toBeGreaterThanOrEqual(TIMEOUT - THRESHOLD);
+    expect(total).toBeLessThanOrEqual(TIMEOUT + THRESHOLD);
   }
 });

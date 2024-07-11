@@ -744,6 +744,14 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
+pub fn eqlComptimeT(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    if (T == u16) {
+        return eqlComptimeUTF16(self, alt);
+    }
+
+    return eqlComptime(self, alt);
+}
+
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
     return eqlComptimeCheckLenWithType(u8, self, alt, true);
 }
@@ -1732,7 +1740,9 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
-            isWindowsAbsolutePathMissingDriveLetter(T, path))
+            isWindowsAbsolutePathMissingDriveLetter(T, path) and
+            // is it a null device path? that's not an error. it's just a weird file path.
+            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL"))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
                 if (T == u8) path else bun.fmt.utf16(path),

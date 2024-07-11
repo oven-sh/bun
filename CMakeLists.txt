@@ -1240,7 +1240,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()

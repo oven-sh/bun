@@ -49,14 +49,12 @@ $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Proces
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /Zi '
-# $CFLAGS = '/O2 /Z7 /MT'
-$CXXFLAGS = '/O2 /Zi '
-# $CXXFLAGS = '/O2 /Z7 /MT'
+$CFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
+$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
 
 if ($env:USE_LTO -eq "1") {
-  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
-  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
+  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
+  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
 }
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
@@ -71,7 +69,10 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=$CFLAGS",
-  "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS",
+  "-DCMAKE_C_FLAGS_RELEASE=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS_RELEASE=$CXXFLAGS",
+  "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
 )
 
 if ($env:USE_LTO -eq "1") {

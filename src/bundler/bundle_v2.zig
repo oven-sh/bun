@@ -6756,8 +6756,8 @@ const LinkerContext = struct {
         const c = ctx.c;
         bun.assert(chunk.content == .javascript);
 
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer chunk.renamer.deinit(bun.default_allocator);
 

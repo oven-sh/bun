@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.18")
-set(WEBKIT_TAG 615e8585f96aa718b0f5158210259b83fe8440ea)
+set(Bun_VERSION "1.1.19")
+set(WEBKIT_TAG f8283468dcb71ce463839b06a57e1e5a687d2b38)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -37,6 +37,13 @@ else()
     endif()
 
     message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
+endif()
+
+if (WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
+    # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
+    # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
+    # as part of some file paths
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
 endif()
 
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
@@ -112,7 +119,11 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-set(LLVM_VERSION 16)
+if(WIN32)
+    set(LLVM_VERSION 18)
+else()
+    set(LLVM_VERSION 16)
+endif()
 
 macro(BUN_FIND_LLVM)
     find_program(
@@ -778,6 +789,8 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal/util/*.js"
+        "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/node/*.js"
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"
@@ -954,12 +967,15 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+if(APPLE)
+    add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
+endif()
+
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
-    "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
@@ -1126,6 +1142,7 @@ if(WIN32)
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
@@ -1148,7 +1165,6 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
-
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()

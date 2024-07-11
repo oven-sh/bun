@@ -2586,6 +2586,10 @@ pub const PackageManager = struct {
     progress_name_buf_dynamic: []u8 = &[_]u8{},
     cpu_count: u32 = 0,
 
+    track_installed_bin: TrackInstalledBin = .{
+        .none = {},
+    },
+
     // progress bar stuff when not stack allocated
     root_progress_node: *Progress.Node = undefined,
 
@@ -2709,6 +2713,12 @@ pub const PackageManager = struct {
         }
         Global.crash();
     }
+
+    const TrackInstalledBin = union(enum) {
+        none: void,
+        pending: void,
+        basename: []const u8,
+    };
 
     // maybe rename to `PackageJSONCache` if we cache more than workspaces
     pub const WorkspacePackageJSONCache = struct {
@@ -4961,6 +4971,8 @@ pub const PackageManager = struct {
         comptime successFn: SuccessFn,
         comptime failFn: ?FailFn,
     ) !void {
+        if (dependency.behavior.isOptionalPeer()) return;
+
         var name = dependency.realname();
 
         var name_hash = switch (dependency.version.tag) {
@@ -5231,7 +5243,7 @@ pub const PackageManager = struct {
                                     this.enqueueNetworkTask(network_task);
                                 }
                             } else {
-                                if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                                if (this.options.do.install_peer_dependencies) {
                                     try this.peer_dependencies.writeItem(id);
                                     return;
                                 }
@@ -5306,7 +5318,7 @@ pub const PackageManager = struct {
 
                     if (dependency.behavior.isPeer()) {
                         if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                            if (this.options.do.install_peer_dependencies) {
                                 try this.peer_dependencies.writeItem(id);
                             }
                             return;
@@ -5331,7 +5343,7 @@ pub const PackageManager = struct {
 
                     if (dependency.behavior.isPeer()) {
                         if (!install_peer) {
-                            if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                            if (this.options.do.install_peer_dependencies) {
                                 try this.peer_dependencies.writeItem(id);
                             }
                             return;
@@ -5383,7 +5395,7 @@ pub const PackageManager = struct {
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                        if (this.options.do.install_peer_dependencies) {
                             try this.peer_dependencies.writeItem(id);
                         }
                         return;
@@ -5571,7 +5583,7 @@ pub const PackageManager = struct {
 
                 if (dependency.behavior.isPeer()) {
                     if (!install_peer) {
-                        if (this.options.do.install_peer_dependencies and !dependency.behavior.isOptionalPeer()) {
+                        if (this.options.do.install_peer_dependencies) {
                             try this.peer_dependencies.writeItem(id);
                         }
                         return;
@@ -8210,6 +8222,13 @@ pub const PackageManager = struct {
         unlink,
         patch,
         @"patch-commit",
+
+        pub fn canGloballyInstallPackages(this: Subcommand) bool {
+            return switch (this) {
+                .install, .update, .add => true,
+                else => false,
+            };
+        }
     };
 
     pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
@@ -8440,18 +8459,18 @@ pub const PackageManager = struct {
         env.loadProcess();
         try env.load(entries_option.entries, &[_][]u8{}, .production, false);
 
-        var log = logger.Log.init(ctx.allocator);
-        defer log.deinit();
         initializeStore();
-        bun.ini.loadNpmrcFromFile(ctx.allocator, ctx.install orelse brk: {
-            const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
-            install_.* = std.mem.zeroes(Api.BunInstall);
-            ctx.install = install_;
-            break :brk install_;
-        }, env, true, &log) catch {
-            if (log.errors == 1) Output.warn("Encountered an error while reading <b>.npmrc<r>:", .{}) else Output.warn("Encountered errors while reading <b>.npmrc<r>:\n", .{});
-            log.printForLogLevel(Output.errorWriter()) catch bun.outOfMemory();
-        };
+        bun.ini.loadNpmrcFromFile(
+            ctx.allocator,
+            ctx.install orelse brk: {
+                const install_ = ctx.allocator.create(Api.BunInstall) catch bun.outOfMemory();
+                install_.* = std.mem.zeroes(Api.BunInstall);
+                ctx.install = install_;
+                break :brk install_;
+            },
+            env,
+            true,
+        );
 
         var cpu_count = @as(u32, @truncate(((try std.Thread.getCpuCount()) + 1)));
 
@@ -9739,6 +9758,14 @@ pub const PackageManager = struct {
             Output.flush();
         }
 
+        // When you run `bun add -g <pkg>` or `bun install -g <pkg>` and the global bin dir is not in $PATH
+        // We should tell the user to add it to $PATH so they don't get confused.
+        if (subcommand.canGloballyInstallPackages()) {
+            if (manager.options.global and manager.options.log_level != .silent) {
+                manager.track_installed_bin = .{ .pending = {} };
+            }
+        }
+
         switch (manager.options.log_level) {
             inline else => |log_level| try manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
         }
@@ -9749,6 +9776,122 @@ pub const PackageManager = struct {
 
         if (manager.any_failed_to_install) {
             Global.exit(1);
+        }
+
+        // Check if we need to print a warning like:
+        //
+        // > warn: To run "vite", add the global bin folder to $PATH:
+        // >
+        // > fish_add_path "/private/tmp/test"
+        //
+        if (subcommand.canGloballyInstallPackages()) {
+            if (manager.options.global) {
+                if (manager.options.bin_path.len > 0 and manager.track_installed_bin == .basename) {
+                    const needs_to_print = if (bun.getenvZ("PATH")) |PATH|
+                        // This is not perfect
+                        //
+                        // If you already have a different binary of the same
+                        // name, it will not detect that case.
+                        //
+                        // The problem is there are too many edgecases with filesystem paths.
+                        //
+                        // We want to veer towards false negative than false
+                        // positive. It would be annoying if this message
+                        // appears unnecessarily. It's kind of okay if it doesn't appear
+                        // when it should.
+                        //
+                        // If you set BUN_INSTALL_BIN to "/tmp/woo" on macOS and
+                        // we just checked for "/tmp/woo" in $PATH, it would
+                        // incorrectly print a warning because /tmp/ on macOS is
+                        // aliased to /private/tmp/
+                        //
+                        // Another scenario is case-insensitive filesystems. If you
+                        // have a binary called "esbuild" in /tmp/TeST and you
+                        // install esbuild, it will not detect that case if we naively
+                        // just checked for "esbuild" in $PATH where "$PATH" is /tmp/test
+                        bun.which(
+                            &package_json_cwd_buf,
+                            PATH,
+                            bun.fs.FileSystem.instance.top_level_dir,
+                            manager.track_installed_bin.basename,
+                        ) == null
+                    else
+                        true;
+
+                    if (needs_to_print) {
+                        const MoreInstructions = struct {
+                            shell: bun.CLI.ShellCompletions.Shell = .unknown,
+                            folder: []const u8,
+
+                            // Convert "/Users/Jarred Sumner" => "/Users/Jarred\ Sumner"
+                            const ShellPathFormatter = struct {
+                                folder: []const u8,
+
+                                pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                                    var remaining = instructions.folder;
+                                    while (bun.strings.indexOfChar(remaining, ' ')) |space| {
+                                        try writer.print(
+                                            "{}",
+                                            .{bun.fmt.fmtPath(u8, remaining[0..space], .{
+                                                .escape_backslashes = true,
+                                                .path_sep = if (Environment.isWindows) .windows else .posix,
+                                            })},
+                                        );
+                                        try writer.writeAll("\\ ");
+                                        remaining = remaining[@min(space + 1, remaining.len)..];
+                                    }
+
+                                    try writer.print(
+                                        "{}",
+                                        .{bun.fmt.fmtPath(u8, remaining, .{
+                                            .escape_backslashes = true,
+                                            .path_sep = if (Environment.isWindows) .windows else .posix,
+                                        })},
+                                    );
+                                }
+                            };
+
+                            pub fn format(instructions: @This(), comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+                                const path = ShellPathFormatter{ .folder = instructions.folder };
+                                switch (instructions.shell) {
+                                    .unknown => {
+                                        // Unfortunately really difficult to do this in one line on PowerShell.
+                                        try writer.print("{}", .{path});
+                                    },
+                                    .bash => {
+                                        try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    },
+                                    .zsh => {
+                                        try writer.print("export PATH=\"{}:$PATH\"", .{path});
+                                    },
+                                    .fish => {
+                                        // Regular quotes will do here.
+                                        try writer.print("fish_add_path {}", .{bun.fmt.quote(instructions.folder)});
+                                    },
+                                    .pwsh => {
+                                        try writer.print("$env:PATH += \";{}\"", .{path});
+                                    },
+                                }
+                            }
+                        };
+
+                        Output.prettyError("\n", .{});
+
+                        Output.warn(
+                            \\To run {}, add the global bin folder to $PATH:
+                            \\
+                            \\<cyan>{}<r>
+                            \\
+                        ,
+                            .{
+                                bun.fmt.quote(manager.track_installed_bin.basename),
+                                MoreInstructions{ .shell = bun.CLI.ShellCompletions.Shell.fromEnv([]const u8, bun.getenvZ("SHELL") orelse ""), .folder = manager.options.bin_path },
+                            },
+                        );
+                        Output.flush();
+                    }
+                }
+            }
         }
     }
 

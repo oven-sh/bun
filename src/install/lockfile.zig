@@ -1717,23 +1717,35 @@ pub const Printer = struct {
                             .extern_string_buf = this.lockfile.buffers.extern_strings.items,
                         };
 
-                        const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
+                        {
+                            const fmt = comptime Output.prettyFmt("<r><green>installed<r> {s}<r><d>@{}<r> with binaries:\n", enable_ansi_colors);
 
-                        try writer.print(
-                            fmt,
-                            .{
-                                package_name,
-                                resolved[package_id].fmt(string_buf, .posix),
-                            },
-                        );
-
-                        while (iterator.next() catch null) |bin_name| {
                             try writer.print(
-                                comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors),
+                                fmt,
                                 .{
-                                    bin_name,
+                                    package_name,
+                                    resolved[package_id].fmt(string_buf, .posix),
                                 },
                             );
+                        }
+
+                        {
+                            const fmt = comptime Output.prettyFmt("<r> <d>- <r><b>{s}<r>\n", enable_ansi_colors);
+                            var manager = &bun.PackageManager.instance;
+
+                            if (manager.track_installed_bin == .pending) {
+                                if (iterator.next() catch null) |bin_name| {
+                                    manager.track_installed_bin = .{
+                                        .basename = bun.default_allocator.dupe(u8, bin_name) catch bun.outOfMemory(),
+                                    };
+
+                                    try writer.print(fmt, .{bin_name});
+                                }
+                            }
+
+                            while (iterator.next() catch null) |bin_name| {
+                                try writer.print(fmt, .{bin_name});
+                            }
                         }
                     },
                 }
@@ -4346,6 +4358,8 @@ pub const Package = extern struct {
                 return error.InvalidPackageJSON;
             };
 
+            if (input_path.len == 0 or input_path.len == 1 and input_path[0] == '.') continue;
+
             if (bun.glob.detectGlobSyntax(input_path)) {
                 workspace_globs.append(input_path) catch bun.outOfMemory();
                 continue;
@@ -4357,6 +4371,9 @@ pub const Package = extern struct {
                 &.{ input_path, "package.json" },
                 .auto,
             );
+
+            // skip root package.json
+            if (strings.eqlLong(bun.path.dirname(abs_package_json_path, .auto), source.path.name.dir, true)) continue;
 
             const workspace_entry = processWorkspaceName(
                 allocator,
@@ -4479,6 +4496,10 @@ pub const Package = extern struct {
                     },
                 }) |matched_path| {
                     const entry_dir: []const u8 = Path.dirname(matched_path, .auto);
+
+                    // skip root package.json
+                    if (strings.eqlComptime(matched_path, "package.json")) continue;
+
                     debug("matched path: {s}, dirname: {s}\n", .{ matched_path, entry_dir });
 
                     const abs_package_json_path = Path.joinAbsStringBufZ(

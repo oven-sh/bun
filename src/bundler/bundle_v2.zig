@@ -1567,13 +1567,9 @@ pub const BundleV2 = struct {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                    concurrent_task.* = JSC.ConcurrentTask{
-                        .auto_delete = true,
-                        .task = completion.task.task(),
-                        .next = null,
-                    };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+                    completion.jsc_event_loop.enqueueTaskConcurrent(
+                        JSC.ConcurrentTask.create(completion.task.task()),
+                    );
                 };
                 has_bundled = true;
             }
@@ -1682,16 +1678,10 @@ pub const BundleV2 = struct {
             },
         };
 
-        const concurrent_task = try bun.default_allocator.create(JSC.ConcurrentTask);
-        concurrent_task.* = JSC.ConcurrentTask{
-            .auto_delete = true,
-            .task = completion.task.task(),
-            .next = null,
-        };
         var out_log = Logger.Log.init(bun.default_allocator);
         this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
     }
 
     pub fn deinit(this: *BundleV2) void {

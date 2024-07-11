@@ -43,7 +43,7 @@ export CMAKE_FLAGS=(
 )
 
 CCACHE=$(which ccache || which sccache || echo "")
-if [ -n "$CCACHE" ]; then
+if [ -f "$CCACHE" ]; then
   CMAKE_FLAGS+=(
     -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE"
     -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE"
@@ -56,22 +56,22 @@ if [[ $(uname -s) == 'Linux' ]]; then
 fi
 
 if [[ $(uname -s) == 'Darwin' ]]; then
-    export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
+  export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
 
-    CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-    export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+  export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
+  export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
 fi
 
 mkdir -p $BUN_DEPS_OUT_DIR
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "C Compiler: ${CC}"
-    echo "C++ Compiler: ${CXX}"
-    if [ -n "$CCACHE" ]; then
-      echo "Ccache: ${CCACHE}"
-    fi
-    if [[ $(uname -s) == 'Darwin' ]]; then
-      echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
-    fi
+  echo "C Compiler: ${CC}"
+  echo "C++ Compiler: ${CXX}"
+  if [ -n "$CCACHE" ]; then
+    echo "Ccache: ${CCACHE}"
+  fi
+  if [[ $(uname -s) == 'Darwin' ]]; then
+    echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  fi
 fi

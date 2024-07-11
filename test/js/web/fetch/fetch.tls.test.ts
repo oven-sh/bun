@@ -225,3 +225,36 @@ it("fetch should respect rejectUnauthorized env", async () => {
     expect(exitCode2).toBe(1);
   });
 });
+
+it("fetch timeout works on tls", async () => {
+  using server = Bun.serve({
+    tls: cert1,
+    hostname: "localhost",
+    port: 0,
+    rejectUnauthorized: false,
+    async fetch() {
+      async function* body() {
+        yield "Hello, ";
+        await Bun.sleep(500); // should only take 200ms
+        yield "World!";
+      }
+      return new Response(body);
+    },
+  });
+  const start = performance.now();
+  const TIMEOUT = 200;
+  const THRESHOLD = 100;
+
+  try {
+    await fetch(server.url, {
+      signal: AbortSignal.timeout(TIMEOUT),
+      tls: { ca: cert1.cert },
+    }).then(res => res.text());
+  } catch (e) {
+    expect(e.name).toBe("TimeoutError");
+  } finally {
+    const total = performance.now() - start;
+    expect(total).toBeGreaterThan(TIMEOUT - THRESHOLD);
+    expect(total).toBeLessThan(TIMEOUT + THRESHOLD);
+  }
+});

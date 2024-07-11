@@ -97,9 +97,18 @@ pub extern "kernel32" fn CommandLineToArgvW(
     pNumArgs: *c_int,
 ) callconv(windows.WINAPI) ?[*]win32.LPWSTR;
 
-pub extern fn GetFileType(
-    hFile: win32.HANDLE,
-) callconv(windows.WINAPI) win32.DWORD;
+pub fn GetFileType(hFile: win32.HANDLE) win32.DWORD {
+    const function = struct {
+        pub extern fn GetFileType(
+            hFile: win32.HANDLE,
+        ) callconv(windows.WINAPI) win32.DWORD;
+    }.GetFileType;
+
+    const rc = function(hFile);
+    if (comptime Environment.enable_logs)
+        bun.sys.syslog("GetFileType({}) = {d}", .{ bun.toFD(hFile), rc });
+    return rc;
+}
 
 /// https://learn.microsoft.com/en-us/windows/win32/api/fileapi/nf-fileapi-getfiletype#return-value
 pub const FILE_TYPE_UNKNOWN = 0x0000;
@@ -3397,8 +3406,25 @@ pub fn GetFinalPathNameByHandle(
     fmt: std.os.windows.GetFinalPathNameByHandleFormat,
     out_buffer: []u16,
 ) std.os.windows.GetFinalPathNameByHandleError![]u16 {
-    bun.sys.syslog("GetFinalPathNameByHandle({*p})", .{hFile});
-    return std.os.windows.GetFinalPathNameByHandle(hFile, fmt, out_buffer);
+    const return_length = bun.windows.GetFinalPathNameByHandleW(hFile, out_buffer.ptr, @truncate(out_buffer.len), switch (fmt.volume_name) {
+        .Dos => win32.FILE_NAME_NORMALIZED | win32.VOLUME_NAME_DOS,
+        .Nt => win32.FILE_NAME_NORMALIZED | win32.VOLUME_NAME_NT,
+    });
+
+    if (return_length == 0) {
+        bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.windows.GetLastError() });
+        return error.FileNotFound;
+    }
+
+    var ret = out_buffer[0..@intCast(return_length)];
+
+    bun.sys.syslog("GetFinalPathNameByHandleW({*p}) = {}", .{ hFile, bun.fmt.utf16(ret) });
+
+    if (ret.len > 4 and std.mem.eql(u16, ret[0..4], &.{ '\\', '\\', '?', '\\' })) {
+        ret = ret[4..];
+    }
+
+    return ret;
 }
 
 extern "kernel32" fn GetModuleHandleExW(

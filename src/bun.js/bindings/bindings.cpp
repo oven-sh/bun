@@ -96,8 +96,6 @@
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/RegExpObject.h"
 #include "JavaScriptCore/PropertyNameArray.h"
-#include "JavaScriptCore/HashMapImpl.h"
-#include "JavaScriptCore/HashMapImplInlines.h"
 #include "webcore/JSAbortSignal.h"
 #include "JSAbortAlgorithm.h"
 
@@ -717,48 +715,48 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
+        // bool canPerformFastSet = JSSet::isAddFastAndNonObservable(set1->structure()) && JSSet::isAddFastAndNonObservable(set2->structure());
 
-        // This code is loosely based on
-        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
-            auto* bucket = set1->head();
-            while (bucket) {
-                if (!bucket->deleted()) {
-                    auto key = bucket->key();
-                    RETURN_IF_EXCEPTION(*scope, false);
-                    auto** bucket2ptr = set2->findBucket(globalObject, key);
+        // // This code is loosely based on
+        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        // if (canPerformFastSet && set1->isIteratorProtocolFastAndNonObservable() && set2->isIteratorProtocolFastAndNonObservable()) {
+        //     auto* bucket = set1->head();
+        //     while (bucket) {
+        //         if (!bucket->deleted()) {
+        //             auto key = bucket->key();
+        //             RETURN_IF_EXCEPTION(*scope, false);
+        //             auto** bucket2ptr = set2->findBucket(globalObject, key);
 
-                    if (bucket2ptr && (*bucket2ptr)->deleted()) {
-                        bucket2ptr = nullptr;
-                    }
+        //             if (bucket2ptr && (*bucket2ptr)->deleted()) {
+        //                 bucket2ptr = nullptr;
+        //             }
 
-                    if (!bucket2ptr) {
-                        auto findDeepEqualKey = [&]() -> bool {
-                            auto* bucket = set2->head();
-                            while (bucket) {
-                                if (!bucket->deleted()) {
-                                    auto key2 = bucket->key();
-                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-                                        return true;
-                                    }
-                                }
-                                bucket = bucket->next();
-                            }
+        //             if (!bucket2ptr) {
+        //                 auto findDeepEqualKey = [&]() -> bool {
+        //                     auto* bucket = set2->head();
+        //                     while (bucket) {
+        //                         if (!bucket->deleted()) {
+        //                             auto key2 = bucket->key();
+        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+        //                                 return true;
+        //                             }
+        //                         }
+        //                         bucket = bucket->next();
+        //                     }
 
-                            return false;
-                        };
+        //                     return false;
+        //                 };
 
-                        if (!findDeepEqualKey()) {
-                            return false;
-                        }
-                    }
-                }
-                bucket = bucket->next();
-            }
+        //                 if (!findDeepEqualKey()) {
+        //                     return false;
+        //                 }
+        //             }
+        //         }
+        //         bucket = bucket->next();
+        //     }
 
-            return true;
-        }
+        //     return true;
+        // }
 
         // This code path can be triggered when it is a class that extends from Set.
         //
@@ -825,56 +823,56 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
             return false;
         }
 
-        bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
+        // bool canPerformFastSet = JSMap::isSetFastAndNonObservable(map1->structure()) && JSMap::isSetFastAndNonObservable(map2->structure());
 
-        // This code is loosely based on
-        // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
-        if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
-            auto* bucket = map1->head();
-            while (bucket) {
-                if (!bucket->deleted()) {
-                    auto key = bucket->key();
-                    auto value = bucket->value();
-                    RETURN_IF_EXCEPTION(*scope, false);
-                    auto** bucket2ptr = map2->findBucket(globalObject, key);
-                    JSMap::BucketType* bucket2 = nullptr;
+        // // This code is loosely based on
+        // // https://github.com/oven-sh/WebKit/blob/657558d4d4c9c33f41b9670e72d96a5a39fe546e/Source/JavaScriptCore/runtime/HashMapImplInlines.h#L203-L211
+        // if (canPerformFastSet && map1->isIteratorProtocolFastAndNonObservable() && map2->isIteratorProtocolFastAndNonObservable()) {
+        //     auto* bucket = map1->head();
+        //     while (bucket) {
+        //         if (!bucket->deleted()) {
+        //             auto key = bucket->key();
+        //             auto value = bucket->value();
+        //             RETURN_IF_EXCEPTION(*scope, false);
+        //             auto** bucket2ptr = map2->findBucket(globalObject, key);
+        //             JSMap::BucketType* bucket2 = nullptr;
 
-                    if (bucket2ptr) {
-                        bucket2 = *bucket2ptr;
+        //             if (bucket2ptr) {
+        //                 bucket2 = *bucket2ptr;
 
-                        if (bucket2->deleted()) {
-                            bucket2 = nullptr;
-                        }
-                    }
+        //                 if (bucket2->deleted()) {
+        //                     bucket2 = nullptr;
+        //                 }
+        //             }
 
-                    if (!bucket2) {
-                        auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
-                            auto* bucket = map2->head();
-                            while (bucket) {
-                                if (!bucket->deleted()) {
-                                    auto key2 = bucket->key();
-                                    if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
-                                        return bucket;
-                                    }
-                                }
-                                bucket = bucket->next();
-                            }
+        //             if (!bucket2) {
+        //                 auto findDeepEqualKey = [&]() -> JSMap::BucketType* {
+        //                     auto* bucket = map2->head();
+        //                     while (bucket) {
+        //                         if (!bucket->deleted()) {
+        //                             auto key2 = bucket->key();
+        //                             if (Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, key, key2, gcBuffer, stack, scope, false)) {
+        //                                 return bucket;
+        //                             }
+        //                         }
+        //                         bucket = bucket->next();
+        //                     }
 
-                            return nullptr;
-                        };
+        //                     return nullptr;
+        //                 };
 
-                        bucket2 = findDeepEqualKey();
-                    }
+        //                 bucket2 = findDeepEqualKey();
+        //             }
 
-                    if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
-                        return false;
-                    }
-                }
-                bucket = bucket->next();
-            }
+        //             if (!bucket2 || !Bun__deepEquals<isStrict, enableAsymmetricMatchers>(globalObject, value, bucket2->value(), gcBuffer, stack, scope, false)) {
+        //                 return false;
+        //             }
+        //         }
+        //         bucket = bucket->next();
+        //     }
 
-            return true;
-        }
+        //     return true;
+        // }
 
         // This code path can be triggered when it is a class that extends from Map.
         //
@@ -5543,6 +5541,57 @@ CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
         return PNaN;
 
     return date->internalNumber();
+}
+
+extern "C" double Bun__parseDate(JSC::JSGlobalObject* globalObject, BunString* str)
+{
+    auto& vm = globalObject->vm();
+    return vm.dateCache.parseDate(globalObject, vm, str->toWTFString());
+}
+
+extern "C" EncodedJSValue JSC__JSValue__dateInstanceFromNullTerminatedString(JSC::JSGlobalObject* globalObject, const LChar* nullTerminatedChars)
+{
+    double dateSeconds = WTF::parseDate(std::span<const LChar>(nullTerminatedChars, strlen(reinterpret_cast<const char*>(nullTerminatedChars))));
+    JSC::DateInstance* date = JSC::DateInstance::create(globalObject->vm(), globalObject->dateStructure(), dateSeconds);
+
+    return JSValue::encode(date);
+}
+
+// this is largely copied from dateProtoFuncToISOString
+extern "C" int JSC__JSValue__toISOString(JSC::JSGlobalObject* globalObject, EncodedJSValue dateValue, char* buf)
+{
+    char buffer[28];
+    JSC::DateInstance* thisDateObj = JSC::jsDynamicCast<JSC::DateInstance*>(JSC::JSValue::decode(dateValue));
+    if (!thisDateObj)
+        return -1;
+
+    if (!std::isfinite(thisDateObj->internalNumber()))
+        return -1;
+
+    auto& vm = globalObject->vm();
+
+    const GregorianDateTime* gregorianDateTime = thisDateObj->gregorianDateTimeUTC(vm.dateCache);
+    if (!gregorianDateTime)
+        return -1;
+
+    // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
+    int ms = static_cast<int>(fmod(thisDateObj->internalNumber(), msPerSecond));
+    if (ms < 0)
+        ms += msPerSecond;
+
+    int charactersWritten;
+    if (gregorianDateTime->year() > 9999 || gregorianDateTime->year() < 0)
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%+07d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+    else
+        charactersWritten = snprintf(buffer, sizeof(buffer), "%04d-%02d-%02dT%02d:%02d:%02d.%03dZ", gregorianDateTime->year(), gregorianDateTime->month() + 1, gregorianDateTime->monthDay(), gregorianDateTime->hour(), gregorianDateTime->minute(), gregorianDateTime->second(), ms);
+
+    memcpy(buf, buffer, charactersWritten);
+
+    ASSERT(charactersWritten > 0 && static_cast<unsigned>(charactersWritten) < sizeof(buffer));
+    if (static_cast<unsigned>(charactersWritten) >= sizeof(buffer))
+        return -1;
+
+    return charactersWritten;
 }
 
 #pragma mark - WebCore::DOMFormData

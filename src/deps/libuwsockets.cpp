@@ -1021,15 +1021,13 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->clearOnAborted();
+      uwsRes->clearOnWritableAndAborted();
       uwsRes->end(std::string_view(data, length), close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->clearOnAborted();
+      uwsRes->clearOnWritableAndAborted();
       uwsRes->end(std::string_view(data, length), close_connection);
     }
   }
@@ -1039,15 +1037,13 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->clearOnAborted();
+      uwsRes->clearOnWritableAndAborted();
       uwsRes->sendTerminatingChunk(close_connection);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->getHttpResponseData()->onWritable = nullptr;
-      uwsRes->clearOnAborted();
+      uwsRes->clearOnWritableAndAborted();
       uwsRes->sendTerminatingChunk(close_connection);
     }
   }
@@ -1561,8 +1557,7 @@ extern "C"
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
       auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
       if (pair.first) {
-        uwsRes->getHttpResponseData()->onWritable = nullptr;
-        uwsRes->clearOnAborted();
+        uwsRes->clearOnWritableAndAborted();
       }
 
       return pair.first;
@@ -1572,8 +1567,7 @@ extern "C"
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
       auto pair = uwsRes->tryEnd(std::string_view(bytes, len), total_len, close);
       if (pair.first) {
-        uwsRes->getHttpResponseData()->onWritable = nullptr;
-        uwsRes->clearOnAborted();
+          uwsRes->clearOnWritableAndAborted();
       }
 
       return pair.first;

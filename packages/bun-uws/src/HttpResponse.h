@@ -580,7 +580,13 @@ public:
         httpResponseData->onAborted = std::move(handler);
         return this;
     }
+    HttpResponse* clearOnWritableAndAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
+        httpResponseData->onWritable = nullptr;
+        httpResponseData->onAborted = nullptr;
+        return this;
+    }
     HttpResponse* clearOnAborted() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 

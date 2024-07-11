@@ -878,8 +878,6 @@ pub const Request = struct {
                         if (s.tee(globalThis)) |teed| {
                             Request.bodySetCached(req_jsvalue, globalThis, teed[0].value);
 
-                            teed[1].value.protect();
-
                             break :brk Body.Value{
                                 .Locked = .{
                                     .readable = JSC.WebCore.ReadableStream.Strong.init(teed[1], globalThis),

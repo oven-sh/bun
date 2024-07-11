@@ -423,7 +423,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
     }
 
     if (!numberValue.isAnyInt()) {
-        throwRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
+        throwNodeRangeError(globalObject, throwScope, "The \"mask\" argument must be an integer"_s);
         return JSValue::encode({});
     }
 
@@ -434,7 +434,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionUmask,
         StringBuilder messageBuilder;
         messageBuilder.append("The \"mask\" value must be in range [0, 4294967295]. Received value: "_s);
         messageBuilder.append(int52ToString(vm, newUmask, 10)->getString(globalObject));
-        throwRangeError(globalObject, throwScope, messageBuilder.toString());
+        throwNodeRangeError(globalObject, throwScope, messageBuilder.toString());
         return JSValue::encode({});
     }
 
@@ -2637,7 +2637,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
     JSValue value = JSValue::decode(encodedValue);
 
     if (!value.isInt32AsAnyInt()) {
-        throwRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+        throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
         return false;
     }
 
@@ -2645,7 +2645,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessDebugPort,
 
     if (port != 0) {
         if (port < 1024 || port > 65535) {
-            throwRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
+            throwNodeRangeError(globalObject, scope, "debugPort must be 0 or in range 1024 to 65535"_s);
             return false;
         }
     }
@@ -2739,7 +2739,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     if (pid < 0) {
-        throwRangeError(globalObject, scope, "pid must be a positive integer"_s);
+        throwNodeRangeError(globalObject, scope, "pid must be a positive integer"_s);
         return JSValue::encode(jsUndefined());
     }
 
@@ -2754,7 +2754,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
             signal = num;
             RETURN_IF_EXCEPTION(scope, {});
         } else {
-            throwRangeError(globalObject, scope, "Unknown signal name"_s);
+            throwNodeRangeError(globalObject, scope, "Unknown signal name"_s);
             return JSValue::encode(jsUndefined());
         }
 

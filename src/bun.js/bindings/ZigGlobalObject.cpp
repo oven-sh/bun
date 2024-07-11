@@ -390,15 +390,15 @@ WTF::String Bun::formatStackTrace(
 
                 // If it's not a Zig::GlobalObject, don't bother source-mapping it.
                 if (globalObject && !sourceURLForFrame.isEmpty()) {
+                    // https://github.com/oven-sh/bun/issues/3595
                     if (!sourceURLForFrame.isEmpty()) {
-                        remappedFrame.source_url = Bun::toString(sourceURLForFrame);
-                    } else {
-                        // https://github.com/oven-sh/bun/issues/3595
-                        remappedFrame.source_url = BunStringEmpty;
-                    }
+                        remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
-                    // This ensures the lifetime of the sourceURL is accounted for correctly
-                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                        // This ensures the lifetime of the sourceURL is accounted for correctly
+                        Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+                        sourceURLForFrame = remappedFrame.source_url.toWTFString();
+                    }
                 }
 
                 // there is always a newline before each stack frame line, ensuring that the name + message
@@ -493,15 +493,15 @@ WTF::String Bun::formatStackTrace(
 
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
             if (globalObject) {
+                // https://github.com/oven-sh/bun/issues/3595
                 if (!sourceURLForFrame.isEmpty()) {
-                    remappedFrame.source_url = Bun::toString(sourceURLForFrame);
-                } else {
-                    // https://github.com/oven-sh/bun/issues/3595
-                    remappedFrame.source_url = BunStringEmpty;
-                }
+                    remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
 
-                // This ensures the lifetime of the sourceURL is accounted for correctly
-                Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+                    // This ensures the lifetime of the sourceURL is accounted for correctly
+                    Bun__remapStackFramePositions(globalObject, &remappedFrame, 1);
+
+                    sourceURLForFrame = remappedFrame.source_url.toWTFString();
+                }
             }
 
             if (!hasSet) {
@@ -584,10 +584,11 @@ static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObje
     // We need to sourcemap it if it's a GlobalObject.
     if (globalObject == lexicalGlobalObject) {
         size_t framesCount = stackTrace.size();
-        ZigStackFrame remappedFrames[framesCount];
+        ZigStackFrame remappedFrames[64];
+        framesCount = framesCount > 64 ? 64 : framesCount;
         for (int i = 0; i < framesCount; i++) {
             remappedFrames[i] = {};
-            remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+            remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
             if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
                 remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
                 remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();
@@ -2493,7 +2494,7 @@ JSC_DEFINE_HOST_FUNCTION(errorConstructorFuncCaptureStackTrace, (JSC::JSGlobalOb
 
     for (int i = 0; i < framesCount; i++) {
         memset(remappedFrames + i, 0, sizeof(ZigStackFrame));
-        remappedFrames[i].source_url = Bun::toString(lexicalGlobalObject, stackTrace.at(i).sourceURL());
+        remappedFrames[i].source_url = Bun::toStringRef(lexicalGlobalObject, stackTrace.at(i).sourceURL());
         if (JSCStackFrame::SourcePositions* sourcePositions = stackTrace.at(i).getSourcePositions()) {
             remappedFrames[i].position.line_zero_based = sourcePositions->line.zeroBasedInt();
             remappedFrames[i].position.column_zero_based = sourcePositions->column.zeroBasedInt();

@@ -208,6 +208,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             return;
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
+            defer mappings.deref();
             const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});

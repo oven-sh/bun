@@ -19,4 +19,27 @@ JSC::JSObject* createNotEnoughArgumentsErrorBun(JSC::JSGlobalObject* globalObjec
 
     return error;
 }
+
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const String& message)
+{
+    auto* error = createRangeError(lexicalGlobalObject, message);
+    if (LIKELY(error)) {
+        auto& vm = getVM(lexicalGlobalObject);
+        auto& builtinNames = Bun::builtinNames(vm);
+        error->putDirect(vm, builtinNames.codePublicName(), jsString(vm, String("ERR_OUT_OF_RANGE"_s)));
+        scope.throwException(lexicalGlobalObject, error);
+    }
+}
+
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, ASCIILiteral message)
+{
+    auto* error = createRangeError(lexicalGlobalObject, message);
+    if (LIKELY(error)) {
+        auto& vm = getVM(lexicalGlobalObject);
+        auto& builtinNames = Bun::builtinNames(vm);
+        error->putDirect(vm, builtinNames.codePublicName(), jsString(vm, String("ERR_OUT_OF_RANGE"_s)));
+        scope.throwException(lexicalGlobalObject, error);
+    }
+}
+
 }

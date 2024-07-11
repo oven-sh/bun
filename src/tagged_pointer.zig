@@ -137,7 +137,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
         }
-        pub inline fn get(this: This, comptime Type: anytype) ?*Type {
+        pub inline fn get(this: This, comptime Type: type) ?*Type {
             comptime assert_type(Type);
 
             return if (this.is(Type)) this.as(Type) else null;

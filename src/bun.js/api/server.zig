@@ -2642,7 +2642,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
             ctx.setAbortHandler();
         }
-        /// Clean the abort handler and the response
+
         fn detachResponse(this: *RequestContext) void {
             this.resp = null;
         }

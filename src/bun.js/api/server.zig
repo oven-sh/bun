@@ -1574,6 +1574,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     value,
                 );
 
+            // check again in case it get aborted after runErrorHandler
+            if (ctx.isAbortedOrEnded()) {
+                ctx.finalizeForAbort();
+                return;
+            }
+
             // I don't think this case happens?
             if (ctx.didUpgradeWebSocket()) {
                 ctx.finalize();

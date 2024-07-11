@@ -35,8 +35,6 @@ if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm
   export CXXFLAGS="$CXXFLAGS -mcpu=cortex-a72 -mtune=ampere1 "
 fi
 
-
-
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"
   -DCMAKE_CXX_COMPILER="${CXX}"

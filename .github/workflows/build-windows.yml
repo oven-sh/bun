@@ -80,7 +80,9 @@ jobs:
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Install LLVM and Ninja
         run: |
-          scoop install ninja, llvm@${{ env.LLVM_VERSION }}, nasm@2.16.01
+          scoop install ninja
+          scoop install llvm@${{ env.LLVM_VERSION }}
+          scoop install nasm@2.16.01
       - if: ${{ inputs.no-cache || !steps.cache.outputs.cache-hit }}
         name: Clone Submodules
         run: |
@@ -155,7 +157,8 @@ jobs:
           submodules: recursive
       - name: Install LLVM and Ninja
         run: |
-          scoop install ninja, llvm@${{ env.LLVM_VERSION }}
+          scoop install ninja
+          scoop install llvm@${{ env.LLVM_VERSION }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
@@ -237,7 +240,8 @@ jobs:
           submodules: recursive
       - name: Install Ninja
         run: |
-          scoop install ninja, llvm@${{ env.LLVM_VERSION }}
+          scoop install ninja
+          scoop install llvm@${{ env.LLVM_VERSION }}
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:

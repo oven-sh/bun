@@ -127,6 +127,15 @@ pub const SavedSourceMap = struct {
 
     pub const vlq_offset = 24;
 
+    pub fn init(this: *SavedSourceMap, map: *HashTable) void {
+        this.* = .{
+            .map = map,
+            .mutex = bun.Lock.init(),
+        };
+
+        this.map.lockPointers();
+    }
+
     pub inline fn lock(map: *SavedSourceMap) void {
         map.mutex.lock();
         map.map.unlockPointers();
@@ -1478,8 +1487,7 @@ pub const VirtualMachine = struct {
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
-        vm.source_mappings.map.lockPointers();
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1593,8 +1601,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
-        vm.source_mappings.map.lockPointers();
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1743,7 +1750,7 @@ pub const VirtualMachine = struct {
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );

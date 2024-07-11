@@ -3,6 +3,8 @@
 
 #include "CommonJSModuleRecord.h"
 #include "ImportMetaObject.h"
+#include "JavaScriptCore/ArgList.h"
+#include "JavaScriptCore/JSGlobalObjectInlines.h"
 #include "_NativeModule.h"
 #include "isBuiltinModule.h"
 #include <JavaScriptCore/JSBoundFunction.h>
@@ -120,7 +122,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleModuleConstructor, (JSC::JSGlobalOb
     idString = idValue.toString(globalObject);
     RETURN_IF_EXCEPTION(scope, JSC::JSValue::encode(JSC::jsUndefined()));
 
-    auto index = idString->tryGetValue().reverseFind('/', idString->length());
+    auto index = idString->tryGetValue()->reverseFind('/', idString->length());
 
     if (index != WTF::notFound) {
       dirname = JSC::jsSubstring(globalObject, idString, 0, index);
@@ -208,7 +210,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionNodeModuleCreateRequire,
       scope, JSValue::encode(Bun::JSCommonJSModule::createBoundRequireFunction(
                  vm, globalObject, val)));
 }
-extern "C" JSC::EncodedJSValue Resolver__nodeModulePathsForJS(JSGlobalObject *, CallFrame *);
+BUN_DECLARE_HOST_FUNCTION(Resolver__nodeModulePathsForJS);
 
 JSC_DEFINE_HOST_FUNCTION(jsFunctionFindSourceMap, (JSGlobalObject * globalObject, CallFrame *callFrame)) {
   auto &vm = globalObject->vm();
@@ -528,7 +530,7 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   auto prototype = constructEmptyObject(globalObject, globalObject->objectPrototype(), 1);
   prototype->putDirectCustomAccessor(
-    vm, JSC::Identifier::fromString(vm, "require"_s),
+    vm, WebCore::clientData(vm)->builtinNames().requirePublicName(),
     JSC::CustomGetterSetter::create(
       vm,
       getterRequireFunction,
@@ -539,17 +541,15 @@ DEFINE_NATIVE_MODULE(NodeModule) {
 
   defaultObject->putDirect(vm, vm.propertyNames->prototype, prototype);
 
-  JSC::JSArray *builtinModules = JSC::JSArray::create(
-    vm,
-    globalObject->arrayStructureForIndexingTypeDuringAllocation(ArrayWithContiguous),
-    countof(builtinModuleNames)
-  );
+  MarkedArgumentBuffer args;
+  args.ensureCapacity(countof(builtinModuleNames));
 
   for (unsigned i = 0; i < countof(builtinModuleNames); ++i) {
-    builtinModules->putDirectIndex(globalObject, i, JSC::jsString(vm, String(builtinModuleNames[i])));
+    args.append(JSC::jsOwnedString(vm, String(builtinModuleNames[i])));
   }
 
-  put(JSC::Identifier::fromString(vm, "builtinModules"_s), builtinModules);
+
+  put(JSC::Identifier::fromString(vm, "builtinModules"_s), JSC::constructArray(globalObject, static_cast<JSC::ArrayAllocationProfile*>(nullptr), JSC::ArgList(args)));
 }
 
 } // namespace Zig

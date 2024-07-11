@@ -44,7 +44,7 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 {
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
+        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -53,10 +53,10 @@ static ExceptionOr<bool> canWriteHeader(const HTTPHeaderName name, const String&
 static ExceptionOr<bool> canWriteHeader(const String& name, const String& value, const String& combinedValue, FetchHeaders::Guard guard)
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     ASSERT(value.isEmpty() || (!isHTTPSpace(value[0]) && !isHTTPSpace(value[value.length() - 1])));
     if (!isValidHTTPHeaderValue((value)))
-        return Exception { TypeError, makeString("Header '", name, "' has invalid value: '", value, "'") };
+        return Exception { TypeError, makeString("Header '"_s, name, "' has invalid value: '"_s, value, "'"_s) };
     if (guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     return true;
@@ -71,7 +71,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
 
         if (headerName != HTTPHeaderName::SetCookie) {
             if (headers.contains(headerName)) {
-                combinedValue = makeString(headers.get(headerName), ", ", normalizedValue);
+                combinedValue = makeString(headers.get(headerName), ", "_s, normalizedValue);
             }
         }
 
@@ -92,7 +92,7 @@ static ExceptionOr<void> appendToHeaderMap(const String& name, const String& val
     }
 
     if (headers.contains(name))
-        combinedValue = makeString(headers.get(name), ", ", normalizedValue);
+        combinedValue = makeString(headers.get(name), ", "_s, normalizedValue);
     auto canWriteResult = canWriteHeader(name, normalizedValue, combinedValue, guard);
     if (canWriteResult.hasException())
         return canWriteResult.releaseException();
@@ -195,7 +195,7 @@ ExceptionOr<void> FetchHeaders::append(const String& name, const String& value)
 ExceptionOr<void> FetchHeaders::remove(const String& name)
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     if (m_guard == FetchHeaders::Guard::Immutable)
         return Exception { TypeError, "Headers object's guard is 'immutable'"_s };
     if (m_guard == FetchHeaders::Guard::Request && isForbiddenHeaderName(name))
@@ -222,14 +222,14 @@ size_t FetchHeaders::memoryCost() const
 ExceptionOr<String> FetchHeaders::get(const String& name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, "'"_s) };
     return m_headers.get(name);
 }
 
 ExceptionOr<bool> FetchHeaders::has(const String& name) const
 {
     if (!isValidHTTPToken(name))
-        return Exception { TypeError, makeString("Invalid header name: '", name, "'") };
+        return Exception { TypeError, makeString("Invalid header name: '"_s, name, '"') };
     return m_headers.contains(name);
 }
 
@@ -273,8 +273,13 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
         bool hasSetCookie = !m_headers->getSetCookieHeaders().isEmpty();
         m_keys.resize(0);
         m_keys.reserveCapacity(m_headers->m_headers.size() + (hasSetCookie ? 1 : 0));
-        for (auto& header : m_headers->m_headers)
-            m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
+        if (m_lowerCaseKeys) {
+            for (auto& header : m_headers->m_headers)
+                m_keys.unsafeAppendWithoutCapacityCheck(header.asciiLowerCaseName());
+        } else {
+            for (auto& header : m_headers->m_headers)
+                m_keys.unsafeAppendWithoutCapacityCheck(header.name());
+        }
         std::sort(m_keys.begin(), m_keys.end(), WTF::codePointCompareLessThan);
         if (hasSetCookie)
             m_keys.unsafeAppendWithoutCapacityCheck(String());
@@ -317,10 +322,11 @@ std::optional<KeyValuePair<String, String>> FetchHeaders::Iterator::next()
     return std::nullopt;
 }
 
-FetchHeaders::Iterator::Iterator(FetchHeaders& headers)
+FetchHeaders::Iterator::Iterator(FetchHeaders& headers, bool lowerCaseKeys = true)
     : m_headers(headers)
 {
     m_cookieIndex = 0;
+    m_lowerCaseKeys = lowerCaseKeys;
 }
 
 } // namespace WebCore

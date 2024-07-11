@@ -36,7 +36,13 @@ const S = JSAst.S;
 
 const debug = Output.scoped(.migrate, false);
 
-pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, bun_lockfile_path: stringZ) LoadFromDiskResult {
+pub fn detectAndLoadOtherLockfile(
+    this: *Lockfile,
+    manager: *Install.PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    bun_lockfile_path: stringZ,
+) LoadFromDiskResult {
     const dirname = bun_lockfile_path[0 .. strings.lastIndexOfChar(bun_lockfile_path, '/') orelse 0];
     // check for package-lock.json, yarn.lock, etc...
     // if it exists, do an in-memory migration
@@ -48,12 +54,17 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
         @memcpy(buf[dirname.len .. dirname.len + npm_lockfile_name.len], npm_lockfile_name);
         buf[dirname.len + npm_lockfile_name.len] = 0;
         var timer = std.time.Timer.start() catch unreachable;
-        const lockfile = bun.sys.openat(bun.FD.cwd(), buf[0 .. dirname.len + npm_lockfile_name.len :0], std.os.O.RDONLY, 0).unwrap() catch break :npm;
+        const lockfile = bun.sys.openat(
+            bun.FD.cwd(),
+            buf[0 .. dirname.len + npm_lockfile_name.len :0],
+            bun.O.RDONLY,
+            0,
+        ).unwrap() catch break :npm;
         defer _ = bun.sys.close(lockfile);
         var lockfile_path_buf: bun.PathBuffer = undefined;
         const lockfile_path = bun.getFdPathZ(lockfile, &lockfile_path_buf) catch break :npm;
         const data = bun.sys.File.from(lockfile).readToEnd(allocator).unwrap() catch break :npm;
-        const migrate_result = migrateNPMLockfile(this, allocator, log, data, lockfile_path) catch |err| {
+        const migrate_result = migrateNPMLockfile(this, manager, allocator, log, data, lockfile_path) catch |err| {
             if (err == error.NPMLockfileVersionMismatch) {
                 Output.prettyErrorln(
                     \\<red><b>error<r><d>:<r> Please upgrade package-lock.json to lockfileVersion 2 or 3
@@ -86,9 +97,9 @@ pub fn detectAndLoadOtherLockfile(this: *Lockfile, allocator: Allocator, log: *l
     return LoadFromDiskResult{ .not_found = {} };
 }
 
-const ResolvedURLsMap = std.StringHashMapUnmanaged(string);
+const ResolvedURLsMap = bun.StringHashMapUnmanaged(string);
 
-const IdMap = std.StringHashMapUnmanaged(IdMapValue);
+const IdMap = bun.StringHashMapUnmanaged(IdMapValue);
 const IdMapValue = struct {
     /// index into the old package-lock.json package entries.
     old_json_index: u32,
@@ -112,7 +123,14 @@ const dependency_keys = .{
     .optionalDependencies,
 };
 
-pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Log, data: string, abs_path: string) !LoadFromDiskResult {
+pub fn migrateNPMLockfile(
+    this: *Lockfile,
+    manager: *Install.PackageManager,
+    allocator: Allocator,
+    log: *logger.Log,
+    data: string,
+    abs_path: string,
+) !LoadFromDiskResult {
     debug("begin lockfile migration", .{});
 
     this.initEmpty(allocator);
@@ -180,7 +198,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const workspace_packages_count = try Lockfile.Package.processWorkspaceNamesArray(
                 &workspaces,
                 allocator,
-                &Install.PackageManager.instance.workspace_package_json_cache,
+                &manager.workspace_package_json_cache,
                 log,
                 json_array,
                 &json_src,
@@ -327,7 +345,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             const pkg_name = packageNameFromPath(pkg_path);
             if (version_prop != null and pkg_name.len > 0) {
                 // construct registry url
-                const registry = Install.PackageManager.instance.scopeForPackageName(pkg_name);
+                const registry = manager.scopeForPackageName(pkg_name);
                 var count: usize = 0;
                 count += registry.url.href.len + pkg_name.len + "/-/".len;
                 if (pkg_name[0] == '@') {
@@ -684,7 +702,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
             }
             if (expr.data != .e_array) return error.InvalidNPMLockfile;
             const arr: *E.Array = expr.data.e_array;
-            var map = std.StringArrayHashMapUnmanaged(void){};
+            var map = bun.StringArrayHashMapUnmanaged(void){};
             try map.ensureTotalCapacity(allocator, arr.items.len);
             for (arr.items.slice()) |item| {
                 map.putAssumeCapacity(item.asString(allocator) orelse return error.InvalidNPMLockfile, {});
@@ -1043,7 +1061,7 @@ pub fn migrateNPMLockfile(this: *Lockfile, allocator: Allocator, log: *logger.Lo
     // This is definitely a memory leak, but it's fine because there is no install api, so this can only be leaked once per process.
     // This operation is neccecary because callers of `loadFromDisk` assume the data is written into the passed `this`.
     // You'll find that not cleaning the lockfile will cause `bun install` to not actually install anything since it doesnt have any hoisted trees.
-    this.* = (try this.cleanWithLogger(&[_]Install.PackageManager.UpdateRequest{}, log, false, .silent)).*;
+    this.* = (try this.cleanWithLogger(manager, &.{}, log, false, .silent)).*;
 
     // if (Environment.isDebug) {
     //     const dump_file = try std.fs.cwd().createFileZ("after-clean.json", .{});

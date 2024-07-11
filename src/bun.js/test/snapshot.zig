@@ -248,9 +248,9 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-            var flags: std.c.O = .{ .CREAT = true, .ACCMODE = .RDWR };
-            if (this.update_snapshots) flags.TRUNC = true;
-            const fd = switch (bun.sys.open(snapshot_file_path, @bitCast(flags), 0o644)) {
+            var flags: bun.Mode = bun.O.CREAT | bun.O.RDWR;
+            if (this.update_snapshots) flags |= bun.O.TRUNC;
+            const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return JSC.Maybe(void){
                     .err = err,

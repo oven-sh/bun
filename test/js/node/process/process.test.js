@@ -1,7 +1,7 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
 import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
 
 const process_sleep = join(import.meta.dir, "process-sleep.js");
@@ -542,12 +542,13 @@ for (const stub of emptyArrayStubs) {
 }
 
 it("dlopen args parsing", () => {
-  expect(() => process.dlopen({ module: "42" }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: 42 }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: "42" } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: 42 } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
+  const notFound = join(tmpdirSync(), "not-found.so");
+  expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: 42 } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
 });
 
@@ -601,6 +602,11 @@ it("catches exceptions with process.on('uncaughtException', fn)", async () => {
   expect(await proc.exited).toBe(42);
 });
 
+it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
 it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
   expect(await proc.exited).toBe(42);
@@ -628,4 +634,18 @@ it("process.hasUncaughtExceptionCaptureCallback", () => {
   process.setUncaughtExceptionCaptureCallback(() => {});
   expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
   process.setUncaughtExceptionCaptureCallback(null);
+});
+
+it("process.execArgv", async () => {
+  const fixtures = [
+    ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
+    ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
+    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+  ];
+
+  for (const [cmd, execArgv, argv] of fixtures) {
+    const replacedCmd = cmd.replace("index.ts", Bun.$.escape(join(__dirname, "print-process-execArgv.js")));
+    const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
+    expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
+  }
 });

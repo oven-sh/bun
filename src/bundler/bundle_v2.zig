@@ -126,7 +126,7 @@ const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 
-fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [*:0]const u8) bun.tracy.Ctx {
+fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
     return bun.tracy.traceNamed(src, "Bundler." ++ name);
 }
 
@@ -220,7 +220,7 @@ pub const ThreadPool = struct {
 
         pub fn deinitCallback(task: *ThreadPoolLib.Task) void {
             debug("Worker.deinit()", .{});
-            var this = @fieldParentPtr(Worker, "deinit_task", task);
+            var this: *Worker = @alignCast(@fieldParentPtr("deinit_task", task));
             this.deinit();
         }
 
@@ -459,7 +459,7 @@ pub const BundleV2 = struct {
     }
 
     fn isDone(this: *BundleV2) bool {
-        return @atomicLoad(usize, &this.graph.parse_pending, .Monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .Monotonic) == 0;
+        return @atomicLoad(usize, &this.graph.parse_pending, .monotonic) == 0 and @atomicLoad(usize, &this.graph.resolve_pending, .monotonic) == 0;
     }
 
     pub fn waitForParse(this: *BundleV2) void {
@@ -584,7 +584,7 @@ pub const BundleV2 = struct {
 
         const entry = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch @panic("Ran out of memory");
         if (!entry.found_existing) {
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
 
             // We need to parse this
             const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -623,7 +623,7 @@ pub const BundleV2 = struct {
             task.tree_shaking = this.linker.options.tree_shaking;
             task.known_target = import_record.original_target;
 
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
 
             // Handle onLoad plugins
             if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -663,7 +663,7 @@ pub const BundleV2 = struct {
         if (entry.found_existing) {
             return null;
         }
-        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
         const source_index = Index.source(this.graph.input_files.len);
 
         if (path.pretty.ptr == path.text.ptr) {
@@ -671,7 +671,8 @@ pub const BundleV2 = struct {
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
             path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
         }
-        path.* = try path.dupeAlloc(this.graph.allocator);
+        path.* = try path.dupeAllocFixPretty(this.graph.allocator);
+        path.assertPrettyIsValid();
         entry.value_ptr.* = source_index.get();
         this.graph.ast.append(bun.default_allocator, JSAst.empty) catch unreachable;
 
@@ -758,6 +759,7 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
+        generator.linker.options.public_path = bundler.options.public_path;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -799,7 +801,7 @@ pub const BundleV2 = struct {
             };
             runtime_parse_task.tree_shaking = true;
             runtime_parse_task.loader = .js;
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
             batch.push(ThreadPoolLib.Batch.from(&runtime_parse_task.task));
         }
 
@@ -998,7 +1000,7 @@ pub const BundleV2 = struct {
                 .use_directive = .@"use client",
             });
 
-            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+            _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
             this.graph.entry_points.append(allocator, source_index) catch unreachable;
             this.graph.pool.pool.schedule(ThreadPoolLib.Batch.from(&task.task));
             this.graph.shadow_entry_point_range.len += 1;
@@ -1207,14 +1209,14 @@ pub const BundleV2 = struct {
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
         pub fn deref(this: *JSBundleCompletionTask) void {
-            if (this.ref_count.fetchSub(1, .Monotonic) == 1) {
+            if (this.ref_count.fetchSub(1, .monotonic) == 1) {
                 this.config.deinit(bun.default_allocator);
                 bun.default_allocator.destroy(this);
             }
         }
 
         pub fn ref(this: *JSBundleCompletionTask) void {
-            _ = this.ref_count.fetchAdd(1, .Monotonic);
+            _ = this.ref_count.fetchAdd(1, .monotonic);
         }
 
         pub fn onComplete(this: *JSBundleCompletionTask) void {
@@ -1368,8 +1370,8 @@ pub const BundleV2 = struct {
                     bun.fmt.quote(source.path.namespace),
                 }) catch {};
 
-                // An error ocurred, prevent spinning the event loop forever
-                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
+                // An error occurred, prevent spinning the event loop forever
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .success => |code| {
                 this.graph.input_files.items(.loader)[load.source_index.get()] = code.loader;
@@ -1387,8 +1389,8 @@ pub const BundleV2 = struct {
                 log.errors += @as(usize, @intFromBool(err.kind == .err));
                 log.warnings += @as(usize, @intFromBool(err.kind == .warn));
 
-                // An error ocurred, prevent spinning the event loop forever
-                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .Monotonic);
+                // An error occurred, prevent spinning the event loop forever
+                _ = @atomicRmw(usize, &this.graph.parse_pending, .Sub, 1, .monotonic);
             },
             .pending, .consumed => unreachable,
         }
@@ -1399,7 +1401,7 @@ pub const BundleV2 = struct {
         this: *BundleV2,
     ) void {
         defer resolve.deinit();
-        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .Monotonic);
+        defer _ = @atomicRmw(usize, &this.graph.resolve_pending, .Sub, 1, .monotonic);
         debug("onResolve: ({s}:{s}, {s})", .{ resolve.import_record.namespace, resolve.import_record.specifier, @tagName(resolve.value) });
 
         defer {
@@ -1493,7 +1495,7 @@ pub const BundleV2 = struct {
                         };
                         task.task.node.next = null;
 
-                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .Monotonic);
+                        _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
 
                         // Handle onLoad plugins
                         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -1547,23 +1549,27 @@ pub const BundleV2 = struct {
         }
     }
 
+    pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
+
     pub fn generateInNewThreadWrap(instance: *BundleThread) void {
         Output.Source.configureNamedThread("Bundler");
 
         instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
+
+        var timer: bun.windows.libuv.Timer = undefined;
+        if (bun.Environment.isWindows) {
+            timer.init(instance.waker.?.loop.uv_loop);
+            timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
+        }
 
         var has_bundled = false;
         while (true) {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                    concurrent_task.* = JSC.ConcurrentTask{
-                        .auto_delete = true,
-                        .task = completion.task.task(),
-                        .next = null,
-                    };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+                    completion.jsc_event_loop.enqueueTaskConcurrent(
+                        JSC.ConcurrentTask.create(completion.task.task()),
+                    );
                 };
                 has_bundled = true;
             }
@@ -1653,7 +1659,7 @@ pub const BundleV2 = struct {
 
         errdefer {
             var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
             completion.log = out_log;
         }
 
@@ -1672,16 +1678,10 @@ pub const BundleV2 = struct {
             },
         };
 
-        const concurrent_task = try bun.default_allocator.create(JSC.ConcurrentTask);
-        concurrent_task.* = JSC.ConcurrentTask{
-            .auto_delete = true,
-            .task = completion.task.task(),
-            .next = null,
-        };
         var out_log = Logger.Log.init(bun.default_allocator);
-        this.bundler.log.appendToWithRecycled(&out_log, true) catch @panic("OOM");
+        this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
     }
 
     pub fn deinit(this: *BundleV2) void {
@@ -1775,7 +1775,7 @@ pub const BundleV2 = struct {
                     import_record.path.namespace,
                     import_record.path.text,
                 });
-                _ = @atomicRmw(usize, &this.graph.resolve_pending, .Add, 1, .Monotonic);
+                _ = @atomicRmw(usize, &this.graph.resolve_pending, .Add, 1, .monotonic);
 
                 resolve.* = JSC.API.JSBundler.Resolve.create(
                     .{
@@ -1845,7 +1845,7 @@ pub const BundleV2 = struct {
             estimated_resolve_queue_count += @as(usize, @intFromBool(!(import_record.is_internal or import_record.is_unused or import_record.source_index.isValid())));
         }
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
-        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch @panic("OOM");
+        resolve_queue.ensureTotalCapacity(estimated_resolve_queue_count) catch bun.outOfMemory();
 
         var last_error: ?anyerror = null;
 
@@ -2011,8 +2011,7 @@ pub const BundleV2 = struct {
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
-            path.assertPrettyIsValid();
-            path.* = path.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {
@@ -2080,9 +2079,9 @@ pub const BundleV2 = struct {
 
         defer {
             if (diff > 0)
-                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @as(usize, @intCast(diff)), .Monotonic)
+                _ = @atomicRmw(usize, &graph.parse_pending, .Add, @as(usize, @intCast(diff)), .monotonic)
             else
-                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @as(usize, @intCast(-diff)), .Monotonic);
+                _ = @atomicRmw(usize, &graph.parse_pending, .Sub, @as(usize, @intCast(-diff)), .monotonic);
         }
 
         var resolve_queue = ResolveQueue.init(this.graph.allocator);
@@ -2788,11 +2787,11 @@ pub const ParseTask = struct {
                     else
                         null,
                 ) catch |err| {
-                    const source_ = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
+                    const source = &Logger.Source.initEmptyFile(log.msgs.allocator.dupe(u8, file_path.text) catch unreachable);
                     switch (err) {
                         error.ENOENT, error.FileNotFound => {
                             log.addErrorFmt(
-                                source_,
+                                source,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "File not found {}",
@@ -2801,7 +2800,7 @@ pub const ParseTask = struct {
                         },
                         else => {
                             log.addErrorFmt(
-                                source_,
+                                source,
                                 Logger.Loc.Empty,
                                 allocator,
                                 "{s} reading file: {}",
@@ -2866,7 +2865,6 @@ pub const ParseTask = struct {
         opts.features.inlining = bundler.options.minify_syntax;
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
-        opts.features.should_fold_typescript_constant_expressions = opts.features.inlining or loader.isTypeScript();
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
@@ -2931,7 +2929,7 @@ pub const ParseTask = struct {
     }
 
     pub fn callback(this: *ThreadPoolLib.Task) void {
-        run(@fieldParentPtr(ParseTask, "task", this));
+        run(@fieldParentPtr("task", this));
     }
 
     fn run(this: *ParseTask) void {
@@ -3193,7 +3191,7 @@ pub const Graph = struct {
 
     use_directive_entry_points: UseDirective.List = .{},
 
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    // const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
 
     estimated_file_loader_count: usize = 0,
 
@@ -3306,6 +3304,13 @@ const LinkerGraph = struct {
     ast: MultiArrayList(JSAst) = .{},
     meta: MultiArrayList(JSMeta) = .{},
 
+    /// We should avoid traversing all files in the bundle, because the linker
+    /// should be able to run a linking operation on a large bundle where only
+    /// a few files are needed (e.g. an incremental compilation scenario). This
+    /// holds all files that could possibly be reached through the entry points.
+    /// If you need to iterate over all files in the linking operation, iterate
+    /// over this array. This array is also sorted in a deterministic ordering
+    /// to help ensure deterministic builds (source indices are random).
     reachable_files: []Index = &[_]Index{},
 
     stable_source_indices: []const u32 = &[_]u32{},
@@ -3315,7 +3320,10 @@ const LinkerGraph = struct {
     has_client_components: bool = false,
     has_server_components: bool = false,
 
-    const_values: std.HashMapUnmanaged(Ref, Expr, Ref.HashCtx, 80) = .{},
+    /// This is for cross-module inlining of detected inlinable constants
+    // const_values: js_ast.Ast.ConstValuesMap = .{},
+    /// This is for cross-module inlining of TypeScript enum constants
+    ts_enums: js_ast.Ast.TsEnumsMap = .{},
 
     pub fn init(allocator: std.mem.Allocator, file_count: usize) !LinkerGraph {
         return LinkerGraph{
@@ -3692,31 +3700,47 @@ const LinkerGraph = struct {
 
         {
             var input_symbols = js_ast.Symbol.Map.initList(js_ast.Symbol.NestedList.init(this.ast.items(.symbols)));
-            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch @panic("Out of memory");
+            var symbols = input_symbols.symbols_for_source.clone(this.allocator) catch bun.outOfMemory();
             for (symbols.slice(), input_symbols.symbols_for_source.slice()) |*dest, src| {
-                dest.* = src.clone(this.allocator) catch @panic("Out of memory");
+                dest.* = src.clone(this.allocator) catch bun.outOfMemory();
             }
             this.symbols = js_ast.Symbol.Map.initList(symbols);
         }
 
+        // TODO: const_values
+        // {
+        //     var const_values = this.const_values;
+        //     var count: usize = 0;
+
+        //     for (this.ast.items(.const_values)) |const_value| {
+        //         count += const_value.count();
+        //     }
+
+        //     if (count > 0) {
+        //         try const_values.ensureTotalCapacity(this.allocator, count);
+        //         for (this.ast.items(.const_values)) |const_value| {
+        //             for (const_value.keys(), const_value.values()) |key, value| {
+        //                 const_values.putAssumeCapacityNoClobber(key, value);
+        //             }
+        //         }
+        //     }
+
+        //     this.const_values = const_values;
+        // }
+
         {
-            var const_values = this.const_values;
             var count: usize = 0;
-
-            for (this.ast.items(.const_values)) |const_value| {
-                count += const_value.count();
+            for (this.ast.items(.ts_enums)) |ts_enums| {
+                count += ts_enums.count();
             }
-
             if (count > 0) {
-                try const_values.ensureTotalCapacity(this.allocator, @as(u32, @truncate(count)));
-                for (this.ast.items(.const_values)) |const_value| {
-                    for (const_value.keys(), const_value.values()) |key, value| {
-                        const_values.putAssumeCapacityNoClobber(key, value);
+                try this.ts_enums.ensureTotalCapacity(this.allocator, count);
+                for (this.ast.items(.ts_enums)) |ts_enums| {
+                    for (ts_enums.keys(), ts_enums.values()) |key, value| {
+                        this.ts_enums.putAssumeCapacityNoClobber(key, value);
                     }
                 }
             }
-
-            this.const_values = const_values;
         }
 
         const in_resolved_exports: []ResolvedExports = this.meta.items(.resolved_exports);
@@ -3793,7 +3817,7 @@ const LinkerContext = struct {
     /// We may need to refer to the CommonJS "module" symbol for exports
     unbound_module_ref: Ref = Ref.None,
 
-    options: LinkerOptions = LinkerOptions{},
+    options: LinkerOptions = .{},
 
     wait_group: ThreadPoolLib.WaitGroup = undefined,
 
@@ -3845,23 +3869,23 @@ const LinkerContext = struct {
             thread_task: ThreadPoolLib.Task = .{ .callback = &runLineOffset },
 
             pub fn runLineOffset(thread_task: *ThreadPoolLib.Task) void {
-                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                var task: *Task = @fieldParentPtr("thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
                     task.ctx.source_maps.line_offset_wait_group.finish();
                 }
 
-                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeLineOffsets(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
             }
 
             pub fn runQuotedSourceContents(thread_task: *ThreadPoolLib.Task) void {
-                var task = @fieldParentPtr(Task, "thread_task", thread_task);
+                var task: *Task = @fieldParentPtr("thread_task", thread_task);
                 defer {
                     task.ctx.markPendingTaskDone();
                     task.ctx.source_maps.quoted_contents_wait_group.finish();
                 }
 
-                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", task.ctx)).allocator, task.source_index);
+                SourceMapData.computeQuotedSourceContents(task.ctx, ThreadPool.Worker.get(@fieldParentPtr("linker", task.ctx)).allocator, task.source_index);
             }
         };
 
@@ -3900,7 +3924,7 @@ const LinkerContext = struct {
 
             const source: *const Logger.Source = &this.parse_graph.input_files.items(.source)[source_index];
             const mutable = MutableString.initEmpty(allocator);
-            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch @panic("Out of memory")).list.items;
+            quoted_source_contents.* = (js_printer.quoteForJSON(source.contents, mutable, false) catch bun.outOfMemory()).list.items;
         }
     };
 
@@ -4002,12 +4026,12 @@ const LinkerContext = struct {
     }
 
     pub fn scheduleTasks(this: *LinkerContext, batch: ThreadPoolLib.Batch) void {
-        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .Monotonic);
+        _ = this.pending_task_count.fetchAdd(@as(u32, @truncate(batch.len)), .monotonic);
         this.parse_graph.pool.pool.schedule(batch);
     }
 
     pub fn markPendingTaskDone(this: *LinkerContext) void {
-        _ = this.pending_task_count.fetchSub(1, .Monotonic);
+        _ = this.pending_task_count.fetchSub(1, .monotonic);
     }
 
     pub noinline fn link(
@@ -4662,7 +4686,7 @@ const LinkerContext = struct {
                     const other_kind = exports_kind[other_file];
 
                     switch (record.kind) {
-                        ImportKind.stmt => {
+                        .stmt => {
                             // Importing using ES6 syntax from a file without any ES6 syntax
                             // causes that module to be considered CommonJS-style, even if it
                             // doesn't have any CommonJS exports.
@@ -4698,7 +4722,7 @@ const LinkerContext = struct {
                                 flags[other_file].wrap = .cjs;
                             }
                         },
-                        ImportKind.require =>
+                        .require =>
                         // Files that are imported with require() must be CommonJS modules
                         {
                             if (other_kind == .esm) {
@@ -4709,7 +4733,7 @@ const LinkerContext = struct {
                                 exports_kind[other_file] = .cjs;
                             }
                         },
-                        ImportKind.dynamic => {
+                        .dynamic => {
                             if (!this.graph.code_splitting) {
                                 // If we're not splitting, then import() is just a require() that
                                 // returns a promise, so the imported file must be a CommonJS module
@@ -5460,8 +5484,8 @@ const LinkerContext = struct {
         const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
 
         const stmts_count =
-            // 2 statements for every export
-            export_aliases.len * 2 +
+            // 1 statement for every export
+            export_aliases.len +
             // + 1 if there are non-zero exports
             @as(usize, @intFromBool(export_aliases.len > 0)) +
             // + 1 if we need to inject the exports variable
@@ -5511,20 +5535,15 @@ const LinkerContext = struct {
                 );
             };
 
-            const block = stmts.eat1(
-                js_ast.Stmt.allocate(allocator_, js_ast.S.Block, .{
-                    .stmts = stmts.eat1(
-                        js_ast.Stmt.allocate(
-                            allocator_,
-                            js_ast.S.Return,
-                            .{ .value = value },
-                            loc,
-                        ),
-                    ),
-                }, loc),
-            );
             const fn_body = js_ast.G.FnBody{
-                .stmts = block,
+                .stmts = stmts.eat1(
+                    js_ast.Stmt.allocate(
+                        allocator_,
+                        js_ast.S.Return,
+                        .{ .value = value },
+                        loc,
+                    ),
+                ),
                 .loc = loc,
             };
             properties.appendAssumeCapacity(
@@ -5674,20 +5693,20 @@ const LinkerContext = struct {
         const id = source_index;
         if (id > c.graph.meta.len) return;
 
-        var worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", c));
+        const worker: *ThreadPool.Worker = ThreadPool.Worker.get(@fieldParentPtr("linker", c));
         defer worker.unget();
 
         // we must use this allocator here
-        const allocator_ = worker.allocator;
+        const allocator = worker.allocator;
 
-        var resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
+        const resolved_exports: *ResolvedExports = &c.graph.meta.items(.resolved_exports)[id];
 
         // Now that all exports have been resolved, sort and filter them to create
         // something we can iterate over later.
-        var aliases = std.ArrayList(string).initCapacity(allocator_, resolved_exports.count()) catch unreachable;
+        var aliases = std.ArrayList(string).initCapacity(allocator, resolved_exports.count()) catch unreachable;
         var alias_iter = resolved_exports.iterator();
-        var imports_to_bind = c.graph.meta.items(.imports_to_bind);
-        var probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
+        const imports_to_bind = c.graph.meta.items(.imports_to_bind);
+        const probably_typescript_type = c.graph.meta.items(.probably_typescript_type);
 
         // counting in here saves us an extra pass through the array
         var re_exports_count: usize = 0;
@@ -5734,7 +5753,7 @@ const LinkerContext = struct {
         // Export creation uses "sortedAndFilteredExportAliases" so this must
         // come second after we fill in that array
         c.createExportsForFile(
-            allocator_,
+            allocator,
             id,
             resolved_exports,
             imports_to_bind,
@@ -5743,60 +5762,103 @@ const LinkerContext = struct {
         );
 
         // Each part tracks the other parts it depends on within this file
-        var local_dependencies = std.AutoHashMap(u32, u32).init(allocator_);
+        var local_dependencies = std.AutoHashMap(u32, u32).init(allocator);
         defer local_dependencies.deinit();
-        var parts = &c.graph.ast.items(.parts)[id];
-        const parts_slice: []js_ast.Part = parts.slice();
-        var named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
+
+        const parts_slice: []js_ast.Part = c.graph.ast.items(.parts)[id].slice();
+        const named_imports: *js_ast.Ast.NamedImports = &c.graph.ast.items(.named_imports)[id];
+
+        const our_imports_to_bind = imports_to_bind[id];
         outer: for (parts_slice, 0..) |*part, part_index| {
+            // Now that all files have been parsed, determine which property
+            // accesses off of imported symbols are inlined enum values and
+            // which ones aren't
+            for (
+                part.import_symbol_property_uses.keys(),
+                part.import_symbol_property_uses.values(),
+            ) |ref, properties| {
+                const use = part.symbol_uses.getPtr(ref).?;
 
-            // TODO: inline const TypeScript enum here
+                // Rare path: this import is a TypeScript enum
+                if (our_imports_to_bind.get(ref)) |import_data| {
+                    const import_ref = import_data.data.import_ref;
+                    if (c.graph.symbols.get(import_ref)) |symbol| {
+                        if (symbol.kind == .ts_enum) {
+                            if (c.graph.ts_enums.get(import_ref)) |enum_data| {
+                                var found_non_inlined_enum = false;
 
-            // TODO: inline function calls here
+                                var it = properties.iterator();
+                                while (it.next()) |next| {
+                                    const name = next.key_ptr.*;
+                                    const prop_use = next.value_ptr;
 
-            // Inline cross-module constants
-            if (c.graph.const_values.count() > 0) {
-                // First, find any symbol usage that points to a constant value.
-                // This will be pretty rare.
-                const first_constant_i: ?usize = brk: {
-                    for (part.symbol_uses.keys(), 0..) |ref, j| {
-                        if (c.graph.const_values.contains(ref)) {
-                            break :brk j;
-                        }
-                    }
+                                    if (enum_data.get(name) == null) {
+                                        found_non_inlined_enum = true;
+                                        use.count_estimate += prop_use.count_estimate;
+                                    }
+                                }
 
-                    break :brk null;
-                };
-                if (first_constant_i) |j| {
-                    var end_i: usize = 0;
-                    // symbol_uses is an array
-                    var keys = part.symbol_uses.keys()[j..];
-                    var values = part.symbol_uses.values()[j..];
-                    for (keys, values) |ref, val| {
-                        if (c.graph.const_values.contains(ref)) {
+                                if (!found_non_inlined_enum) {
+                                    _ = part.symbol_uses.swapRemove(ref);
+                                }
+                            }
                             continue;
                         }
-
-                        keys[end_i] = ref;
-                        values[end_i] = val;
-                        end_i += 1;
                     }
-                    part.symbol_uses.entries.len = end_i + j;
+                }
 
-                    if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
-                        part.tag = .dead_due_to_inlining;
-                        part.dependencies.len = 0;
-                        continue :outer;
-                    }
-
-                    part.symbol_uses.reIndex(allocator_) catch unreachable;
+                // Common path: this import isn't a TypeScript enum
+                var it = properties.valueIterator();
+                while (it.next()) |prop_use| {
+                    use.count_estimate += prop_use.count_estimate;
                 }
             }
 
-            const symbol_uses = part.symbol_uses.keys();
+            // TODO: inline function calls here
+
+            // TODO: Inline cross-module constants
+            // if (c.graph.const_values.count() > 0) {
+            //     // First, find any symbol usage that points to a constant value.
+            //     // This will be pretty rare.
+            //     const first_constant_i: ?usize = brk: {
+            //         for (part.symbol_uses.keys(), 0..) |ref, j| {
+            //             if (c.graph.const_values.contains(ref)) {
+            //                 break :brk j;
+            //             }
+            //         }
+
+            //         break :brk null;
+            //     };
+            //     if (first_constant_i) |j| {
+            //         var end_i: usize = 0;
+            //         // symbol_uses is an array
+            //         var keys = part.symbol_uses.keys()[j..];
+            //         var values = part.symbol_uses.values()[j..];
+            //         for (keys, values) |ref, val| {
+            //             if (c.graph.const_values.contains(ref)) {
+            //                 continue;
+            //             }
+
+            //             keys[end_i] = ref;
+            //             values[end_i] = val;
+            //             end_i += 1;
+            //         }
+            //         part.symbol_uses.entries.len = end_i + j;
+
+            //         if (part.symbol_uses.entries.len == 0 and part.can_be_removed_if_unused) {
+            //             part.tag = .dead_due_to_inlining;
+            //             part.dependencies.len = 0;
+            //             continue :outer;
+            //         }
+
+            //         part.symbol_uses.reIndex(allocator) catch unreachable;
+            //     }
+            // }
+            if (false) break :outer; // this `if` is here to preserve the unused
+            //                          block label from the above commented code.
 
             // Now that we know this, we can determine cross-part dependencies
-            for (symbol_uses, 0..) |ref, j| {
+            for (part.symbol_uses.keys(), 0..) |ref, j| {
                 if (comptime Environment.allow_assert) {
                     bun.assert(part.symbol_uses.values()[j].count_estimate > 0);
                 }
@@ -5809,7 +5871,7 @@ const LinkerContext = struct {
                         local.value_ptr.* = @as(u32, @intCast(part_index));
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
                         part.dependencies.push(
-                            allocator_,
+                            allocator,
                             .{
                                 .source_index = Index.source(source_index),
                                 .part_index = other_part_index,
@@ -5820,7 +5882,7 @@ const LinkerContext = struct {
 
                 // Also map from imports to parts that use them
                 if (named_imports.getPtr(ref)) |existing| {
-                    existing.local_parts_with_uses.push(allocator_, @as(u32, @intCast(part_index))) catch unreachable;
+                    existing.local_parts_with_uses.push(allocator, @as(u32, @intCast(part_index))) catch unreachable;
                 }
             }
         }
@@ -6365,7 +6427,7 @@ const LinkerContext = struct {
     };
     fn generateChunkJS(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
-        const worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        const worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         postProcessJSChunk(ctx, worker, chunk, chunk_index) catch |err| Output.panic("TODO: handle error: {s}", .{@errorName(err)});
     }
@@ -6626,7 +6688,7 @@ const LinkerContext = struct {
 
     fn generateJSRenamer(ctx: GenerateChunkCtx, chunk: *Chunk, chunk_index: usize) void {
         defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         generateJSRenamer_(ctx, worker, chunk, chunk_index);
     }
@@ -6641,10 +6703,10 @@ const LinkerContext = struct {
     }
 
     fn generateCompileResultForJSChunk(task: *ThreadPoolLib.Task) void {
-        const part_range: *const PendingPartRange = @fieldParentPtr(PendingPartRange, "task", task);
+        const part_range: *const PendingPartRange = @fieldParentPtr("task", task);
         const ctx = part_range.ctx;
         defer ctx.wg.finish();
-        var worker = ThreadPool.Worker.get(@fieldParentPtr(BundleV2, "linker", ctx.c));
+        var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
@@ -6694,8 +6756,8 @@ const LinkerContext = struct {
         const c = ctx.c;
         bun.assert(chunk.content == .javascript);
 
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
@@ -6713,19 +6775,19 @@ const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            const indent: usize = 0;
             // TODO: IIFE indent
 
             const print_options = js_printer.Options{
-                // TODO: IIFE
-                .indent = indent,
+                // TODO: IIFE indent
+                .indent = .{},
+                .has_run_symbol_renamer = true,
 
                 .allocator = worker.allocator,
                 .require_ref = runtimeRequireRef,
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
-                .const_values = c.graph.const_values,
+                // .const_values = c.graph.const_values,
             };
 
             var cross_chunk_import_records = ImportRecord.List.initCapacity(worker.allocator, chunk.cross_chunk_imports.len) catch unreachable;
@@ -6903,18 +6965,18 @@ const LinkerContext = struct {
                 line_offset.advance(compile_result.code());
                 j.push(compile_result.code(), bun.default_allocator);
             } else {
-                const generated_offset = line_offset;
                 j.push(compile_result.code(), bun.default_allocator);
 
                 if (compile_result.source_map_chunk()) |source_map_chunk| {
-                    line_offset.reset();
                     if (c.options.source_maps != .none) {
                         try compile_results_for_source_map.append(worker.allocator, CompileResultForSourceMap{
                             .source_map_chunk = source_map_chunk,
-                            .generated_offset = generated_offset.value,
+                            .generated_offset = line_offset.value,
                             .source_index = compile_result.sourceIndex(),
                         });
                     }
+
+                    line_offset.reset();
                 } else {
                     line_offset.advance(compile_result.code());
                 }
@@ -6991,22 +7053,35 @@ const LinkerContext = struct {
         const trace = tracer(@src(), "generateSourceMapForChunk");
         defer trace.end();
 
-        var j = StringJoiner{
-            .allocator = worker.allocator,
-        };
+        var j = StringJoiner{ .allocator = worker.allocator };
 
         const sources = c.parse_graph.input_files.items(.source);
         const quoted_source_map_contents = c.graph.files.items(.quoted_source_contents);
 
-        var source_index_to_sources_index = std.AutoHashMap(u32, u32).init(worker.allocator);
-        defer source_index_to_sources_index.deinit();
-        var next_source_index: u32 = 0;
+        // Entries in `results` do not 1:1 map to source files, the mapping
+        // is actually many to one, where a source file can have multiple chunks
+        // in the sourcemap.
+        //
+        // This hashmap is going to map:
+        //    `source_index` (per compilation) in a chunk
+        //   -->
+        //    Which source index in the generated sourcemap, referred to
+        //    as the "mapping source index" within this function to be distinct.
+        var source_id_map = std.AutoArrayHashMap(u32, i32).init(worker.allocator);
+        defer source_id_map.deinit();
+
         const source_indices = results.items(.source_index);
 
-        j.pushStatic("{\n  \"version\": 3,\n  \"sources\": [");
+        j.pushStatic(
+            \\{
+            \\  "version": 3,
+            \\  "sources": [
+        );
         if (source_indices.len > 0) {
             {
-                var path = sources[source_indices[0]].path;
+                const index = source_indices[0];
+                var path = sources[index].path;
+                try source_id_map.putNoClobber(index, 0);
 
                 if (path.isFile()) {
                     const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
@@ -7017,36 +7092,49 @@ const LinkerContext = struct {
                 quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
                 j.pushStatic(quote_buf.list.items); // freed by arena
             }
-            if (source_indices.len > 1) {
-                for (source_indices[1..]) |index| {
-                    var path = sources[index].path;
 
-                    if (path.isFile()) {
-                        const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
-                        path.pretty = rel_path;
-                    }
+            var next_mapping_source_index: i32 = 1;
+            for (source_indices[1..]) |index| {
+                const gop = try source_id_map.getOrPut(index);
+                if (gop.found_existing) continue;
 
-                    var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
-                    quote_buf.appendAssumeCapacity(", ");
-                    quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
-                    j.pushStatic(quote_buf.list.items); // freed by arena
+                gop.value_ptr.* = next_mapping_source_index;
+                next_mapping_source_index += 1;
+
+                var path = sources[index].path;
+
+                if (path.isFile()) {
+                    const rel_path = try std.fs.path.relative(worker.allocator, chunk_abs_dir, path.text);
+                    path.pretty = rel_path;
                 }
+
+                var quote_buf = try MutableString.init(worker.allocator, path.pretty.len + ", ".len + 2);
+                quote_buf.appendAssumeCapacity(", ");
+                quote_buf = try js_printer.quoteForJSON(path.pretty, quote_buf, false);
+                j.pushStatic(quote_buf.list.items); // freed by arena
             }
         }
 
-        j.pushStatic("],\n  \"sourcesContent\": [");
-        if (source_indices.len > 0) {
+        j.pushStatic(
+            \\],
+            \\  "sourcesContent": [
+        );
+
+        const source_indices_for_contents = source_id_map.keys();
+        if (source_indices_for_contents.len > 0) {
             j.pushStatic("\n    ");
-            j.pushStatic(quoted_source_map_contents[source_indices[0]]);
+            j.pushStatic(quoted_source_map_contents[source_indices_for_contents[0]]);
 
-            if (source_indices.len > 1) {
-                for (source_indices[1..]) |index| {
-                    j.pushStatic(",\n  ");
-                    j.pushStatic(quoted_source_map_contents[index]);
-                }
+            for (source_indices_for_contents[1..]) |index| {
+                j.pushStatic(",\n    ");
+                j.pushStatic(quoted_source_map_contents[index]);
             }
         }
-        j.pushStatic("\n  ],\n  \"mappings\": \"");
+        j.pushStatic(
+            \\
+            \\  ],
+            \\  "mappings": "
+        );
 
         const mapping_start = j.len;
         var prev_end_state = sourcemap.SourceMapState{};
@@ -7054,14 +7142,11 @@ const LinkerContext = struct {
         const source_map_chunks = results.items(.source_map_chunk);
         const offsets = results.items(.generated_offset);
         for (source_map_chunks, offsets, source_indices) |chunk, offset, current_source_index| {
-            const res = try source_index_to_sources_index.getOrPut(current_source_index);
-            if (res.found_existing) continue;
-            res.value_ptr.* = next_source_index;
-            const source_index = @as(i32, @intCast(next_source_index));
-            next_source_index += 1;
+            const mapping_source_index = source_id_map.get(current_source_index) orelse
+                unreachable; // the pass above during printing of "sources" must add the index
 
             var start_state = sourcemap.SourceMapState{
-                .source_index = source_index,
+                .source_index = mapping_source_index,
                 .generated_line = offset.lines,
                 .generated_column = offset.columns,
             };
@@ -7073,7 +7158,7 @@ const LinkerContext = struct {
             try sourcemap.appendSourceMapChunk(&j, worker.allocator, prev_end_state, start_state, chunk.buffer.list.items);
 
             prev_end_state = chunk.end_state;
-            prev_end_state.source_index = source_index;
+            prev_end_state.source_index = mapping_source_index;
             prev_column_offset = chunk.final_generated_column;
 
             if (prev_end_state.generated_line == 0) {
@@ -7582,8 +7667,9 @@ const LinkerContext = struct {
         }
 
         const print_options = js_printer.Options{
-            // TODO: IIFE
-            .indent = 0,
+            // TODO: IIFE indent
+            .indent = .{},
+            .has_run_symbol_renamer = true,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,
@@ -7592,7 +7678,7 @@ const LinkerContext = struct {
 
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
-            .const_values = c.graph.const_values,
+            // .const_values = c.graph.const_values,
         };
 
         return .{
@@ -7916,7 +8002,7 @@ const LinkerContext = struct {
 
         for (part_stmts) |stmt_| {
             var stmt = stmt_;
-            proccess_stmt: {
+            process_stmt: {
                 switch (stmt.data) {
                     .s_import => |s| {
                         // "import * as ns from 'path'"
@@ -7971,12 +8057,12 @@ const LinkerContext = struct {
                                 continue;
                             }
 
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         // "export * from 'path'"
                         if (!shouldStripExports) {
-                            break :proccess_stmt;
+                            break :process_stmt;
                         }
 
                         const record = ast.import_records.at(s.import_record_index);
@@ -8862,15 +8948,17 @@ const LinkerContext = struct {
 
         const print_options = js_printer.Options{
             // TODO: IIFE
-            .indent = 0,
-
+            .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
-            .const_values = c.graph.const_values,
+            // .const_values = c.graph.const_values,
+            .ts_enums = c.graph.ts_enums,
+
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
             .module_type = c.options.output_format,
+            .has_run_symbol_renamer = true,
 
             .allocator = allocator,
             .to_esm_ref = toESMRef,
@@ -9032,7 +9120,7 @@ const LinkerContext = struct {
             const DuplicateEntry = struct {
                 sources: std.ArrayListUnmanaged(*Chunk) = .{},
             };
-            var duplicates_map: std.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
+            var duplicates_map: bun.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
 
             // Compute the final hashes of each chunk. This can technically be done in
             // parallel but it probably doesn't matter so much because we're not hashing
@@ -9259,7 +9347,7 @@ const LinkerContext = struct {
 
         var output_files = std.ArrayList(options.OutputFile).initCapacity(
             bun.default_allocator,
-            (if (c.options.source_maps == .external) chunks.len * 2 else chunks.len) + @as(
+            (if (c.options.source_maps.hasExternalFiles()) chunks.len * 2 else chunks.len) + @as(
                 usize,
                 @intFromBool(react_client_components_manifest.len > 0) + c.parse_graph.additional_output_files.items.len,
             ),
@@ -9302,11 +9390,30 @@ const LinkerContext = struct {
                 );
 
                 switch (c.options.source_maps) {
-                    .external => {
+                    .external, .linked => |tag| {
                         const output_source_map = chunk.output_source_map.finalize(bun.default_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                         var source_map_final_rel_path = default_allocator.alloc(u8, chunk.final_rel_path.len + ".map".len) catch unreachable;
                         bun.copy(u8, source_map_final_rel_path, chunk.final_rel_path);
                         bun.copy(u8, source_map_final_rel_path[chunk.final_rel_path.len..], ".map");
+
+                        if (tag == .linked) {
+                            const a, const b = if (c.options.public_path.len > 0)
+                                cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                            else
+                                .{ "", std.fs.path.basename(source_map_final_rel_path) };
+
+                            const source_map_start = "//# sourceMappingURL=";
+                            const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
+                            var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                            buf.appendSliceAssumeCapacity(code_result.buffer);
+                            buf.appendSliceAssumeCapacity(source_map_start);
+                            buf.appendSliceAssumeCapacity(a);
+                            buf.appendSliceAssumeCapacity(b);
+                            buf.appendAssumeCapacity('\n');
+
+                            Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len).free(code_result.buffer);
+                            code_result.buffer = buf.items;
+                        }
 
                         sourcemap_output_file = options.OutputFile.init(
                             options.OutputFile.Options{
@@ -9486,12 +9593,29 @@ const LinkerContext = struct {
             );
 
             switch (c.options.source_maps) {
-                .external => {
+                .external, .linked => |tag| {
                     const output_source_map = chunk.output_source_map.finalize(source_map_allocator, code_result.shifts) catch @panic("Failed to allocate memory for external source map");
                     const source_map_final_rel_path = strings.concat(default_allocator, &.{
                         chunk.final_rel_path,
                         ".map",
                     }) catch @panic("Failed to allocate memory for external source map path");
+
+                    if (tag == .linked) {
+                        const a, const b = if (c.options.public_path.len > 0)
+                            cheapPrefixNormalizer(c.options.public_path, source_map_final_rel_path)
+                        else
+                            .{ "", std.fs.path.basename(source_map_final_rel_path) };
+
+                        const source_map_start = "//# sourceMappingURL=";
+                        const total_len = code_result.buffer.len + source_map_start.len + a.len + b.len + "\n".len;
+                        var buf = std.ArrayList(u8).initCapacity(Chunk.IntermediateOutput.allocatorForSize(total_len), total_len) catch @panic("Failed to allocate memory for output file with inline source map");
+                        buf.appendSliceAssumeCapacity(code_result.buffer);
+                        buf.appendSliceAssumeCapacity(source_map_start);
+                        buf.appendSliceAssumeCapacity(a);
+                        buf.appendSliceAssumeCapacity(b);
+                        buf.appendAssumeCapacity('\n');
+                        code_result.buffer = buf.items;
+                    }
 
                     switch (JSC.Node.NodeFS.writeFileWithPathBuffer(
                         &pathbuf,
@@ -11356,7 +11480,7 @@ pub const Chunk = struct {
     };
 
     pub const OutputPiece = struct {
-        // layed out like this so it takes up the same amount of space as a []const u8
+        // laid out like this so it takes up the same amount of space as a []const u8
         data_ptr: [*]const u8 = undefined,
         data_len: u32 = 0,
 

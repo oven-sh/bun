@@ -1,9 +1,8 @@
 import assert from "assert";
-import dedent from "dedent";
-
-import { ESBUILD_PATH, RUN_UNCHECKED_TESTS, itBundled, testForFile } from "../expectBundled";
+import { ESBUILD_PATH, itBundled, dedent } from "../expectBundled";
 import { osSlashes } from "harness";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { describe, expect } from "bun:test";
+
 // Tests ported from:
 // https://github.com/evanw/esbuild/blob/main/internal/bundler_tests/bundler_default_test.go
 
@@ -1149,7 +1148,6 @@ describe("bundler", () => {
     },
   });
   itBundled("default/SourceMap", {
-    todo: true,
     files: {
       "/Users/user/project/src/entry.js": /* js */ `
         import {bar} from './bar'
@@ -1162,6 +1160,30 @@ describe("bundler", () => {
     sourceMap: "external",
     onAfterBundle(api) {
       const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
+      api.expectFile("/Users/user/project/out/entry.js").not.toContain(`//# sourceMappingURL`);
+      api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
+      // see src/sourcemap/sourcemap.zig DebugIDFormatter for more info
+      expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);
+      expect(json.debugId.endsWith("64756e2164756e21"));
+    },
+    run: {
+      stdout: "hi",
+    },
+  });
+  itBundled("default/SourceMapLinked", {
+    files: {
+      "/Users/user/project/src/entry.js": /* js */ `
+        import {bar} from './bar'
+        function foo() { bar() }
+        foo()
+      `,
+      "/Users/user/project/src/bar.js": `export function bar() { console.log('hi') }`,
+    },
+    outdir: "/Users/user/project/out",
+    sourceMap: "linked",
+    onAfterBundle(api) {
+      const json = JSON.parse(api.readFile("/Users/user/project/out/entry.js.map"));
+      api.expectFile("/Users/user/project/out/entry.js").toContain(`//# sourceMappingURL=entry.js.map`);
       api.expectFile("/Users/user/project/out/entry.js").toContain(`//# debugId=${json.debugId}`);
       // see src/sourcemap/sourcemap.zig DebugIDFormatter for more info
       expect(json.debugId).toMatch(/^[A-F0-9]{32}$/);

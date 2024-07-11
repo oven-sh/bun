@@ -3,12 +3,13 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
+. (Join-Path $PSScriptRoot "env.ps1")
+
+if ($env:CI) {
+  & (Join-Path $PSScriptRoot "update-submodules.ps1")
+}
 
 $DidAnything = $false;
-
-$BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $PSScriptRoot '..' }
-$BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
-$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
 
 function Build-Dependency {
   param(
@@ -47,9 +48,6 @@ function Build-Dependency {
   $Script:DidAnything = $true
 }
 
-Build-Dependency `
-  -Script "base64" `
-  -Outputs @("base64.lib")
 Build-Dependency `
   -Script "boringssl" `
   -Outputs @("crypto.lib", "ssl.lib", "decrepit.lib")

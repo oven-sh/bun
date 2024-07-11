@@ -125,7 +125,7 @@ int us_poll_events(struct us_poll_t *p) {
          ((p->poll_type & POLL_TYPE_POLLING_OUT) ? LIBUS_SOCKET_WRITABLE : 0);
 }
 
-unsigned int us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
+size_t us_internal_accept_poll_event(struct us_poll_t *p) { return 0; }
 
 int us_internal_poll_type(struct us_poll_t *p) { return p->poll_type & POLL_TYPE_KIND_MASK; }
 
@@ -145,7 +145,7 @@ struct us_loop_t *us_create_loop(void *hint,
                                  void (*post_cb)(struct us_loop_t *loop),
                                  unsigned int ext_size) {
   struct us_loop_t *loop =
-      (struct us_loop_t *)malloc(sizeof(struct us_loop_t) + ext_size);
+      (struct us_loop_t *)calloc(1, sizeof(struct us_loop_t) + ext_size);
 
   loop->uv_loop = hint ? hint : uv_loop_new();
   loop->is_default = hint != 0;

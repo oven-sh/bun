@@ -100,6 +100,8 @@ pub const UpdateCommand = @import("./cli/update_command.zig").UpdateCommand;
 pub const UpgradeCommand = @import("./cli/upgrade_command.zig").UpgradeCommand;
 pub const BunxCommand = @import("./cli/bunx_command.zig").BunxCommand;
 pub const ExecCommand = @import("./cli/exec_command.zig").ExecCommand;
+pub const PatchCommand = @import("./cli/patch_command.zig").PatchCommand;
+pub const PatchCommitCommand = @import("./cli/patch_commit_command.zig").PatchCommitCommand;
 
 pub const Arguments = struct {
     pub fn loader_resolver(in: string) !Api.Loader {
@@ -124,7 +126,7 @@ pub const Arguments = struct {
         var paths = [_]string{ cwd, filename };
         const outpath = try std.fs.path.resolve(allocator, &paths);
         defer allocator.free(outpath);
-        var file = try bun.openFileZ(&try std.os.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
+        var file = try bun.openFileZ(&try std.posix.toPosixPath(outpath), std.fs.File.OpenFlags{ .mode = .read_only });
         defer file.close();
         const size = try file.getEndPos();
         return try file.readToEndAlloc(allocator, size);
@@ -201,7 +203,7 @@ pub const Arguments = struct {
         clap.parseParam("-v, --version                     Print version and exit") catch unreachable,
         clap.parseParam("--revision                        Print version with revision and exit") catch unreachable,
     } ++ auto_or_run_params;
-    const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
+    pub const auto_params = auto_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     const run_only_params = [_]ParamType{
         clap.parseParam("--silent                          Don't print the script command") catch unreachable,
@@ -242,19 +244,20 @@ pub const Arguments = struct {
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
         clap.parseParam("--coverage                       Generate a coverage profile") catch unreachable,
+        clap.parseParam("--coverage-reporter <STR>...     Report coverage in 'text' and/or 'lcov'. Defaults to 'text'.") catch unreachable,
+        clap.parseParam("--coverage-dir <STR>             Directory for coverage files. Defaults to 'coverage'.") catch unreachable,
         clap.parseParam("--bail <NUMBER>?                 Exit the test suite after <NUMBER> failures. If you do not specify a number, it defaults to 1.") catch unreachable,
         clap.parseParam("-t, --test-name-pattern <STR>    Run only tests with a name that matches the given regex.") catch unreachable,
     };
     pub const test_params = test_only_params ++ runtime_params_ ++ transpiler_params_ ++ base_params_;
 
     pub fn loadConfigPath(allocator: std.mem.Allocator, auto_loaded: bool, config_path: [:0]const u8, ctx: Command.Context, comptime cmd: Command.Tag) !void {
-        var config_file = switch (bun.sys.openA(config_path, std.os.O.RDONLY, 0)) {
-
+        var config_file = switch (bun.sys.openA(config_path, bun.O.RDONLY, 0)) {
             .result => |fd| fd.asFile(),
             .err => |err| {
                 if (auto_loaded) return;
@@ -276,8 +279,8 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        js_ast.Stmt.Data.Store.create(allocator);
-        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create();
+        js_ast.Expr.Data.Store.create();
         defer {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
@@ -438,6 +441,24 @@ pub const Arguments = struct {
 
             if (!ctx.test_options.coverage.enabled) {
                 ctx.test_options.coverage.enabled = args.flag("--coverage");
+            }
+
+            if (args.options("--coverage-reporter").len > 0) {
+                ctx.test_options.coverage.reporters = .{ .text = false, .lcov = false };
+                for (args.options("--coverage-reporter")) |reporter| {
+                    if (bun.strings.eqlComptime(reporter, "text")) {
+                        ctx.test_options.coverage.reporters.text = true;
+                    } else if (bun.strings.eqlComptime(reporter, "lcov")) {
+                        ctx.test_options.coverage.reporters.lcov = true;
+                    } else {
+                        Output.prettyErrorln("<r><red>error<r>: --coverage-reporter received invalid reporter: \"{s}\"", .{reporter});
+                        Global.exit(1);
+                    }
+                }
+            }
+
+            if (args.option("--coverage-dir")) |dir| {
+                ctx.test_options.coverage.reports_directory = dir;
             }
 
             if (args.option("--bail")) |bail| {
@@ -769,12 +790,20 @@ pub const Arguments = struct {
             }
 
             if (args.option("--sourcemap")) |setting| {
-                if (setting.len == 0 or strings.eqlComptime(setting, "inline")) {
-                    opts.source_map = Api.SourceMapMode.inline_into_file;
+                if (setting.len == 0) {
+                    // In the future, Bun is going to make this default to .linked
+                    opts.source_map = if (bun.FeatureFlags.breaking_changes_1_2)
+                        .linked
+                    else
+                        .@"inline";
+                } else if (strings.eqlComptime(setting, "inline")) {
+                    opts.source_map = .@"inline";
                 } else if (strings.eqlComptime(setting, "none")) {
-                    opts.source_map = Api.SourceMapMode._none;
+                    opts.source_map = .none;
                 } else if (strings.eqlComptime(setting, "external")) {
-                    opts.source_map = Api.SourceMapMode.external;
+                    opts.source_map = .external;
+                } else if (strings.eqlComptime(setting, "linked")) {
+                    opts.source_map = .linked;
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
@@ -1004,6 +1033,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
+        \\  <b><blue>patch <d>\<pkg\><r>                     Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -1032,10 +1062,10 @@ pub const HelpCommand = struct {
 
         const args = .{
             packages_to_x_filler[package_x_i],
-            packages_to_create_filler[package_create_i],
             packages_to_add_filler[package_add_i],
             packages_to_remove_filler[package_remove_i],
             packages_to_add_filler[(package_add_i + 1) % packages_to_add_filler.len],
+            packages_to_create_filler[package_create_i],
         };
 
         switch (reason) {
@@ -1342,6 +1372,8 @@ pub const Command = struct {
             RootCommandMatcher.case("add"), RootCommandMatcher.case("a") => .AddCommand,
 
             RootCommandMatcher.case("update") => .UpdateCommand,
+            RootCommandMatcher.case("patch") => .PatchCommand,
+            RootCommandMatcher.case("patch-commit") => .PatchCommitCommand,
 
             RootCommandMatcher.case("r"),
             RootCommandMatcher.case("remove"),
@@ -1474,6 +1506,20 @@ pub const Command = struct {
                 const ctx = try Command.init(allocator, log, .UpdateCommand);
 
                 try UpdateCommand.exec(ctx);
+                return;
+            },
+            .PatchCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommand);
+
+                try PatchCommand.exec(ctx);
+                return;
+            },
+            .PatchCommitCommand => {
+                if (comptime bun.fast_debug_build_mode and bun.fast_debug_build_cmd != .PatchCommitCommand) unreachable;
+                const ctx = try Command.init(allocator, log, .PatchCommitCommand);
+
+                try PatchCommitCommand.exec(ctx);
                 return;
             },
             .BunxCommand => {
@@ -1796,7 +1842,7 @@ pub const Command = struct {
                 if (ctx.runtime_options.eval.script.len > 0) {
                     const trigger = bun.pathLiteral("/[eval]");
                     var entry_point_buf: [bun.MAX_PATH_BYTES + trigger.len]u8 = undefined;
-                    const cwd = try std.os.getcwd(&entry_point_buf);
+                    const cwd = try std.posix.getcwd(&entry_point_buf);
                     @memcpy(entry_point_buf[cwd.len..][0..trigger.len], trigger);
                     try BunJS.Run.boot(ctx, entry_point_buf[0 .. cwd.len + trigger.len]);
                     return;
@@ -2041,10 +2087,12 @@ pub const Command = struct {
         ReplCommand,
         ReservedCommand,
         ExecCommand,
+        PatchCommand,
+        PatchCommitCommand,
 
         /// Used by crash reports.
         ///
-        /// This must be kept in sync with
+        /// This must be kept in sync with https://github.com/oven-sh/bun.report/blob/62601d8aafb9c0d29554dfc3f8854044ec04d367/backend/remap.ts#L10
         pub fn char(this: Tag) u8 {
             return switch (this) {
                 .AddCommand => 'I',
@@ -2070,6 +2118,8 @@ pub const Command = struct {
                 .ReplCommand => 'G',
                 .ReservedCommand => 'w',
                 .ExecCommand => 'e',
+                .PatchCommand => 'x',
+                .PatchCommitCommand => 'z',
             };
         }
 
@@ -2272,6 +2322,12 @@ pub const Command = struct {
                     Output.pretty("<b>Usage<r>: <b><green>bun completions<r>", .{});
                     Output.flush();
                 },
+                Command.Tag.PatchCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.patch);
+                },
+                Command.Tag.PatchCommitCommand => {
+                    Install.PackageManager.CommandLineArguments.printHelp(.@"patch-commit");
+                },
                 Command.Tag.ExecCommand => {
                     Output.pretty(
                         \\<b>Usage: bun exec <r><cyan>\<script\><r>
@@ -2295,14 +2351,24 @@ pub const Command = struct {
 
         pub fn readGlobalConfig(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand, .PatchCommand, .PatchCommitCommand => true,
                 else => false,
             };
         }
 
         pub fn isNPMRelated(this: Tag) bool {
             return switch (this) {
-                .BunxCommand, .LinkCommand, .UnlinkCommand, .PackageManagerCommand, .InstallCommand, .AddCommand, .RemoveCommand, .UpdateCommand => true,
+                .BunxCommand,
+                .LinkCommand,
+                .UnlinkCommand,
+                .PackageManagerCommand,
+                .InstallCommand,
+                .AddCommand,
+                .RemoveCommand,
+                .UpdateCommand,
+                .PatchCommand,
+                .PatchCommitCommand,
+                => true,
                 else => false,
             };
         }
@@ -2314,6 +2380,8 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
             .AutoCommand = true,
@@ -2328,6 +2396,8 @@ pub const Command = struct {
             .AddCommand = true,
             .RemoveCommand = true,
             .UpdateCommand = true,
+            .PatchCommand = true,
+            .PatchCommitCommand = true,
             .PackageManagerCommand = true,
             .BunxCommand = true,
         });
@@ -2338,6 +2408,8 @@ pub const Command = struct {
             .AddCommand = false,
             .RemoveCommand = false,
             .UpdateCommand = false,
+            .PatchCommand = false,
+            .PatchCommitCommand = false,
             .PackageManagerCommand = false,
             .LinkCommand = false,
             .UnlinkCommand = false,

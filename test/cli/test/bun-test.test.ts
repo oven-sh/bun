@@ -1,6 +1,6 @@
 import { join, resolve, dirname } from "node:path";
 import { tmpdir } from "node:os";
-import { writeFileSync, rmSync, mkdirSync } from "node:fs";
+import { writeFileSync, rmSync, mkdirSync, realpathSync } from "node:fs";
 import { spawnSync } from "bun";
 import { describe, test, expect } from "bun:test";
 import { bunExe, bunEnv, tmpdirSync } from "harness";
@@ -337,7 +337,7 @@ describe("bun test", () => {
     // This test crashes, which will pass because stderr contains "timed out"
     // but the crash can also mean it hangs, which will end up failing.
     // Possibly fixed by https://github.com/oven-sh/bun/pull/8076/files
-    test.todo("timeout can be set to 30ms", () => {
+    test("timeout can be set to 30ms", () => {
       const stderr = runTest({
         args: ["--timeout", "30"],
         input: `
@@ -351,11 +351,9 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain("timed out after 30ms");
+      expect(stderr).toHaveTestTimedOutAfter(30);
     });
     test("timeout should default to 5000ms", () => {
-      // TODO: Lower this timeout to 5005 once https://github.com/oven-sh/bun/issues/8913 is fixed
-      // Linux does not seem to have this issue.
       const time = process.platform === "linux" ? 5005 : 5500;
       const stderr = runTest({
         input: `
@@ -366,7 +364,7 @@ describe("bun test", () => {
           });
         `,
       });
-      expect(stderr).toContain("timed out after 5000ms");
+      expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
   });
   describe("support for Github Actions", () => {

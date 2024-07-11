@@ -30,10 +30,6 @@ $ docker pull oven/bun
 $ docker run --rm --init --ulimit memlock=-1:-1 oven/bun
 ```
 
-```bash#Proto
-$ proto install bun
-```
-
 {% /codetabs %}
 
 ### Windows
@@ -144,9 +140,8 @@ $ bun upgrade
 {% callout %}
 **Homebrew users** — To avoid conflicts with Homebrew, use `brew upgrade bun` instead.
 
-**Scoop users** — To avoid conflicts with Scoop, use `scoop upgrade bun` instead.
+**Scoop users** — To avoid conflicts with Scoop, use `scoop update bun` instead.
 
-**proto users** - Use `proto install bun --pin` instead.
 {% /callout %}
 
 ## Canary builds
@@ -289,10 +284,6 @@ $ npm uninstall -g bun
 
 ```bash#Homebrew
 $ brew uninstall bun
-```
-
-```bash#Proto
-$ proto uninstall bun
 ```
 
 {% /codetabs %}

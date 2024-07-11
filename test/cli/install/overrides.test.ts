@@ -1,7 +1,11 @@
 import { join } from "path";
 import { readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, tmpdirSync } from "harness";
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
@@ -123,11 +127,7 @@ test("overrides to npm specifier", async () => {
   );
   install(tmp, ["install", "express@4.18.2"]);
 
-  // BUG: the npm specifier is hoisted https://github.com/oven-sh/bun/issues/6433
-  // const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
-  const bytes = JSON.parse(
-    readFileSync(join(tmp, "node_modules/body-parser/node_modules/bytes/package.json"), "utf-8"),
-  );
+  const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
 
   expect(bytes.name).toBe("lodash");
   expect(bytes.version).toBe("4.0.0");

@@ -50,6 +50,8 @@ var panic_mutex = std.Thread.Mutex{};
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
 
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
+
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
     /// From @panic()
@@ -104,6 +106,9 @@ pub fn crashHandler(
     // the handler.
     resetSegfaultHandler();
 
+    if (bun.Environment.isDebug)
+        bun.Output.disableScopedDebugWriter();
+
     var trace_str_buf = std.BoundedArray(u8, 1024){};
 
     nosuspend switch (panic_stage) {
@@ -111,7 +116,7 @@ pub fn crashHandler(
             bun.maybeHandlePanicDuringProcessReload();
 
             panic_stage = 1;
-            _ = panicking.fetchAdd(1, .SeqCst);
+            _ = panicking.fetchAdd(1, .seq_cst);
 
             {
                 panic_mutex.lock();
@@ -144,53 +149,53 @@ pub fn crashHandler(
                     Output.flush();
                     Output.Source.Stdio.restore();
 
-                    writer.writeAll("=" ** 60 ++ "\n") catch std.os.abort();
-                    printMetadata(writer) catch std.os.abort();
+                    writer.writeAll("=" ** 60 ++ "\n") catch std.posix.abort();
+                    printMetadata(writer) catch std.posix.abort();
                 } else {
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
-                    writer.writeAll("oh no") catch std.os.abort();
+                    writer.writeAll("oh no") catch std.posix.abort();
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.posix.abort();
                     } else {
-                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                     }
-                    writer.writeAll("multiple threads are crashing") catch std.os.abort();
+                    writer.writeAll("multiple threads are crashing") catch std.posix.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt("<red>", true)) catch std.posix.abort();
                     }
 
-                    writer.writeAll("panic") catch std.os.abort();
+                    writer.writeAll("panic") catch std.posix.abort();
 
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt("<r><d>", true)) catch std.posix.abort();
                     }
 
                     if (bun.CLI.Cli.is_main_thread) {
-                        writer.writeAll("(main thread)") catch std.os.abort();
+                        writer.writeAll("(main thread)") catch std.posix.abort();
                     } else switch (bun.Environment.os) {
                         .windows => {
                             var name: std.os.windows.PWSTR = undefined;
                             const result = bun.windows.GetThreadDescription(std.os.windows.kernel32.GetCurrentThread(), &name);
                             if (std.os.windows.HRESULT_CODE(result) == .SUCCESS and name[0] != 0) {
-                                writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.os.abort();
+                                writer.print("({})", .{bun.fmt.utf16(bun.span(name))}) catch std.posix.abort();
                             } else {
-                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.os.abort();
+                                writer.print("(thread {d})", .{std.os.windows.kernel32.GetCurrentThreadId()}) catch std.posix.abort();
                             }
                         },
                         .mac, .linux => {},
                         else => @compileError("TODO"),
                     }
 
-                    writer.writeAll(": ") catch std.os.abort();
+                    writer.writeAll(": ") catch std.posix.abort();
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r>", true)) catch std.os.abort();
+                        writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
-                    writer.print("{}\n", .{reason}) catch std.os.abort();
+                    writer.print("{}\n", .{reason}) catch std.posix.abort();
                 }
 
                 var addr_buf: [10]usize = undefined;
@@ -213,15 +218,15 @@ pub fn crashHandler(
                         .trace = trace,
                         .reason = reason,
                         .action = .view_trace,
-                    }}) catch std.os.abort();
+                    }}) catch std.posix.abort();
                 } else {
                     if (!has_printed_message) {
                         has_printed_message = true;
-                        writer.writeAll("oh no") catch std.os.abort();
+                        writer.writeAll("oh no") catch std.posix.abort();
                         if (Output.enable_ansi_colors) {
-                            writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.os.abort();
+                            writer.writeAll(Output.prettyFmt("<r><d>:<r> ", true)) catch std.posix.abort();
                         } else {
-                            writer.writeAll(Output.prettyFmt(": ", true)) catch std.os.abort();
+                            writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
                         }
                         if (reason == .out_of_memory) {
                             writer.writeAll(
@@ -231,7 +236,7 @@ pub fn crashHandler(
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            ) catch std.os.abort();
+                            ) catch std.posix.abort();
                         } else {
                             writer.writeAll(
                                 \\Bun has crashed. This indicates a bug in Bun, not your code.
@@ -240,31 +245,31 @@ pub fn crashHandler(
                                 \\please file a GitHub issue using the link below:
                                 \\
                                 \\
-                            ) catch std.os.abort();
+                            ) catch std.posix.abort();
                         }
                     }
 
                     if (Output.enable_ansi_colors) {
-                        writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.os.abort();
+                        writer.print(Output.prettyFmt("<cyan>", true), .{}) catch std.posix.abort();
                     }
 
-                    writer.writeAll(" ") catch std.os.abort();
+                    writer.writeAll(" ") catch std.posix.abort();
 
                     trace_str_buf.writer().print("{}", .{TraceString{
                         .trace = trace,
                         .reason = reason,
                         .action = .open_issue,
-                    }}) catch std.os.abort();
+                    }}) catch std.posix.abort();
 
-                    writer.writeAll(trace_str_buf.slice()) catch std.os.abort();
+                    writer.writeAll(trace_str_buf.slice()) catch std.posix.abort();
 
-                    writer.writeAll("\n") catch std.os.abort();
+                    writer.writeAll("\n") catch std.posix.abort();
                 }
 
                 if (Output.enable_ansi_colors) {
-                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.os.abort();
+                    writer.writeAll(Output.prettyFmt("<r>\n", true)) catch std.posix.abort();
                 } else {
-                    writer.writeAll("\n") catch std.os.abort();
+                    writer.writeAll("\n") catch std.posix.abort();
                 }
             }
             // Be aware that this function only lets one thread return from it.
@@ -274,7 +279,7 @@ pub fn crashHandler(
             report(trace_str_buf.slice());
 
             if (bun.auto_reload_on_crash and
-                // Do not reload if the panic arised FROM the reload function.
+                // Do not reload if the panic arose FROM the reload function.
                 !bun.isProcessReloadInProgressOnAnotherThread())
             {
                 // attempt to prevent a double panic
@@ -285,7 +290,7 @@ pub fn crashHandler(
                 });
                 Output.flush();
 
-                comptime std.debug.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
+                comptime bun.assert(void == @TypeOf(bun.reloadProcess(bun.default_allocator, false, true)));
                 bun.reloadProcess(bun.default_allocator, false, true);
             }
         },
@@ -300,15 +305,15 @@ pub fn crashHandler(
             // we're still holding the mutex but that's fine as we're going to
             // call abort()
             const stderr = std.io.getStdErr().writer();
-            stderr.print("\npanic: {s}\n", .{reason}) catch std.os.abort();
-            stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.os.abort();
+            stderr.print("\npanic: {s}\n", .{reason}) catch std.posix.abort();
+            stderr.print("panicked during a panic. Aborting.\n", .{}) catch std.posix.abort();
         },
         3 => {
             // Panicked while printing "Panicked during a panic."
         },
         else => {
             // Panicked or otherwise looped into the panic handler while trying to exit.
-            std.os.abort();
+            std.posix.abort();
         },
     };
 
@@ -341,7 +346,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.SystemFdQuotaExceeded => {
             if (comptime bun.Environment.isPosix) {
-                const limit = if (std.os.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
+                const limit = if (std.posix.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
                 if (comptime bun.Environment.isMac) {
                     Output.prettyError(
                         \\<r><red>error<r>: Your computer ran out of file descriptors <d>(<red>SystemFdQuotaExceeded<r><d>)<r>
@@ -405,7 +410,7 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
 
         error.ProcessFdQuotaExceeded => {
             if (comptime bun.Environment.isPosix) {
-                const limit = if (std.os.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
+                const limit = if (std.posix.getrlimit(.NOFILE)) |limit| limit.cur else |_| null;
                 if (comptime bun.Environment.isMac) {
                     Output.prettyError(
                         \\
@@ -472,10 +477,10 @@ pub fn handleRootError(err: anyerror, error_return_trace: ?*std.builtin.StackTra
             }
         },
 
-        // The usage of `unreachable` in Zig's std.os may cause the file descriptor problem to show up as other errors
+        // The usage of `unreachable` in Zig's std.posix may cause the file descriptor problem to show up as other errors
         error.NotOpenForReading, error.Unexpected => {
             if (comptime bun.Environment.isPosix) {
-                const limit = std.os.getrlimit(.NOFILE) catch std.mem.zeroes(std.os.rlimit);
+                const limit = std.posix.getrlimit(.NOFILE) catch std.mem.zeroes(std.posix.rlimit);
 
                 if (limit.cur > 0 and limit.cur < (8192 * 2)) {
                     Output.prettyError(
@@ -618,7 +623,7 @@ else
 const metadata_version_line = std.fmt.comptimePrint(
     "Bun {s}v{s} {s} {s}{s}\n",
     .{
-        if (bun.Environment.is_canary) "Canary " else "",
+        if (bun.Environment.isDebug) "Debug " else if (bun.Environment.is_canary) "Canary " else "",
         Global.package_json_version_with_sha,
         bun.Environment.os.displayString(),
         arch_display_string,
@@ -626,19 +631,19 @@ const metadata_version_line = std.fmt.comptimePrint(
     },
 );
 
-fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyopaque) callconv(.C) noreturn {
+fn handleSegfaultPosix(sig: i32, info: *const std.posix.siginfo_t, _: ?*const anyopaque) callconv(.C) noreturn {
     const addr = switch (bun.Environment.os) {
         .linux => @intFromPtr(info.fields.sigfault.addr),
         .mac => @intFromPtr(info.addr),
-        else => unreachable,
+        else => @compileError(unreachable),
     };
 
     crashHandler(
         switch (sig) {
-            std.os.SIG.SEGV => .{ .segmentation_fault = addr },
-            std.os.SIG.ILL => .{ .illegal_instruction = addr },
-            std.os.SIG.BUS => .{ .bus_error = addr },
-            std.os.SIG.FPE => .{ .floating_point_error = addr },
+            std.posix.SIG.SEGV => .{ .segmentation_fault = addr },
+            std.posix.SIG.ILL => .{ .illegal_instruction = addr },
+            std.posix.SIG.BUS => .{ .bus_error = addr },
+            std.posix.SIG.FPE => .{ .floating_point_error = addr },
 
             // we do not register this handler for other signals
             else => unreachable,
@@ -651,7 +656,7 @@ fn handleSegfaultPosix(sig: i32, info: *const std.os.siginfo_t, _: ?*const anyop
 var did_register_sigaltstack = false;
 var sigaltstack: [512 * 1024]u8 = undefined;
 
-pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
+pub fn updatePosixSegfaultHandler(act: ?*std.posix.Sigaction) !void {
     if (act) |act_| {
         if (!did_register_sigaltstack) {
             var stack: std.c.stack_t = .{
@@ -661,16 +666,16 @@ pub fn updatePosixSegfaultHandler(act: ?*std.os.Sigaction) !void {
             };
 
             if (std.c.sigaltstack(&stack, null) == 0) {
-                act_.flags |= std.os.SA.ONSTACK;
+                act_.flags |= std.posix.SA.ONSTACK;
                 did_register_sigaltstack = true;
             }
         }
     }
 
-    try std.os.sigaction(std.os.SIG.SEGV, act, null);
-    try std.os.sigaction(std.os.SIG.ILL, act, null);
-    try std.os.sigaction(std.os.SIG.BUS, act, null);
-    try std.os.sigaction(std.os.SIG.FPE, act, null);
+    try std.posix.sigaction(std.posix.SIG.SEGV, act, null);
+    try std.posix.sigaction(std.posix.SIG.ILL, act, null);
+    try std.posix.sigaction(std.posix.SIG.BUS, act, null);
+    try std.posix.sigaction(std.posix.SIG.FPE, act, null);
 }
 
 var windows_segfault_handle: ?windows.HANDLE = null;
@@ -682,10 +687,10 @@ pub fn init() void {
             windows_segfault_handle = windows.kernel32.AddVectoredExceptionHandler(0, handleSegfaultWindows);
         },
         .mac, .linux => {
-            var act = std.os.Sigaction{
+            var act = std.posix.Sigaction{
                 .handler = .{ .sigaction = handleSegfaultPosix },
-                .mask = std.os.empty_sigset,
-                .flags = (std.os.SA.SIGINFO | std.os.SA.RESTART | std.os.SA.RESETHAND),
+                .mask = std.posix.empty_sigset,
+                .flags = (std.posix.SA.SIGINFO | std.posix.SA.RESTART | std.posix.SA.RESETHAND),
             };
             updatePosixSegfaultHandler(&act) catch {};
         },
@@ -703,9 +708,9 @@ pub fn resetSegfaultHandler() void {
         return;
     }
 
-    var act = std.os.Sigaction{
-        .handler = .{ .handler = std.os.SIG.DFL },
-        .mask = std.os.empty_sigset,
+    var act = std.posix.Sigaction{
+        .handler = .{ .handler = std.posix.SIG.DFL },
+        .mask = std.posix.empty_sigset,
         .flags = 0,
     };
     // To avoid a double-panic, do nothing if an error happens here.
@@ -733,6 +738,8 @@ pub fn handleSegfaultWindows(info: *windows.EXCEPTION_POINTERS) callconv(windows
     );
 }
 
+extern "C" fn gnu_get_libc_version() ?[*:0]const u8;
+
 pub fn printMetadata(writer: anytype) !void {
     if (Output.enable_ansi_colors) {
         try writer.writeAll(Output.prettyFmt("<r><d>", true));
@@ -740,6 +747,25 @@ pub fn printMetadata(writer: anytype) !void {
 
     try writer.writeAll(metadata_version_line);
     {
+        const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const cpu_features = CPUFeatures.get();
+        if (bun.Environment.isLinux) {
+            // TODO: musl
+            const version = gnu_get_libc_version() orelse "";
+            const kernel_version = bun.Analytics.GenerateHeader.GeneratePlatform.kernelVersion();
+            if (platform.os == .wsl) {
+                try writer.print("WSL Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            } else {
+                try writer.print("Linux Kernel v{d}.{d}.{d} | glibc v{s}\n", .{ kernel_version.major, kernel_version.minor, kernel_version.patch, bun.sliceTo(version, 0) });
+            }
+        } else if (bun.Environment.isMac) {
+            try writer.print("macOS v{s}\n", .{platform.version});
+        }
+
+        if (!cpu_features.isEmpty()) {
+            try writer.print("CPU: {}\n", .{cpu_features});
+        }
+
         try writer.print("Args: ", .{});
         var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {
@@ -791,7 +817,7 @@ pub fn printMetadata(writer: anytype) !void {
 }
 
 fn waitForOtherThreadToFinishPanicking() void {
-    if (panicking.fetchSub(1, .SeqCst) != 1) {
+    if (panicking.fetchSub(1, .seq_cst) != 1) {
         // Another thread is panicking, wait for the last one to finish
         // and call abort()
         if (builtin.single_threaded) unreachable;
@@ -946,8 +972,8 @@ const StackLine = struct {
                 } = .{ .address = addr -| 1 };
                 const CtxTy = @TypeOf(ctx);
 
-                std.os.dl_iterate_phdr(&ctx, error{Found}, struct {
-                    fn callback(info: *std.os.dl_phdr_info, _: usize, context: *CtxTy) !void {
+                std.posix.dl_iterate_phdr(&ctx, error{Found}, struct {
+                    fn callback(info: *std.posix.dl_phdr_info, _: usize, context: *CtxTy) !void {
                         defer context.i += 1;
 
                         if (context.address < info.dlpi_addr) return;
@@ -1260,21 +1286,21 @@ fn report(url: []const u8) void {
 fn crash() noreturn {
     switch (bun.Environment.os) {
         .windows => {
-            std.os.abort();
+            std.posix.abort();
         },
         else => {
             // Install default handler so that the tkill below will terminate.
-            const sigact = std.os.Sigaction{ .handler = .{ .handler = std.os.SIG.DFL }, .mask = std.os.empty_sigset, .flags = 0 };
+            const sigact = std.posix.Sigaction{ .handler = .{ .handler = std.posix.SIG.DFL }, .mask = std.posix.empty_sigset, .flags = 0 };
             inline for (.{
-                std.os.SIG.SEGV,
-                std.os.SIG.ILL,
-                std.os.SIG.BUS,
-                std.os.SIG.ABRT,
-                std.os.SIG.FPE,
-                std.os.SIG.HUP,
-                std.os.SIG.TERM,
+                std.posix.SIG.SEGV,
+                std.posix.SIG.ILL,
+                std.posix.SIG.BUS,
+                std.posix.SIG.ABRT,
+                std.posix.SIG.FPE,
+                std.posix.SIG.HUP,
+                std.posix.SIG.TERM,
             }) |sig| {
-                std.os.sigaction(sig, &sigact, null) catch {};
+                std.posix.sigaction(sig, &sigact, null) catch {};
             }
 
             @trap();
@@ -1470,17 +1496,17 @@ pub const js_bindings = struct {
         return obj;
     }
 
-    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsGetMachOImageZeroOffset(_: *bun.JSC.JSGlobalObject, _: *bun.JSC.CallFrame) JSValue {
         if (!bun.Environment.isMac) return .undefined;
 
         const header = std.c._dyld_get_image_header(0) orelse return .undefined;
         const base_address = @intFromPtr(header);
         const vmaddr_slide = std.c._dyld_get_image_vmaddr_slide(0);
 
-        return bun.JSC.JSValue.jsNumber(base_address - vmaddr_slide);
+        return JSValue.jsNumber(base_address - vmaddr_slide);
     }
 
-    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsSegfault(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         @setRuntimeSafety(false);
         const ptr: [*]align(1) u64 = @ptrFromInt(0xDEADBEEF);
         ptr[0] = 0xDEADBEEF;
@@ -1488,19 +1514,19 @@ pub const js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsPanic(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.crash_handler.panicImpl("invoked crashByPanic() handler", null, null);
     }
 
-    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsRootError(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.crash_handler.handleRootError(error.Test, null);
     }
 
-    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.outOfMemory();
     }
 
-    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
@@ -1510,7 +1536,7 @@ pub const js_bindings = struct {
         return bun.String.createLatin1(buf.slice()).toJS(global);
     }
 
-    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn jsGetFeatureData(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const obj = JSValue.createEmptyObject(global, 5);
         const list = bun.Analytics.packed_features_list;
         const array = JSValue.createEmptyArray(global, list.len);
@@ -1521,7 +1547,7 @@ pub const js_bindings = struct {
         obj.put(global, JSC.ZigString.static("version"), bun.String.init(Global.package_json_version).toJS(global));
         obj.put(global, JSC.ZigString.static("is_canary"), JSC.JSValue.jsBoolean(bun.Environment.is_canary));
         obj.put(global, JSC.ZigString.static("revision"), bun.String.init(bun.Environment.git_sha).toJS(global));
-        obj.put(global, JSC.ZigString.static("generated_at"), bun.JSC.JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
+        obj.put(global, JSC.ZigString.static("generated_at"), JSValue.jsNumberFromInt64(@max(std.time.milliTimestamp(), 0)));
         return obj;
     }
 };

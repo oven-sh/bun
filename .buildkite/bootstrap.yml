@@ -1,0 +1,30 @@
+# Uploads the latest CI workflow to Buildkite.
+# https://buildkite.com/docs/pipelines/defining-steps
+#
+# Changes to this file must be manually edited here:
+# https://buildkite.com/bun/bun/settings/steps
+steps:
+  - if: "build.pull_request.repository.fork"
+    block: ":eyes:"
+    prompt: "Did you review the PR?"
+    blocked_state: "running"
+
+  - label: ":pipeline:"
+    command: "buildkite-agent pipeline upload .buildkite/ci.yml"
+    agents:
+      queue: "build-linux"
+
+  - if: "build.branch == 'main' && !build.pull_request.repository.fork"
+    label: ":github:"
+    agents:
+      queue: "test-darwin"
+    depends_on:
+      - "darwin-aarch64-build-bun"
+      - "darwin-x64-build-bun"
+      - "linux-aarch64-build-bun"
+      - "linux-x64-build-bun"
+      - "linux-x64-baseline-build-bun"
+      - "windows-x64-build-bun"
+      - "windows-x64-baseline-build-bun"
+    command:
+      - ".buildkite/scripts/upload-release.sh"

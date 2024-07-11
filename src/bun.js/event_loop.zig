@@ -59,7 +59,7 @@ pub fn ConcurrentPromiseTask(comptime Context: type) type {
         }
 
         pub fn runFromThreadPool(task: *WorkPoolTask) void {
-            var this = @fieldParentPtr(This, "task", task);
+            var this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx);
             this.onFinish();
         }
@@ -122,7 +122,7 @@ pub fn WorkTask(comptime Context: type) type {
 
         pub fn runFromThreadPool(task: *TaskType) void {
             JSC.markBinding(@src());
-            const this = @fieldParentPtr(This, "task", task);
+            const this: *This = @fieldParentPtr("task", task);
             Context.run(this.ctx, this);
         }
 
@@ -206,7 +206,7 @@ pub const ManagedTask = struct {
     pub fn New(comptime Type: type, comptime Callback: anytype) type {
         return struct {
             pub fn init(ctx: *Type) Task {
-                var managed = bun.default_allocator.create(ManagedTask) catch @panic("out of memory!");
+                var managed = bun.default_allocator.create(ManagedTask) catch bun.outOfMemory();
                 managed.* = ManagedTask{
                     .callback = wrap,
                     .ctx = ctx,
@@ -286,7 +286,7 @@ pub const AnyTaskWithExtraContext = struct {
                         @as(*ContextType, @ptrCast(@alignCast(extra.?))),
                     },
                 );
-                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr(AnyTaskWithExtraContext, "ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
+                const anytask: *AnyTaskWithExtraContext = @fieldParentPtr("ctx", @as(*?*anyopaque, @ptrCast(@alignCast(this.?))));
                 bun.default_allocator.destroy(anytask);
             }
         };
@@ -319,8 +319,11 @@ pub const JSCScheduler = struct {
     export fn Bun__queueJSCDeferredWorkTaskConcurrently(jsc_vm: *VirtualMachine, task: *JSCScheduler.JSCDeferredWorkTask) void {
         JSC.markBinding(@src());
         var loop = jsc_vm.eventLoop();
-        var concurrent_task = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
-        loop.enqueueTaskConcurrent(concurrent_task.from(task, .auto_deinit));
+        loop.enqueueTaskConcurrent(ConcurrentTask.new(.{
+            .task = Task.init(task),
+            .next = null,
+            .auto_delete = true,
+        }));
     }
 
     comptime {
@@ -394,7 +397,7 @@ const ShellAsync = bun.shell.Interpreter.Async;
 // const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.IOReader.AsyncDeinit;
 const ShellIOReaderAsyncDeinit = bun.shell.Interpreter.AsyncDeinitReader;
 const ShellIOWriterAsyncDeinit = bun.shell.Interpreter.AsyncDeinitWriter;
-const TimerReference = JSC.BunTimer.Timeout.TimerReference;
+const TimerObject = JSC.BunTimer.TimerObject;
 const ProcessWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessQueue.ResultTask else opaque {};
 const ProcessMiniEventLoopWaiterThreadTask = if (Environment.isPosix) bun.spawn.WaiterThread.ProcessMiniEventLoopQueue.ResultTask else opaque {};
 const ShellAsyncSubprocessDone = bun.shell.Interpreter.Cmd.ShellAsyncSubprocessDone;
@@ -473,7 +476,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellCondExprStatTask,
     ShellAsync,
     ShellAsyncSubprocessDone,
-    TimerReference,
+    TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
 
     ProcessWaiterThreadTask,
@@ -486,19 +489,18 @@ pub const ConcurrentTask = struct {
     auto_delete: bool = false,
 
     pub const Queue = UnboundedQueue(ConcurrentTask, .next);
+    pub usingnamespace bun.New(@This());
 
     pub const AutoDeinit = enum {
         manual_deinit,
         auto_deinit,
     };
     pub fn create(task: Task) *ConcurrentTask {
-        const created = bun.default_allocator.create(ConcurrentTask) catch @panic("out of memory!");
-        created.* = .{
+        return ConcurrentTask.new(.{
             .task = task,
             .next = null,
             .auto_delete = true,
-        };
-        return created;
+        });
     }
 
     pub fn createFrom(task: anytype) *ConcurrentTask {
@@ -569,7 +571,7 @@ pub const GarbageCollectionController = struct {
     }
 
     pub fn bunVM(this: *GarbageCollectionController) *VirtualMachine {
-        return @fieldParentPtr(VirtualMachine, "gc_controller", this);
+        return @alignCast(@fieldParentPtr("gc_controller", this));
     }
 
     pub fn onGCTimer(timer: *uws.Timer) callconv(.C) void {
@@ -771,8 +773,6 @@ pub const EventLoop = struct {
     deferred_tasks: DeferredTaskQueue = .{},
     uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
 
-    timer_reference_pool: ?*bun.JSC.BunTimer.Timeout.TimerReference.Pool = null,
-
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
     concurrent_ref: std.atomic.Value(i32) = std.atomic.Value(i32).init(0),
@@ -826,15 +826,6 @@ pub const EventLoop = struct {
 
     pub inline fn getVmImpl(this: *EventLoop) *JSC.VirtualMachine {
         return this.virtual_machine;
-    }
-
-    pub fn timerReferencePool(this: *EventLoop) *bun.JSC.BunTimer.Timeout.TimerReference.Pool {
-        return this.timer_reference_pool orelse brk: {
-            const _pool = bun.default_allocator.create(bun.JSC.BunTimer.Timeout.TimerReference.Pool) catch bun.outOfMemory();
-            _pool.* = bun.JSC.BunTimer.Timeout.TimerReference.Pool.init(bun.default_allocator);
-            this.timer_reference_pool = _pool;
-            break :brk _pool;
-        };
     }
 
     pub fn pipeReadBuffer(this: *const EventLoop) []u8 {
@@ -1236,10 +1227,9 @@ pub const EventLoop = struct {
                     var any: *RuntimeTranspilerStore = task.get(RuntimeTranspilerStore).?;
                     any.drain();
                 },
-                @field(Task.Tag, typeBaseName(@typeName(TimerReference))) => {
-                    bun.markPosixOnly();
-                    var any: *TimerReference = task.get(TimerReference).?;
-                    any.runFromJSThread();
+                @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
+                    var any: *TimerObject = task.get(TimerObject).?;
+                    any.runImmediateTask(this.virtual_machine);
                 },
 
                 else => if (Environment.allow_assert) {
@@ -1269,9 +1259,8 @@ pub const EventLoop = struct {
         _ = this.tickConcurrentWithCount();
     }
 
-    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
-        JSC.markBinding(@src());
-        const delta = this.concurrent_ref.swap(0, .Monotonic);
+    fn updateCounts(this: *EventLoop) void {
+        const delta = this.concurrent_ref.swap(0, .monotonic);
         const loop = this.virtual_machine.event_loop_handle.?;
         if (comptime Environment.isWindows) {
             if (delta > 0) {
@@ -1288,6 +1277,10 @@ pub const EventLoop = struct {
                 loop.active -= @intCast(-delta);
             }
         }
+    }
+
+    pub fn tickConcurrentWithCount(this: *EventLoop) usize {
+        this.updateCounts();
 
         var concurrent = this.concurrent_tasks.popBatch();
         const count = concurrent.count;
@@ -1308,8 +1301,8 @@ pub const EventLoop = struct {
 
         while (iter.next()) |task| {
             if (to_destroy) |dest| {
-                bun.default_allocator.destroy(dest);
                 to_destroy = null;
+                dest.destroy();
             }
 
             if (task.auto_delete) {
@@ -1323,7 +1316,7 @@ pub const EventLoop = struct {
         }
 
         if (to_destroy) |dest| {
-            bun.default_allocator.destroy(dest);
+            dest.destroy();
         }
 
         return this.tasks.count - start_count;
@@ -1361,10 +1354,12 @@ pub const EventLoop = struct {
         if (loop.isActive()) {
             this.processGCTimer();
             var event_loop_sleep_timer = if (comptime Environment.isDebug) std.time.Timer.start() catch unreachable else {};
-            loop.tick();
+            // for the printer, this is defined:
+            var timespec: bun.timespec = if (Environment.isDebug) .{ .sec = 0, .nsec = 0 } else undefined;
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
 
             if (comptime Environment.isDebug) {
-                log("tick {}", .{bun.fmt.fmtDuration(event_loop_sleep_timer.read())});
+                log("tick {}, timeout: {}", .{ bun.fmt.fmtDuration(event_loop_sleep_timer.read()), bun.fmt.fmtDuration(timespec.ns()) });
             }
         } else {
             loop.tickWithoutIdle();
@@ -1373,36 +1368,8 @@ pub const EventLoop = struct {
             }
         }
 
-        this.flushImmediateQueue();
-        ctx.onAfterEventLoop();
-    }
-
-    pub fn autoTickWithTimeout(this: *EventLoop, timeoutMs: i64) void {
-        var ctx = this.virtual_machine;
-        var loop = this.usocketsLoop();
-
-        this.flushImmediateQueue();
-        this.tickImmediateTasks();
-
-        if (comptime Environment.isPosix) {
-            // Some tasks need to keep the event loop alive for one more tick.
-            // We want to keep the event loop alive long enough to process those ticks and any microtasks
-            //
-            // BUT. We don't actually have an idle event in that case.
-            // That means the process will be waiting forever on nothing.
-            // So we need to drain the counter immediately before entering uSockets loop
-            const pending_unref = ctx.pending_unref_counter;
-            if (pending_unref > 0) {
-                ctx.pending_unref_counter = 0;
-                loop.unrefCount(pending_unref);
-            }
-        }
-
-        if (loop.isActive()) {
-            this.processGCTimer();
-            loop.tickWithTimeout(timeoutMs);
-        } else {
-            loop.tickWithoutIdle();
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1457,11 +1424,10 @@ pub const EventLoop = struct {
 
     pub fn autoTickActive(this: *EventLoop) void {
         var loop = this.usocketsLoop();
-
+        var ctx = this.virtual_machine;
         this.flushImmediateQueue();
         this.tickImmediateTasks();
 
-        var ctx = this.virtual_machine;
         if (comptime Environment.isPosix) {
             const pending_unref = ctx.pending_unref_counter;
             if (pending_unref > 0) {
@@ -1472,9 +1438,15 @@ pub const EventLoop = struct {
 
         if (loop.isActive()) {
             this.processGCTimer();
-            loop.tick();
+            var timespec: bun.timespec = undefined;
+
+            loop.tickWithTimeout(if (ctx.timer.getTimeout(&timespec)) &timespec else null);
         } else {
             loop.tickWithoutIdle();
+        }
+
+        if (Environment.isPosix) {
+            ctx.timer.drainTimers(ctx);
         }
 
         this.flushImmediateQueue();
@@ -1540,43 +1512,16 @@ pub const EventLoop = struct {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
         switch (promise.status(this.virtual_machine.jsc)) {
             JSC.JSPromise.Status.Pending => {
-                while (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
                     this.tick();
 
-                    if (!worker.requested_terminate and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
                         this.autoTick();
                     }
                 }
             },
             else => {},
         }
-    }
-
-    // TODO: this implementation is terrible
-    // we should not be checking the millitimestamp every time
-    pub fn waitForPromiseWithTimeout(this: *EventLoop, promise: JSC.AnyPromise, timeout: u32) bool {
-        return switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                if (timeout == 0) {
-                    return false;
-                }
-                const start_time = std.time.milliTimestamp();
-                while (promise.status(this.virtual_machine.jsc) == .Pending) {
-                    this.tick();
-
-                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
-                        const remaining = std.time.milliTimestamp() - start_time;
-                        if (remaining >= timeout) {
-                            return false;
-                        }
-
-                        this.autoTickWithTimeout(remaining);
-                    }
-                }
-                return true;
-            },
-            else => true,
-        };
     }
 
     pub fn enqueueTask(this: *EventLoop, task: Task) void {
@@ -1636,11 +1581,14 @@ pub const EventLoop = struct {
         }
     }
     pub fn enqueueTaskConcurrent(this: *EventLoop, task: *ConcurrentTask) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrent({s})", .{task.task.typeName() orelse "[unknown]"});
         }
 
         this.concurrent_tasks.push(task);
@@ -1648,11 +1596,14 @@ pub const EventLoop = struct {
     }
 
     pub fn enqueueTaskConcurrentBatch(this: *EventLoop, batch: ConcurrentTask.Queue.Batch) void {
-        JSC.markBinding(@src());
         if (comptime Environment.allow_assert) {
             if (this.virtual_machine.has_terminated) {
                 @panic("EventLoop.enqueueTaskConcurrent: VM has terminated");
             }
+        }
+
+        if (comptime Environment.isDebug) {
+            log("enqueueTaskConcurrentBatch({d})", .{batch.count});
         }
 
         this.concurrent_tasks.pushBatch(batch.front.?, batch.last.?, batch.count);
@@ -1661,13 +1612,13 @@ pub const EventLoop = struct {
 
     pub fn refConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchAdd(1, .Monotonic);
+        _ = this.concurrent_ref.fetchAdd(1, .monotonic);
         this.wakeup();
     }
 
     pub fn unrefConcurrently(this: *EventLoop) void {
         // TODO maybe this should be AcquireRelease
-        _ = this.concurrent_ref.fetchSub(1, .Monotonic);
+        _ = this.concurrent_ref.fetchSub(1, .monotonic);
         this.wakeup();
     }
 };
@@ -1982,9 +1933,8 @@ pub const MiniEventLoop = struct {
 
     pub fn stderr(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stderr_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
-            const fd = if (comptime Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
+            const fd = if (Environment.isWindows) bun.FDImpl.fromUV(2).encode() else bun.STDERR_FD;
 
             switch (bun.sys.fstat(fd)) {
                 .result => |stat| {
@@ -1993,7 +1943,7 @@ pub const MiniEventLoop = struct {
                 .err => {},
             }
 
-            store.* = JSC.WebCore.Blob.Store{
+            const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
@@ -2005,7 +1955,7 @@ pub const MiniEventLoop = struct {
                         .mode = mode,
                     },
                 },
-            };
+            });
 
             this.stderr_store = store;
             break :brk store;
@@ -2014,7 +1964,6 @@ pub const MiniEventLoop = struct {
 
     pub fn stdout(this: *MiniEventLoop) *JSC.WebCore.Blob.Store {
         return this.stdout_store orelse brk: {
-            const store = bun.default_allocator.create(JSC.WebCore.Blob.Store) catch bun.outOfMemory();
             var mode: bun.Mode = 0;
             const fd = if (Environment.isWindows) bun.FDImpl.fromUV(1).encode() else bun.STDOUT_FD;
 
@@ -2025,7 +1974,7 @@ pub const MiniEventLoop = struct {
                 .err => {},
             }
 
-            store.* = JSC.WebCore.Blob.Store{
+            const store = JSC.WebCore.Blob.Store.new(.{
                 .ref_count = std.atomic.Value(u32).init(2),
                 .allocator = bun.default_allocator,
                 .data = .{
@@ -2037,7 +1986,7 @@ pub const MiniEventLoop = struct {
                         .mode = mode,
                     },
                 },
-            };
+            });
 
             this.stdout_store = store;
             break :brk store;

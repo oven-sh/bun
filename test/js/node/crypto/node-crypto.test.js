@@ -1,6 +1,7 @@
 import { it, expect, describe } from "bun:test";
 
 import crypto from "node:crypto";
+import util from "node:util";
 import { PassThrough, Readable } from "node:stream";
 
 it("crypto.randomBytes should return a Buffer", () => {
@@ -16,10 +17,7 @@ it("crypto.randomInt should return a number", () => {
 });
 
 it("crypto.randomInt with no arguments", () => {
-  const result = crypto.randomInt();
-  expect(typeof result).toBe("number");
-  expect(result).toBeGreaterThanOrEqual(0);
-  expect(result).toBeLessThanOrEqual(Number.MAX_SAFE_INTEGER);
+  expect(() => crypto.randomInt()).toThrow(TypeError);
 });
 
 it("crypto.randomInt with one argument", () => {
@@ -27,6 +25,13 @@ it("crypto.randomInt with one argument", () => {
   expect(typeof result).toBe("number");
   expect(result).toBeGreaterThanOrEqual(0);
   expect(result).toBeLessThanOrEqual(100);
+});
+
+it("crypto.randomInt with a callback", async () => {
+  const result = await util.promisify(crypto.randomInt)(0, 10);
+  expect(typeof result).toBe("number");
+  expect(result).toBeGreaterThanOrEqual(0);
+  expect(result).toBeLessThanOrEqual(10);
 });
 
 // https://github.com/oven-sh/bun/issues/1839

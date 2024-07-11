@@ -123,6 +123,7 @@ describe("tls.Server", () => {
               resolve();
             },
           );
+          client.on("error", reject);
         });
       }
 
@@ -214,8 +215,12 @@ describe("tls.Server", () => {
             onemore.on("close", () => {
               server.close();
             });
+            onemore.on("error", reject);
           });
+
+          other.on("error", reject);
         });
+        client.on("error", reject);
       });
       server.on("error", reject);
       server.on("clientError", reject);
@@ -238,14 +243,17 @@ describe("tls.Server", () => {
         port: (server.address() as AddressInfo).port,
         ca,
       };
+      var authorized = false;
       const socket = tls.connect(options, () => {
-        resolve(socket.authorized);
+        authorized = socket.authorized;
         socket.end();
       });
 
       socket.on("error", reject);
       socket.on("close", () => {
-        server.close();
+        server.close(() => {
+          resolve(authorized);
+        });
       });
     });
     return promise;
@@ -298,7 +306,7 @@ describe("tls.Server", () => {
           client.end();
         },
       );
-
+      client.on("error", reject);
       client.on("close", () => {
         server.close();
       });

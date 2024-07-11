@@ -53,7 +53,7 @@ function __bun_complete_bins_scripts --inherit-variable bun_builtin_cmds_without
     # Scripts have descriptions appended with a tab separator.
     # Strip off descriptions for the purposes of subcommand testing.
     set -l scripts (__fish__get_bun_scripts)
-    if __fish_seen_subcommand_from $(string split \t -f 1 -- $scripts)
+    if __fish_seen_subcommand_from (string split \t -f 1 -- $scripts)
         return
     end
     # Emit scripts.

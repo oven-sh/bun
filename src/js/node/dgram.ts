@@ -764,15 +764,16 @@ Socket.prototype[SymbolAsyncDispose] = async function () {
   if (!this[kStateSymbol].handle.socket) {
     return;
   }
-  return new Promise((resolve, reject) => {
-    this.close(err => {
-      if (err) {
-        reject(err);
-      } else {
-        resolve();
-      }
-    });
+  const { promise, resolve, reject } = $newPromiseCapability(Promise);
+  this.close(err => {
+    if (err) {
+      reject(err);
+    } else {
+      resolve();
+    }
   });
+
+  return promise;
 };
 
 function socketCloseNT(self) {

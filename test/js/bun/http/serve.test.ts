@@ -2,7 +2,7 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv, dumpStats } from "harness";
+import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4 } from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
@@ -27,7 +27,6 @@ async function runTest({ port, ...serverOptions }: Serve<any>, test: (server: Se
     while (!server) {
       try {
         server = serve({ ...serverOptions, port: 0 });
-        console.log(`Server: ${server.url}`);
         break;
       } catch (e: any) {
         console.log("catch:", e);
@@ -189,56 +188,50 @@ it("should display a welcome message when the response value type is incorrect",
 
 it("request.signal works in trivial case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(2);
         return new Response("Test failed!");
       },
     },
     async server => {
-      try {
-        await fetch(server.url.origin, { signal: aborty.signal });
-        throw new Error("Expected fetch to throw");
-      } catch (e: any) {
-        expect(e.name).toBe("AbortError");
-      }
-      await Bun.sleep(1);
-
-      expect(didAbort).toBe(true);
+      expect(async () => {
+        const response = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await response.blob();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
 
 it("request.signal works in leaky case", async () => {
   var aborty = new AbortController();
-  var didAbort = false;
+  var signaler = Promise.withResolvers();
 
   await runTest(
     {
       async fetch(req) {
         req.signal.addEventListener("abort", () => {
-          didAbort = true;
+          signaler.resolve();
         });
-
-        expect(didAbort).toBe(false);
         aborty.abort();
         await Bun.sleep(20);
         return new Response("Test failed!");
       },
     },
     async server => {
-      expect(async () => fetch(server.url.origin, { signal: aborty.signal })).toThrow("The operation was aborted.");
-
-      await Bun.sleep(10);
-
-      expect(didAbort).toBe(true);
+      await expect(async () => {
+        const resp = await fetch(server.url.origin, { signal: aborty.signal });
+        await signaler.promise;
+        await Bun.sleep(10);
+        resp.body?.getReader();
+      }).toThrow("The operation was aborted.");
     },
   );
 });
@@ -1281,11 +1274,12 @@ it("#5859 json", async () => {
 });
 
 it("#5859 arrayBuffer", async () => {
-  await Bun.write("/tmp/bad", new Uint8Array([0xfd]));
-  expect(async () => await Bun.file("/tmp/bad").json()).toThrow();
+  const tmp = join(tmpdirSync(), "bad");
+  await Bun.write(tmp, new Uint8Array([0xfd]));
+  expect(async () => await Bun.file(tmp).json()).toThrow();
 });
 
-it("server.requestIP (v4)", async () => {
+it.if(isIPv4())("server.requestIP (v4)", async () => {
   using server = Bun.serve({
     port: 0,
     fetch(req, server) {
@@ -1302,7 +1296,7 @@ it("server.requestIP (v4)", async () => {
   });
 });
 
-it("server.requestIP (v6)", async () => {
+it.if(isIPv6())("server.requestIP (v6)", async () => {
   using server = Bun.serve({
     port: 0,
     fetch(req, server) {
@@ -1319,8 +1313,8 @@ it("server.requestIP (v6)", async () => {
   });
 });
 
-it("server.requestIP (unix)", async () => {
-  const unix = "/tmp/bun-serve.sock";
+it.if(isPosix)("server.requestIP (unix)", async () => {
+  const unix = join(tmpdirSync(), "serve.sock");
   using server = Bun.serve({
     unix,
     fetch(req, server) {
@@ -1515,3 +1509,36 @@ it("should work with dispose keyword", async () => {
   }
   expect(fetch(url)).rejects.toThrow();
 });
+
+it("should be able to stop in the middle of a file response", async () => {
+  async function doRequest(url: string) {
+    try {
+      const response = await fetch(url, { signal: AbortSignal.timeout(10) });
+      const read = (response.body as ReadableStream<any>).getReader();
+      while (true) {
+        const { value, done } = await read.read();
+        if (done) break;
+      }
+      expect(response.status).toBe(200);
+    } catch {}
+  }
+  const fixture = join(import.meta.dir, "server-bigfile-send.fixture.js");
+  for (let i = 0; i < 3; i++) {
+    const process = Bun.spawn([bunExe(), fixture], {
+      env: bunEnv,
+      stderr: "inherit",
+      stdout: "pipe",
+      stdin: "ignore",
+    });
+    const { value } = await process.stdout.getReader().read();
+    const url = new TextDecoder().decode(value).trim();
+    const requests = [];
+    for (let j = 0; j < 5_000; j++) {
+      requests.push(doRequest(url));
+    }
+    // only await for 1k requests (and kill the process)
+    await Promise.all(requests.slice(0, 1_000));
+    expect(process.exitCode || 0).toBe(0);
+    process.kill();
+  }
+}, 60_000);

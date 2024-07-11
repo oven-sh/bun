@@ -1,6 +1,5 @@
-import assert from "assert";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 describe("bundler", () => {
   itBundled("minify/TemplateStringFolding", {
@@ -55,6 +54,17 @@ describe("bundler", () => {
     ],
     minifySyntax: true,
     target: "bun",
+  });
+  itBundled("minify/StringAdditionFolding", {
+    files: {
+      "/entry.js": /* js */ `
+        capture("Objects are not valid as a React child (found: " + (childString === "[object Object]" ? "object with keys {" + Object.keys(node).join(", ") + "}" : childString) + "). " + "If you meant to render a collection of children, use an array " + "instead.")
+      `,
+    },
+    capture: [
+      '"Objects are not valid as a React child (found: " + (childString === "[object Object]" ? "object with keys {" + Object.keys(node).join(", ") + "}" : childString) + "). If you meant to render a collection of children, use an array instead."',
+    ],
+    minifySyntax: true,
   });
   itBundled("minify/FunctionExpressionRemoveName", {
     todo: true,
@@ -122,8 +132,68 @@ describe("bundler", () => {
     run: { stdout: "4 2 3\n4 5 3\n4 5 6" },
     onAfterBundle(api) {
       const code = api.readFile("/out.js");
-      assert([...code.matchAll(/var /g)].length === 1, "expected only 1 variable declaration statement");
+      expect([...code.matchAll(/var /g)]).toHaveLength(1);
     },
+  });
+  itBundled("minify/Infinity", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(Infinity);
+        capture(-Infinity);
+        capture(Infinity + 1);
+        capture(-Infinity - 1);
+        capture(Infinity / 0);
+        capture(-Infinity / 0);
+        capture(Infinity * 0);
+        capture(-Infinity * 0);
+        capture(Infinity % 1);
+        capture(-Infinity % 1);
+        capture(Infinity ** 1);
+        capture(-(Infinity ** 1));
+        capture(~Infinity);
+        capture(~-Infinity);
+      `,
+    },
+    capture: [
+      "1 / 0",
+      "-1 / 0",
+      "1 / 0",
+      "-1 / 0",
+      "1 / 0",
+      "-1 / 0",
+      "NaN",
+      "NaN",
+      "NaN",
+      "NaN",
+      "1 / 0",
+      "-1 / 0",
+      "-1",
+      "-1",
+    ],
+    minifySyntax: true,
+  });
+  itBundled("minify+whitespace/Infinity", {
+    files: {
+      "/entry.js": /* js */ `
+        capture(Infinity);
+        capture(-Infinity);
+        capture(Infinity + 1);
+        capture(-Infinity - 1);
+        capture(Infinity / 0);
+        capture(-Infinity / 0);
+        capture(Infinity * 0);
+        capture(-Infinity * 0);
+        capture(Infinity % 1);
+        capture(-Infinity % 1);
+        capture(Infinity ** 1);
+        capture((-Infinity) ** 2);
+        capture(~Infinity);
+        capture(~-Infinity);
+      `,
+    },
+    capture: ["1/0", "-1/0", "1/0", "-1/0", "1/0", "-1/0", "NaN", "NaN", "NaN", "NaN", "1/0", "1/0", "-1", "-1"],
+    minifySyntax: true,
+    minifyWhitespace: true,
   });
   itBundled("minify/InlineArraySpread", {
     files: {

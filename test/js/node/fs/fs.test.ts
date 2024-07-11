@@ -62,6 +62,18 @@ function mkdirForce(path: string) {
   if (!existsSync(path)) mkdirSync(path, { recursive: true });
 }
 
+it("fs.writeFile(1, data) should work when its inherited", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "1"]).toRun();
+});
+
+it("fs.writeFile(2, data) should work when its inherited", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), "2"]).toRun();
+});
+
+it("fs.writeFile(/dev/null, data) should work", async () => {
+  expect([join(import.meta.dir, "fs-writeFile-1-fixture.js"), require("os").devNull]).toRun();
+});
+
 it("fs.openAsBlob", async () => {
   expect((await openAsBlob(import.meta.path)).size).toBe(statSync(import.meta.path).size);
 });
@@ -863,15 +875,17 @@ it("promises.readdir on a large folder withFileTypes", async () => {
 });
 
 it("statSync throwIfNoEntry", () => {
-  expect(statSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
-  expect(lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: false })).toBeUndefined();
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(statSync(path, { throwIfNoEntry: false })).toBeUndefined();
+  expect(lstatSync(path, { throwIfNoEntry: false })).toBeUndefined();
 });
 
 it("statSync throwIfNoEntry: true", () => {
-  expect(() => statSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => statSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok", { throwIfNoEntry: true })).toThrow("No such file or directory");
-  expect(() => lstatSync("/tmp/404/not-found/ok")).toThrow("No such file or directory");
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  expect(() => statSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => statSync(path)).toThrow("No such file or directory");
+  expect(() => lstatSync(path, { throwIfNoEntry: true })).toThrow("No such file or directory");
+  expect(() => lstatSync(path)).toThrow("No such file or directory");
 });
 
 it("stat == statSync", async () => {
@@ -927,15 +941,17 @@ it("mkdtempSync() empty name", () => {
 });
 
 it("mkdtempSync() non-exist dir #2568", () => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
   try {
-    expect(mkdtempSync("/tmp/hello/world")).toBeFalsy();
+    expect(mkdtempSync(path)).toBeFalsy();
   } catch (err: any) {
     expect(err?.errno).toBe(-2);
   }
 });
 
 it("mkdtemp() non-exist dir #2568", done => {
-  mkdtemp("/tmp/hello/world", (err, folder) => {
+  const path = join(tmpdirSync(), "does", "not", "exist");
+  mkdtemp(path, (err, folder) => {
     try {
       expect(err?.errno).toBe(-2);
       expect(folder).toBeUndefined();
@@ -2549,11 +2565,19 @@ it("fstat on a large file", () => {
     }
     fdatasyncSync(fd);
     expect(fstatSync(fd).size).toEqual(offset);
+  } catch (error) {
+    // TODO: Once `fs.statfsSync` is implemented, make sure that the buffer size
+    // is small enough not to cause: ENOSPC: No space left on device.
+    if (error.code === "ENOSPC") {
+      console.warn("Skipping test 'fstat on a large file' because not enough disk space");
+      return;
+    }
+    throw error;
   } finally {
     if (fd) closeSync(fd);
     unlinkSync(dest);
   }
-}, 20_000);
+}, 30_000);
 
 it("fs.constants", () => {
   if (isWindows) {
@@ -3208,11 +3232,56 @@ it("promises exists should never throw ENAMETOOLONG", async () => {
 
 it("promises.fdatasync with a bad fd should include that in the error thrown", async () => {
   try {
-    await _promises.fdatasync(500);
+    await _promises.fdatasync(50000);
   } catch (e) {
     expect(typeof e.fd).toBe("number");
-    expect(e.fd).toBe(500);
+    expect(e.fd).toBe(50000);
     return;
   }
   expect.unreachable();
+});
+
+it("promises.cp should work even if dest does not exist", async () => {
+  const x_dir = tmpdirSync();
+  const text_expected = "A".repeat(131073);
+  let src = "package-lock.json";
+  let folder = "folder-not-exist";
+  let dst = join(folder, src);
+
+  src = join(x_dir, src);
+  folder = join(x_dir, folder);
+  dst = join(x_dir, dst);
+
+  await promises.writeFile(src, text_expected);
+  await promises.rm(folder, { recursive: true, force: true });
+  await promises.cp(src, dst);
+
+  const text_actual = await Bun.file(dst).text();
+  expect(text_actual).toBe(text_expected);
+});
+
+it("promises.writeFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.writeFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+});
+
+it("promises.readFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await Bun.write(Bun.file(x_path), "data");
+  await using file = await fs.promises.open(x_path, "r");
+  expect((await fs.promises.readFile(file)).toString()).toBe("data");
+});
+
+it("promises.appendFile should accept a FileHandle", async () => {
+  const x_dir = tmpdirSync();
+  const x_path = join(x_dir, "dummy.txt");
+  await using file = await fs.promises.open(x_path, "w");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("data");
+  await fs.promises.appendFile(file, "data");
+  expect(await Bun.file(x_path).text()).toBe("datadata");
 });

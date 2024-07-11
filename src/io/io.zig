@@ -3,14 +3,12 @@ const std = @import("std");
 const sys = bun.sys;
 const linux = std.os.linux;
 const Environment = bun.Environment;
-const heap = @import("./heap.zig");
+pub const heap = @import("./heap.zig");
 const JSC = bun.JSC;
 
 const log = bun.Output.scoped(.loop, false);
 
-const TimerHeap = heap.Intrusive(Timer, void, Timer.less);
-
-const os = std.os;
+const posix = std.posix;
 const assert = bun.assert;
 
 pub const Source = @import("./source.zig").Source;
@@ -20,49 +18,50 @@ pub const Loop = struct {
     waker: bun.Async.Waker,
     epoll_fd: if (Environment.isLinux) bun.FileDescriptor else u0 = if (Environment.isLinux) .zero else 0,
 
-    timers: TimerHeap = .{ .context = {} },
-
-    cached_now: os.timespec = .{
+    cached_now: posix.timespec = .{
         .tv_nsec = 0,
         .tv_sec = 0,
     },
     active: usize = 0,
 
     var loop: Loop = undefined;
-    var has_loaded_loop: bool = false;
+
+    fn load() void {
+        loop = Loop{
+            .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
+        };
+        if (comptime Environment.isLinux) {
+            loop.epoll_fd = bun.toFD(std.posix.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+
+            {
+                var epoll = std.mem.zeroes(std.os.linux.epoll_event);
+                epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
+                epoll.data.ptr = @intFromPtr(&loop);
+                const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
+
+                switch (bun.C.getErrno(rc)) {
+                    .SUCCESS => {},
+                    else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
+                }
+            }
+        }
+        var thread = std.Thread.spawn(.{
+            .allocator = bun.default_allocator,
+
+            // smaller thread, since it's not doing much.
+            .stack_size = 1024 * 1024 * 2,
+        }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
+        thread.detach();
+    }
+    var once = std.once(load);
 
     pub fn get() *Loop {
         if (Environment.isWindows) {
             @panic("Do not use this API on windows");
         }
 
-        if (!@atomicRmw(bool, &has_loaded_loop, std.builtin.AtomicRmwOp.Xchg, true, .Monotonic)) {
-            loop = Loop{
-                .waker = bun.Async.Waker.init() catch @panic("failed to initialize waker"),
-            };
-            if (comptime Environment.isLinux) {
-                loop.epoll_fd = bun.toFD(std.os.epoll_create1(std.os.linux.EPOLL.CLOEXEC | 0) catch @panic("Failed to create epoll file descriptor"));
+        once.call();
 
-                {
-                    var epoll = std.mem.zeroes(std.os.linux.epoll_event);
-                    epoll.events = std.os.linux.EPOLL.IN | std.os.linux.EPOLL.ERR | std.os.linux.EPOLL.HUP;
-                    epoll.data.ptr = @intFromPtr(&loop);
-                    const rc = std.os.linux.epoll_ctl(loop.epoll_fd.cast(), std.os.linux.EPOLL.CTL_ADD, loop.waker.getFd().cast(), &epoll);
-
-                    switch (std.os.linux.getErrno(rc)) {
-                        .SUCCESS => {},
-                        else => |err| bun.Output.panic("Failed to wait on epoll {s}", .{@tagName(err)}),
-                    }
-                }
-            }
-            var thread = std.Thread.spawn(.{
-                .allocator = bun.default_allocator,
-
-                // smaller thread, since it's not doing much.
-                .stack_size = 1024 * 1024 * 2,
-            }, onSpawnIOThread, .{}) catch @panic("Failed to spawn IO watcher thread");
-            thread.detach();
-        }
         return &loop;
     }
 
@@ -109,7 +108,7 @@ pub const Loop = struct {
                         .readable => |readable| {
                             switch (readable.poll.registerForEpoll(readable.tag, this, .poll_readable, true, readable.fd)) {
                                 .err => |err| {
-                                    readable.onError(request, err);
+                                    readable.onError(readable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;
@@ -119,7 +118,7 @@ pub const Loop = struct {
                         .writable => |writable| {
                             switch (writable.poll.registerForEpoll(writable.tag, this, .poll_writable, true, writable.fd)) {
                                 .err => |err| {
-                                    writable.onError(request, err);
+                                    writable.onError(writable.ctx, err);
                                 },
                                 .result => {
                                     this.active += 1;
@@ -131,49 +130,9 @@ pub const Loop = struct {
                             this.active -= 1;
                             close.onDone(close.ctx);
                         },
-                        .timer_cancelled => {},
-                        .timer => |timer| {
-                            while (true) {
-                                switch (timer.state) {
-                                    .PENDING => {
-                                        timer.state = .ACTIVE;
-                                        this.timers.insert(timer);
-                                        this.active += 1;
-                                    },
-                                    .ACTIVE => {
-                                        @panic("timer is already active");
-                                    },
-                                    .CANCELLED => {
-                                        timer.deinit();
-                                        this.active -= 1;
-                                        break;
-                                    },
-                                    .FIRED => {
-                                        @panic("timer has already fired");
-                                    },
-                                }
-                                break;
-                            }
-                        },
                     }
                 }
             }
-
-            this.drainExpiredTimers();
-
-            // Determine our next timeout based on the timers
-            const timeout: i32 = if (this.active == 0) 0 else timeout: {
-                const t = this.timers.peek() orelse break :timeout -1;
-
-                // Determine the time in milliseconds.
-                const ms_now = @as(u64, @intCast(this.cached_now.tv_sec)) * std.time.ms_per_s +
-                    @as(u64, @intCast(this.cached_now.tv_nsec)) / std.time.ns_per_ms;
-                const ms_next = @as(u64, @intCast(t.next.tv_sec)) * std.time.ms_per_s +
-                    @as(u64, @intCast(t.next.tv_nsec)) / std.time.ns_per_ms;
-                const out = @as(i32, @intCast(ms_next -| ms_now));
-
-                break :timeout @max(out, 0);
-            };
 
             var events: [256]EventType = undefined;
 
@@ -181,10 +140,10 @@ pub const Loop = struct {
                 this.pollfd().cast(),
                 &events,
                 @intCast(events.len),
-                timeout,
+                std.math.maxInt(i32),
             );
 
-            switch (std.os.linux.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("epoll_wait: {s}", .{@tagName(e)}),
@@ -286,57 +245,13 @@ pub const Loop = struct {
                             }
                             close.onDone(close.ctx);
                         },
-                        .timer_cancelled => {},
-                        .timer => |timer| {
-                            while (true) {
-                                switch (timer.state) {
-                                    .PENDING => {
-                                        timer.state = .ACTIVE;
-                                        this.timers.insert(timer);
-                                        this.active += 1;
-                                    },
-                                    .ACTIVE => {
-                                        @panic("timer is already active");
-                                    },
-                                    .CANCELLED => {
-                                        timer.deinit();
-                                        this.active -= 1;
-                                        break;
-                                    },
-                                    .FIRED => {
-                                        @panic("timer has already fired");
-                                    },
-                                }
-                                break;
-                            }
-                        },
                     }
                 }
             }
 
-            this.drainExpiredTimers();
             const change_count = events_list.items.len;
 
-            // Determine our next timeout based on the timers
-            const timeout: ?std.os.timespec = timeout: {
-                const t = this.timers.peek() orelse break :timeout null;
-                var out: std.os.timespec = undefined;
-                out.tv_sec = t.next.tv_sec -| this.cached_now.tv_sec;
-                out.tv_nsec = t.next.tv_nsec -| this.cached_now.tv_nsec;
-
-                if (out.tv_nsec < 0) {
-                    out.tv_sec -= 1;
-                    out.tv_nsec += std.time.ns_per_s;
-                }
-
-                if (out.tv_sec < 0) {
-                    break :timeout null;
-                }
-
-                break :timeout out;
-            };
-
-            const rc = os.system.kevent64(
+            const rc = posix.system.kevent64(
                 this.pollfd().cast(),
                 events_list.items.ptr,
                 @intCast(change_count),
@@ -346,10 +261,10 @@ pub const Loop = struct {
                 // registration, it becomes errno
                 @intCast(events_list.capacity),
                 0,
-                if (timeout) |*t| t else null,
+                null,
             );
 
-            switch (std.c.getErrno(rc)) {
+            switch (bun.C.getErrno(rc)) {
                 .INTR => continue,
                 .SUCCESS => {},
                 else => |e| bun.Output.panic("kevent64 failed: {s}", .{@tagName(e)}),
@@ -358,46 +273,11 @@ pub const Loop = struct {
             this.updateNow();
 
             assert(rc <= events_list.capacity);
-            const current_events: []std.os.darwin.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
+            const current_events: []std.posix.system.kevent64_s = events_list.items.ptr[0..@intCast(rc)];
 
             for (current_events) |event| {
                 Poll.onUpdateKQueue(event);
             }
-        }
-    }
-
-    fn drainExpiredTimers(this: *Loop) void {
-        const now = Timer{ .next = this.cached_now };
-
-        var current_batch = JSC.ConcurrentTask.Queue.Batch{};
-        var prev_event_loop: ?*JSC.EventLoop = null;
-
-        // Run our expired timers
-        while (this.timers.peek()) |t| {
-            if (!Timer.less({}, t, &now)) break;
-
-            // Remove the timer
-            assert(this.timers.deleteMin().? == t);
-
-            // Mark completion as done
-            t.state = .FIRED;
-
-            switch (t.fire(
-                &current_batch,
-                &prev_event_loop,
-            )) {
-                .disarm => {},
-                .rearm => |new| {
-                    t.next = new;
-                    t.reset = null;
-                    t.state = .ACTIVE;
-                    this.timers.insert(t);
-                },
-            }
-        }
-
-        if (prev_event_loop) |event_loop| {
-            event_loop.enqueueTaskConcurrentBatch(current_batch);
         }
     }
 
@@ -406,7 +286,7 @@ pub const Loop = struct {
     }
 
     extern "C" fn clock_gettime_monotonic(sec: *i64, nsec: *i64) c_int;
-    pub fn updateTimespec(timespec: *os.timespec) void {
+    pub fn updateTimespec(timespec: *posix.timespec) void {
         if (comptime Environment.isLinux) {
             const rc = linux.clock_gettime(linux.CLOCK.MONOTONIC, timespec);
             assert(rc == 0);
@@ -420,12 +300,12 @@ pub const Loop = struct {
             timespec.tv_sec = @intCast(tv_sec);
             timespec.tv_nsec = @intCast(tv_nsec);
         } else {
-            std.os.clock_gettime(std.os.CLOCK.MONOTONIC, timespec) catch {};
+            std.posix.clock_gettime(std.posix.CLOCK.MONOTONIC, timespec) catch {};
         }
     }
 };
 
-const EventType = if (Environment.isLinux) linux.epoll_event else std.os.system.kevent64_s;
+const EventType = if (Environment.isLinux) linux.epoll_event else std.posix.system.kevent64_s;
 
 pub const Request = struct {
     next: ?*Request = null,
@@ -439,8 +319,6 @@ pub const Action = union(enum) {
     readable: FileAction,
     writable: FileAction,
     close: CloseAction,
-    timer: *Timer,
-    timer_cancelled: void,
 
     pub const FileAction = struct {
         fd: bun.FileDescriptor,
@@ -507,137 +385,6 @@ const Pollable = struct {
     }
 };
 
-const TimerReference = bun.JSC.BunTimer.Timeout.TimerReference;
-
-pub const Timer = struct {
-    /// The absolute time to fire this timer next.
-    next: os.timespec,
-
-    /// Only used internally. If this is non-null and timer is
-    /// CANCELLED, then the timer is rearmed automatically with this
-    /// as the next time. The callback will not be called on the
-    /// cancellation.
-    reset: ?os.timespec = null,
-
-    /// Internal heap fields.
-    heap: heap.IntrusiveField(Timer) = .{},
-
-    state: State = .PENDING,
-
-    tag: Tag = .TimerCallback,
-
-    pub const Tag = enum {
-        TimerCallback,
-        TimerReference,
-
-        pub fn Type(comptime T: Tag) type {
-            return switch (T) {
-                .TimerCallback => TimerCallback,
-                .TimerReference => TimerReference,
-            };
-        }
-    };
-
-    const TimerCallback = struct {
-        callback: *const fn (*TimerCallback) Arm,
-        ctx: *anyopaque,
-        timer: Timer,
-    };
-
-    pub const State = enum {
-        /// The timer is waiting to be enabled.
-        PENDING,
-
-        /// The timer is active and will fire at the next time.
-        ACTIVE,
-
-        /// The timer has been cancelled and will not fire.
-        CANCELLED,
-
-        /// The timer has fired and the callback has been called.
-        FIRED,
-    };
-
-    fn less(_: void, a: *const Timer, b: *const Timer) bool {
-        return a.ns() < b.ns();
-    }
-
-    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
-    /// 584 years so if we get any overflows we just use maxInt(u64). If
-    /// any software is running in 584 years waiting on this timer...
-    /// shame on me I guess... but I'll be dead.
-    fn ns(self: *const Timer) u64 {
-        assert(self.next.tv_sec >= 0);
-        assert(self.next.tv_nsec >= 0);
-
-        const max = std.math.maxInt(u64);
-        const s_ns = std.math.mul(
-            u64,
-            @as(u64, @intCast(self.next.tv_sec)),
-            std.time.ns_per_s,
-        ) catch return max;
-        return std.math.add(u64, s_ns, @as(u64, @intCast(self.next.tv_nsec))) catch
-            return max;
-    }
-
-    pub const Arm = union(enum) {
-        rearm: std.os.timespec,
-        disarm,
-    };
-
-    pub fn fire(this: *Timer, batch: *JSC.ConcurrentTask.Queue.Batch, event_loop: *?*JSC.EventLoop) Arm {
-        if (comptime Environment.allow_assert) {
-            if (comptime Environment.isPosix) {
-                const timer = std.time.Instant{ .timestamp = this.next };
-                var now = std.time.Instant{ .timestamp = undefined };
-                Loop.updateTimespec(&now.timestamp);
-
-                if (timer.order(now) != .lt) {
-                    bun.Output.panic("Timer fired {} too early", .{bun.fmt.fmtDuration(timer.since(now))});
-                }
-            }
-        }
-
-        switch (this.tag) {
-            inline else => |t| {
-                var container: *t.Type() = @fieldParentPtr(t.Type(), "timer", this);
-                if (comptime @hasDecl(t.Type(), "callback")) {
-                    const concurrent_task = container.concurrent_task.from(container, .manual_deinit);
-                    if (event_loop.*) |loop| {
-                        // If they are different event loops, we have to drain the batch right here.
-                        if (loop != container.event_loop) {
-                            loop.enqueueTaskConcurrentBatch(batch.*);
-                            batch.* = .{};
-                            event_loop.* = container.event_loop;
-                        }
-
-                        if (batch.front == null) {
-                            batch.front = concurrent_task;
-                        }
-                    } else {
-                        batch.front = concurrent_task;
-                        event_loop.* = container.event_loop;
-                    }
-
-                    if (batch.last) |last| {
-                        bun.assert(last.next == null);
-                        last.next = concurrent_task;
-                    }
-
-                    batch.last = concurrent_task;
-
-                    batch.count += 1;
-                    return container.callback();
-                }
-
-                return container.callback(container);
-            },
-        }
-    }
-
-    pub fn deinit(_: *Timer) void {}
-};
-
 pub const Poll = struct {
     flags: Flags.Set = Flags.Set.initEmpty(),
     generation_number: GenerationNumberInt = 0,
@@ -691,26 +438,26 @@ pub const Poll = struct {
         pub const Set = std.EnumSet(Flags);
         pub const Struct = std.enums.EnumFieldStruct(Flags, bool, false);
 
-        pub fn fromKQueueEvent(kqueue_event: std.os.system.kevent64_s) Flags.Set {
+        pub fn fromKQueueEvent(kqueue_event: std.posix.system.kevent64_s) Flags.Set {
             var flags = Flags.Set{};
-            if (kqueue_event.filter == std.os.system.EVFILT_READ) {
+            if (kqueue_event.filter == std.posix.system.EVFILT_READ) {
                 flags.insert(Flags.readable);
                 log("readable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_WRITE) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_WRITE) {
                 flags.insert(Flags.writable);
                 log("writable", .{});
-                if (kqueue_event.flags & std.os.system.EV_EOF != 0) {
+                if (kqueue_event.flags & std.posix.system.EV_EOF != 0) {
                     flags.insert(Flags.hup);
                     log("hup", .{});
                 }
-            } else if (kqueue_event.filter == std.os.system.EVFILT_PROC) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_PROC) {
                 log("proc", .{});
                 flags.insert(Flags.process);
-            } else if (kqueue_event.filter == std.os.system.EVFILT_MACHPORT) {
+            } else if (kqueue_event.filter == std.posix.system.EVFILT_MACHPORT) {
                 log("machport", .{});
                 flags.insert(Flags.machport);
             }
@@ -743,7 +490,7 @@ pub const Poll = struct {
             tag: Pollable.Tag,
             poll: *Poll,
             fd: bun.FileDescriptor,
-            kqueue_event: *std.os.system.kevent64_s,
+            kqueue_event: *std.posix.system.kevent64_s,
         ) void {
             log("register({s}, {})", .{ @tagName(action), fd });
             defer {
@@ -768,12 +515,12 @@ pub const Poll = struct {
                 }
             }
 
-            const one_shot_flag = std.os.system.EV_ONESHOT;
+            const one_shot_flag = std.posix.system.EV_ONESHOT;
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -782,7 +529,7 @@ pub const Poll = struct {
                 },
                 .writable => .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -791,7 +538,7 @@ pub const Poll = struct {
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_READ,
+                    .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -799,7 +546,7 @@ pub const Poll = struct {
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
                     .ident = @as(u64, @intCast(fd.int())),
-                    .filter = std.os.system.EVFILT_WRITE,
+                    .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
                     .udata = @intFromPtr(Pollable.init(tag, poll).ptr()),
@@ -824,7 +571,7 @@ pub const Poll = struct {
     }
 
     pub fn onUpdateKQueue(
-        event: std.os.system.kevent64_s,
+        event: std.posix.system.kevent64_s,
     ) void {
         if (event.filter == std.c.EVFILT_MACHPORT)
             return;
@@ -837,7 +584,7 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.flags == std.c.EV_ERROR) {
                     log("error({d}) = {d}", .{ event.ident, event.data });
                     this.onIOError(bun.sys.Error.fromCode(@enumFromInt(event.data), .kevent));
@@ -859,9 +606,9 @@ pub const Poll = struct {
             .empty => {},
 
             inline else => |t| {
-                var this: *Pollable.Tag.Type(t) = @fieldParentPtr(Pollable.Tag.Type(t), "io_poll", poll);
+                var this: *Pollable.Tag.Type(t) = @alignCast(@fieldParentPtr("io_poll", poll));
                 if (event.events & linux.EPOLL.ERR != 0) {
-                    const errno = std.os.linux.getErrno(event.events);
+                    const errno = bun.C.getErrno(event.events);
                     log("error() = {s}", .{@tagName(errno)});
                     this.onIOError(bun.sys.Error.fromCode(errno, .epoll_ctl));
                 } else {

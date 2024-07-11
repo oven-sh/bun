@@ -5,7 +5,10 @@
 //      @import("root").bun
 //
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
+const builtin = @import("builtin");
 const std = @import("std");
+const bun = @This();
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
@@ -14,6 +17,12 @@ pub const default_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
 else
     @import("./memory_allocator.zig").c_allocator;
+
+/// Zeroing memory allocator
+pub const z_allocator: std.mem.Allocator = if (!use_mimalloc)
+    std.heap.c_allocator
+else
+    @import("./memory_allocator.zig").z_allocator;
 
 pub const huge_allocator: std.mem.Allocator = if (!use_mimalloc)
     std.heap.c_allocator
@@ -38,7 +47,6 @@ pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
 pub const meta = @import("./meta.zig");
-pub const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
 pub const base64 = @import("./base64/base64.zig");
 pub const path = @import("./resolver/resolve_path.zig");
 pub const resolver = @import("./resolver/resolver.zig");
@@ -47,7 +55,19 @@ pub const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 pub const fmt = @import("./fmt.zig");
 pub const allocators = @import("./allocators.zig");
 
+/// Copied from Zig std.trait
+pub const trait = @import("./trait.zig");
+/// Copied from Zig std.Progress before 0.13 rewrite
+pub const Progress = @import("./Progress.zig");
+/// Modified version of Zig's ComptimeStringMap
+pub const comptime_string_map = @import("./comptime_string_map.zig");
+pub const ComptimeStringMap = comptime_string_map.ComptimeStringMap;
+pub const ComptimeStringMap16 = comptime_string_map.ComptimeStringMap16;
+pub const ComptimeStringMapWithKeyType = comptime_string_map.ComptimeStringMapWithKeyType;
+
 pub const glob = @import("./glob.zig");
+pub const patch = @import("./patch.zig");
+pub const ini = @import("./ini.zig");
 
 pub const shell = struct {
     pub usingnamespace @import("./shell/shell.zig");
@@ -66,7 +86,7 @@ else if (Environment.isWindows)
     // Do not bitcast it to *anyopaque manually, but instead use `fdcast()`
     u64
 else
-    std.os.fd_t;
+    std.posix.fd_t;
 
 pub const FD = FileDescriptor;
 pub const FileDescriptor = enum(FileDescriptorInt) {
@@ -85,7 +105,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
     ///
     /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.os.fd_t {
+    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
         if (Environment.isWindows)
             @compileError("FileDescriptor.int() is not allowed on Windows.");
         return @intFromEnum(self);
@@ -105,7 +125,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     /// to Windows' *HANDLE, and casts the types for proper usage.
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
-    pub inline fn cast(fd: FileDescriptor) std.os.fd_t {
+    pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
         if (!Environment.isWindows) return fd.int();
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
@@ -140,6 +160,23 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
         return toFD(std.fs.cwd().fd);
     }
 
+    pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
+        if (Environment.isPosix) return this.int() == that.int();
+
+        const this_ = FDImpl.decode(this);
+        const that_ = FDImpl.decode(that);
+        return switch (this_.kind) {
+            .system => switch (that_.kind) {
+                .system => this_.value.as_system == that_.value.as_system,
+                .uv => false,
+            },
+            .uv => switch (that_.kind) {
+                .system => false,
+                .uv => this_.value.as_uv == that_.value.as_uv,
+            },
+        };
+    }
+
     pub fn isStdio(fd: FileDescriptor) bool {
         // fd.assertValid();
         const decoded = FDImpl.decode(fd);
@@ -171,31 +208,31 @@ pub const StoredFileDescriptorType = FileDescriptor;
 pub const PlatformIOVec = if (Environment.isWindows)
     windows.libuv.uv_buf_t
 else
-    std.os.iovec;
+    std.posix.iovec;
 
 pub const PlatformIOVecConst = if (Environment.isWindows)
     windows.libuv.uv_buf_t
 else
-    std.os.iovec_const;
+    std.posix.iovec_const;
 
 pub fn platformIOVecCreate(input: []const u8) PlatformIOVec {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
             Output.debugWarn("call to bun.PlatformIOVec.init with length larger than u32, this will overflow on windows", .{});
         }
     }
-    return .{ .iov_len = @intCast(input.len), .iov_base = @constCast(input.ptr) };
+    // TODO: remove this constCast by making the input mutable
+    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecConstCreate(input: []const u8) PlatformIOVecConst {
-    if (Environment.isWindows) return windows.libuv.uv_buf_t.init(input);
     if (Environment.allow_assert) {
         if (input.len > @as(usize, std.math.maxInt(u32))) {
             Output.debugWarn("call to bun.PlatformIOVecConst.init with length larger than u32, this will overflow on windows", .{});
         }
     }
-    return .{ .iov_len = @intCast(input.len), .iov_base = input.ptr };
+    // TODO: remove this constCast by adding uv_buf_t_const
+    return .{ .len = @intCast(input.len), .base = @constCast(input.ptr) };
 }
 
 pub fn platformIOVecToSlice(iovec: PlatformIOVec) []u8 {
@@ -291,28 +328,6 @@ fn Span(comptime T: type) type {
         else => @compileError("invalid type given to std.mem.Span: " ++ @typeName(T)),
     }
 }
-// fn Span(comptime T: type) type {
-//     switch (@typeInfo(T)) {
-//         .Optional => |optional_info| {
-//             return ?Span(optional_info.child);
-//         },
-//         .Pointer => |ptr_info| {
-//             var new_ptr_info = ptr_info;
-//             switch (ptr_info.size) {
-//                 .C => {
-//                     new_ptr_info.sentinel = &@as(ptr_info.child, 0);
-//                     new_ptr_info.is_allowzero = false;
-//                 },
-//                 .Many => if (ptr_info.sentinel == null) @compileError("invalid type given to bun.span: " ++ @typeName(T)),
-//                 else => {},
-//             }
-//             new_ptr_info.size = .Slice;
-//             return @Type(.{ .Pointer = new_ptr_info });
-//         },
-//         else => {},
-//     }
-//     @compileError("invalid type given to bun.span: " ++ @typeName(T));
-// }
 
 pub fn span(ptr: anytype) Span(@TypeOf(ptr)) {
     if (@typeInfo(@TypeOf(ptr)) == .Optional) {
@@ -360,6 +375,51 @@ pub const StringHashMapUnowned = struct {
 };
 pub const BabyList = @import("./baby_list.zig").BabyList;
 pub const ByteList = BabyList(u8);
+pub const OffsetByteList = struct {
+    head: u32 = 0,
+    byte_list: ByteList = .{},
+
+    pub fn init(head: u32, byte_list: ByteList) OffsetByteList {
+        return OffsetByteList{
+            .head = head,
+            .byte_list = byte_list,
+        };
+    }
+
+    pub fn write(self: *OffsetByteList, allocator: std.mem.Allocator, bytes: []const u8) !void {
+        _ = try self.byte_list.write(allocator, bytes);
+    }
+
+    pub fn slice(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[0..this.head];
+    }
+
+    pub fn remaining(this: *OffsetByteList) []u8 {
+        return this.byte_list.slice()[this.head..];
+    }
+
+    pub fn consume(self: *OffsetByteList, bytes: u32) void {
+        self.head +|= bytes;
+        if (self.head >= self.byte_list.len) {
+            self.head = 0;
+            self.byte_list.len = 0;
+        }
+    }
+
+    pub fn len(self: *const OffsetByteList) u32 {
+        return self.byte_list.len - self.head;
+    }
+
+    pub fn clear(self: *OffsetByteList) void {
+        self.head = 0;
+        self.byte_list.len = 0;
+    }
+
+    pub fn deinit(self: *OffsetByteList, allocator: std.mem.Allocator) void {
+        self.byte_list.deinitWithAllocator(allocator);
+        self.* = .{};
+    }
+};
 
 pub fn DebugOnly(comptime Type: type) type {
     if (comptime Environment.allow_assert) {
@@ -388,29 +448,10 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
-    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
-
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    assert(input.len > 0);
-    assert(output.len > 0);
-
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
-
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
-        C.memmove(output.ptr, input.ptr, input.len);
-    } else {
-        for (input, output) |input_byte, *out| {
-            out.* = input_byte;
-        }
-    }
+    return memmove(output, input);
 }
 
 pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
@@ -456,17 +497,17 @@ pub fn fastRandom() u64 {
             pub fn get() u64 {
                 // This is slightly racy but its fine because this memoization is done as a performance optimization
                 // and we only need to do it once per process
-                var value = seed_value.load(.Monotonic);
-                while (value == 0) : (value = seed_value.load(.Monotonic)) {
+                var value = seed_value.load(.monotonic);
+                while (value == 0) : (value = seed_value.load(.monotonic)) {
                     if (comptime Environment.isDebug) outer: {
                         if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
                             value = std.fmt.parseInt(u64, env, 10) catch break :outer;
-                            seed_value.store(value, .Monotonic);
+                            seed_value.store(value, .monotonic);
                             return value;
                         }
                     }
                     rand(std.mem.asBytes(&value));
-                    seed_value.store(value, .Monotonic);
+                    seed_value.store(value, .monotonic);
                 }
 
                 return value;
@@ -505,14 +546,12 @@ pub fn rand(bytes: []u8) void {
 pub const ObjectPool = @import("./pool.zig").ObjectPool;
 
 pub fn assertNonBlocking(fd: anytype) void {
-    assert(
-        (std.os.fcntl(fd, std.os.F.GETFL, 0) catch unreachable) & std.os.O.NONBLOCK != 0,
-    );
+    assert((std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch unreachable) & O.NONBLOCK != 0);
 }
 
 pub fn ensureNonBlocking(fd: anytype) void {
-    const current = std.os.fcntl(fd, std.os.F.GETFL, 0) catch 0;
-    _ = std.os.fcntl(fd, std.os.F.SETFL, current | std.os.O.NONBLOCK) catch 0;
+    const current = std.posix.fcntl(fd, std.posix.F.GETFL, 0) catch 0;
+    _ = std.posix.fcntl(fd, std.posix.F.SETFL, current | O.NONBLOCK) catch 0;
 }
 
 const global_scope_log = sys.syslog;
@@ -521,16 +560,16 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         @panic("TODO on Windows");
     }
     assert(fd != invalid_fd);
-    var polls = [_]std.os.pollfd{
+    var polls = [_]std.posix.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.IN | std.os.POLL.ERR | std.os.POLL.HUP,
+            .events = std.posix.POLL.IN | std.posix.POLL.ERR | std.posix.POLL.HUP,
             .revents = 0,
         },
     };
 
-    const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+    const result = (std.posix.poll(&polls, 0) catch 0) != 0;
+    const rc = if (result and polls[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
@@ -540,7 +579,7 @@ pub fn isReadable(fd: FileDescriptor) PollFlag {
         fd,
         result,
         @tagName(rc),
-        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+        if (polls[0].revents & std.posix.POLL.ERR != 0) " ERR " else "",
     });
     return rc;
 }
@@ -551,14 +590,14 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         var polls = [_]std.os.windows.ws2_32.WSAPOLLFD{
             .{
                 .fd = socketcast(fd),
-                .events = std.os.POLL.WRNORM,
+                .events = std.posix.POLL.WRNORM,
                 .revents = 0,
             },
         };
         const rc = std.os.windows.ws2_32.WSAPoll(&polls, 1, 0);
         const result = (if (rc != std.os.windows.ws2_32.SOCKET_ERROR) @as(usize, @intCast(rc)) else 0) != 0;
         global_scope_log("poll({}) writable: {any} ({d})", .{ fd, result, polls[0].revents });
-        if (result and polls[0].revents & std.os.POLL.WRNORM != 0) {
+        if (result and polls[0].revents & std.posix.POLL.WRNORM != 0) {
             return .hup;
         } else if (result) {
             return .ready;
@@ -569,16 +608,16 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
     }
     assert(fd != invalid_fd);
 
-    var polls = [_]std.os.pollfd{
+    var polls = [_]std.posix.pollfd{
         .{
             .fd = fd.cast(),
-            .events = std.os.POLL.OUT | std.os.POLL.ERR | std.os.POLL.HUP,
+            .events = std.posix.POLL.OUT | std.posix.POLL.ERR | std.posix.POLL.HUP,
             .revents = 0,
         },
     };
 
-    const result = (std.os.poll(&polls, 0) catch 0) != 0;
-    const rc = if (result and polls[0].revents & (std.os.POLL.HUP | std.os.POLL.ERR) != 0)
+    const result = (std.posix.poll(&polls, 0) catch 0) != 0;
+    const rc = if (result and polls[0].revents & (std.posix.POLL.HUP | std.posix.POLL.ERR) != 0)
         PollFlag.hup
     else if (result)
         PollFlag.ready
@@ -588,7 +627,7 @@ pub fn isWritable(fd: FileDescriptor) PollFlag {
         fd,
         result,
         @tagName(rc),
-        if (polls[0].revents & std.os.POLL.ERR != 0) " ERR " else "",
+        if (polls[0].revents & std.posix.POLL.ERR != 0) " ERR " else "",
     });
     return rc;
 }
@@ -694,9 +733,9 @@ pub var start_time: i128 = 0;
 pub fn openFileZ(pathZ: [:0]const u8, open_flags: std.fs.File.OpenFlags) !std.fs.File {
     var flags: Mode = 0;
     switch (open_flags.mode) {
-        .read_only => flags |= std.os.O.RDONLY,
-        .write_only => flags |= std.os.O.WRONLY,
-        .read_write => flags |= std.os.O.RDWR,
+        .read_only => flags |= O.RDONLY,
+        .write_only => flags |= O.WRONLY,
+        .read_write => flags |= O.RDWR,
     }
 
     const res = try sys.open(pathZ, flags, 0).unwrap();
@@ -707,16 +746,16 @@ pub fn openFile(path_: []const u8, open_flags: std.fs.File.OpenFlags) !std.fs.Fi
     if (comptime Environment.isWindows) {
         var flags: Mode = 0;
         switch (open_flags.mode) {
-            .read_only => flags |= std.os.O.RDONLY,
-            .write_only => flags |= std.os.O.WRONLY,
-            .read_write => flags |= std.os.O.RDWR,
+            .read_only => flags |= O.RDONLY,
+            .write_only => flags |= O.WRONLY,
+            .read_write => flags |= O.RDWR,
         }
 
         const fd = try sys.openA(path_, flags, 0).unwrap();
         return fd.asFile();
     }
 
-    return try openFileZ(&try std.os.toPosixPath(path_), open_flags);
+    return try openFileZ(&try std.posix.toPosixPath(path_), open_flags);
 }
 
 pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
@@ -724,9 +763,15 @@ pub fn openDir(dir: std.fs.Dir, path_: [:0]const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openat(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openat(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
+}
+
+pub fn openDirNoRenamingOrDeletingWindows(dir: FileDescriptor, path_: [:0]const u8) !std.fs.Dir {
+    if (comptime !Environment.isWindows) @compileError("use openDir!");
+    const res = try sys.openDirAtWindowsA(dir, path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
+    return res.asDir();
 }
 
 pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
@@ -734,7 +779,7 @@ pub fn openDirA(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -744,7 +789,7 @@ pub fn openDirForIteration(dir: std.fs.Dir, path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(toFD(dir.fd), path_, .{ .iterable = true, .can_rename_or_delete = false, .read_only = true }).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openatA(toFD(dir.fd), path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openatA(toFD(dir.fd), path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -754,7 +799,7 @@ pub fn openDirAbsolute(path_: []const u8) !std.fs.Dir {
         const res = try sys.openDirAtWindowsA(invalid_fd, path_, .{ .iterable = true, .can_rename_or_delete = true, .read_only = true }).unwrap();
         return res.asDir();
     } else {
-        const fd = try sys.openA(path_, std.os.O.DIRECTORY | std.os.O.CLOEXEC | std.os.O.RDONLY, 0).unwrap();
+        const fd = try sys.openA(path_, O.DIRECTORY | O.CLOEXEC | O.RDONLY, 0).unwrap();
         return fd.asDir();
     }
 }
@@ -765,12 +810,12 @@ pub fn getRuntimeFeatureFlag(comptime flag: [:0]const u8) bool {
         const state = enum(u8) { idk, disabled, enabled };
         var is_enabled: std.atomic.Value(state) = std.atomic.Value(state).init(.idk);
         pub fn get() bool {
-            return switch (is_enabled.load(.SeqCst)) {
+            return switch (is_enabled.load(.seq_cst)) {
                 .enabled => true,
                 .disabled => false,
                 .idk => {
                     const enabled = if (getenvZ(flag_)) |val| strings.eqlComptime(val, "1") or strings.eqlComptime(val, "true") else false;
-                    is_enabled.store(if (enabled) .enabled else .disabled, .SeqCst);
+                    is_enabled.store(if (enabled) .enabled else .disabled, .seq_cst);
                     return enabled;
                 },
             };
@@ -790,7 +835,7 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
         for (std.os.environ) |lineZ| {
             const line = sliceTo(lineZ, 0);
             const key_end = strings.indexOfCharUsize(line, '=') orelse line.len;
-            if (strings.eqlInsensitive(line[0..key_end], key)) {
+            if (strings.eqlCaseInsensitiveASCII(line[0..key_end], key, true)) {
                 return line[@min(key_end + 1, line.len)..];
             }
         }
@@ -800,6 +845,11 @@ pub fn getenvZ(key: [:0]const u8) ?[]const u8 {
 
     const ptr = std.c.getenv(key.ptr) orelse return null;
     return sliceTo(ptr, 0);
+}
+
+pub fn getenvTruthy(key: [:0]const u8) bool {
+    if (getenvZ(key)) |value| return std.mem.eql(u8, value, "true") or std.mem.eql(u8, value, "1");
+    return false;
 }
 
 pub const FDHashMapContext = struct {
@@ -1019,6 +1069,7 @@ pub fn U32HashMap(comptime Type: type) type {
 }
 
 const CopyFile = @import("./copy_file.zig");
+pub const copyFileErrnoConvert = CopyFile.copyFileErrorConvert;
 pub const copyFileRange = CopyFile.copyFileRange;
 pub const canUseCopyFileRangeSyscall = CopyFile.canUseCopyFileRangeSyscall;
 pub const disableCopyFileRangeSyscall = CopyFile.disableCopyFileRangeSyscall;
@@ -1217,15 +1268,11 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    comptime {
-        var entries: [std.enums.values(T).len]struct { string, T } = undefined;
-        var i: usize = 0;
-        for (std.enums.values(T)) |value| {
-            entries[i] = .{ .@"0" = @tagName(value), .@"1" = value };
-            i += 1;
-        }
-        return ComptimeStringMap(T, entries);
+    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    for (std.enums.values(T), &entries) |value, *entry| {
+        entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
+    return ComptimeStringMap(T, entries);
 }
 
 /// Write 0's for every byte in Type
@@ -1244,19 +1291,19 @@ var needs_proc_self_workaround: bool = false;
 // This is our "polyfill" when /proc/self/fd is not available it's only
 // necessary on linux because other platforms don't have an optional
 // /proc/self/fd
-fn getFdPathViaCWD(fd: std.os.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
-    const prev_fd = try std.os.openatZ(std.fs.cwd().fd, ".", std.os.O.DIRECTORY, 0);
+fn getFdPathViaCWD(fd: std.posix.fd_t, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+    const prev_fd = try std.posix.openatZ(std.fs.cwd().fd, ".", .{ .DIRECTORY = true }, 0);
     var needs_chdir = false;
     defer {
-        if (needs_chdir) std.os.fchdir(prev_fd) catch unreachable;
-        std.os.close(prev_fd);
+        if (needs_chdir) std.posix.fchdir(prev_fd) catch unreachable;
+        std.posix.close(prev_fd);
     }
-    try std.os.fchdir(fd);
+    try std.posix.fchdir(fd);
     needs_chdir = true;
-    return std.os.getcwd(buf);
+    return std.posix.getcwd(buf);
 }
 
-pub const getcwd = std.os.getcwd;
+pub const getcwd = std.posix.getcwd;
 
 pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
     var temp: PathBuffer = undefined;
@@ -1266,7 +1313,7 @@ pub fn getcwdAlloc(allocator: std.mem.Allocator) ![]u8 {
 
 /// Get the absolute path to a file descriptor.
 /// On Linux, when `/proc/self/fd` is not available, this function will attempt to use `fchdir` and `getcwd` to get the path instead.
-pub fn getFdPath(fd_: anytype, buf: *[@This().MAX_PATH_BYTES]u8) ![]u8 {
+pub fn getFdPath(fd_: anytype, buf: *[MAX_PATH_BYTES]u8) ![]u8 {
     const fd = toFD(fd_).cast();
 
     if (comptime Environment.isWindows) {
@@ -1549,8 +1596,8 @@ pub const failing_allocator = std.mem.Allocator{ .ptr = undefined, .vtable = &.{
 var __reload_in_progress__ = std.atomic.Value(bool).init(false);
 threadlocal var __reload_in_progress__on_current_thread = false;
 pub fn isProcessReloadInProgressOnAnotherThread() bool {
-    @fence(.Acquire);
-    return __reload_in_progress__.load(.Monotonic) and !__reload_in_progress__on_current_thread;
+    @fence(.acquire);
+    return __reload_in_progress__.load(.monotonic) and !__reload_in_progress__on_current_thread;
 }
 
 pub noinline fn maybeHandlePanicDuringProcessReload() void {
@@ -1570,7 +1617,7 @@ pub noinline fn maybeHandlePanicDuringProcessReload() void {
             std.atomic.spinLoopHint();
 
             if (comptime Environment.isPosix) {
-                std.os.nanosleep(1, 0);
+                std.posix.nanosleep(1, 0);
             }
         }
     }
@@ -1596,7 +1643,7 @@ pub fn reloadProcess(
     clear_terminal: bool,
     comptime may_return: bool,
 ) if (may_return) void else noreturn {
-    __reload_in_progress__.store(true, .Monotonic);
+    __reload_in_progress__.store(true, .monotonic);
     __reload_in_progress__on_current_thread = true;
 
     if (clear_terminal) {
@@ -1606,7 +1653,6 @@ pub fn reloadProcess(
     }
 
     Output.Source.Stdio.restore();
-    const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
@@ -1694,7 +1740,7 @@ pub fn reloadProcess(
         }.on_before_reload_process_linux;
 
         on_before_reload_process_linux();
-        const err = std.os.execveZ(
+        const err = std.posix.execveZ(
             exec_path,
             newargv,
             envp,
@@ -1867,7 +1913,6 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
-
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
             var this = try allocator.tryGet();
             this.allocator = allocator;
@@ -1900,21 +1945,27 @@ pub const MaxHeapAllocator = @import("./max_heap_allocator.zig").MaxHeapAllocato
 pub const tracy = @import("./tracy.zig");
 pub const trace = tracy.trace;
 
-pub fn openFileForPath(path_: [:0]const u8) !std.fs.File {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | O_PATH;
+pub fn openFileForPath(file_path: [:0]const u8) !std.fs.File {
+    if (Environment.isWindows)
+        return std.fs.cwd().openFileZ(file_path, .{});
 
-    const fd = try std.os.openZ(path_, flags, 0);
+    const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
+    const flags: u32 = O.CLOEXEC | O.NOCTTY | O_PATH;
+
+    const fd = try std.posix.openZ(file_path, O.toPacked(flags), 0);
     return std.fs.File{
         .handle = fd,
     };
 }
 
-pub fn openDirForPath(path_: [:0]const u8) !std.fs.Dir {
-    const O_PATH = if (comptime Environment.isLinux) std.os.O.PATH else std.os.O.RDONLY;
-    const flags: u32 = std.os.O.CLOEXEC | std.os.O.NOCTTY | std.os.O.DIRECTORY | O_PATH;
+pub fn openDirForPath(file_path: [:0]const u8) !std.fs.Dir {
+    if (Environment.isWindows)
+        return std.fs.cwd().openDirZ(file_path, .{});
 
-    const fd = try std.os.openZ(path_, flags, 0);
+    const O_PATH = if (comptime Environment.isLinux) O.PATH else O.RDONLY;
+    const flags: u32 = O.CLOEXEC | O.NOCTTY | O.DIRECTORY | O_PATH;
+
+    const fd = try std.posix.openZ(file_path, O.toPacked(flags), 0);
     return std.fs.Dir{
         .fd = fd,
     };
@@ -1939,10 +1990,10 @@ pub const ArenaAllocator = @import("./ArenaAllocator.zig").ArenaAllocator;
 pub const Wyhash11 = @import("./wyhash.zig").Wyhash11;
 
 pub const RegularExpression = @import("./bun.js/bindings/RegularExpression.zig").RegularExpression;
+
 pub inline fn assertComptime() void {
-    if (comptime !@inComptime()) {
-        @compileError("This function can only be called in comptime.");
-    }
+    var x = 0; // if you hit an error on this line, you are not in a comptime context
+    _ = &x;
 }
 
 const TODO_LOG = Output.scoped(.TODO, false);
@@ -1961,7 +2012,7 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
     const T = @TypeOf(fd);
     if (Environment.isWindows) {
         return (switch (T) {
-            FDImpl => fd,
+            FDImpl => fd, // TODO: remove the toFD call from these places and make this a @compileError
             FDImpl.System => FDImpl.fromSystem(fd),
             FDImpl.UV, i32, comptime_int => FDImpl.fromUV(fd),
             FileDescriptor => FDImpl.decode(fd),
@@ -1973,13 +2024,13 @@ pub inline fn toFD(fd: anytype) FileDescriptor {
         }).encode();
     } else {
         // TODO: remove intCast. we should not be casting u32 -> i32
-        // even though file descriptors are always positive, linux/mac repesents them as signed integers
+        // even though file descriptors are always positive, linux/mac represents them as signed integers
         return switch (T) {
             FileDescriptor => fd, // TODO: remove the toFD call from these places and make this a @compileError
-            std.fs.File, sys.File => toFD(fd.handle),
+            sys.File => fd.handle,
+            std.fs.File => @enumFromInt(fd.handle),
             std.fs.Dir => @enumFromInt(@as(i32, @intCast(fd.fd))),
             c_int, i32, u32, comptime_int => @enumFromInt(fd),
-            usize, i64 => @enumFromInt(@as(i32, @intCast(fd))),
             else => @compileError("bun.toFD() not implemented for: " ++ @typeName(T)),
         };
     }
@@ -2050,7 +2101,7 @@ pub inline fn uvfdcast(fd: anytype) FDImpl.UV {
     }
 }
 
-pub inline fn socketcast(fd: anytype) std.os.socket_t {
+pub inline fn socketcast(fd: anytype) std.posix.socket_t {
     if (Environment.isWindows) {
         return @ptrCast(FDImpl.decode(fd).system());
     } else {
@@ -2064,9 +2115,8 @@ pub const HOST_NAME_MAX = if (Environment.isWindows)
     // https://learn.microsoft.com/en-us/windows/win32/api/winsock/nf-winsock-gethostname
     256
 else
-    std.os.HOST_NAME_MAX;
+    std.posix.HOST_NAME_MAX;
 
-pub const enums = @import("./enums.zig");
 const WindowsStat = extern struct {
     dev: u32,
     ino: u32,
@@ -2101,7 +2151,7 @@ const WindowsStat = extern struct {
     }
 };
 
-pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.os.Stat;
+pub const Stat = if (Environment.isWindows) windows.libuv.uv_stat_t else std.posix.Stat;
 
 pub var argv: [][:0]const u8 = &[_][:0]const u8{};
 
@@ -2139,7 +2189,7 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
         };
 
         const argvu16 = argvu16_ptr[0..@intCast(length)];
-        var out_argv = try allocator.alloc([:0]u8, @intCast(length));
+        const out_argv = try allocator.alloc([:0]u8, @intCast(length));
         var string_builder = StringBuilder{};
 
         for (argvu16) |argraw| {
@@ -2149,11 +2199,12 @@ pub fn initArgv(allocator: std.mem.Allocator) !void {
 
         try string_builder.allocate(allocator);
 
-        for (argvu16, 0..) |argraw, i| {
+        for (argvu16, out_argv) |argraw, *out| {
             const arg = std.mem.span(argraw);
-            // Command line is expected to be valid UTF-16le so this never
-            // fails and it's okay to unwrap pointer
-            out_argv[i] = string_builder.append16(arg).?;
+
+            // Command line is expected to be valid UTF-16le
+            // ...but sometimes, it's not valid. https://github.com/oven-sh/bun/issues/11610
+            out.* = string_builder.append16(arg, default_allocator) orelse @panic("Failed to allocate memory for argv");
         }
 
         argv = out_argv;
@@ -2187,8 +2238,8 @@ pub const win32 = struct {
     pub fn unsetStdioModeFlags(i: anytype, flags: w.DWORD) !w.DWORD {
         const fd = stdio(i);
         var original_mode: w.DWORD = 0;
-        if (windows.GetConsoleMode(fd.cast(), &original_mode) != 0) {
-            if (windows.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
+        if (windows.kernel32.GetConsoleMode(fd.cast(), &original_mode) != 0) {
+            if (windows.kernel32.SetConsoleMode(fd.cast(), original_mode & ~flags) == 0) {
                 return windows.getLastError();
             }
         } else return windows.getLastError();
@@ -2399,6 +2450,7 @@ pub fn isRegularFile(mode: anytype) bool {
 }
 
 pub const sys = @import("./sys.zig");
+pub const O = sys.O;
 
 pub const Mode = C.Mode;
 
@@ -2465,9 +2517,11 @@ pub const LazyBoolValue = enum {
 pub fn LazyBool(comptime Getter: anytype, comptime Parent: type, comptime field: string) type {
     return struct {
         value: LazyBoolValue = .unknown,
+
         pub fn get(self: *@This()) bool {
             if (self.value == .unknown) {
-                self.value = switch (Getter(@fieldParentPtr(Parent, field, self))) {
+                const parent: *Parent = @alignCast(@fieldParentPtr(field, self));
+                self.value = switch (Getter(parent)) {
                     true => .yes,
                     false => .no,
                 };
@@ -2539,6 +2593,16 @@ pub fn makePath(dir: std.fs.Dir, sub_path: []const u8) !void {
     }
 }
 
+/// Like std.fs.Dir.makePath except instead of infinite looping on dangling
+/// symlink, it deletes the symlink and tries again.
+pub fn makePathW(dir: std.fs.Dir, sub_path: []const u16) !void {
+    // was going to copy/paste makePath and use all W versions but they didn't all exist
+    // and this buffer was needed anyway
+    var buf: PathBuffer = undefined;
+    const buf_len = simdutf.convert.utf16.to.utf8.le(sub_path, &buf);
+    return makePath(dir, buf[0..buf_len]);
+}
+
 pub const Async = @import("async");
 
 /// This is a helper for writing path string literals that are compatible with Windows.
@@ -2549,9 +2613,11 @@ pub inline fn pathLiteral(comptime literal: anytype) *const [literal.len:0]u8 {
         var buf: [literal.len:0]u8 = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
-        return &buf;
+        const final = buf[0..buf.len :0].*;
+        return &final;
     };
 }
 
@@ -2562,13 +2628,13 @@ pub inline fn OSPathLiteral(comptime literal: anytype) *const [literal.len:0]OSP
         var buf: [literal.len:0]OSPathChar = undefined;
         for (literal, 0..) |c, i| {
             buf[i] = if (c == '/') '\\' else c;
+            assert(buf[i] != 0 and buf[i] < 128);
         }
         buf[buf.len] = 0;
-        return &buf;
+        const final = buf[0..buf.len :0].*;
+        return &final;
     };
 }
-
-const builtin = @import("builtin");
 
 pub const MakePath = struct {
     const w = std.os.windows;
@@ -2849,15 +2915,15 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
+/// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
-pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
-
-pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
@@ -2866,78 +2932,54 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
-pub inline fn new(comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t;
-        return ptr;
+pub inline fn new(comptime T: type, init: T) *T {
+    const ptr = if (heap_breakdown.enabled)
+        heap_breakdown.getZone(T).create(T, init)
+    else ptr: {
+        const ptr = default_allocator.create(T) catch outOfMemory();
+        ptr.* = init;
+        break :ptr ptr;
+    };
+
+    if (comptime Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t;
     return ptr;
+}
+
+/// Free a globally-allocated a value from `bun.new()`. Using this with
+/// pointers allocated from other means may cause crashes.
+pub inline fn destroy(ptr: anytype) void {
+    const T = std.meta.Child(@TypeOf(ptr));
+
+    if (Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
+    }
+
+    if (heap_breakdown.enabled) {
+        heap_breakdown.getZone(T).destroy(T, ptr);
+    } else {
+        default_allocator.destroy(ptr);
+    }
 }
 
 pub inline fn dupe(comptime T: type, t: *T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t.*;
-        return ptr;
-    }
-
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t.*;
-    return ptr;
-}
-
-/// Free a globally-allocated a value
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroyWithAlloc(allocator: std.mem.Allocator, t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            destroy(t);
-            return;
-        }
-    }
-
-    allocator.destroy(t);
+    return new(T, t.*);
 }
 
 pub fn New(comptime T: type) type {
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        pub const ban_standard_library_allocator = true;
 
         pub inline fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
-                allocation_logger("destroy({*})", .{self});
-            }
-
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
-                if (comptime Environment.allow_assert) {
-                    allocation_logger("new() = {*}", .{ptr});
-                }
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                allocation_logger("new() = {*}", .{ptr});
-            }
-            return ptr;
+            return bun.new(T, t);
         }
     };
 }
@@ -2963,28 +3005,23 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     const log = Output.scoped(output_name, true);
 
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-
         pub fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
+            if (Environment.allow_assert) {
                 assert(self.ref_count == 0);
-                allocation_logger("destroy() = {*}", .{self});
             }
 
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub fn ref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -2997,26 +3034,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
+            const ptr = bun.new(T, t);
 
-                if (comptime Environment.allow_assert) {
-                    if (ptr.ref_count != 1) {
-                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
-                    }
-                    allocation_logger("new() = {*}", .{ptr});
+            if (Environment.enable_logs) {
+                if (ptr.ref_count != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
                 }
-
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                assert(ptr.ref_count == 1);
-                allocation_logger("new() = {*}", .{ptr});
             }
 
             return ptr;
@@ -3024,30 +3047,63 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     };
 }
 
-/// Free a globally-allocated a value.
-///
-/// Must have used `new` to allocate the value.
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroy(t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
-    } else {
-        default_allocator.destroy(t);
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
     }
-}
 
-pub inline fn newWithAlloc(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        if (allocator.vtable == default_allocator.vtable) {
-            return new(T, t);
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
         }
     }
 
-    const ptr = allocator.create(T) catch outOfMemory();
-    ptr.* = t;
-    return ptr;
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (Environment.allow_assert) {
+                assert(self.ref_count.load(.seq_cst) == 0);
+            }
+
+            bun.destroy(self);
+        }
+
+        pub fn ref(self: *T) void {
+            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            bun.debugAssert(ref_count > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (Environment.enable_logs) {
+                if (ptr.ref_count.load(.seq_cst) != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
+                }
+            }
+
+            return ptr;
+        }
+    };
 }
 
 pub fn exitThread() noreturn {
@@ -3107,10 +3163,7 @@ pub fn errnoToZigErr(err: anytype) anyerror {
     return error.Unexpected;
 }
 
-pub const S = if (Environment.isWindows) C.S else std.os.S;
-
-/// Deprecated!
-pub const trait = @import("./trait.zig");
+pub const S = if (Environment.isWindows) C.S else std.posix.S;
 
 pub const brotli = @import("./brotli.zig");
 
@@ -3243,6 +3296,19 @@ noinline fn assertionFailure() noreturn {
     Output.panic("Internal assertion failure", .{});
 }
 
+noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noreturn {
+    if (@inComptime()) {
+        @compileError("assertion failure");
+    }
+
+    @setCold(true);
+    Output.panic("Internal assertion failure {s}:{d}:{d}", .{
+        src.file,
+        src.line,
+        src.column,
+    });
+}
+
 pub inline fn debugAssert(cheap_value_only_plz: bool) void {
     if (comptime !Environment.isDebug) {
         return;
@@ -3264,6 +3330,17 @@ pub fn assert(value: bool) callconv(callconv_inline) void {
     }
 }
 
+pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv(callconv_inline) void {
+    if (comptime !Environment.allow_assert) {
+        return;
+    }
+
+    if (!value) {
+        if (comptime Environment.isDebug) unreachable;
+        assertionFailureWithLocation(src);
+    }
+}
+
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
     return assert(a == b);
@@ -3282,37 +3359,258 @@ pub inline fn unsafeAssert(condition: bool) void {
 
 pub const dns = @import("./dns.zig");
 
+pub fn getRoughTickCount() timespec {
+    if (comptime Environment.isMac) {
+        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
+        // https://opensource.apple.com/source/Libc/Libc-1158.1.2/gen/clock_gettime.c.auto.html
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.c.clock_getres(C.CLOCK_MONOTONIC_RAW_APPROX, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = C.CLOCK_MONOTONIC_RAW_APPROX;
+                } else {
+                    clock_id = C.CLOCK_MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+
+        // We use this one because we can avoid reading the mach timebase info ourselves.
+        _ = std.c.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isLinux) {
+        var spec = timespec{
+            .nsec = 0,
+            .sec = 0,
+        };
+        const clocky = struct {
+            pub var clock_id: i32 = 0;
+            pub fn get() void {
+                var res = timespec{};
+                _ = std.os.linux.clock_getres(std.os.linux.CLOCK.MONOTONIC_COARSE, @ptrCast(&res));
+                if (res.ms() <= 1) {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_COARSE;
+                } else {
+                    clock_id = std.os.linux.CLOCK.MONOTONIC_RAW;
+                }
+            }
+
+            pub var once = std.once(get);
+        };
+        clocky.once.call();
+        _ = std.os.linux.clock_gettime(clocky.clock_id, @ptrCast(&spec));
+        return spec;
+    }
+
+    if (comptime Environment.isWindows) {
+        const ms = getRoughTickCountMs();
+        return timespec{
+            .sec = @intCast(ms / 1000),
+            .nsec = @intCast((ms % 1000) * 1_000_000),
+        };
+    }
+
+    return 0;
+}
+
 /// When you don't need a super accurate timestamp, this is a fast way to get one.
 ///
 /// Requesting the current time frequently is somewhat expensive. So we can use a rough timestamp.
 ///
 /// This timestamp doesn't easily correlate to a specific time. It's only useful relative to other calls.
 pub fn getRoughTickCountMs() u64 {
-    if (comptime Environment.isMac) {
-        // https://opensource.apple.com/source/xnu/xnu-2782.30.5/libsyscall/wrappers/mach_approximate_time.c.auto.html
-        const mach_continuous_approximate_time = struct {
-            pub extern "C" fn mach_continuous_approximate_time() u64;
-        }.mach_continuous_approximate_time;
-
-        return mach_continuous_approximate_time() / std.time.ns_per_ms;
-    }
-
-    if (comptime Environment.isLinux) {
-        var timespec = std.os.linux.timespec{
-            .tv_nsec = 0,
-            .tv_sec = 0,
-        };
-        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC_COARSE, &timespec);
-        const ns: u64 = @intCast(@max((timespec.tv_sec *| std.time.ns_per_s) +| timespec.tv_nsec, 0));
-        return ns / std.time.ns_per_ms;
-    }
-
-    if (comptime Environment.isWindows) {
+    if (Environment.isWindows) {
         const GetTickCount64 = struct {
             pub extern "kernel32" fn GetTickCount64() std.os.windows.ULONGLONG;
         }.GetTickCount64;
         return GetTickCount64();
     }
 
-    return 0;
+    const spec = getRoughTickCount();
+    return spec.ns() / std.time.ns_per_ms;
 }
+
+pub const timespec = extern struct {
+    sec: isize = 0,
+    nsec: isize = 0,
+
+    pub fn eql(this: *const timespec, other: *const timespec) bool {
+        return this.sec == other.sec and this.nsec == other.nsec;
+    }
+
+    pub fn toInstant(this: *const timespec) std.time.Instant {
+        if (comptime Environment.isPosix) {
+            return std.time.Instant{
+                .timestamp = @bitCast(this.*),
+            };
+        }
+
+        if (comptime Environment.isWindows) {
+            return std.time.Instant{
+                .timestamp = @intCast(this.sec * std.time.ns_per_s + this.nsec),
+            };
+        }
+    }
+
+    // TODO: this is wrong!
+    pub fn duration(this: *const timespec, other: *const timespec) timespec {
+        var sec_diff = this.sec - other.sec;
+        var nsec_diff = this.nsec - other.nsec;
+
+        if (nsec_diff < 0) {
+            sec_diff -= 1;
+            nsec_diff += std.time.ns_per_s;
+        }
+
+        return timespec{
+            .sec = sec_diff,
+            .nsec = nsec_diff,
+        };
+    }
+
+    pub fn order(a: *const timespec, b: *const timespec) std.math.Order {
+        const sec_order = std.math.order(a.sec, b.sec);
+        if (sec_order != .eq) return sec_order;
+        return std.math.order(a.nsec, b.nsec);
+    }
+
+    /// Returns the nanoseconds of this timer. Note that maxInt(u64) ns is
+    /// 584 years so if we get any overflows we just use maxInt(u64). If
+    /// any software is running in 584 years waiting on this timer...
+    /// shame on me I guess... but I'll be dead.
+    pub fn ns(this: *const timespec) u64 {
+        if (this.sec <= 0) {
+            return @max(this.nsec, 0);
+        }
+
+        assert(this.sec >= 0);
+        assert(this.nsec >= 0);
+
+        const max = std.math.maxInt(u64);
+        const s_ns = std.math.mul(
+            u64,
+            @as(u64, @intCast(this.sec)),
+            std.time.ns_per_s,
+        ) catch return max;
+
+        return std.math.add(u64, s_ns, @as(u64, @intCast(this.nsec))) catch
+            return max;
+    }
+
+    pub fn ms(this: *const timespec) u64 {
+        return this.ns() / std.time.ns_per_ms;
+    }
+
+    pub fn greater(a: *const timespec, b: *const timespec) bool {
+        return a.order(b) == .gt;
+    }
+
+    pub fn now() timespec {
+        return getRoughTickCount();
+    }
+
+    pub fn sinceNow(start: *const timespec) u64 {
+        return now().duration(start).ns();
+    }
+
+    pub fn addMs(this: *const timespec, interval: i64) timespec {
+        const sec_inc = @divTrunc(interval, std.time.ms_per_s);
+        const nsec_inc = @rem(interval, std.time.ms_per_s) * std.time.ns_per_ms;
+
+        var new_timespec = this.*;
+
+        new_timespec.sec += sec_inc;
+        new_timespec.nsec += nsec_inc;
+
+        if (new_timespec.nsec >= std.time.ns_per_s) {
+            new_timespec.sec += 1;
+            new_timespec.nsec -= std.time.ns_per_s;
+        }
+
+        return new_timespec;
+    }
+
+    pub fn msFromNow(interval: i64) timespec {
+        return now().addMs(interval);
+    }
+};
+
+pub const UUID = @import("./bun.js/uuid.zig");
+
+/// An abstract number of element in a sequence. The sequence has a first element.
+/// This type should be used instead of integer because 2 contradicting traditions can
+/// call a first element '0' or '1' which makes integer type ambiguous.
+pub fn OrdinalT(comptime Int: type) type {
+    return enum(Int) {
+        invalid = switch (@typeInfo(Int).Int.signedness) {
+            .unsigned => std.math.maxInt(Int),
+            .signed => -1,
+        },
+        start = 0,
+        _,
+
+        pub fn fromZeroBased(int: Int) @This() {
+            assert(int >= 0);
+            assert(int != std.math.maxInt(Int));
+            return @enumFromInt(int);
+        }
+
+        pub fn fromOneBased(int: Int) @This() {
+            assert(int > 0);
+            return @enumFromInt(int - 1);
+        }
+
+        pub fn zeroBased(ord: @This()) Int {
+            return @intFromEnum(ord);
+        }
+
+        pub fn oneBased(ord: @This()) Int {
+            return @intFromEnum(ord) + 1;
+        }
+
+        pub fn add(ord: @This(), inc: Int) @This() {
+            return fromZeroBased(ord.zeroBased() + inc);
+        }
+
+        pub fn isValid(ord: @This()) bool {
+            return ord.zeroBased() >= 0;
+        }
+    };
+}
+
+/// ABI-equivalent of WTF::OrdinalNumber
+pub const Ordinal = OrdinalT(c_int);
+
+pub fn memmove(output: []u8, input: []const u8) void {
+    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len and output.len > 0);
+    }
+
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+
+    if (!does_input_or_output_overlap) {
+        @memcpy(output[0..input.len], input);
+    } else if (comptime Environment.isNative) {
+        C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
+    }
+}
+
+pub const hmac = @import("./hmac.zig");

@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const install = spawnSync({
-      cmd: ["bun", "install", "--verbose"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,
@@ -22,6 +22,12 @@ describe("napi", () => {
     it("works", () => {
       const args = [...Array(20).keys()];
       checkSameOutput("test_issue_7685", args);
+    });
+  });
+  describe("issue_11949", () => {
+    it("napi_call_threadsafe_function should accept null", () => {
+      const result = checkSameOutput("test_issue_11949", []);
+      expect(result).toStartWith("data: nullptr");
     });
   });
 
@@ -51,6 +57,11 @@ describe("napi", () => {
       const result = checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str:");
     });
+  });
+
+  it("#1288", async () => {
+    const result = checkSameOutput("self", []);
+    expect(result).toBe("hello world!");
   });
 });
 

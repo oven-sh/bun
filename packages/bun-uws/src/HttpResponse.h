@@ -75,14 +75,6 @@ public:
     void writeMark() {
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
-
-        /* You can disable this altogether */
-// #ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
-//         if (!Super::getLoopData()->noMark) {
-//             /* We only expose major version */
-//             writeHeader("uWebSockets", "20");
-//         }
-// #endif
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.

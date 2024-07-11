@@ -228,7 +228,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -255,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -286,8 +286,8 @@ pub const MutableString = struct {
         return std.mem.eql(u8, self.list.items, other);
     }
 
-    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
-        var buffers: [count]std.os.iovec_const = undefined;
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.posix.iovec_const {
+        var buffers: [count]std.posix.iovec_const = undefined;
         inline for (&buffers, ranges) |*b, r| {
             b.* = .{
                 .iov_base = self.list.items[r[0]..r[1]].ptr,

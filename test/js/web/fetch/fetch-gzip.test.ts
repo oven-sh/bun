@@ -1,6 +1,14 @@
 import { Socket } from "bun";
-import { it, expect } from "bun:test";
+import { it, expect, beforeAll } from "bun:test";
 import { gcTick } from "harness";
+import path from "path";
+
+const gzipped = path.join(import.meta.dir, "fixture.html.gz");
+const html = path.join(import.meta.dir, "fixture.html");
+let htmlText: string;
+beforeAll(async () => {
+  htmlText = (await Bun.file(html).text()).replace(/\r\n/g, "\n");
+});
 
 it("fetch() with a buffered gzip response works (one chunk)", async () => {
   using server = Bun.serve({
@@ -8,7 +16,7 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
 
     async fetch(req) {
       gcTick(true);
-      return new Response(require("fs").readFileSync(import.meta.dir + "/fixture.html.gz"), {
+      return new Response(require("fs").readFileSync(gzipped), {
         headers: {
           "Content-Encoding": "gzip",
           "Content-Type": "text/html; charset=utf-8",
@@ -18,13 +26,13 @@ it("fetch() with a buffered gzip response works (one chunk)", async () => {
   });
   gcTick(true);
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, { verbose: true });
+  const res = await fetch(server.url, { verbose: true });
   gcTick(true);
   const arrayBuffer = await res.arrayBuffer();
   const clone = new Buffer(arrayBuffer);
   gcTick(true);
   await (async function () {
-    const second = new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer());
+    const second = Buffer.from(htmlText);
     gcTick(true);
     expect(second.equals(clone)).toBe(true);
   })();
@@ -37,7 +45,7 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
 
     async fetch(req) {
       if (req.url.endsWith("/redirect"))
-        return new Response(await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer(), {
+        return new Response(await Bun.file(gzipped).arrayBuffer(), {
           headers: {
             "Content-Encoding": "gzip",
             "Content-Type": "text/html; charset=utf-8",
@@ -48,11 +56,10 @@ it("fetch() with a redirect that returns a buffered gzip response works (one chu
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}/hey`, { verbose: true });
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
-  ).toBe(true);
+  const url = new URL("hey", server.url);
+  const res = await fetch(url, { verbose: true });
+  const text = (await res.text()).replace(/\r\n/g, "\n");
+  expect(text).toEqual(htmlText);
 });
 
 it("fetch() with a protocol-relative redirect that returns a buffered gzip response works (one chunk)", async () => {
@@ -61,25 +68,24 @@ it("fetch() with a protocol-relative redirect that returns a buffered gzip respo
 
     async fetch(req, server) {
       if (req.url.endsWith("/redirect"))
-        return new Response(await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer(), {
+        return new Response(await Bun.file(gzipped).arrayBuffer(), {
           headers: {
             "Content-Encoding": "gzip",
             "Content-Type": "text/html; charset=utf-8",
           },
         });
 
-      return Response.redirect(`://${server.hostname}:${server.port}/redirect`);
+      const { host } = server.url;
+      return Response.redirect(`://${host}/redirect`);
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}/hey`, { verbose: true });
-  expect(res.url).toBe(`http://${server.hostname}:${server.port}/redirect`);
+  const res = await fetch(new URL("hey", server.url), { verbose: true });
+  expect(new URL(res.url)).toEqual(new URL("redirect", server.url));
   expect(res.redirected).toBe(true);
   expect(res.status).toBe(200);
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
-  ).toBe(true);
+  const text = (await res.text()).replace(/\r\n/g, "\n");
+  expect(text).toEqual(htmlText);
 });
 
 it("fetch() with a gzip response works (one chunk, streamed, with a delay)", async () => {
@@ -109,42 +115,86 @@ it("fetch() with a gzip response works (one chunk, streamed, with a delay)", asy
     },
   });
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
-  ).toBe(true);
+  const res = await fetch(server.url);
+  const text = (await res.text()).replace(/\r\n/g, "\n");
+  expect(text).toEqual(htmlText);
 });
 
 it("fetch() with a gzip response works (multiple chunks, TCP server)", async done => {
-  const compressed = await Bun.file(import.meta.dir + "/fixture.html.gz").arrayBuffer();
+  const compressed = await Bun.file(gzipped).arrayBuffer();
   var socketToClose!: Socket;
+  let pending,
+    pendingChunks = [];
   const server = Bun.listen({
+    hostname: "localhost",
     port: 0,
-    hostname: "0.0.0.0",
     socket: {
+      drain(socket) {
+        if (pending) {
+          while (pendingChunks.length) {
+            const chunk = pendingChunks.shift();
+            const written = socket.write(chunk);
+
+            if (written < chunk.length) {
+              pendingChunks.push(chunk.slice(written));
+              return;
+            }
+          }
+          const resolv = pending;
+          pending = null;
+          resolv();
+        }
+      },
       async open(socket) {
         socketToClose = socket;
 
         var corked: any[] = [];
         var cork = true;
+        let written = 0;
+        let pendingChunks = [];
         async function write(chunk: any) {
-          await new Promise<void>((resolve, reject) => {
-            if (cork) {
-              corked.push(chunk);
+          let defer = Promise.withResolvers();
+
+          if (cork) {
+            corked.push(chunk);
+          }
+
+          if (!cork && corked.length) {
+            const toWrite = corked.join("");
+            const wrote = socket.write(toWrite);
+            if (wrote !== toWrite.length) {
+              pendingChunks.push(toWrite.slice(wrote));
+            }
+            corked.length = 0;
+          }
+
+          if (!cork) {
+            if (pendingChunks.length) {
+              pendingChunks.push(chunk);
+              pending = defer.resolve;
+              await defer.promise;
+              defer = Promise.withResolvers();
+              pending = defer.resolve;
             }
 
-            if (!cork && corked.length) {
-              socket.write(corked.join(""));
-              corked.length = 0;
+            const written = socket.write(chunk);
+            if (written < chunk.length) {
+              console.log("written", written);
+              pendingChunks.push(chunk.slice(written));
+              pending = defer.resolve;
+              await defer.promise;
+              defer = Promise.withResolvers();
+              pending = defer.resolve;
             }
+          }
 
-            if (!cork) {
-              socket.write(chunk);
-            }
-
-            resolve();
-          });
+          const promise = defer.promise;
+          if (pendingChunks.length) {
+            pending = promise;
+            await promise;
+          } else {
+            pending = null;
+          }
         }
         await write("HTTP/1.1 200 OK\r\n");
         await write("Content-Encoding: gzip\r\n");
@@ -157,6 +207,8 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
           await write(compressed.slice(i - 100, i));
         }
         await write(compressed.slice(i - 100));
+        await write("\r\n");
+
         socket.flush();
       },
       drain(socket) {},
@@ -164,11 +216,9 @@ it("fetch() with a gzip response works (multiple chunks, TCP server)", async don
   });
   await 1;
 
-  const res = await fetch(`http://${server.hostname}:${server.port}`, {});
-  const arrayBuffer = await res.arrayBuffer();
-  expect(
-    new Buffer(arrayBuffer).equals(new Buffer(await Bun.file(import.meta.dir + "/fixture.html").arrayBuffer())),
-  ).toBe(true);
+  const res = await fetch(`http://${server.hostname}:${server.port}`);
+  const text = (await res.text()).replace(/\r\n/g, "\n");
+  expect(text).toEqual(htmlText);
   socketToClose.end();
   server.stop();
   done();

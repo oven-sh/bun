@@ -95,8 +95,6 @@ pub extern fn ZigString__toExternalValueWithCallback(arg0: [*c]const ZigString, 
 pub extern fn ZigString__toRangeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toSyntaxErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn ZigString__toTypeErrorInstance(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValue(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
-pub extern fn ZigString__toValueGC(arg0: [*c]const ZigString, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn WebCore__DOMURL__cast_(JSValue0: JSC__JSValue, arg1: *bindings.VM) ?*bindings.DOMURL;
 pub extern fn WebCore__DOMURL__fileSystemPath(arg0: ?*bindings.DOMURL) BunString;
 pub extern fn WebCore__DOMURL__href_(arg0: ?*bindings.DOMURL, arg1: [*c]ZigString) void;
@@ -197,7 +195,7 @@ pub extern fn JSC__JSMap__get_(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalO
 pub extern fn JSC__JSMap__has(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSMap__remove(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) bool;
 pub extern fn JSC__JSMap__set(arg0: ?*bindings.JSMap, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, JSValue3: JSC__JSValue) void;
-pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?*const fn (*bindings.JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue, ArgFn4: ?*const fn (*bindings.JSGlobalObject, *bindings.CallFrame) callconv(.C) JSC__JSValue) void;
+pub extern fn JSC__JSValue___then(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue, ArgFn3: ?bun.JSC.JSHostFunctionPtr, ArgFn4: ?bun.JSC.JSHostFunctionPtr) void;
 pub extern fn JSC__JSValue__asArrayBuffer_(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: ?*Bun__ArrayBuffer) bool;
 pub extern fn JSC__JSValue__asBigIntCompare(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__asCell(JSValue0: JSC__JSValue) [*c]bindings.JSCell;
@@ -284,6 +282,7 @@ pub extern fn JSC__JSValue__jsTDZValue(...) JSC__JSValue;
 pub extern fn JSC__JSValue__jsType(JSValue0: JSC__JSValue) u8;
 pub extern fn JSC__JSValue__jsUndefined(...) JSC__JSValue;
 pub extern fn JSC__JSValue__keys(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
+pub extern fn JSC__JSValue__values(arg0: *bindings.JSGlobalObject, arg1: JSC__JSValue) JSC__JSValue;
 pub extern fn JSC__JSValue__parseJSON(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject) JSC__JSValue;
 pub extern fn JSC__JSValue__push(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, JSValue2: JSC__JSValue) void;
 pub extern fn JSC__JSValue__put(JSValue0: JSC__JSValue, arg1: *bindings.JSGlobalObject, arg2: [*c]const ZigString, JSValue3: JSC__JSValue) void;

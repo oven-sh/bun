@@ -617,7 +617,12 @@ pub const Body = struct {
             };
         }
 
-        pub fn resolve(to_resolve: *Value, new: *Value, global: *JSGlobalObject) void {
+        pub fn resolve(
+            to_resolve: *Value,
+            new: *Value,
+            global: *JSGlobalObject,
+            headers: ?*FetchHeaders,
+        ) void {
             log("resolve", .{});
             if (to_resolve.* == .Locked) {
                 var locked = &to_resolve.Locked;
@@ -683,9 +688,29 @@ pub const Body = struct {
                             async_form_data.toJS(global, blob.slice(), promise);
                         },
                         else => {
-                            var ptr = bun.new(Blob, new.use());
-                            ptr.allocator = bun.default_allocator;
-                            promise.resolve(global, ptr.toJS(global));
+                            var blob = Blob.new(new.use());
+                            blob.allocator = bun.default_allocator;
+                            if (headers) |fetch_headers| {
+                                if (fetch_headers.fastGet(.ContentType)) |content_type| {
+                                    var content_slice = content_type.toSlice(bun.default_allocator);
+                                    defer content_slice.deinit();
+                                    var allocated = false;
+                                    const mimeType = MimeType.init(content_slice.slice(), bun.default_allocator, &allocated);
+                                    blob.content_type = mimeType.value;
+                                    blob.content_type_allocated = allocated;
+                                    blob.content_type_was_set = true;
+                                    if (blob.store != null) {
+                                        blob.store.?.mime_type = mimeType;
+                                    }
+                                }
+                            }
+                            if (!blob.content_type_was_set and blob.store != null) {
+                                blob.content_type = MimeType.text.value;
+                                blob.content_type_allocated = false;
+                                blob.content_type_was_set = true;
+                                blob.store.?.mime_type = MimeType.text;
+                            }
+                            promise.resolve(global, blob.toJS(global));
                         },
                     }
                     JSC.C.JSValueUnprotect(global, promise_.asObjectRef());
@@ -737,7 +762,7 @@ pub const Body = struct {
                         );
                     } else {
                         new_blob = Blob.init(
-                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch @panic("Out of memory"),
+                            bun.default_allocator.dupe(u8, wtf.latin1Slice()) catch bun.outOfMemory(),
                             bun.default_allocator,
                             JSC.VirtualMachine.get().global,
                         );
@@ -961,7 +986,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -982,7 +1007,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getBody(
             this: *Type,
             globalThis: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             var body: *Body.Value = this.getBodyValue();
 
             if (body.* == .Used) {
@@ -995,7 +1020,7 @@ pub fn BodyMixin(comptime Type: type) type {
         pub fn getBodyUsed(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
-        ) callconv(.C) JSValue {
+        ) JSValue {
             return JSValue.jsBoolean(
                 switch (this.getBodyValue().*) {
                     .Used => true,
@@ -1015,7 +1040,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
             if (value.* == .Used) {
                 return handleBodyAlreadyUsed(globalObject);
@@ -1045,7 +1070,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1068,7 +1093,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1091,7 +1116,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var value: *Body.Value = this.getBodyValue();
 
             if (value.* == .Used) {
@@ -1147,7 +1172,7 @@ pub fn BodyMixin(comptime Type: type) type {
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
             _: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             return this.getBlobWithoutCallFrame(globalObject);
         }
 
@@ -1162,26 +1187,36 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             if (value.* == .Locked) {
-                if (value.Locked.promise != null) {
-                    return handleBodyAlreadyUsed(globalObject);
+                if (value.Locked.promise == null or value.Locked.promise.?.isEmptyOrUndefinedOrNull()) {
+                    return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
                 }
-
-                return value.Locked.setPromise(globalObject, .{ .getBlob = {} });
+                return handleBodyAlreadyUsed(globalObject);
             }
 
-            var blob = bun.new(Blob, value.use());
+            var blob = Blob.new(value.use());
             blob.allocator = getAllocator(globalObject);
-
-            if (blob.content_type.len == 0 and blob.store != null) {
+            if (blob.content_type.len == 0) {
                 if (this.getFetchHeaders()) |fetch_headers| {
                     if (fetch_headers.fastGet(.ContentType)) |content_type| {
-                        blob.store.?.mime_type = MimeType.init(content_type.slice(), null, null);
+                        var content_slice = content_type.toSlice(blob.allocator.?);
+                        defer content_slice.deinit();
+                        var allocated = false;
+                        const mimeType = MimeType.init(content_slice.slice(), blob.allocator.?, &allocated);
+                        blob.content_type = mimeType.value;
+                        blob.content_type_allocated = allocated;
+                        blob.content_type_was_set = true;
+                        if (blob.store != null) {
+                            blob.store.?.mime_type = mimeType;
+                        }
                     }
-                } else {
+                }
+                if (!blob.content_type_was_set and blob.store != null) {
+                    blob.content_type = MimeType.text.value;
+                    blob.content_type_allocated = false;
+                    blob.content_type_was_set = true;
                     blob.store.?.mime_type = MimeType.text;
                 }
             }
-
             return JSC.JSPromise.resolvedPromiseValue(globalObject, blob.toJS(globalObject));
         }
     };
@@ -1313,7 +1348,7 @@ pub const BodyValueBufferer = struct {
 
         const chunk = stream.slice();
         log("onStreamPipe chunk {}", .{chunk.len});
-        _ = sink.stream_buffer.write(chunk) catch @panic("OOM");
+        _ = sink.stream_buffer.write(chunk) catch bun.outOfMemory();
         if (stream.isDone()) {
             const bytes = sink.stream_buffer.list.items;
             log("onStreamPipe done {}", .{bytes.len});
@@ -1322,14 +1357,14 @@ pub const BodyValueBufferer = struct {
         }
     }
 
-    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         var args = callframe.arguments(2);
         var sink: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
         sink.handleResolveStream(true);
         return JSValue.jsUndefined();
     }
 
-    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn onRejectStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
         const args = callframe.arguments(2);
         var sink = args.ptr[args.len - 1].asPromisePtr(@This());
         const err = args.ptr[0];
@@ -1468,7 +1503,7 @@ pub const BodyValueBufferer = struct {
                     sink.byte_stream = byte_stream;
                     log("byte stream pre-buffered {}", .{bytes.len});
 
-                    _ = sink.stream_buffer.write(bytes) catch @panic("OOM");
+                    _ = sink.stream_buffer.write(bytes) catch bun.outOfMemory();
                     return;
                 },
             }

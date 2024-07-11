@@ -139,14 +139,14 @@ JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetLineNumber, (JSGlobalObject * globa
 {
     ENTER_PROTO_FUNC();
     // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L484-L486
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->lineNumber(), 1)));
+    return JSC::JSValue::encode(jsNumber(std::max(callSite->lineNumber().oneBasedInt(), 1)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(callSiteProtoFuncGetColumnNumber, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     ENTER_PROTO_FUNC();
     // https://github.com/mozilla/source-map/blob/60adcb064bf033702d954d6d3f9bc3635dcb744b/lib/source-map-consumer.js#L488-L489
-    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber(), 0)));
+    return JSC::JSValue::encode(jsNumber(std::max(callSite->columnNumber().zeroBasedInt(), 0)));
 }
 
 // TODO:

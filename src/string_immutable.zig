@@ -8,6 +8,7 @@ const bun = @import("root").bun;
 const log = bun.Output.scoped(.STR, true);
 const js_lexer = @import("./js_lexer.zig");
 const grapheme = @import("./grapheme.zig");
+const JSC = bun.JSC;
 
 pub const Encoding = enum {
     ascii,
@@ -28,7 +29,11 @@ pub inline fn containsChar(self: string, char: u8) bool {
 }
 
 pub inline fn contains(self: string, str: string) bool {
-    return indexOf(self, str) != null;
+    return containsT(u8, self, str);
+}
+
+pub inline fn containsT(comptime T: type, self: []const T, str: []const T) bool {
+    return indexOfT(T, self, str) != null;
 }
 
 pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
@@ -42,71 +47,40 @@ pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
     return slice;
 }
 
-pub inline fn w(comptime str: []const u8) [:0]const u16 {
-    if (!@inComptime()) @compileError("strings.w() must be called in a comptime context");
-    comptime var output: [str.len + 1]u16 = undefined;
+// TODO: remove this
+pub const w = toUTF16Literal;
 
-    for (str, 0..) |c, i| {
-        output[i] = c;
-    }
-    output[str.len] = 0;
-
-    const Static = struct {
-        pub const literal: [:0]const u16 = output[0 .. output.len - 1 :0];
-    };
-    return Static.literal;
-}
-
-pub fn toUTF16Literal(comptime str: []const u8) []const u16 {
+pub fn toUTF16Literal(comptime str: []const u8) [:0]const u16 {
     return comptime literal(u16, str);
 }
 
-pub inline fn literal(comptime T: type, comptime str: string) []const T {
-    if (!@inComptime()) @compileError("strings.literal() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: []const T = output[0..];
+pub fn literal(comptime T: type, comptime str: []const u8) *const [literalLength(T, str):0]T {
+    if (!@inComptime()) @compileError("strings.literal() must be called in a comptime context");
+    return comptime switch (T) {
+        u8 => brk: {
+            var data: [str.len:0]u8 = undefined;
+            @memcpy(&data, str);
+            const final = data[0..].*;
+            break :brk &final;
+        },
+        u16 => return std.unicode.utf8ToUtf16LeStringLiteral(str),
+        else => @compileError("unsupported type " ++ @typeName(T) ++ " in strings.literal() call."),
     };
-    return Static.literal;
 }
 
-pub inline fn literalBuf(comptime T: type, comptime str: string) [str.len]T {
-    if (!@inComptime()) @compileError("strings.literalBuf() should be called in a comptime context");
-    comptime var output: [str.len]T = undefined;
-
-    for (str, 0..) |c, i| {
-        // TODO(dylan-conway): should we check for non-ascii characters like JSC does with operator""_s
-        output[i] = c;
-    }
-
-    const Static = struct {
-        pub const literal: [str.len]T = output;
+fn literalLength(comptime T: type, comptime str: string) usize {
+    return comptime switch (T) {
+        u8 => str.len,
+        u16 => std.unicode.calcUtf16LeLen(str) catch unreachable,
+        else => 0, // let other errors report first
     };
-    return Static.literal;
 }
 
-pub inline fn toUTF16LiteralZ(comptime str: []const u8) [:0]const u16 {
-    comptime var output: [str.len + 1]u16 = undefined;
-
-    for (str, 0..) |c, i| {
-        output[i] = c;
-    }
-    output[str.len] = 0;
-
-    const Static = struct {
-        pub const literal: [:0]const u16 = output[0..str.len :0];
-    };
-    return Static.literal;
-}
+// TODO: remove this
+pub const toUTF16LiteralZ = toUTF16Literal;
 
 pub const OptionalUsize = std.meta.Int(.unsigned, @bitSizeOf(usize) - 1);
-pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
+pub fn indexOfAny(slice: string, comptime str: []const u8) ?OptionalUsize {
     switch (comptime str.len) {
         0 => @compileError("str cannot be empty"),
         1 => return indexOfChar(slice, str[0]),
@@ -145,9 +119,15 @@ pub fn indexOfAny(slice: string, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
-    for (self, 0..) |c, i| {
-        inline for (str) |a| {
+    return indexOfAnyT(u16, self, str);
+}
+
+pub fn indexOfAnyT(comptime T: type, str: []const T, comptime chars: anytype) ?OptionalUsize {
+    if (T == u8) return indexOfAny(str, chars);
+    for (str, 0..) |c, i| {
+        inline for (chars) |a| {
             if (c == a) {
                 return @as(OptionalUsize, @intCast(i));
             }
@@ -156,15 +136,21 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
 
     return null;
 }
+
 pub inline fn containsComptime(self: string, comptime str: string) bool {
-    var remain = self;
+    if (comptime str.len == 0) @compileError("Don't call this with an empty string plz.");
+
+    const start = std.mem.indexOfScalar(u8, self, str[0]) orelse return false;
+    var remain = self[start..];
     const Int = std.meta.Int(.unsigned, str.len * 8);
 
     while (remain.len >= comptime str.len) {
         if (@as(Int, @bitCast(remain.ptr[0..str.len].*)) == @as(Int, @bitCast(str.ptr[0..str.len].*))) {
             return true;
         }
-        remain = remain[str.len..];
+
+        const next_start = std.mem.indexOfScalar(u8, remain[1..], str[0]) orelse return false;
+        remain = remain[1 + next_start ..];
     }
 
     return false;
@@ -221,11 +207,6 @@ pub inline fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub inline fn indexAny(in: anytype, target: string) ?usize {
-    for (in, 0..) |str, i| if (indexOf(str, target) != null) return i;
-    return null;
-}
-
 pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
@@ -272,6 +253,14 @@ pub fn indexOfSigned(self: string, str: string) i32 {
 }
 
 pub inline fn lastIndexOfChar(self: []const u8, char: u8) ?usize {
+    if (comptime Environment.isLinux) {
+        if (@inComptime()) {
+            return lastIndexOfCharT(u8, self, char);
+        }
+        const start = bun.C.memrchr(self.ptr, char, self.len) orelse return null;
+        const i = @intFromPtr(start) - @intFromPtr(self.ptr);
+        return @intCast(i);
+    }
     return lastIndexOfCharT(u8, self, char);
 }
 
@@ -762,8 +751,12 @@ pub fn eql(self: string, other: anytype) bool {
     return true;
 }
 
-pub inline fn eqlInsensitive(self: string, other: anytype) bool {
-    return std.ascii.eqlIgnoreCase(self, other);
+pub fn eqlComptimeT(comptime T: type, self: []const T, comptime alt: anytype) bool {
+    if (T == u16) {
+        return eqlComptimeUTF16(self, alt);
+    }
+
+    return eqlComptime(self, alt);
 }
 
 pub fn eqlComptime(self: string, comptime alt: anytype) bool {
@@ -789,7 +782,7 @@ pub fn hasPrefixComptimeUTF16(self: []const u16, comptime alt: []const u8) bool 
 pub fn hasPrefixComptimeType(comptime T: type, self: []const T, comptime alt: anytype) bool {
     const rhs = comptime switch (T) {
         u8 => alt,
-        u16 => switch (std.meta.Child(@TypeOf(alt))) {
+        u16 => switch (bun.meta.Item(@TypeOf(alt))) {
             u16 => alt,
             else => w(alt),
         },
@@ -1754,7 +1747,9 @@ pub fn toWDirPath(wbuf: []u16, utf8: []const u8) [:0]const u16 {
 pub fn assertIsValidWindowsPath(comptime T: type, path: []const T) void {
     if (Environment.allow_assert and Environment.isWindows) {
         if (bun.path.Platform.windows.isAbsoluteT(T, path) and
-            isWindowsAbsolutePathMissingDriveLetter(T, path))
+            isWindowsAbsolutePathMissingDriveLetter(T, path) and
+            // is it a null device path? that's not an error. it's just a weird file path.
+            !eqlComptimeT(T, path, "\\\\.\\NUL") and !eqlComptimeT(T, path, "\\\\.\\nul") and !eqlComptimeT(T, path, "\\nul") and !eqlComptimeT(T, path, "\\NUL"))
         {
             std.debug.panic("Internal Error: Do not pass posix paths to Windows APIs, was given '{s}'" ++ if (Environment.isDebug) " (missing a root like 'C:\\', see PosixToWinNormalizer for why this is an assertion)" else ". Please open an issue on GitHub with a reproduction.", .{
                 if (T == u8) path else bun.fmt.utf16(path),
@@ -2357,8 +2352,6 @@ pub fn elementLengthLatin1IntoUTF8(comptime Type: type, latin1_: Type) usize {
     return input_len + total_non_ascii_count;
 }
 
-const JSC = bun.JSC;
-
 pub fn copyLatin1IntoUTF16(comptime Buffer: type, buf_: Buffer, comptime Type: type, latin1_: Type) EncodeIntoResult {
     var buf = buf_;
     var latin1 = latin1_;
@@ -2585,8 +2578,7 @@ pub fn escapeHTMLForLatin1Input(allocator: std.mem.Allocator, latin1: []const u8
 
                         buf = try std.ArrayList(u8).initCapacity(allocator, latin1.len + 6);
                         const copy_len = @intFromPtr(remaining.ptr) - @intFromPtr(latin1.ptr);
-                        @memcpy(buf.items[0..copy_len], latin1[0..copy_len]);
-                        buf.items.len = copy_len;
+                        buf.appendSliceAssumeCapacity(latin1[0..copy_len]);
                         any_needs_escape = true;
                         inline for (0..ascii_vector_size) |i| {
                             switch (vec[i]) {
@@ -4037,6 +4029,20 @@ pub fn encodeBytesToHex(destination: []u8, source: []const u8) usize {
     return to_read * 2;
 }
 
+/// Leave a single leading char
+/// ```zig
+/// trimSubsequentLeadingChars("foo\n\n\n\n", '\n') -> "foo\n"
+/// ```
+pub fn trimSubsequentLeadingChars(slice: []const u8, char: u8) []const u8 {
+    if (slice.len == 0) return slice;
+    var end = slice.len - 1;
+    var endend = slice.len;
+    while (end > 0 and slice[end] == char) : (end -= 1) {
+        endend = end + 1;
+    }
+    return slice[0..endend];
+}
+
 pub fn trimLeadingChar(slice: []const u8, char: u8) []const u8 {
     if (indexOfNotChar(slice, char)) |i| {
         return slice[i..];
@@ -4887,27 +4893,27 @@ pub fn isIPAddress(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
     if (input.len > max_ip_address_buffer.len) return false;
 
-    var sockaddr: std.os.sockaddr = undefined;
+    var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
 
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET, ip_addr_str.ptr, &sockaddr) != 0 or bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET, ip_addr_str.ptr, &sockaddr) > 0 or bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn isIPV6Address(input: []const u8) bool {
     var max_ip_address_buffer: [512]u8 = undefined;
     if (input.len > max_ip_address_buffer.len) return false;
 
-    var sockaddr: std.os.sockaddr = undefined;
+    var sockaddr: std.posix.sockaddr = undefined;
     @memset(std.mem.asBytes(&sockaddr), 0);
     @memcpy(max_ip_address_buffer[0..input.len], input);
     max_ip_address_buffer[input.len] = 0;
 
     const ip_addr_str: [:0]const u8 = max_ip_address_buffer[0..input.len :0];
-    return bun.c_ares.ares_inet_pton(std.os.AF.INET6, ip_addr_str.ptr, &sockaddr) != 0;
+    return bun.c_ares.ares_inet_pton(std.posix.AF.INET6, ip_addr_str.ptr, &sockaddr) > 0;
 }
 
 pub fn cloneNormalizingSeparators(
@@ -5109,6 +5115,10 @@ pub inline fn charIsAnySlash(char: u8) bool {
 }
 
 pub inline fn startsWithWindowsDriveLetter(s: []const u8) bool {
+    return startsWithWindowsDriveLetterT(u8, s);
+}
+
+pub inline fn startsWithWindowsDriveLetterT(comptime T: type, s: []const T) bool {
     return s.len > 2 and s[1] == ':' and switch (s[0]) {
         'a'...'z', 'A'...'Z' => true,
         else => false,

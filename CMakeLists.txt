@@ -39,7 +39,7 @@ else()
     message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
 endif()
 
-if (WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
+if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
     # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
     # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
     # as part of some file paths
@@ -1240,7 +1240,7 @@ if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${DSYMUTIL} --flat -z -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()

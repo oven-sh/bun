@@ -1180,6 +1180,7 @@ if(UNIX AND NOT APPLE)
         "-static-libstdc++"
         "-static-libgcc"
         "-Wl,-z,now"
+        "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
         "-Wl,-z,stack-size=12800000"

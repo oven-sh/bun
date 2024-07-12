@@ -147,6 +147,11 @@ pub fn build(b: *Build) !void {
         break :brk .{ os, arch };
     };
 
+    if (os == .linux and arch == .aarch64) {
+        // #12076
+        target_query.cpu_model = .{ .explicit = &std.Target.aarch64.cpu.cortex_a35 };
+    }
+
     target_query.os_version_min = getOSVersionMin(os);
     target_query.glibc_version = getOSGlibCVersion(os);
 

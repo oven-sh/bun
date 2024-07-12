@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.19")
-set(WEBKIT_TAG f8283468dcb71ce463839b06a57e1e5a687d2b38)
+set(WEBKIT_TAG b49be549da59347762aa83f849a65158d2a0d724)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1143,8 +1143,8 @@ if(WIN32)
         "BORINGSSL_NO_CXX=1" # lol
     )
 
-    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
 
@@ -1417,6 +1417,11 @@ if(USE_STATIC_SQLITE)
         "SQLITE_ENABLE_JSON1=1"
         "SQLITE_ENABLE_MATH_FUNCTIONS=1"
     )
+
+    if(WIN32)
+        target_compile_options(sqlite3 PRIVATE /MT /U_DLL)
+    endif()
+
     target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
@@ -1454,7 +1459,6 @@ else()
         winmm
         bcrypt
         ntdll
-        ucrt
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows

@@ -31,8 +31,8 @@ export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidd
 export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 
 if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
-  export CFLAGS="$CFLAGS -mcpu=cortex-a35 -mtune=ampere1 "
-  export CXXFLAGS="$CXXFLAGS -mcpu=cortex-a35 -mtune=ampere1 "
+  export CFLAGS="$CFLAGS -mcpu=cortex-a35 "
+  export CXXFLAGS="$CXXFLAGS -mcpu=cortex-a35 "
 fi
 
 export CMAKE_FLAGS=(

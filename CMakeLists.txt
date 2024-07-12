@@ -1161,6 +1161,7 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
+        -faddrsig
     )
 endif()
 

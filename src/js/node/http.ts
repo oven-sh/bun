@@ -523,7 +523,6 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     this[serverSymbol] = Bun.serve<any>({
       tls,
       port,
-      reusePort: !cluster.isPrimary,
       hostname: host,
       unix: socketPath,
       // Bindings to be used for WS Server

@@ -261,7 +261,7 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn hasPrefix(this: ZigString, needle: []const u8) bool {
+    pub fn hasPrefixComptime(this: ZigString, comptime needle: []const u8) bool {
         if (this.len == 0)
             return false;
         if (this.length() < needle.len)

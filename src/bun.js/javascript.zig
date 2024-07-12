@@ -3679,7 +3679,7 @@ pub const VirtualMachine = struct {
                         if (data.isObject()) {
                             if (data.get(global, "cmd")) |prop| {
                                 if (prop.isString()) {
-                                    if (prop.toString(global).getZigString(global).hasPrefix("NODE_")) {
+                                    if (prop.toString(global).getZigString(global).hasPrefixComptime("NODE_")) {
                                         Process__emitInternalMessageEvent(global, data);
                                         return;
                                     }

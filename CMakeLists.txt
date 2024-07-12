@@ -883,7 +883,11 @@ endif()
 
 get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 
-set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.obj")
+if(WIN32)
+    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.obj")
+else()
+    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
+endif()
 
 set(USES_TERMINAL_NOT_IN_CI "")
 
@@ -976,6 +980,7 @@ if(APPLE)
 endif()
 
 add_compile_definitions(
+
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
@@ -1114,7 +1119,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         target_compile_options(${bun} PUBLIC
             /O2
             ${LTO_FLAG}
-            /Gy 
+            /Gy
             /Gw
             /GF
             /GA

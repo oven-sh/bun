@@ -870,11 +870,11 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
-if(NOT BUN_ZIG_OBJ_EXT)
+if(NOT BUN_ZIG_OBJ_FORMAT)
     # To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
     # LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
     # Change to "bc" to experiment, "Invalid record" means it is not valid output.
-    set(BUN_ZIG_OBJ_EXT "obj")
+    set(BUN_ZIG_OBJ_FORMAT "obj")
 endif()
 
 if(NOT BUN_ZIG_OBJ_DIR)
@@ -884,7 +884,7 @@ endif()
 get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
 
 if(WIN32)
-    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.obj")
+    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
 else()
     set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
 endif()
@@ -911,7 +911,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dtarget=${ZIG_TARGET}"
         "-Denable_logs=${ENABLE_LOGS}"
         "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
-        "-Dobj_format=${BUN_ZIG_OBJ_EXT}"
+        "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"

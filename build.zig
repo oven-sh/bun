@@ -245,7 +245,7 @@ pub fn build(b: *Build) !void {
         var step = b.step("obj", "Build Bun's Zig code as a .o file");
         var bun_obj = addBunObject(b, &build_options);
         step.dependOn(&bun_obj.step);
-        step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format, os == .windows));
+        step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
     }
 
     // zig build windows-shim
@@ -382,15 +382,13 @@ pub fn addInstallObjectFile(
     compile: *Compile,
     name: []const u8,
     out_mode: ObjectFormat,
-    is_windows: bool,
 ) *Step {
     // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
     const bin = compile.getEmittedBin();
-    const extension = if (is_windows) "obj" else "o";
     return &b.addInstallFile(switch (out_mode) {
         .obj => bin,
         .bc => compile.getEmittedLlvmBc(),
-    }, b.fmt("{s}.{s}", .{ name, extension })).step;
+    }, b.fmt("{s}.o", .{name})).step;
 }
 
 fn exists(path: []const u8) bool {

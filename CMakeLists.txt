@@ -1108,7 +1108,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             list(APPEND LTO_LINK_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
             list(APPEND LTO_LINK_FLAG "/OPT:REF")
-            list(APPEND LTO_LINK_FLAG "/OPT:ICF=100")
+            list(APPEND LTO_LINK_FLAG "/OPT:NOICF")
         endif()
 
         target_compile_options(${bun} PUBLIC

@@ -1128,7 +1128,7 @@ else()
 
     if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
         # on arm64 linux, we set a minimum of armv8
-        target_compile_options(${bun} PUBLIC -march=cortex-a35 -mtune=ampere1)
+        target_compile_options(${bun} PUBLIC -march=armv8-a -mtune=ampere1)
     endif()
 endif()
 

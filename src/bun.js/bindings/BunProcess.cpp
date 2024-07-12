@@ -2865,10 +2865,12 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
 }
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
 
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
@@ -2898,18 +2900,32 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-#if OS(WINDOWS)
-    int result = uv_kill(pid, signal);
-#else
-    int result = kill(pid, signal);
-#endif
-
-    if (result < 0) {
-        throwSystemError(scope, globalObject, "kill"_s, errno);
-        return JSValue::encode(jsUndefined());
+    auto global = jsCast<Zig::GlobalObject*>(globalObject);
+    JSValue _killFn = global->processObject()->get(globalObject, Identifier::fromString(vm, "_kill"_s));
+    if (!_killFn.isCallable()) {
+        throwTypeError(globalObject, scope, "process._kill is not a function"_s);
+        return JSValue::encode({});
     }
 
-    return JSValue::encode(jsBoolean(true));
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsNumber(pid));
+    args.append(jsNumber(signal));
+    JSC::CallData callData = JSC::getCallData(_killFn);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
+        return {};
+    }
+
+    return JSValue::encode(result);
 }
 
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)

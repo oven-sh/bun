@@ -1262,7 +1262,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      onDisconnect: () => this.#disconnect(),
+      onDisconnect: has_ipc ? () => this.#disconnect() : undefined,
       serialization,
       argv0,
       windowsHide: !!options.windowsHide,

@@ -20,6 +20,7 @@ const windows = bun.windows;
 const uv = windows.libuv;
 const LifecycleScriptSubprocess = bun.install.LifecycleScriptSubprocess;
 const Body = JSC.WebCore.Body;
+const IPClog = Output.scoped(.IPC, false);
 
 const PosixSpawn = bun.posix.spawn;
 const Rusage = bun.posix.spawn.Rusage;
@@ -716,7 +717,7 @@ pub const Subprocess = struct {
     }
 
     pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
-        Output.scoped(.IPC, false)("Subprocess#doSend\n", .{});
+        IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
                 global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
@@ -2276,7 +2277,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         message: IPC.DecodedIPCMessage,
     ) void {
-        Output.scoped(.IPC, false)("Subprocess#handleIPCMessage\n", .{});
+        IPClog("Subprocess#handleIPCMessage\n", .{});
         switch (message) {
             // In future versions we can read this in order to detect version mismatches,
             // or disable future optimizations if the subprocess is old.
@@ -2298,7 +2299,7 @@ pub const Subprocess = struct {
     }
 
     pub fn handleIPCClose(this: *Subprocess) void {
-        Output.scoped(.IPC, false)("Subprocess#handleIPCClose\n", .{});
+        IPClog("Subprocess#handleIPCClose\n", .{});
         this.updateHasPendingActivity();
 
         const this_jsvalue = this.this_jsvalue;

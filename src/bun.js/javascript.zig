@@ -3693,7 +3693,7 @@ pub const VirtualMachine = struct {
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            Output.scoped(.IPC, false)("IPCInstance#handleIPCClose\n", .{});
+            IPC.log("IPCInstance#handleIPCClose\n", .{});
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;

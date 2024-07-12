@@ -42,7 +42,6 @@ else if (process.platform === "win32") {
   // Windows due to the way IOCP is wired up.
   schedulingPolicy = SCHED_NONE;
 } else schedulingPolicy = SCHED_RR;
-
 cluster.schedulingPolicy = schedulingPolicy;
 
 cluster.setupPrimary = function (options) {
@@ -54,17 +53,6 @@ cluster.setupPrimary = function (options) {
     ...cluster.settings,
     ...options,
   };
-
-  // Tell V8 to write profile data for each process to a separate file.
-  // Without --logfile=v8-%p.log, everything ends up in a single, unusable
-  // file. (Unusable because what V8 logs are memory addresses and each
-  // process has its own memory mappings.)
-  if (
-    ArrayPrototypeSome.$call(settings.execArgv, s => StringPrototypeStartsWith.$call(s, "--prof")) &&
-    !ArrayPrototypeSome.$call(settings.execArgv, s => StringPrototypeStartsWith.$call(s, "--logfile="))
-  ) {
-    settings.execArgv = [...settings.execArgv, "--logfile=v8-%p.log"];
-  }
 
   cluster.settings = settings;
 

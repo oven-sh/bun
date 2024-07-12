@@ -30,6 +30,7 @@ pub const BunObject = struct {
     pub const resolve = toJSCallback(Bun.resolve);
     pub const resolveSync = toJSCallback(Bun.resolveSync);
     pub const serve = toJSCallback(Bun.serve);
+    pub const setRef = toJSCallback(Bun.setRef);
     pub const sha = toJSCallback(JSC.wrapStaticMethod(Crypto.SHA512_256, "hash_", true));
     pub const shrink = toJSCallback(Bun.shrink);
     pub const sleepSync = toJSCallback(Bun.sleepSync);
@@ -158,6 +159,7 @@ pub const BunObject = struct {
         @export(BunObject.resolve, .{ .name = callbackName("resolve") });
         @export(BunObject.resolveSync, .{ .name = callbackName("resolveSync") });
         @export(BunObject.serve, .{ .name = callbackName("serve") });
+        @export(BunObject.setRef, .{ .name = callbackName("setRef") });
         @export(BunObject.sha, .{ .name = callbackName("sha") });
         @export(BunObject.shrink, .{ .name = callbackName("shrink") });
         @export(BunObject.sleepSync, .{ .name = callbackName("sleepSync") });
@@ -3419,6 +3421,26 @@ pub fn serve(
     }
 
     unreachable;
+}
+
+extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    const arguments = callframe.arguments(1).ptr;
+
+    if (arguments.len == 0) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(ZigString.static("enabled").toJS(globalObject)));
+    }
+    if (!arguments[0].isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
+            ZigString.static("enabled").toJS(globalObject),
+            ZigString.static("boolean").toJS(globalObject),
+            arguments[0],
+        ));
+    }
+
+    const enabled = arguments[0].toBoolean();
+    Bun__setChannelRef(globalObject, enabled);
+    return JSValue.jsUndefined();
 }
 
 pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: JSValue, ptr: [*]const u16, len: usize) JSValue {

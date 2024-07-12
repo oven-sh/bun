@@ -14,7 +14,7 @@ pub const ERR_INVALID_HANDLE_TYPE = createSimpleError(createTypeError, .ERR_INVA
 pub const ERR_IPC_DISCONNECTED = createSimpleError(createError, .ERR_IPC_DISCONNECTED, "IPC channel is already disconnected");
 pub const ERR_CHILD_CLOSED_BEFORE_REPLY = createSimpleError(createError, .ERR_CHILD_CLOSED_BEFORE_REPLY, "Child closed before reply received");
 
-fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCode, comptime message: string) JSC.JSBuiltinFunctionType {
+fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCode, comptime message: string) JSC.JS2NativeFunctionType {
     const R = struct {
         pub fn cbb(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
             const S = struct {

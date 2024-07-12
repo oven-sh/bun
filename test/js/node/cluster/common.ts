@@ -31,7 +31,7 @@ export function patchEmitter(emitter: any, prefix: string) {
   var oldEmit = emitter.emit;
 
   emitter.emit = function () {
-    console.log([prefix, ...arguments]);
+    console.log([prefix, arguments[0]]);
     oldEmit.apply(emitter, arguments);
   };
 }

@@ -5,13 +5,17 @@
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
 #include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ScriptExecutionContext.h"
+#include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
+#include "helpers.h"
 #include "node_api.h"
 #include "ZigGlobalObject.h"
 #include "headers.h"
@@ -876,22 +880,33 @@ extern "C" int Bun__handleUnhandledRejection(JSC::JSGlobalObject* lexicalGlobalO
     }
 }
 
+extern "C" void Bun__setChannelRef(GlobalObject* globalObject, bool enabled)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    process->wrapped().m_hasIPCRef = enabled;
+
+    if (enabled) {
+        process->scriptExecutionContext()->refEventLoop();
+    } else {
+        process->scriptExecutionContext()->unrefEventLoop();
+    }
+}
+
 static void onDidChangeListeners(EventEmitter& eventEmitter, const Identifier& eventName, bool isAdded)
 {
     if (eventEmitter.scriptExecutionContext()->isMainThread()) {
         // IPC handlers
-        if (eventName.string() == "message"_s) {
+        if (eventName.string() == "message"_s || eventName.string() == "disconnect"_s) {
+            auto* global = jsCast<GlobalObject*>(eventEmitter.scriptExecutionContext()->jsGlobalObject());
             if (isAdded) {
-                auto* global = eventEmitter.scriptExecutionContext()->jsGlobalObject();
                 if (Bun__GlobalObject__hasIPC(global)
                     && eventEmitter.listenerCount(eventName) == 1) {
                     Bun__ensureProcessIPCInitialized(global);
-                    eventEmitter.scriptExecutionContext()->refEventLoop();
-                    eventEmitter.m_hasIPCRef = true;
+                    Bun__setChannelRef(global, true);
                 }
             } else {
-                if (eventEmitter.listenerCount(eventName) == 0 && eventEmitter.m_hasIPCRef) {
-                    eventEmitter.scriptExecutionContext()->unrefEventLoop();
+                if (eventEmitter.listenerCount(eventName) == 0) {
+                    Bun__setChannelRef(global, false);
                 }
             }
             return;
@@ -1933,6 +1948,37 @@ static JSValue constructProcessDisconnect(VM& vm, JSObject* processObject)
     }
 }
 
+static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
+{
+    auto* globalObject = processObject->globalObject();
+    if (Bun__GlobalObject__hasIPC(globalObject)) {
+        auto& vm = globalObject->vm();
+        auto scope = DECLARE_THROW_SCOPE(vm);
+
+        JSC::JSFunction* getControl = JSC::JSFunction::create(vm, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
+        JSC::MarkedArgumentBuffer args;
+        JSC::CallData callData = JSC::getCallData(getControl);
+
+        NakedPtr<JSC::Exception> returnedException = nullptr;
+        auto result = JSC::call(globalObject, getControl, callData, globalObject->globalThis(), args, returnedException);
+        RETURN_IF_EXCEPTION(scope, {});
+
+        if (auto* exception = returnedException.get()) {
+#if BUN_DEBUG
+            Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
+#endif
+            scope.throwException(globalObject, exception->value());
+            returnedException.clear();
+            return {};
+        }
+
+        return result;
+    } else {
+        return jsUndefined();
+    }
+    return {};
+}
+
 #if OS(WINDOWS)
 #define getpid _getpid
 #endif
@@ -2924,6 +2970,7 @@ extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValu
   binding                          Process_functionBinding                             Function 1
   browser                          constructBrowser                                    PropertyCallback
   chdir                            Process_functionChdir                               Function 1
+  channel                          constructProcessChannel                             PropertyCallback
   config                           constructProcessConfigObject                        PropertyCallback
   connected                        processConnected                                    CustomAccessor
   constrainedMemory                Process_functionConstrainedMemory                   Function 0

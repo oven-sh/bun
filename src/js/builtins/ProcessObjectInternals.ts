@@ -403,3 +403,20 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
     },
   });
 }
+
+export function getChannel() {
+  const EventEmitter = require("node:events");
+  return new (class Control extends EventEmitter {
+    constructor() {
+      super();
+    }
+
+    ref() {
+      Bun.setRef(true);
+    }
+
+    unref() {
+      Bun.setRef(false);
+    }
+  })();
+}

@@ -56,6 +56,7 @@
     macro(resolve) \
     macro(resolveSync) \
     macro(serve) \
+    macro(setRef) \
     macro(sha) \
     macro(shrink) \
     macro(sleepSync) \

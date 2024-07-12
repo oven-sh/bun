@@ -951,6 +951,8 @@ class Server extends EventEmitter {
         }
       }
 
+      listenInCluster(this, null, port, 4, backlog, undefined, exclusive);
+
       // We must schedule the emitListeningNextTick() only after the next run of
       // the event loop's IO queue. Otherwise, the server may not actually be listening
       // when the 'listening' event is emitted.
@@ -963,6 +965,13 @@ class Server extends EventEmitter {
       setTimeout(emitErrorNextTick, 1, this, err);
     }
     return this;
+  }
+
+  get _handle() {
+    return this;
+  }
+  set _handle(new_handle) {
+    //nothing
   }
 }
 
@@ -984,6 +993,28 @@ function emitListeningNextTick(self, onListen) {
     }
   }
   self.emit("listening");
+}
+
+let cluster;
+function listenInCluster(server, address, port, addressType, backlog, fd, exclusive, flags, options) {
+  exclusive = !!exclusive;
+
+  if (cluster === undefined) cluster = require("node:cluster");
+
+  if (cluster.isPrimary || exclusive) {
+    return;
+  }
+
+  const serverQuery = {
+    address: address,
+    port: port,
+    addressType: addressType,
+    fd: fd,
+    flags,
+    backlog,
+    ...options,
+  };
+  cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {});
 }
 
 function createServer(options, connectionListener) {
@@ -1027,78 +1058,6 @@ function toNumber(x) {
   return (x = Number(x)) >= 0 ? x : false;
 }
 
-// Returns handle if it can be created, or error code if it can't
-function _createServerHandle(address, port, addressType?, fd?, flags?) {
-  let err = 0;
-  // Assign handle in listen, and clean up if bind or listen fails
-  let handle;
-
-  let isTCP = false;
-  if (typeof fd === "number" && fd >= 0) {
-    try {
-      handle = createHandle(fd, true);
-    } catch (e) {
-      // Not a fd we can listen on.  This will trigger an error.
-      $debug("listen invalid fd=%d:", fd, e.message);
-      return UV_EINVAL;
-    }
-
-    err = handle.open(fd);
-    if (err) return err;
-
-    $assert(!address && !port);
-  } else if (port === -1 && addressType === -1) {
-    handle = new Pipe(PipeConstants.SERVER);
-    if (isWindows) {
-      const instances = NumberParseInt(process.env.NODE_PENDING_PIPE_INSTANCES);
-      if (!NumberIsNaN(instances)) {
-        handle.setPendingInstances(instances);
-      }
-    }
-  } else {
-    handle = new TCP(TCPConstants.SERVER);
-    isTCP = true;
-  }
-
-  if (address || port || isTCP) {
-    debug("bind to", address || "any");
-    if (!address) {
-      // Try binding to ipv6 first
-      err = handle.bind6(DEFAULT_IPV6_ADDR, port, flags);
-      if (err) {
-        handle.close();
-        // Fallback to ipv4
-        return _createServerHandle(DEFAULT_IPV4_ADDR, port);
-      }
-    } else if (addressType === 6) {
-      err = handle.bind6(address, port, flags);
-    } else {
-      err = handle.bind(address, port);
-    }
-  }
-
-  if (err) {
-    handle.close();
-    return err;
-  }
-
-  return handle;
-}
-
-function createHandle(fd, is_server) {
-  validateInt32(fd, "fd", 0);
-  const type = guessHandleType(fd);
-  if (type === "PIPE") {
-    return new Pipe(is_server ? PipeConstants.SERVER : PipeConstants.SOCKET);
-  }
-
-  if (type === "TCP") {
-    return new TCP(is_server ? TCPConstants.SERVER : TCPConstants.SOCKET);
-  }
-
-  throw new ERR_INVALID_FD_TYPE(type);
-}
-
 // TODO:
 class BlockList {
   constructor() {}
@@ -1121,7 +1080,6 @@ export default {
   Socket,
   [Symbol.for("::bunternal::")]: SocketClass,
   _normalizeArgs: normalizeArgs,
-  _createServerHandle,
 
   getDefaultAutoSelectFamily: $zig("node_net_binding.zig", "getDefaultAutoSelectFamily"),
   setDefaultAutoSelectFamily: $zig("node_net_binding.zig", "setDefaultAutoSelectFamily"),

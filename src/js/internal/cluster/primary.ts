@@ -79,20 +79,6 @@ cluster.setupPrimary = function (options) {
   );
 
   process.nextTick(setupSettingsNT, settings);
-
-  process.on("internalMessage", message => {
-    if (message.cmd !== "NODE_DEBUG_ENABLED") return;
-
-    for (const worker of ObjectValues(cluster.workers)) {
-      if (worker.state === "online" || worker.state === "listening") {
-        process._debugProcess(worker.process.pid);
-      } else {
-        worker.once("online", function () {
-          process._debugProcess(this.process.pid);
-        });
-      }
-    }
-  });
 };
 
 // Deprecated alias must be same as setupPrimary

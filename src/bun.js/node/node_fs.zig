@@ -1136,7 +1136,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?Truncate {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, .truncate, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or TypedArray",
@@ -1198,7 +1198,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, .writev, exception) orelse {
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -1289,7 +1289,7 @@ pub const Arguments = struct {
                 return null;
             };
 
-            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, .readv, exception) orelse {
+            const fd = JSC.Node.fileDescriptorFromJS(ctx, fd_value, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -1370,7 +1370,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .ftruncate, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -1488,7 +1488,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .fchown, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -1702,7 +1702,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .fchmod, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -1830,7 +1830,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .fstat, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "file descriptor must be a number",
@@ -2468,7 +2468,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .close, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
@@ -2584,7 +2584,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .futime, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
@@ -2710,7 +2710,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .write, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
@@ -2834,7 +2834,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .read, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
@@ -2960,7 +2960,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?ReadFile {
-            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, .ReadFile, exception) orelse {
+            const path = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -3061,7 +3061,7 @@ pub const Arguments = struct {
         }
 
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?WriteFile {
-            const file = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, .WriteFile, exception) orelse {
+            const file = PathOrFileDescriptor.fromJS(ctx, arguments, bun.default_allocator, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "path must be a string or a file descriptor",
@@ -3643,7 +3643,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .fdatasync, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",
@@ -3850,7 +3850,7 @@ pub const Arguments = struct {
                     );
                 }
                 return null;
-            }, .fsync, exception) orelse {
+            }, exception) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "fd must be a number",

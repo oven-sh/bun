@@ -50,7 +50,7 @@ const PathOrBlob = union(enum) {
     blob: Blob,
 
     pub fn fromJSNoCopy(ctx: js.JSContextRef, args: *JSC.Node.ArgumentsSlice, exception: js.ExceptionRef) ?PathOrBlob {
-        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, null, exception)) |path| {
+        if (JSC.Node.PathOrFileDescriptor.fromJS(ctx, args, bun.default_allocator, exception)) |path| {
             return PathOrBlob{
                 .path = path,
             };
@@ -1518,7 +1518,7 @@ pub const Blob = struct {
         var exception_ = [1]JSC.JSValueRef{null};
         const exception = &exception_;
 
-        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, null, exception) orelse {
+        var path = JSC.Node.PathOrFileDescriptor.fromJS(globalObject, &args, bun.default_allocator, exception) orelse {
             if (exception_[0] == null) {
                 globalObject.throwInvalidArguments("Expected file path string or file descriptor", .{});
             } else {

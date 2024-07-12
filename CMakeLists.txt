@@ -1159,7 +1159,7 @@ else()
 
     if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
         # on arm64 linux, we set a minimum of armv8
-        target_compile_options(${bun} PUBLIC -march=cortex-a35 -mtune=ampere1)
+        target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
     endif()
 endif()
 
@@ -1192,6 +1192,7 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
+        -faddrsig
     )
 endif()
 
@@ -1211,6 +1212,7 @@ if(UNIX AND NOT APPLE)
         "-static-libstdc++"
         "-static-libgcc"
         "-Wl,-z,now"
+        "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
         "-Wl,-z,stack-size=12800000"

@@ -51,7 +51,6 @@ cluster.setupPrimary = function (options) {
     exec: process.argv[1],
     execArgv: process.execArgv,
     silent: false,
-    stdio: ["inherit", "inherit", "inherit", "ipc"],
     ...cluster.settings,
     ...options,
   };

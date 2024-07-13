@@ -201,6 +201,8 @@ The callback function is called lazily, only if the module is imported or requir
 
 Instead of manually restoring each mock individually with `mockFn.mockRestore()`, restore all mocks with one command by calling `mock.restore()`. Doing so does not reset the value of modules overridden with `mock.module()`.
 
+This can reduce the amount of code in your tests by adding this to `afterEach` blocks in each test file or even in your [test preload code](https://bun.sh/docs/runtime/bunfig#test-preload).
+
 ```ts
 import { expect, mock, spyOn, test } from "bun:test";
 

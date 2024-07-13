@@ -37,3 +37,5 @@ new_test("worker-init.ts");
 new_test("setup-primary-cumulative.ts");
 new_test("ipc-throw.ts");
 new_test("worker-disconnect-on-error.ts");
+new_test("bind-twice.ts");
+new_test("rr-handle-keep-loop-alive.ts");

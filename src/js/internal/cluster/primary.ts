@@ -1,14 +1,12 @@
 const EventEmitter = require("node:events");
 const child_process = require("node:child_process");
 const Worker = require("internal/cluster/Worker");
-const SharedHandle = require("internal/cluster/SharedHandle");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
 const { internal, sendHelper } = require("internal/cluster/utils");
 const path = require("node:path");
+const { throwNotImplemented } = require("internal/shared");
 
 const ArrayPrototypeSlice = Array.prototype.slice;
-const ArrayPrototypeSome = Array.prototype.some;
-const StringPrototypeStartsWith = String.prototype.startsWith;
 const ObjectValues = Object.values;
 const ObjectKeys = Object.keys;
 
@@ -245,7 +243,7 @@ function queryServer(worker, message) {
     // be obvious reasons: it's connectionless. There is nothing to send to
     // the workers except raw datagrams and that's pointless.
     if (schedulingPolicy !== SCHED_RR || message.addressType === "udp4" || message.addressType === "udp6") {
-      handle = new SharedHandle(key, address, message);
+      throwNotImplemented("node:cluster SCHED_NONE");
     } else {
       handle = new RoundRobinHandle(key, address, message);
     }

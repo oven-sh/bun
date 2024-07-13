@@ -3230,30 +3230,36 @@ pub const JSGlobalObject = extern struct {
 
     pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
         const arg0 = arg_name.toString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
         const arg1 = etype.toString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
         const arg2 = atype.jsTypeString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
         return this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ arg0, arg1, arg2 });
     }
 
     pub fn ERR_MISSING_ARGS_1(this: *JSGlobalObject, arg1: JSValue) JSValue {
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{
-            arg1.toString(this),
-        });
+        const s1 = arg1.toString(this);
+        if (this.hasException()) return .zero;
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{s1});
     }
 
     pub fn ERR_MISSING_ARGS_2(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue) JSValue {
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" and \"{}\" arguments must be specified", .{
-            arg1.toString(this),
-            arg2.toString(this),
-        });
+        const s1 = arg1.toString(this);
+        if (this.hasException()) return .zero;
+        const s2 = arg2.toString(this);
+        if (this.hasException()) return .zero;
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" and \"{}\" arguments must be specified", .{ s1, s2 });
     }
 
     pub fn ERR_MISSING_ARGS_3(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\", \"{}\", and \"{}\" arguments must be specified", .{
-            arg1.toString(this),
-            arg2.toString(this),
-            arg3.toString(this),
-        });
+        const s1 = arg1.toString(this);
+        if (this.hasException()) return .zero;
+        const s2 = arg2.toString(this);
+        if (this.hasException()) return .zero;
+        const s3 = arg3.toString(this);
+        if (this.hasException()) return .zero;
+        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\", \"{}\", and \"{}\" arguments must be specified", .{ s1, s2, s3 });
     }
 
     pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {

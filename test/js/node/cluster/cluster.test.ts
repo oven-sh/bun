@@ -35,3 +35,4 @@ new_test("rr-ref.ts");
 new_test("send-deadlock.ts");
 new_test("worker-init.ts");
 new_test("setup-primary-cumulative.ts");
+new_test("ipc-throw.ts");

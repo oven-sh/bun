@@ -148,6 +148,12 @@ it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
 });
 
+it("process.version is set", () => {
+  // This implies you forgot -Dreported_nodejs_version in zig build configuration
+  expect(process.version).not.toInclude("0.0.0");
+  expect(process.version).not.toInclude("unset");
+});
+
 it.todo("process.argv0", () => {
   expect(basename(process.argv0)).toBe(basename(process.argv[0]));
 });

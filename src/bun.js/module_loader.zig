@@ -11,7 +11,7 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
-const Arena = @import("../mimalloc_arena.zig").Arena;
+const Arena = @import("../allocators/mimalloc_arena.zig").Arena;
 const C = bun.C;
 
 const Allocator = std.mem.Allocator;
@@ -2115,7 +2115,7 @@ pub const ModuleLoader = struct {
             .sqlite_embedded, .sqlite => {
                 const sqlite_module_source_code_string = brk: {
                     if (jsc_vm.hot_reload == .hot) {
-                        break :brk 
+                        break :brk
                         \\// Generated code
                         \\import {Database} from 'bun:sqlite';
                         \\const {path} = import.meta;
@@ -2135,7 +2135,7 @@ pub const ModuleLoader = struct {
                         ;
                     }
 
-                    break :brk 
+                    break :brk
                     \\// Generated code
                     \\import {Database} from 'bun:sqlite';
                     \\export const db = new Database(import.meta.path);

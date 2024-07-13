@@ -5,9 +5,9 @@ const bun = @import("root").bun;
 const log = bun.Output.scoped(.mimalloc, true);
 const assert = bun.assert;
 const Allocator = mem.Allocator;
-const mimalloc = @import("./allocators/mimalloc.zig");
-const FeatureFlags = @import("./feature_flags.zig");
-const Environment = @import("./env.zig");
+const mimalloc = @import("./mimalloc.zig");
+const FeatureFlags = @import("../feature_flags.zig");
+const Environment = @import("../env.zig");
 
 fn mimalloc_free(
     _: *anyopaque,

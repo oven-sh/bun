@@ -17,7 +17,7 @@ const Index = @import("ast/base.zig").Index;
 const RefHashCtx = @import("ast/base.zig").RefHashCtx;
 const ObjectPool = @import("./pool.zig").ObjectPool;
 const ImportRecord = @import("import_record.zig").ImportRecord;
-const allocators = @import("allocators.zig");
+const allocators = @import("./allocators/allocators.zig");
 const JSC = bun.JSC;
 const RefCtx = @import("./ast/base.zig").RefCtx;
 const JSONParser = bun.JSON;
@@ -26,7 +26,7 @@ const ComptimeStringMap = bun.ComptimeStringMap;
 const JSPrinter = @import("./js_printer.zig");
 const js_lexer = @import("./js_lexer.zig");
 const TypeScript = @import("./js_parser.zig").TypeScript;
-const ThreadlocalArena = @import("./mimalloc_arena.zig").Arena;
+const ThreadlocalArena = @import("./allocators/mimalloc_arena.zig").Arena;
 const MimeType = bun.http.MimeType;
 
 /// This is the index to the automatically-generated part containing code that

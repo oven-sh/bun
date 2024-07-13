@@ -1,7 +1,7 @@
 const std = @import("std");
 
-const FeatureFlags = @import("./feature_flags.zig");
-const Environment = @import("./env.zig");
+const FeatureFlags = @import("../feature_flags.zig");
+const Environment = @import("../env.zig");
 const FixedBufferAllocator = std.heap.FixedBufferAllocator;
 const bun = @import("root").bun;
 
@@ -260,7 +260,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
     };
 }
 
-const Mutex = @import("./lock.zig").Lock;
+const Mutex = @import("../lock.zig").Lock;
 
 /// Append-only list.
 /// Stores an initial count in .bss section of the object file

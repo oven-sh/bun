@@ -33,7 +33,7 @@ const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
 const JSC = bun.JSC;
 
-const allocators = @import("../allocators.zig");
+const allocators = @import("../allocators/allocators.zig");
 const Msg = logger.Msg;
 const Path = Fs.Path;
 const debuglog = Output.scoped(.Resolver, true);

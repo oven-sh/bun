@@ -11,7 +11,7 @@ const C = bun.C;
 
 const PercentEncoding = @import("../url.zig").PercentEncoding;
 const std = @import("std");
-const allocators = @import("../allocators.zig");
+const allocators = @import("../allocators/allocators.zig");
 const URLPath = @This();
 
 extname: string = "",

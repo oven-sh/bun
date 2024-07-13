@@ -345,6 +345,10 @@ function emitListeningNextTick(self, onListen, err, hostname, port) {
   }
 }
 
+function emitErrorNextTick(self, error) {
+  self.emit("error", error);
+}
+
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
@@ -611,7 +615,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
 
     setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
   } catch (err) {
-    server.emit("error", err);
+    setTimeout(emitErrorNextTick, 1, this, err);
   }
 
   return this;

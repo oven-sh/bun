@@ -1920,8 +1920,6 @@ pub const Api = struct {
     };
 
     pub const PackagesMode = enum(u8) {
-        none,
-
         /// bundle
         bundle,
 

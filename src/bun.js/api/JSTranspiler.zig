@@ -586,9 +586,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
-    std.log.debug("packages in jstranspiler...\n", .{});
     if (try object.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
-        std.log.debug("packages in jstranspiler: {any}\n", .{packages});
         transpiler.transform.packages = packages.toAPI();
     }
 

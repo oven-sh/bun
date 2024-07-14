@@ -224,9 +224,7 @@ pub const JSBundler = struct {
                 }
             }
 
-            std.log.debug("packages in jsbundler...\n", .{});
             if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
-                std.log.debug("packages in jsbundler: {any}\n", .{packages});
                 this.packages = packages;
             }
 

@@ -443,7 +443,6 @@ pub const Bundler = struct {
         js_ast.Stmt.Data.Store.create();
 
         const fs = try Fs.FileSystem.init(opts.absolute_working_dir);
-        Output.debugWarn("bundle options: {any}", .{opts});
         const bundle_options = try options.BundleOptions.fromApi(
             allocator,
             fs,

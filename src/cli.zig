@@ -698,9 +698,7 @@ pub const Arguments = struct {
             }
 
             if (args.option("--packages")) |packages| {
-                if (packages.len == 0) {
-                    opts.packages = .bundle;
-                } else if (strings.eqlComptime(packages, "bundle")) {
+                if (strings.eqlComptime(packages, "bundle")) {
                     opts.packages = .bundle;
                 } else if (strings.eqlComptime(packages, "external")) {
                     opts.packages = .external;

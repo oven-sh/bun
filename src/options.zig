@@ -1382,7 +1382,7 @@ pub const PackagesOption = enum {
     external,
 
     pub fn fromApi(packages: ?Api.PackagesMode) PackagesOption {
-        return switch (packages orelse .none) {
+        return switch (packages orelse .bundle) {
             .external => .external,
             .bundle => .bundle,
             else => .bundle,

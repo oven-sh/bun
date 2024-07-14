@@ -159,7 +159,7 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
-  /** Defaults to "external" */
+  /** Defaults to "bundle" */
   packages?: "bundle" | "external";
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";

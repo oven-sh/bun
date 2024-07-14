@@ -75,4 +75,5 @@ pub const Classes = struct {
     pub const PostgresSQLQuery = JSC.Postgres.PostgresSQLQuery;
     pub const BrotliEncoder = JSC.API.BrotliEncoder;
     pub const BrotliDecoder = JSC.API.BrotliDecoder;
+    pub const Sign = JSC.API.Crypto.Sign;
 };

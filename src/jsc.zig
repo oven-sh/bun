@@ -14,6 +14,7 @@ pub const C = @import("./bun.js/javascript_core_c_api.zig");
 pub const WebCore = @import("./bun.js/webcore.zig");
 pub const BuildMessage = @import("./bun.js/BuildMessage.zig").BuildMessage;
 pub const ResolveMessage = @import("./bun.js/ResolveMessage.zig").ResolveMessage;
+
 pub const Cloudflare = struct {
     pub const HTMLRewriter = @import("./bun.js/api/html_rewriter.zig").HTMLRewriter;
     pub const ContentOptions = @import("./bun.js/api/html_rewriter.zig").ContentOptions;
@@ -51,6 +52,7 @@ pub const API = struct {
     pub const H2FrameParser = @import("./bun.js/api/bun/h2_frame_parser.zig").H2FrameParser;
     pub const BrotliEncoder = @import("./bun.js/api/js_brotli.zig").BrotliEncoder;
     pub const BrotliDecoder = @import("./bun.js/api/js_brotli.zig").BrotliDecoder;
+    pub const Crypto = Bun.Crypto;
 };
 pub const Postgres = @import("./sql/postgres.zig");
 pub const DNS = @import("./bun.js/api/bun/dns_resolver.zig");

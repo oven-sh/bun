@@ -111,4 +111,26 @@ export default [
       },
     },
   }),
+  define({
+    name: "Sign",
+    construct: true,
+    finalize: true,
+    JSType: "0b11101110",
+    klass: {
+      sign: {
+        fn: "signOneShot",
+        length: 2,
+      },
+    },
+    proto: {
+      update: {
+        fn: "update",
+        length: 8,
+      },
+      sign: {
+        fn: "finalSign",
+        length: 8,
+      },
+    },
+  }),
 ];

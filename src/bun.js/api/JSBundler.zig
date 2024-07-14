@@ -67,7 +67,7 @@ pub const JSBundler = struct {
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
-        packages: options.PackagesOption = .none,
+        packages: options.PackagesOption = .bundle,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -222,6 +222,12 @@ pub const JSBundler = struct {
                         options.SourceMapOption,
                     );
                 }
+            }
+
+            std.log.debug("packages in jsbundler...\n", .{});
+            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+                std.log.debug("packages in jsbundler: {any}\n", .{packages});
+                this.packages = packages;
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {

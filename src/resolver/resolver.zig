@@ -632,6 +632,7 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+        Output.debugWarn("r opts packages: {any}", .{r.opts.packages});
         if (r.opts.packages == .external and isExternalModuleLike(import_path)) {
             return true;
         }

@@ -586,6 +586,12 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
         }
     }
 
+    std.log.debug("packages in jstranspiler...\n", .{});
+    if (try object.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+        std.log.debug("packages in jstranspiler: {any}\n", .{packages});
+        transpiler.transform.packages = packages.toAPI();
+    }
+
     var tree_shaking: ?bool = null;
     if (object.getOptional(globalThis, "treeShaking", bool) catch return transpiler) |treeShaking| {
         tree_shaking = treeShaking;

@@ -1378,7 +1378,6 @@ pub const SourceMapOption = enum {
 };
 
 pub const PackagesOption = enum {
-    none,
     bundle,
     external,
 
@@ -1386,20 +1385,18 @@ pub const PackagesOption = enum {
         return switch (packages orelse .none) {
             .external => .external,
             .bundle => .bundle,
-            else => .none,
+            else => .bundle,
         };
     }
 
     pub fn toAPI(packages: ?PackagesOption) Api.PackagesMode {
-        return switch (packages orelse .none) {
+        return switch (packages orelse .bundle) {
             .external => .external,
             .bundle => .bundle,
-            .none => .none,
         };
     }
 
     pub const Map = bun.ComptimeStringMap(PackagesOption, .{
-        .{ "none", .none },
         .{ "external", .external },
         .{ "bundle", .bundle },
     });

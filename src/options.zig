@@ -1377,6 +1377,34 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const PackagesOption = enum {
+    none,
+    bundle,
+    external,
+
+    pub fn fromApi(packages: ?Api.PackagesMode) PackagesOption {
+        return switch (packages orelse .none) {
+            .external => .external,
+            .bundle => .bundle,
+            else => .none,
+        };
+    }
+
+    pub fn toAPI(packages: ?PackagesOption) Api.PackagesMode {
+        return switch (packages orelse .none) {
+            .external => .external,
+            .bundle => .bundle,
+            .none => .none,
+        };
+    }
+
+    pub const Map = bun.ComptimeStringMap(PackagesOption, .{
+        .{ "none", .none },
+        .{ "external", .external },
+        .{ "bundle", .bundle },
+    });
+};
+
 pub const OutputFormat = enum {
     preserve,
 
@@ -1472,6 +1500,7 @@ pub const BundleOptions = struct {
     no_macros: bool = false,
 
     conditions: ESMConditions = undefined,
+    packages: PackagesOption = PackagesOption.none,
     tree_shaking: bool = false,
     code_splitting: bool = false,
     source_map: SourceMapOption = SourceMapOption.none,

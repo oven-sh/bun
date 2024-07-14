@@ -1644,6 +1644,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
+        bundler.options.packages = config.packages;
         bundler.resolver.generation = generation;
         bundler.options.code_splitting = config.code_splitting;
 

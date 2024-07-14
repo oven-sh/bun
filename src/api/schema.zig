@@ -1684,6 +1684,9 @@ pub const Api = struct {
         /// conditions
         conditions: []const []const u8,
 
+        /// packages
+        packages: ?PackagesMode = null,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1770,6 +1773,9 @@ pub const Api = struct {
                     },
                     26 => {
                         this.conditions = try reader.readArray([]const u8);
+                    },
+                    27 => {
+                        this.packages = try reader.readValue(PackagesMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1886,6 +1892,11 @@ pub const Api = struct {
                 try writer.writeArray([]const u8, conditions);
             }
 
+            if (this.packages) |packages| {
+                try writer.writeFieldID(27);
+                try writer.writeValue([]const u8, packages);
+            }
+
             try writer.endMessage();
         }
     };
@@ -1900,6 +1911,22 @@ pub const Api = struct {
         external,
 
         linked,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const PackagesMode = enum(u8) {
+        none,
+
+        /// bundle
+        bundle,
+
+        /// external
+        external,
 
         _,
 

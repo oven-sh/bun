@@ -1500,10 +1500,10 @@ pub const BundleOptions = struct {
     no_macros: bool = false,
 
     conditions: ESMConditions = undefined,
-    packages: PackagesOption = PackagesOption.none,
     tree_shaking: bool = false,
     code_splitting: bool = false,
     source_map: SourceMapOption = SourceMapOption.none,
+    packages: PackagesOption = PackagesOption.bundle,
 
     disable_transpilation: bool = false,
 
@@ -1765,6 +1765,8 @@ pub const BundleOptions = struct {
         opts.out_extensions = opts.target.outExtensions(allocator);
 
         opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);
+
+        opts.packages = PackagesOption.fromApi(transform.packages orelse .bundle);
 
         opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;

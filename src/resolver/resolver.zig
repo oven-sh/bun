@@ -481,6 +481,13 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
     };
 }
 
+fn isExternalModuleLike(import_path: string) bool {
+    if (strings.startsWith(import_path, ".") or strings.startsWith(import_path, "/") or strings.startsWith(import_path, "..")) {
+        return false;
+    }
+    return true;
+}
+
 pub const Resolver = struct {
     const ThisResolver = @This();
     opts: options.BundleOptions,
@@ -625,6 +632,9 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+        if (r.opts.packages == .external and isExternalModuleLike(import_path)) {
+            return true;
+        }
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,

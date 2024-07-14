@@ -1,8 +1,8 @@
 ---
-name: Create an Telegram bot using GramIO and Bun
+name: Create a Telegram bot using GramIO and Bun
 ---
 
-[GramIO](https://gramio.dev) is a multi-runtime, extensible and very type-safe Telegram Bot API framework with great plugin system. Get started with `bun create`.
+[GramIO](https://gramio.dev) is a multi-runtime, extensible and very type-safe Telegram Bot API framework with a great plugin system. Get started with `bun create`.
 
 ```sh
 $ bun create gramio bot
@@ -26,7 +26,7 @@ $ bun create gramio bot
 
 ---
 
-As we can see, we can conveniently start new project with everything we need! Let's take a look at the `src/index.ts` file.
+As we can see, we can conveniently start a new project with everything we need! Let's take a look at the `src/index.ts` file.
 
 ```ts#src/index.ts
 import { autoRetry } from "@gramio/auto-retry";

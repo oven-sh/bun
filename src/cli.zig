@@ -227,6 +227,7 @@ pub const Arguments = struct {
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
         clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+        clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -694,6 +695,17 @@ pub const Arguments = struct {
                     externals[i] = @constCast(external);
                 }
                 opts.external = externals;
+            }
+
+            if (args.option("--packages")) |packages| {
+                if (strings.eqlComptime(packages, "bundle")) {
+                    opts.packages = .bundle;
+                } else if (strings.eqlComptime(packages, "external")) {
+                    opts.packages = .external;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
             }
 
             const TargetMatcher = strings.ExactSizeMatcher(8);

@@ -1309,6 +1309,31 @@ describe("bundler", () => {
     target: "bun",
     run: true,
   });
+  itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/foo/index.js": `export const a = "Hello World";`,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        Hello World
+      `,
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

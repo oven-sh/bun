@@ -1377,6 +1377,31 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const PackagesOption = enum {
+    bundle,
+    external,
+
+    pub fn fromApi(packages: ?Api.PackagesMode) PackagesOption {
+        return switch (packages orelse .bundle) {
+            .external => .external,
+            .bundle => .bundle,
+            else => .bundle,
+        };
+    }
+
+    pub fn toAPI(packages: ?PackagesOption) Api.PackagesMode {
+        return switch (packages orelse .bundle) {
+            .external => .external,
+            .bundle => .bundle,
+        };
+    }
+
+    pub const Map = bun.ComptimeStringMap(PackagesOption, .{
+        .{ "external", .external },
+        .{ "bundle", .bundle },
+    });
+};
+
 pub const OutputFormat = enum {
     preserve,
 
@@ -1475,6 +1500,7 @@ pub const BundleOptions = struct {
     tree_shaking: bool = false,
     code_splitting: bool = false,
     source_map: SourceMapOption = SourceMapOption.none,
+    packages: PackagesOption = PackagesOption.bundle,
 
     disable_transpilation: bool = false,
 
@@ -1736,6 +1762,8 @@ pub const BundleOptions = struct {
         opts.out_extensions = opts.target.outExtensions(allocator);
 
         opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);
+
+        opts.packages = PackagesOption.fromApi(transform.packages orelse .bundle);
 
         opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;

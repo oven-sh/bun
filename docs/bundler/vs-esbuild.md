@@ -94,8 +94,8 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 ---
 
 - `--packages`
-- n/a
-- Not supported
+- `--packages`
+- No differences
 
 ---
 

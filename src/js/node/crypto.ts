@@ -11938,9 +11938,9 @@ crypto_exports.generateKeyPairSync = _generateKeyPairSync;
 crypto_exports.generateKeyPair = function (algorithm, options, callback) {
   try {
     const result = _generateKeyPairSync(algorithm, options);
-    typeof callback === "function" && callback(null, result.publicKey, result.privateKey);
+    typeof callback === "function" && process.nextTick(callback, null, result.publicKey, result.privateKey);
   } catch (err) {
-    typeof callback === "function" && callback(err);
+    typeof callback === "function" && process.nextTick(callback, err);
   }
 };
 

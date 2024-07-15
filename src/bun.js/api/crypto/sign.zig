@@ -6,9 +6,9 @@ const Async = bun.Async;
 const JSGlobalObject = JSC.JSGlobalObject;
 const std = @import("std");
 const ZigString = bun.JSC.ZigString;
-const Crypto = @import("../crypto.zig");
+const Crypto = JSC.API.Bun.Crypto;
 const BoringSSL = bun.BoringSSL;
-const EVP = Crypto.EVP;
+const EVP = Crypto;
 
 pub const Sign = struct {
     this_value: JSC.JSValue = .zero,
@@ -24,7 +24,7 @@ pub const Sign = struct {
         this.destroy();
     }
 
-    pub fn signOneShot(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue  { 
+    pub fn signOneShot(globalObject: *JSGlobalObject, callFrame: *JSC.CallFrame) JSC.JSValue {
         _ = globalObject;
         _ = callFrame;
         return .zero;
@@ -47,19 +47,30 @@ pub const Sign = struct {
     }
 
     pub fn update(this: *Sign, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
-        _ = this; // autofix
-        _ = globalThis; // autofix
+        const this_value = callframe.this();
+        this.this_value = this_value;
+        const arguments = callframe.arguments(3).slice();
+        if (arguments.len < 1) {
+            globalThis.throwNotEnoughArguments("Sign.update", 2, 0);
+            return .zero;
+        }
 
-        return callframe.this();
+        const data = arguments[0];
+        const input_encoding_value: JSC.JSValue = if (arguments.len > 1) arguments[1] else .undefined;
 
+        var string_or_buffer = JSC.Node.StringOrBuffer.fromJSWithEncodingValue(globalThis, bun.default_allocator, data, input_encoding_value) orelse return .zero;
+        defer string_or_buffer.deinit();
+        this.evp.update(string_or_buffer.slice());
+        return this_value;
     }
 
     pub fn finalSign(this: *Sign, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         _ = this; // autofix
-
         _ = globalThis; // autofix
+        const arguments = callframe.arguments(8).slice();
 
-        return callframe.this();
+        BoringSSL.
+        
     }
 
     pub fn finalize(this: *Sign) void {

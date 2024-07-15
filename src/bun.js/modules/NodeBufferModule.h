@@ -1,3 +1,7 @@
+#pragma once
+
+#include "root.h"
+
 #include "../bindings/JSBuffer.h"
 #include "_NativeModule.h"
 #include "simdutf.h"
@@ -121,6 +125,8 @@ JSC_DEFINE_HOST_FUNCTION(jsBufferConstructorFunction_isAscii,
       JSValue::encode(jsBoolean(simdutf::validate_ascii(ptr, byteLength))));
 }
 
+BUN_DECLARE_HOST_FUNCTION(jsFunctionResolveObjectURL);
+
 JSC_DEFINE_HOST_FUNCTION(jsFunctionNotImplemented,
                          (JSGlobalObject * globalObject,
                           CallFrame *callFrame)) {
@@ -192,7 +198,8 @@ DEFINE_NATIVE_MODULE(NodeBuffer) {
 
   auto *resolveObjectURL =
       InternalFunction::createFunctionThatMasqueradesAsUndefined(
-          vm, globalObject, 1, "resolveObjectURL"_s, jsFunctionNotImplemented);
+          vm, globalObject, 1, "resolveObjectURL"_s,
+          jsFunctionResolveObjectURL);
 
   put(JSC::Identifier::fromString(vm, "resolveObjectURL"_s), resolveObjectURL);
 

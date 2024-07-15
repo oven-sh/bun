@@ -23,6 +23,8 @@ stderr_store: ?*Blob.Store = null,
 stdin_store: ?*Blob.Store = null,
 stdout_store: ?*Blob.Store = null,
 
+postgresql_context: JSC.Postgres.PostgresSQLContext = .{},
+
 entropy_cache: ?*EntropyCache = null,
 
 hot_map: ?HotMap = null,
@@ -352,7 +354,7 @@ pub fn stdin(rare: *RareData) *Blob.Store {
                     .pathlike = .{
                         .fd = fd,
                     },
-                    .is_atty = if (bun.STDIN_FD.isValid()) std.os.isatty(bun.STDIN_FD.cast()) else false,
+                    .is_atty = if (bun.STDIN_FD.isValid()) std.posix.isatty(bun.STDIN_FD.cast()) else false,
                     .mode = mode,
                 },
             },

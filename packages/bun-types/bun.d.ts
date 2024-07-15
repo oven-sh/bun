@@ -1516,11 +1516,12 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
     loader?: { [k in string]: Loader };
-    sourcemap?: "none" | "inline" | "external"; // default: "none"
+    sourcemap?: "none" | "linked" | "inline" | "external"; // default: "none", true -> "inline"
     /**
      * package.json `exports` conditions used when resolving imports
      *
@@ -2968,7 +2969,7 @@ declare module "bun" {
      * Returns 0 if the versions are equal, 1 if `v1` is greater, or -1 if `v2` is greater.
      * Throws an error if either version is invalid.
      */
-    order(v1: StringLike, v2: StringLike): -1 | 0 | 1;
+    order(this: void, v1: StringLike, v2: StringLike): -1 | 0 | 1;
   }
   var semver: Semver;
 

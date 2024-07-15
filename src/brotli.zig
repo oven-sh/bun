@@ -11,17 +11,17 @@ const mimalloc = bun.Mimalloc;
 
 const BrotliAllocator = struct {
     pub fn alloc(_: ?*anyopaque, len: usize) callconv(.C) *anyopaque {
-        if (comptime bun.is_heap_breakdown_enabled) {
-            const zone = bun.HeapBreakdown.malloc_zone_t.get(BrotliAllocator);
-            return zone.malloc_zone_malloc(len).?;
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone(BrotliAllocator);
+            return zone.malloc_zone_malloc(len) orelse bun.outOfMemory();
         }
 
-        return mimalloc.mi_malloc(len) orelse unreachable;
+        return mimalloc.mi_malloc(len) orelse bun.outOfMemory();
     }
 
     pub fn free(_: ?*anyopaque, data: ?*anyopaque) callconv(.C) void {
-        if (comptime bun.is_heap_breakdown_enabled) {
-            const zone = bun.HeapBreakdown.malloc_zone_t.get(BrotliAllocator);
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone(BrotliAllocator);
             zone.malloc_zone_free(data);
             return;
         }

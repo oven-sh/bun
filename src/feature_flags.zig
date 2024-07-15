@@ -46,8 +46,6 @@ pub const allow_json_single_quotes = true;
 
 pub const react_specific_warnings = true;
 
-pub const log_allocations = false;
-
 pub const CSSInJSImportBehavior = enum {
     // When you import a .css file and you reference the import in JavaScript
     // Just return whatever the property key they referenced was
@@ -173,9 +171,13 @@ pub const runtime_transpiler_cache = true;
 /// order to isolate your bug.
 pub const windows_bunx_fast_path = true;
 
+/// Enable breaking changes for the next major release of Bun
+// TODO: Make this a CLI flag / runtime var so that we can verify disabled code paths can compile
 pub const breaking_changes_1_2 = false;
 
 // This causes strange bugs where writing via console.log (sync) has a different
 // order than via Bun.file.writer() so we turn it off until there's a unified,
 // buffered writer abstraction shared throughout Bun
 pub const nonblocking_stdout_and_stderr_on_posix = false;
+
+pub const postgresql = env.is_canary or env.isDebug;

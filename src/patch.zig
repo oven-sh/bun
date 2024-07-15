@@ -132,7 +132,7 @@ pub const PatchFile = struct {
                     const newfile_fd = switch (bun.sys.openat(
                         patch_dir,
                         filepath.sliceAssumeZ(),
-                        std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+                        bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
                         mode.toBunMode(),
                     )) {
                         .result => |fd| fd,
@@ -204,7 +204,7 @@ pub const PatchFile = struct {
                             .result => |p| p,
                             .err => |e| return e.toSystemError(),
                         };
-                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), std.os.O.RDWR, 0)) {
+                        const fd = switch (bun.sys.open(bun.path.joinZ(&[_][]const u8{ absfilepath, filepath }, .auto), bun.O.RDWR, 0)) {
                             .err => |e| return e.toSystemError(),
                             .result => |f| f,
                         };
@@ -333,7 +333,7 @@ pub const PatchFile = struct {
         const file_fd = switch (bun.sys.openat(
             patch_dir,
             file_path,
-            std.os.O.CREAT | std.os.O.WRONLY | std.os.O.TRUNC,
+            bun.O.CREAT | bun.O.WRONLY | bun.O.TRUNC,
             @intCast(stat.mode),
         )) {
             .err => |e| return .{ .err = e.withPath(file_path) },
@@ -611,11 +611,11 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 result.parts.append(bun.default_allocator, .{
                     .file_deletion = bun.new(FileDeletion, FileDeletion{
                         .hunk = if (file.hunks.items.len > 0) brk: {
-                            var value = file.hunks.items[0];
+                            const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
                                 .header = Hunk.Header.zeroes,
                             };
-                            break :brk bun.dupe(Hunk, &value);
+                            break :brk bun.new(Hunk, value);
                         } else null,
                         .path = path,
                         .mode = parseFileMode(file.deleted_file_mode.?) orelse {
@@ -632,11 +632,11 @@ fn patchFileSecondPass(files: []FileDeets) ParseErr!PatchFile {
                 result.parts.append(bun.default_allocator, .{
                     .file_creation = bun.new(FileCreation, FileCreation{
                         .hunk = if (file.hunks.items.len > 0) brk: {
-                            var value = file.hunks.items[0];
+                            const value = file.hunks.items[0];
                             file.hunks.items[0] = .{
                                 .header = Hunk.Header.zeroes,
                             };
-                            break :brk bun.dupe(Hunk, &value);
+                            break :brk bun.new(Hunk, value);
                         } else null,
                         .path = path,
                         .mode = parseFileMode(file.new_file_mode.?) orelse {
@@ -1043,7 +1043,10 @@ const PatchLinesParser = struct {
         if (b_part_start >= line.len) return null;
         const lmao_bro = line[b_part_start..];
         std.mem.doNotOptimizeAway(lmao_bro);
-        const b_part_end = if (std.mem.indexOfAny(u8, line[b_part_start..], " \n\r\t")) |pos| pos + b_part_start else line.len;
+        const b_part_end = if (bun.strings.indexAnyComptime(line[b_part_start..], " \n\r\t")) |pos|
+            pos + b_part_start
+        else
+            line.len;
 
         const b_part = line[b_part_start..b_part_end];
         for (a_part) |c| if (!VALID_CHARS.isSet(c)) return null;
@@ -1091,7 +1094,7 @@ const PatchLinesParser = struct {
 };
 
 pub const TestingAPIs = struct {
-    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn makeDiff(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
@@ -1143,7 +1146,7 @@ pub const TestingAPIs = struct {
             }
         }
     };
-    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn apply(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         var args = switch (parseApplyArgs(globalThis, callframe)) {
             .err => |e| return e,
             .result => |a| a,
@@ -1158,7 +1161,7 @@ pub const TestingAPIs = struct {
         return .true;
     }
     /// Used in JS tests, see `internal-for-testing.ts` and patch tests.
-    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn parse(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const arguments_ = callframe.arguments(2);
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
 
@@ -1201,7 +1204,7 @@ pub const TestingAPIs = struct {
             const path = bunstr.toOwnedSliceZ(bun.default_allocator) catch unreachable;
             defer bun.default_allocator.free(path);
 
-            break :brk switch (bun.sys.open(path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+            break :brk switch (bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
                 .err => |e| {
                     globalThis.throwValue(e.withPath(path).toJSC(globalThis));
                     return .{ .err = .undefined };
@@ -1373,7 +1376,7 @@ pub fn gitDiffInternal(
         allocator.free(new_folder);
     };
 
-    var child_proc = std.ChildProcess.init(
+    var child_proc = std.process.Child.init(
         &[_][]const u8{
             "git",
             "-c",

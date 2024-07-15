@@ -489,7 +489,7 @@ pub const FSWatcher = struct {
     pub fn initJS(this: *FSWatcher, listener: JSC.JSValue) void {
         if (this.persistent) {
             this.poll_ref.ref(this.ctx);
-            _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
+            _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         }
 
         const js_this = FSWatcher.toJS(this, this.globalThis);
@@ -523,7 +523,7 @@ pub const FSWatcher = struct {
 
     pub fn emitAbort(this: *FSWatcher, err: JSC.JSValue) void {
         if (this.closed) return;
-        _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
+        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
         defer this.close();
         defer this.unrefTask();
 
@@ -584,7 +584,7 @@ pub const FSWatcher = struct {
             if (this.encoding == .buffer)
                 filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
             else if (this.encoding == .utf8) {
-                filename = JSC.ZigString.fromUTF8(file_name).toValueGC(globalObject);
+                filename = JSC.ZigString.fromUTF8(file_name).toJS(globalObject);
             } else {
                 // convert to desired encoding
                 filename = Encoder.toStringAtRuntime(file_name.ptr, file_name.len, globalObject, this.encoding);
@@ -610,7 +610,7 @@ pub const FSWatcher = struct {
         }
     }
 
-    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -618,7 +618,7 @@ pub const FSWatcher = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -626,34 +626,31 @@ pub const FSWatcher = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.persistent);
     }
 
     // this can be called from Watcher Thread or JS Context Thread
     pub fn refTask(this: *FSWatcher) bool {
-        {
-            @fence(.Acquire);
-            this.mutex.lock();
-            defer this.mutex.unlock();
-            if (this.closed) return false;
-            _ = this.pending_activity_count.fetchAdd(1, .Monotonic);
-        }
+        @fence(.acquire);
+        this.mutex.lock();
+        defer this.mutex.unlock();
+        if (this.closed) return false;
+        _ = this.pending_activity_count.fetchAdd(1, .monotonic);
 
         return true;
     }
 
-    pub fn hasPendingActivity(this: *FSWatcher) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.pending_activity_count.load(.Acquire) > 0;
+    pub fn hasPendingActivity(this: *FSWatcher) bool {
+        @fence(.acquire);
+        return this.pending_activity_count.load(.acquire) > 0;
     }
 
     pub fn unrefTask(this: *FSWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-
         // JSC eventually will free it
-        _ = this.pending_activity_count.fetchSub(1, .Monotonic);
+        _ = this.pending_activity_count.fetchSub(1, .monotonic);
     }
 
     pub fn close(this: *FSWatcher) void {
@@ -699,12 +696,12 @@ pub const FSWatcher = struct {
         this.js_this = .zero;
     }
 
-    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         this.close();
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn finalize(this: *FSWatcher) callconv(.C) void {
+    pub fn finalize(this: *FSWatcher) void {
         this.deinit();
     }
 

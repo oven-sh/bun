@@ -198,6 +198,12 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return JSValue::encode(jsUndefined());                                                                     \
     }
 
+#define CHECK_PREPARED_JIT                                                                                         \
+    if (UNLIKELY(castedThis->stmt == nullptr || castedThis->version_db == nullptr)) {                              \
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Statement has finalized"_s)); \
+        return {};                                                                                                 \
+    }
+
 class VersionSqlite3 {
 public:
     explicit VersionSqlite3(sqlite3* db)
@@ -894,7 +900,7 @@ static inline bool rebindValue(JSC::JSGlobalObject* lexicalGlobalObject, sqlite3
             return false;
         }
 
-        auto roped = str->tryGetValue(lexicalGlobalObject);
+        String roped = str->tryGetValue(lexicalGlobalObject);
         if (UNLIKELY(!roped)) {
             throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Out of memory :("_s));
             return false;
@@ -993,7 +999,7 @@ static JSC::JSValue rebindObject(JSC::JSGlobalObject* globalObject, SQLiteBindin
             JSValue value = getValue(name, i);
             if (!value && !scope.exception()) {
                 if (throwOnMissing) {
-                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, name, "\""_s)));
+                    throwException(globalObject, scope, createError(globalObject, makeString("Missing parameter \""_s, reinterpret_cast<const unsigned char*>(name), "\""_s)));
                 } else {
                     continue;
                 }
@@ -2316,12 +2322,12 @@ JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChe
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto* stmt = castedThis->stmt;
-    CHECK_PREPARED
+    CHECK_PREPARED_JIT
 
     int statusCode = sqlite3_reset(stmt);
     if (UNLIKELY(statusCode != SQLITE_OK)) {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
-        return JSValue::encode(jsUndefined());
+        return { .value = 0 };
     }
 
     int status = sqlite3_step(stmt);
@@ -2345,11 +2351,11 @@ JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChe
     }
 
     if (status == SQLITE_DONE || status == SQLITE_OK) {
-        RELEASE_AND_RETURN(scope, JSValue::encode(result));
+        RELEASE_AND_RETURN(scope, { JSValue::encode(result) });
     } else {
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
         sqlite3_reset(stmt);
-        return JSValue::encode(jsUndefined());
+        return { JSValue::encode(jsUndefined()) };
     }
 }
 
@@ -2457,6 +2463,8 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         DO_REBIND(arg0);
     }
 
+    int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
+
     int status = sqlite3_step(stmt);
     if (!sqlite3_stmt_readonly(stmt)) {
         castedThis->version_db->version++;
@@ -2465,8 +2473,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
     if (!castedThis->hasExecuted || castedThis->need_update()) {
         initializeColumnNames(lexicalGlobalObject, castedThis);
     }
-
-    int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
 
     while (status == SQLITE_ROW) {
         status = sqlite3_step(stmt);

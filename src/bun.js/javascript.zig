@@ -127,6 +127,25 @@ pub const SavedSourceMap = struct {
 
     pub const vlq_offset = 24;
 
+    pub fn init(this: *SavedSourceMap, map: *HashTable) void {
+        this.* = .{
+            .map = map,
+            .mutex = bun.Lock.init(),
+        };
+
+        this.map.lockPointers();
+    }
+
+    pub inline fn lock(map: *SavedSourceMap) void {
+        map.mutex.lock();
+        map.map.unlockPointers();
+    }
+
+    pub inline fn unlock(map: *SavedSourceMap) void {
+        map.map.lockPointers();
+        map.mutex.unlock();
+    }
+
     // For the runtime, we store the number of mappings and how many bytes the final list is at the beginning of the array
     // The first 8 bytes are the length of the array
     // The second 8 bytes are the number of mappings
@@ -209,8 +228,8 @@ pub const SavedSourceMap = struct {
     }
 
     pub fn removeZigSourceProvider(this: *SavedSourceMap, opaque_source_provider: *anyopaque, path: []const u8) void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
 
         const entry = this.map.getEntry(bun.hash(path)) orelse return;
         const old_value = Value.from(entry.value_ptr.*);
@@ -222,8 +241,8 @@ pub const SavedSourceMap = struct {
         } else if (old_value.get(ParsedSourceMap)) |map| {
             if (map.underlying_provider.provider()) |prov| {
                 if (@intFromPtr(prov) == @intFromPtr(opaque_source_provider)) {
-                    map.deinit(default_allocator);
                     this.map.removeByPtr(entry.key_ptr);
+                    map.deref();
                 }
             }
         }
@@ -239,15 +258,14 @@ pub const SavedSourceMap = struct {
 
     pub fn deinit(this: *SavedSourceMap) void {
         {
-            this.mutex.lock();
-            defer this.mutex.unlock();
+            this.lock();
+            defer this.unlock();
 
             var iter = this.map.valueIterator();
             while (iter.next()) |val| {
                 var value = Value.from(val.*);
-                if (value.get(ParsedSourceMap)) |source_map_| {
-                    var source_map: *ParsedSourceMap = source_map_;
-                    source_map.deinit(default_allocator);
+                if (value.get(ParsedSourceMap)) |source_map| {
+                    source_map.deref();
                 } else if (value.get(SavedMappings)) |saved_mappings| {
                     var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                     saved.deinit();
@@ -257,6 +275,7 @@ pub const SavedSourceMap = struct {
             }
         }
 
+        this.map.unlockPointers();
         this.map.deinit();
     }
 
@@ -265,14 +284,15 @@ pub const SavedSourceMap = struct {
     }
 
     fn putValue(this: *SavedSourceMap, path: []const u8, value: Value) !void {
-        this.mutex.lock();
-        defer this.mutex.unlock();
+        this.lock();
+        defer this.unlock();
+
         const entry = try this.map.getOrPut(bun.hash(path));
         if (entry.found_existing) {
             var old_value = Value.from(entry.value_ptr.*);
             if (old_value.get(ParsedSourceMap)) |parsed_source_map| {
                 var source_map: *ParsedSourceMap = parsed_source_map;
-                source_map.deinit(default_allocator);
+                source_map.deref();
             } else if (old_value.get(SavedMappings)) |saved_mappings| {
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(saved_mappings)) };
                 saved.deinit();
@@ -283,37 +303,59 @@ pub const SavedSourceMap = struct {
         entry.value_ptr.* = value.ptr();
     }
 
-    pub fn getWithContent(
+    fn getWithContent(
         this: *SavedSourceMap,
         path: string,
         hint: SourceMap.ParseUrlResultHint,
     ) SourceMap.ParseUrl {
         const hash = bun.hash(path);
-        const mapping = this.map.getEntry(hash) orelse return .{};
+
+        // This lock is for the hash table
+        this.lock();
+
+        // This mapping entry is only valid while the mutex is locked
+        const mapping = this.map.getEntry(hash) orelse {
+            this.unlock();
+            return .{};
+        };
+
         switch (Value.from(mapping.value_ptr.*).tag()) {
             Value.Tag.ParsedSourceMap => {
-                return .{ .map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap) };
+                defer this.unlock();
+                const map = Value.from(mapping.value_ptr.*).as(ParsedSourceMap);
+                map.ref();
+                return .{ .map = map };
             },
             Value.Tag.SavedMappings => {
+                defer this.unlock();
                 var saved = SavedMappings{ .data = @as([*]u8, @ptrCast(Value.from(mapping.value_ptr.*).as(ParsedSourceMap))) };
                 defer saved.deinit();
-                const result = default_allocator.create(ParsedSourceMap) catch unreachable;
-                result.* = saved.toMapping(default_allocator, path) catch {
+                const result = ParsedSourceMap.new(saved.toMapping(default_allocator, path) catch {
                     _ = this.map.remove(mapping.key_ptr.*);
                     return .{};
-                };
+                });
                 mapping.value_ptr.* = Value.init(result).ptr();
+                result.ref();
+
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
                 var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                this.unlock();
 
-                if (ptr.getSourceMap(path, .none, hint)) |parse|
+                // Do not lock the mutex while we're parsing JSON!
+                if (ptr.getSourceMap(path, .none, hint)) |parse| {
                     if (parse.map) |map| {
-                        mapping.value_ptr.* = Value.init(map).ptr();
-                        return parse;
-                    };
+                        map.ref();
+                        // The mutex is not locked. We have to check the hash table again.
+                        this.putValue(path, Value.init(map)) catch bun.outOfMemory();
 
+                        return parse;
+                    }
+                }
+
+                this.lock();
+                defer this.unlock();
                 // does not have a valid source map. let's not try again
                 _ = this.map.remove(hash);
 
@@ -343,14 +385,12 @@ pub const SavedSourceMap = struct {
         column: i32,
         source_handling: SourceMap.SourceContentHandling,
     ) ?SourceMap.Mapping.Lookup {
-        this.mutex.lock();
-        defer this.mutex.unlock();
-
         const parse = this.getWithContent(path, switch (source_handling) {
             .no_source_contents => .mappings_only,
             .source_contents => .{ .all = .{ .line = line, .column = column } },
         });
         const map = parse.map orelse return null;
+
         const mapping = parse.mapping orelse
             SourceMap.Mapping.find(map.mappings, line, column) orelse
             return null;
@@ -392,7 +432,7 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     if (callFrame.argumentsCount() < 1) {
         globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
@@ -415,7 +455,7 @@ pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.Stri
 pub export fn Bun__Process__disconnect(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
-) JSValue {
+) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
     _ = callFrame;
     _ = globalObject;
@@ -460,12 +500,9 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
 pub export fn Bun__queueTaskConcurrently(global: *JSGlobalObject, task: *JSC.CppTask) void {
     JSC.markBinding(@src());
 
-    const concurrent = bun.default_allocator.create(JSC.ConcurrentTask) catch unreachable;
-    concurrent.* = JSC.ConcurrentTask{
-        .task = Task.init(task),
-        .auto_delete = true,
-    };
-    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(concurrent);
+    global.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(
+        JSC.ConcurrentTask.create(Task.init(task)),
+    );
 }
 
 pub export fn Bun__handleRejectedPromise(global: *JSGlobalObject, promise: *JSC.JSPromise) void {
@@ -523,7 +560,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        var vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnExit(vm.global, this.exit_code);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
@@ -532,7 +569,7 @@ pub const ExitHandler = struct {
 
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
-        const vm = @fieldParentPtr(VirtualMachine, "exit_handler", this);
+        const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
         Process__dispatchOnBeforeExit(vm.global, this.exit_code);
     }
 };
@@ -658,11 +695,12 @@ pub const VirtualMachine = struct {
     default_tls_reject_unauthorized: ?bool = null,
     default_verbose_fetch: ?bun.http.HTTPVerboseLevel = null,
 
-    /// Do not access this field directly
-    /// It exists in the VirtualMachine struct so that
-    /// we don't accidentally make a stack copy of it
-    /// only use it through
-    /// source_mappings
+    /// Do not access this field directly!
+    ///
+    /// It exists in the VirtualMachine struct so that we don't accidentally
+    /// make a stack copy of it only use it through source_mappings.
+    ///
+    /// This proposal could let us safely move it back https://github.com/ziglang/zig/issues/7769
     saved_source_map_table: SavedSourceMap.HashTable = undefined,
     source_mappings: SavedSourceMap = undefined,
 
@@ -1230,7 +1268,9 @@ pub const VirtualMachine = struct {
             }
 
             debug("spin", .{});
-            while (futex_atomic.load(.Monotonic) > 0) std.Thread.Futex.wait(&futex_atomic, 1);
+            while (futex_atomic.load(.monotonic) > 0) {
+                std.Thread.Futex.wait(&futex_atomic, 1);
+            }
             if (comptime Environment.allow_assert)
                 debug("waitForDebugger: {}", .{Output.ElapsedFormatter{
                     .colors = Output.enable_ansi_colors_stderr,
@@ -1302,7 +1342,7 @@ pub const VirtualMachine = struct {
             }
 
             debug("wake", .{});
-            futex_atomic.store(0, .Monotonic);
+            futex_atomic.store(0, .monotonic);
             std.Thread.Futex.wake(&futex_atomic, 1);
 
             this.eventLoop().tick();
@@ -1447,7 +1487,7 @@ pub const VirtualMachine = struct {
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1561,7 +1601,7 @@ pub const VirtualMachine = struct {
             .ref_strings_mutex = Lock.init(),
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1710,7 +1750,7 @@ pub const VirtualMachine = struct {
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
-        vm.source_mappings = .{ .map = &vm.saved_source_map_table };
+        vm.source_mappings.init(&vm.saved_source_map_table);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1775,7 +1815,7 @@ pub const VirtualMachine = struct {
             return ResolvedSource{
                 .source_code = bun.String.init(""),
                 .specifier = specifier,
-                .source_url = bun.String.init(source_url),
+                .source_url = specifier.createIfDifferent(source_url),
                 .hash = 0,
                 .allocator = null,
                 .source_code_needs_deref = false,
@@ -1790,7 +1830,7 @@ pub const VirtualMachine = struct {
         return ResolvedSource{
             .source_code = bun.String.init(source.impl),
             .specifier = specifier,
-            .source_url = bun.String.init(source_url),
+            .source_url = specifier.createIfDifferent(source_url),
             .hash = source.hash,
             .allocator = source,
             .source_code_needs_deref = false,
@@ -2275,16 +2315,6 @@ pub const VirtualMachine = struct {
 
         res.* = ErrorableString.ok(bun.String.init(result.path));
     }
-
-    // // This double prints
-    // pub fn promiseRejectionTracker(global: *JSGlobalObject, promise: *JSPromise, _: JSPromiseRejectionOperation) callconv(.C) JSValue {
-    //     const result = promise.result(global.vm());
-    //     if (@intFromEnum(VirtualMachine.get().last_error_jsvalue) != @intFromEnum(result)) {
-    //         VirtualMachine.get().runErrorHandler(result, null);
-    //     }
-
-    //     return JSValue.jsUndefined();
-    // }
 
     pub const main_file_name: string = "bun:main";
 
@@ -2955,6 +2985,8 @@ pub const VirtualMachine = struct {
                 @max(frame.position.column.zeroBased(), 0),
                 .no_source_contents,
             )) |lookup| {
+                const source_map = lookup.source_map;
+                defer if (source_map) |map| map.deref();
                 if (lookup.displaySourceURLIfNeeded(sourceURL.slice())) |source_url| {
                     frame.source_url.deref();
                     frame.source_url = source_url;
@@ -3066,9 +3098,8 @@ pub const VirtualMachine = struct {
                     },
                     .source_index = 0,
                 },
-                // undefined is fine, because these two values are never read if `top.remapped == true`
-                .source_map = undefined,
-                .prefetched_source_code = undefined,
+                .source_map = null,
+                .prefetched_source_code = null,
             }
         else
             this.source_mappings.resolveMapping(
@@ -3080,6 +3111,8 @@ pub const VirtualMachine = struct {
 
         if (maybe_lookup) |lookup| {
             const mapping = lookup.mapping;
+            const source_map = lookup.source_map;
+            defer if (source_map) |map| map.deref();
 
             if (!top.remapped) {
                 if (lookup.displaySourceURLIfNeeded(top_source_url.slice())) |src| {
@@ -3089,7 +3122,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
-                if (!top.remapped and lookup.source_map.isExternal()) {
+                if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;
                     }
@@ -3146,6 +3179,7 @@ pub const VirtualMachine = struct {
                     @max(frame.position.column.zeroBased(), 0),
                     .no_source_contents,
                 )) |lookup| {
+                    defer if (lookup.source_map) |map| map.deref();
                     if (lookup.displaySourceURLIfNeeded(source_url.slice())) |src| {
                         frame.source_url.deref();
                         frame.source_url = src;
@@ -3729,8 +3763,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
         onAccept: std.ArrayHashMapUnmanaged(GenericWatcher.HashType, bun.BabyList(OnAcceptCallback), bun.ArrayIdentityContext, false) = .{},
         ctx: *Ctx,
         verbose: bool = false,
+        pending_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-        tombstones: std.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
+        tombstones: bun.StringHashMapUnmanaged(*bun.fs.FileSystem.RealFS.EntriesOption) = .{},
 
         pub fn eventLoop(this: @This()) *EventLoopType {
             return this.ctx.eventLoop();
@@ -3766,7 +3801,18 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             }
 
             pub fn run(this: *HotReloadTask) void {
-                this.reloader.ctx.reload();
+                // Since we rely on the event loop for hot reloads, there can be
+                // a delay before the next reload begins. In the time between the
+                // last reload and the next one, we shouldn't schedule any more
+                // hot reloads. Since we reload literally everything, we don't
+                // need to worry about missing any changes.
+                //
+                // Note that we set the count _before_ we reload, so that if we
+                // get another hot reload request while we're reloading, we'll
+                // still enqueue it.
+                while (this.reloader.pending_count.swap(0, .monotonic) > 0) {
+                    this.reloader.ctx.reload();
+                }
             }
 
             pub fn enqueue(this: *HotReloadTask) void {
@@ -3782,6 +3828,8 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                     bun.reloadProcess(bun.default_allocator, clear_screen, false);
                     unreachable;
                 }
+
+                _ = this.reloader.pending_count.fetchAdd(1, .monotonic);
 
                 BunDebugger__willHotReload();
                 var that = bun.default_allocator.create(HotReloadTask) catch unreachable;
@@ -3891,6 +3939,9 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
             err: bun.sys.Error,
         ) void {
             Output.err(@as(bun.C.E, @enumFromInt(err.errno)), "Watcher crashed", .{});
+            if (bun.Environment.isDebug) {
+                @panic("Watcher crash");
+            }
         }
 
         pub fn getContext(this: *@This()) *@This().Watcher {
@@ -3998,7 +4049,7 @@ pub fn NewHotReloader(comptime Ctx: type, comptime EventLoopType: type, comptime
                                         if (parent_hash == id) {
                                             const affected_path = file_paths[entry_id];
                                             const was_deleted = check: {
-                                                std.os.access(affected_path, std.os.F_OK) catch break :check true;
+                                                std.posix.access(affected_path, std.posix.F_OK) catch break :check true;
                                                 break :check false;
                                             };
                                             if (!was_deleted) continue;

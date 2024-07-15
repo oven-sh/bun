@@ -126,6 +126,10 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
             return null;
         }
 
+        pub fn typeName(this: This) ?[]const u8 {
+            return @tagName(this.tag());
+        }
+
         const This = @This();
         pub fn assert_type(comptime Type: type) void {
             const name = comptime typeBaseName(@typeName(Type));
@@ -133,7 +137,7 @@ pub fn TaggedPointerUnion(comptime Types: anytype) type {
                 @compileError("TaggedPointerUnion does not have " ++ name ++ ".");
             }
         }
-        pub inline fn get(this: This, comptime Type: anytype) ?*Type {
+        pub inline fn get(this: This, comptime Type: type) ?*Type {
             comptime assert_type(Type);
 
             return if (this.is(Type)) this.as(Type) else null;

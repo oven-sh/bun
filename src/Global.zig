@@ -76,7 +76,7 @@ extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch {};
+        _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
@@ -111,11 +111,11 @@ export fn bun_is_exiting() c_int {
     return @intFromBool(isExiting());
 }
 pub fn isExiting() bool {
-    return is_exiting.load(.Monotonic);
+    return is_exiting.load(.monotonic);
 }
 
 pub fn exitWide(code: u32) noreturn {
-    is_exiting.store(true, .Monotonic);
+    is_exiting.store(true, .monotonic);
 
     if (comptime Environment.isMac) {
         std.c.exit(@bitCast(code));
@@ -131,13 +131,13 @@ pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
     Output.flush();
 
     if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
-            const act = std.os.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
-                .mask = std.os.empty_sigset,
+        if (sig >= 1 and sig != std.posix.SIG.STOP and sig != std.posix.SIG.KILL) {
+            const act = std.posix.Sigaction{
+                .handler = .{ .sigaction = @ptrCast(@alignCast(std.posix.SIG.DFL)) },
+                .mask = std.posix.empty_sigset,
                 .flags = 0,
             };
-            std.os.sigaction(@intCast(sig), &act, null) catch {};
+            std.posix.sigaction(@intCast(sig), &act, null) catch {};
         }
     }
 
@@ -171,18 +171,7 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Output.flush();
-        std.debug.panic(fmt, args);
-    }
-}
+pub const panic = Output.panic; // deprecated
 
 pub fn notimpl() noreturn {
     @setCold(true);
@@ -223,7 +212,6 @@ pub const BunInfo = struct {
 };
 
 pub const user_agent = "Bun/" ++ Global.package_json_version;
-
 pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 
 comptime {

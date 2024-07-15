@@ -30,7 +30,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -44,7 +43,7 @@ template<> CryptoAesKeyAlgorithm convertDictionary<CryptoAesKeyAlgorithm>(JSGlob
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoAesKeyAlgorithm result;
     JSValue nameValue;
@@ -52,28 +51,28 @@ template<> CryptoAesKeyAlgorithm convertDictionary<CryptoAesKeyAlgorithm>(JSGlob
         nameValue = jsUndefined();
     else {
         nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "CryptoAesKeyAlgorithm", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoAesKeyAlgorithm"_s, "DOMString"_s);
+        return {};
     }
     JSValue lengthValue;
     if (isNullOrUndefined)
         lengthValue = jsUndefined();
     else {
         lengthValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "length"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!lengthValue.isUndefined()) {
         result.length = convert<IDLUnsignedShort>(lexicalGlobalObject, lengthValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length", "CryptoAesKeyAlgorithm", "unsigned short");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "length"_s, "CryptoAesKeyAlgorithm"_s, "unsigned short"_s);
+        return {};
     }
     return result;
 }
@@ -86,10 +85,10 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), nameValue);
     auto lengthValue = toJS<IDLUnsignedShort>(lexicalGlobalObject, throwScope, dictionary.length);
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "length"_s), lengthValue);
     return result;
 }

@@ -2,8 +2,9 @@ cmake_minimum_required(VERSION 3.22)
 cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
-set(Bun_VERSION "1.1.15")
-set(WEBKIT_TAG 64d04ec1a65d91326c5f2298b9c7d05b56125252)
+set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
+set(Bun_VERSION "1.1.20")
+set(WEBKIT_TAG b49be549da59347762aa83f849a65158d2a0d724)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -13,6 +14,9 @@ set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
+
+# Used in process.version, process.versions.node, napi, and elsewhere
+set(REPORTED_NODEJS_VERSION "22.3.0")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -34,6 +38,13 @@ else()
     message(STATUS "The CMake build type is: ${CMAKE_BUILD_TYPE}")
 endif()
 
+if(WIN32 AND NOT CMAKE_CL_SHOWINCLUDES_PREFIX)
+    # workaround until cmake fix is shipped https://github.com/ninja-build/ninja/issues/2280
+    # './build/.ninja_deps' may need to be deleted, the bug is "Note: including file: ..." is saved
+    # as part of some file paths
+    set(CMAKE_CL_SHOWINCLUDES_PREFIX "Note: including file:")
+endif()
+
 if(CMAKE_BUILD_TYPE STREQUAL "Debug")
     set(DEBUG ON)
     set(DEFAULT_ZIG_OPTIMIZE "Debug")
@@ -46,11 +57,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
     set(DEFAULT_ZIG_OPTIMIZE "ReleaseFast")
 
     if(WIN32)
-        # lld-link will strip it for you, so we can build directly to bun.exe
+        # Debug symbols are in a separate file: bun.pdb
         set(bun "bun")
-
-        # TODO(@paperdave): Remove this
-        # it is enabled for the time being to make sure to catch more bugs in the experimental windows builds
         set(DEFAULT_ZIG_OPTIMIZE "ReleaseSafe")
     else()
         if(ZIG_OPTIMIZE STREQUAL "Debug")
@@ -107,7 +115,11 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-set(LLVM_VERSION 16)
+if(WIN32)
+    set(LLVM_VERSION 18)
+else()
+    set(LLVM_VERSION 16)
+endif()
 
 macro(BUN_FIND_LLVM)
     find_program(
@@ -316,6 +328,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(WIN32 AND USE_LTO)
+    set(CMAKE_LINKER_TYPE LLD)
+    set(CMAKE_INTERPROCEDURAL_OPTIMIZATION OFF)
+endif()
 
 option(BUN_TIDY_ONLY "Only run clang-tidy" OFF)
 option(BUN_TIDY_ONLY_EXTRA " Only run clang-tidy, with extra checks for local development" OFF)
@@ -610,7 +627,7 @@ set(BUN_DEPS_DIR "${BUN_SRC}/deps")
 set(BUN_CODEGEN_SRC "${BUN_SRC}/codegen")
 
 if(NOT BUN_DEPS_OUT_DIR)
-    set(BUN_DEPS_OUT_DIR "${BUN_DEPS_DIR}")
+    set(BUN_DEPS_OUT_DIR "${CMAKE_CURRENT_SOURCE_DIR}/build/bun-deps")
 endif()
 
 set(BUN_RAW_SOURCES, "")
@@ -768,6 +785,8 @@ if(NOT NO_CODEGEN)
         "${BUN_SRC}/js/thirdparty/*.ts"
         "${BUN_SRC}/js/internal/*.js"
         "${BUN_SRC}/js/internal/*.ts"
+        "${BUN_SRC}/js/internal/util/*.js"
+        "${BUN_SRC}/js/internal/fs/*.ts"
         "${BUN_SRC}/js/node/*.js"
         "${BUN_SRC}/js/node/*.ts"
         "${BUN_SRC}/js/thirdparty/*.js"
@@ -851,11 +870,24 @@ file(GLOB ZIG_FILES
     "${BUN_SRC}/*/*/*/*/*.zig"
 )
 
-if(NOT BUN_ZIG_OBJ)
-    set(BUN_ZIG_OBJ "${BUN_WORKDIR}/CMakeFiles/bun-zig.o")
+if(NOT BUN_ZIG_OBJ_FORMAT)
+    # To use LLVM bitcode from Zig, more work needs to be done. Currently, an install of
+    # LLVM 18.1.7 does not compatible with what bitcode Zig 0.13 outputs (has LLVM 18.1.7)
+    # Change to "bc" to experiment, "Invalid record" means it is not valid output.
+    set(BUN_ZIG_OBJ_FORMAT "obj")
 endif()
 
-get_filename_component(BUN_ZIG_OBJ "${BUN_ZIG_OBJ}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+if(NOT BUN_ZIG_OBJ_DIR)
+    set(BUN_ZIG_OBJ_DIR "${BUN_WORKDIR}/CMakeFiles")
+endif()
+
+get_filename_component(BUN_ZIG_OBJ_DIR "${BUN_ZIG_OBJ_DIR}" REALPATH BASE_DIR "${CMAKE_BINARY_DIR}")
+
+if(WIN32)
+    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
+else()
+    set(BUN_ZIG_OBJ "${BUN_ZIG_OBJ_DIR}/bun-zig.o")
+endif()
 
 set(USES_TERMINAL_NOT_IN_CI "")
 
@@ -869,7 +901,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         COMMAND
         "${ZIG_COMPILER}" "build" "obj"
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
-        "-Doutput-file=${BUN_ZIG_OBJ}"
+        "--prefix" "${BUN_ZIG_OBJ_DIR}"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
@@ -878,6 +910,8 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Dcpu=${CPU_TARGET}"
         "-Dtarget=${ZIG_TARGET}"
         "-Denable_logs=${ENABLE_LOGS}"
+        "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
+        "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
@@ -941,12 +975,15 @@ set_target_properties(${bun} PROPERTIES
     VISIBILITY_INLINES_HIDDEN YES
 )
 
+if(APPLE)
+    add_compile_definitions("__DARWIN_NON_CANCELABLE=1")
+endif()
+
 add_compile_definitions(
 
     # TODO: are all of these variables strictly necessary?
     "_HAS_EXCEPTIONS=0"
     "LIBUS_USE_OPENSSL=1"
-    "UWS_HTTPRESPONSE_NO_WRITEMARK=1"
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
@@ -960,6 +997,7 @@ add_compile_definitions(
     "IS_BUILD"
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
+    "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
 )
 
 if(NOT ASSERT_ENABLED)
@@ -1069,13 +1107,38 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
         set(LTO_LINK_FLAG "")
 
         if(USE_LTO)
-            # -emit-llvm seems to not be supported or under a different name on Windows.
+            target_compile_options(${bun} PUBLIC -Xclang -emit-llvm-bc)
+
             list(APPEND LTO_FLAG "-flto=full")
+            list(APPEND LTO_LINK_FLAG "-flto=full")
             list(APPEND LTO_LINK_FLAG "/LTCG")
+            list(APPEND LTO_LINK_FLAG "/OPT:REF")
+            list(APPEND LTO_LINK_FLAG "/OPT:NOICF")
         endif()
 
-        target_compile_options(${bun} PUBLIC /O2 ${LTO_FLAG} /DEBUG:FULL)
-        target_link_options(${bun} PUBLIC ${LTO_LINK_FLAG} /DEBUG:FULL)
+        target_compile_options(${bun} PUBLIC
+            /O2
+            ${LTO_FLAG}
+            /Gy
+            /Gw
+            /GF
+            /GA
+        )
+        target_link_options(${bun} PUBLIC
+            ${LTO_LINK_FLAG}
+            /DEBUG:FULL
+
+            /delayload:ole32.dll
+            /delayload:WINMM.dll
+            /delayload:dbghelp.dll
+            /delayload:VCRUNTIME140_1.dll
+
+            # libuv loads these two immediately, but for some reason it seems to still be slightly faster to delayload them
+            /delayload:WS2_32.dll
+            /delayload:WSOCK32.dll
+            /delayload:ADVAPI32.dll
+            /delayload:IPHLPAPI.dll
+        )
     endif()
 endif()
 
@@ -1093,6 +1156,11 @@ else()
         # On arm macOS, we can set it to a minimum of the M1 cpu set. this might be the default already.
         target_compile_options(${bun} PUBLIC "-mcpu=apple-m1")
     endif()
+
+    if(NOT WIN32 AND NOT APPLE AND ARCH STREQUAL "aarch64")
+        # on arm64 linux, we set a minimum of armv8
+        target_compile_options(${bun} PUBLIC -march=armv8-a+crc -mtune=ampere1)
+    endif()
 endif()
 
 target_compile_options(${bun} PUBLIC -ferror-limit=${ERROR_LIMIT})
@@ -1106,11 +1174,12 @@ if(WIN32)
         "BORINGSSL_NO_CXX=1" # lol
     )
 
-    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
-    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreadedDLL")
+    # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
+    set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
     target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
-    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000")
+
+    target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
         -fPIC
@@ -1123,6 +1192,7 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
+        -faddrsig
     )
 endif()
 
@@ -1132,7 +1202,6 @@ if(APPLE)
     target_link_options(${bun} PUBLIC "-Wl,-stack_size,0x1200000")
     target_link_options(${bun} PUBLIC "-exported_symbols_list" "${BUN_SRC}/symbols.txt")
     set_target_properties(${bun} PROPERTIES LINK_DEPENDS "${BUN_SRC}/symbols.txt")
-
     target_link_options(${bun} PUBLIC "-fno-keep-static-consts")
     target_link_libraries(${bun} PRIVATE "resolv")
 endif()
@@ -1143,6 +1212,7 @@ if(UNIX AND NOT APPLE)
         "-static-libstdc++"
         "-static-libgcc"
         "-Wl,-z,now"
+        "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
         "-Wl,-z,stack-size=12800000"
@@ -1204,12 +1274,15 @@ endif()
 
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
-    # add_custom_command(
-    # TARGET ${bun}
-    # POST_BUILD
-    # COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/bun.dSYM ${BUN_WORKDIR}/${bun}
-    # COMMENT "Stripping Symbols"
-    # )
+    if(CI AND APPLE)
+        add_custom_command(
+            TARGET ${bun}
+            POST_BUILD
+            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
+            COMMENT "Generating .dSYM"
+        )
+    endif()
+
     add_custom_command(
         TARGET ${bun}
         POST_BUILD
@@ -1377,6 +1450,11 @@ if(USE_STATIC_SQLITE)
         "SQLITE_ENABLE_JSON1=1"
         "SQLITE_ENABLE_MATH_FUNCTIONS=1"
     )
+
+    if(WIN32)
+        target_compile_options(sqlite3 PRIVATE /MT /U_DLL)
+    endif()
+
     target_link_libraries(${bun} PRIVATE sqlite3)
     message(STATUS "Using static sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=0")
@@ -1404,7 +1482,6 @@ if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
 else()
-    target_link_options(${bun} PRIVATE "-static")
     target_link_libraries(${bun} PRIVATE
         "${WEBKIT_LIB_DIR}/WTF.lib"
         "${WEBKIT_LIB_DIR}/JavaScriptCore.lib"
@@ -1414,15 +1491,11 @@ else()
         winmm
         bcrypt
         ntdll
-        ucrt
         userenv
         dbghelp
         wsock32 # ws2_32 required by TransmitFile aka sendfile on windows
+        delayimp.lib
     )
-endif()
-
-if(WIN32)
-    # delayimp -delayload:shell32.dll -delayload:ole32.dll
 endif()
 
 if(BUN_LINK_ONLY)

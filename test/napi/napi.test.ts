@@ -7,7 +7,7 @@ describe("napi", () => {
   beforeAll(() => {
     // build gyp
     const install = spawnSync({
-      cmd: ["bun", "install", "--verbose"],
+      cmd: [bunExe(), "install", "--verbose"],
       cwd: join(__dirname, "napi-app"),
       stderr: "inherit",
       env: bunEnv,
@@ -57,6 +57,11 @@ describe("napi", () => {
       const result = checkSameOutput("test_napi_get_value_string_utf8_with_buffer", ["abcdef", 424242]);
       expect(result).toEndWith("str:");
     });
+  });
+
+  it("#1288", async () => {
+    const result = checkSameOutput("self", []);
+    expect(result).toBe("hello world!");
   });
 });
 

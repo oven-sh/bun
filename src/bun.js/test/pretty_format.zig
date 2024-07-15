@@ -4,7 +4,7 @@ const Output = bun.Output;
 const JSC = bun.JSC;
 const JSGlobalObject = JSC.JSGlobalObject;
 const JSValue = JSC.JSValue;
-const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+const is_bindgen: bool = false;
 const default_allocator = bun.default_allocator;
 const CAPI = JSC.C;
 const ZigString = JSC.ZigString;
@@ -1101,11 +1101,14 @@ pub const JestPrettyFormat = struct {
                 .Error => {
                     var classname = ZigString.Empty;
                     value.getClassName(this.globalThis, &classname);
-                    var message_string = ZigString.Empty;
-                    if (value.get(this.globalThis, "message")) |message_prop| {
-                        message_prop.toZigString(&message_string, this.globalThis);
+                    var message_string = bun.String.empty;
+                    defer message_string.deref();
+
+                    if (value.fastGet(this.globalThis, .message)) |message_prop| {
+                        message_string = message_prop.toBunString(this.globalThis);
                     }
-                    if (message_string.len == 0) {
+
+                    if (message_string.isEmpty()) {
                         writer.print("[{s}]", .{classname});
                         return;
                     }
@@ -1384,10 +1387,21 @@ pub const JestPrettyFormat = struct {
                     writer.print("{}", .{str});
                 },
                 .Event => {
-                    const event_type = EventType.map.getWithEql(value.get(this.globalThis, "type").?.getZigString(this.globalThis), ZigString.eqlComptime) orelse EventType.unknown;
-                    if (event_type != .MessageEvent and event_type != .ErrorEvent) {
-                        return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
-                    }
+                    const event_type_value = brk: {
+                        const value_ = value.get(this.globalThis, "type") orelse break :brk JSValue.undefined;
+                        if (value_.isString()) {
+                            break :brk value_;
+                        }
+
+                        break :brk JSValue.undefined;
+                    };
+
+                    const event_type = switch (EventType.map.fromJS(this.globalThis, event_type_value) orelse .unknown) {
+                        .MessageEvent, .ErrorEvent => |evt| evt,
+                        else => {
+                            return this.printAs(.Object, Writer, writer_, value, .Event, enable_ansi_colors);
+                        },
+                    };
 
                     writer.print(
                         comptime Output.prettyFmt("<r><cyan>{s}<r> {{\n", enable_ansi_colors),
@@ -1409,35 +1423,53 @@ pub const JestPrettyFormat = struct {
                                 event_type.label(),
                             },
                         );
-                        this.writeIndent(Writer, writer_) catch unreachable;
+
+                        if (value.fastGet(this.globalThis, .message)) |message_value| {
+                            if (message_value.isString()) {
+                                this.writeIndent(Writer, writer_) catch unreachable;
+                                writer.print(
+                                    comptime Output.prettyFmt("<r><blue>message<d>:<r> ", enable_ansi_colors),
+                                    .{},
+                                );
+
+                                const tag = Tag.get(message_value, this.globalThis);
+                                this.format(tag, Writer, writer_, message_value, this.globalThis, enable_ansi_colors);
+                                writer.writeAll(", \n");
+                            }
+                        }
 
                         switch (event_type) {
                             .MessageEvent => {
+                                this.writeIndent(Writer, writer_) catch unreachable;
                                 writer.print(
                                     comptime Output.prettyFmt("<r><blue>data<d>:<r> ", enable_ansi_colors),
                                     .{},
                                 );
-                                const data = value.fastGet(this.globalThis, .data).?;
+                                const data = value.fastGet(this.globalThis, .data) orelse JSValue.undefined;
                                 const tag = Tag.get(data, this.globalThis);
+
                                 if (tag.cell.isStringLike()) {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                 } else {
                                     this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
                                 }
+                                writer.writeAll(", \n");
                             },
                             .ErrorEvent => {
-                                writer.print(
-                                    comptime Output.prettyFmt("<r><blue>error<d>:<r>\n", enable_ansi_colors),
-                                    .{},
-                                );
+                                if (value.fastGet(this.globalThis, .@"error")) |data| {
+                                    this.writeIndent(Writer, writer_) catch unreachable;
+                                    writer.print(
+                                        comptime Output.prettyFmt("<r><blue>error<d>:<r> ", enable_ansi_colors),
+                                        .{},
+                                    );
 
-                                const data = value.get(this.globalThis, "error").?;
-                                const tag = Tag.get(data, this.globalThis);
-                                this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    const tag = Tag.get(data, this.globalThis);
+                                    this.format(tag, Writer, writer_, data, this.globalThis, enable_ansi_colors);
+                                    writer.writeAll("\n");
+                                }
                             },
                             else => unreachable,
                         }
-                        writer.writeAll("\n");
                     }
 
                     this.writeIndent(Writer, writer_) catch unreachable;

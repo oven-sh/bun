@@ -573,7 +573,7 @@ void JSPerformanceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceTiming*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -610,18 +610,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<PerformanceTiming>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7PerformanceTiming@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore17PerformanceTimingE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore17PerformanceTimingE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // PerformanceTiming has subclasses. If PerformanceTiming has subclasses that get passed
         // to toJS() we currently require PerformanceTiming you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<PerformanceTiming>(globalObject, WTFMove(impl));

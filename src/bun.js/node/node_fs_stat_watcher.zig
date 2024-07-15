@@ -26,13 +26,13 @@ const log = bun.Output.scoped(.StatWatcher, false);
 
 fn statToJSStats(globalThis: *JSC.JSGlobalObject, stats: bun.Stat, bigint: bool) JSC.JSValue {
     if (bigint) {
-        return bun.new(StatsBig, StatsBig.init(stats)).toJS(globalThis);
+        return StatsBig.new(StatsBig.init(stats)).toJS(globalThis);
     } else {
-        return bun.new(StatsSmall, StatsSmall.init(stats)).toJS(globalThis);
+        return StatsSmall.new(StatsSmall.init(stats)).toJS(globalThis);
     }
 }
 
-/// This is a singleton struct that contains the timer used to schedule restat calls.
+/// This is a singleton struct that contains the timer used to schedule re-stat calls.
 pub const StatWatcherScheduler = struct {
     current_interval: std.atomic.Value(i32) = .{ .raw = 0 },
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -67,12 +67,12 @@ pub const StatWatcherScheduler = struct {
     }
 
     fn getInterval(this: *StatWatcherScheduler) i32 {
-        return this.current_interval.load(.Monotonic);
+        return this.current_interval.load(.monotonic);
     }
 
     /// Update the current interval and set the timer (this function is thread safe)
     fn setInterval(this: *StatWatcherScheduler, interval: i32) void {
-        this.current_interval.store(interval, .Monotonic);
+        this.current_interval.store(interval, .monotonic);
 
         if (this.main_thread == std.Thread.getCurrentId()) {
             // we are in the main thread we can set the timer
@@ -80,7 +80,7 @@ pub const StatWatcherScheduler = struct {
             return;
         }
         // we are not in the main thread we need to schedule a task to set the timer
-        this.sheduleTimerUpdate();
+        this.scheduleTimerUpdate();
     }
 
     /// Set the timer (this function is not thread safe, should be called only from the main thread)
@@ -102,7 +102,7 @@ pub const StatWatcherScheduler = struct {
     }
 
     /// Schedule a task to set the timer in the main thread
-    fn sheduleTimerUpdate(this: *StatWatcherScheduler) void {
+    fn scheduleTimerUpdate(this: *StatWatcherScheduler) void {
         const Holder = struct {
             scheduler: *StatWatcherScheduler,
             task: JSC.AnyTask,
@@ -136,7 +136,7 @@ pub const StatWatcherScheduler = struct {
     }
 
     pub fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-        var this: *StatWatcherScheduler = @fieldParentPtr(StatWatcherScheduler, "task", task);
+        var this: *StatWatcherScheduler = @alignCast(@fieldParentPtr("task", task));
         // Instant.now will not fail on our target platforms.
         const now = std.time.Instant.now() catch unreachable;
 
@@ -147,7 +147,7 @@ pub const StatWatcherScheduler = struct {
         var contain_watchers = false;
         while (iter.next()) |watcher| {
             if (watcher.closed) {
-                watcher.used_by_scheduler_thread.store(false, .Release);
+                watcher.used_by_scheduler_thread.store(false, .release);
                 continue;
             }
             contain_watchers = true;
@@ -309,7 +309,7 @@ pub const StatWatcher = struct {
         }
     };
 
-    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doRef(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         if (!this.closed and !this.persistent) {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
@@ -317,7 +317,7 @@ pub const StatWatcher = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doUnref(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         if (this.persistent) {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
@@ -325,10 +325,10 @@ pub const StatWatcher = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn hasPendingActivity(this: *StatWatcher) callconv(.C) bool {
-        @fence(.Acquire);
+    pub fn hasPendingActivity(this: *StatWatcher) bool {
+        @fence(.acquire);
 
-        return this.used_by_scheduler_thread.load(.Acquire);
+        return this.used_by_scheduler_thread.load(.acquire);
     }
 
     /// Stops file watching but does not free the instance.
@@ -343,13 +343,13 @@ pub const StatWatcher = struct {
         this.last_jsvalue.clear();
     }
 
-    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn doClose(this: *StatWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         this.close();
         return JSC.JSValue.jsUndefined();
     }
 
     /// If the scheduler is not using this, free instantly, otherwise mark for being freed.
-    pub fn finalize(this: *StatWatcher) callconv(.C) void {
+    pub fn finalize(this: *StatWatcher) void {
         log("Finalize\n", .{});
         this.deinit();
     }
@@ -367,12 +367,12 @@ pub const StatWatcher = struct {
         }
 
         fn workPoolCallback(task: *JSC.WorkPoolTask) void {
-            const initial_stat_task: *InitialStatTask = @fieldParentPtr(InitialStatTask, "task", task);
+            const initial_stat_task: *InitialStatTask = @fieldParentPtr("task", task);
             defer bun.default_allocator.destroy(initial_stat_task);
             const this = initial_stat_task.watcher;
 
             if (this.closed) {
-                this.used_by_scheduler_thread.store(false, .Release);
+                this.used_by_scheduler_thread.store(false, .release);
                 return;
             }
 
@@ -395,7 +395,7 @@ pub const StatWatcher = struct {
 
     pub fn initialStatSuccessOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread.store(false, .Release);
+            this.used_by_scheduler_thread.store(false, .release);
             return;
         }
 
@@ -408,7 +408,7 @@ pub const StatWatcher = struct {
 
     pub fn initialStatErrorOnMainThread(this: *StatWatcher) void {
         if (this.closed) {
-            this.used_by_scheduler_thread.store(false, .Release);
+            this.used_by_scheduler_thread.store(false, .release);
             return;
         }
 

@@ -1,3 +1,4 @@
+#include "root.h"
 #include "JS2Native.h"
 
 #include <JavaScriptCore/BuiltinUtils.h>
@@ -5,6 +6,7 @@
 #include <JavaScriptCore/JSGlobalObject.h>
 
 #include "ZigGlobalObject.h"
+
 #include "GeneratedJS2Native.h"
 #include "wtf/Assertions.h"
 

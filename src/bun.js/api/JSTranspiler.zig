@@ -140,10 +140,9 @@ pub const TransformTask = struct {
             .allocator = allocator,
         };
         ast_memory_allocator.reset();
+
         JSAst.Stmt.Data.Store.memory_allocator = ast_memory_allocator;
         JSAst.Expr.Data.Store.memory_allocator = ast_memory_allocator;
-        JSAst.Stmt.Data.Store.create(bun.default_allocator);
-        JSAst.Expr.Data.Store.create(bun.default_allocator);
 
         defer {
             JSAst.Stmt.Data.Store.reset();
@@ -573,18 +572,22 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
     if (object.get(globalThis, "sourcemap")) |flag| {
         if (flag.isBoolean() or flag.isUndefinedOrNull()) {
             if (flag.toBoolean()) {
-                transpiler.transform.source_map = Api.SourceMapMode.external;
+                transpiler.transform.source_map = .@"inline";
             } else {
-                transpiler.transform.source_map = Api.SourceMapMode.inline_into_file;
+                transpiler.transform.source_map = .none;
             }
         } else {
             if (options.SourceMapOption.Map.fromJS(globalObject, flag)) |source| {
                 transpiler.transform.source_map = source.toAPI();
             } else {
-                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"external\", or \"none\"", .{}, globalObject, exception);
+                JSC.throwInvalidArguments("sourcemap must be one of \"inline\", \"linked\", \"external\", or \"none\"", .{}, globalObject, exception);
                 return transpiler;
             }
         }
+    }
+
+    if (try object.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+        transpiler.transform.packages = packages.toAPI();
     }
 
     var tree_shaking: ?bool = null;
@@ -743,7 +746,7 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
 pub fn constructor(
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) ?*Transpiler {
+) ?*Transpiler {
     var temp = bun.ArenaAllocator.init(getAllocator(globalThis));
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(
@@ -907,7 +910,7 @@ pub fn scan(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(3);
     var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments.slice());
@@ -1005,7 +1008,7 @@ pub fn transform(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     JSC.markBinding(@src());
     var exception_ref = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_ref;
@@ -1061,7 +1064,7 @@ pub fn transformSync(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     JSC.markBinding(@src());
     var exception_value = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_value;
@@ -1191,7 +1194,7 @@ pub fn transformSync(
     var out = JSC.ZigString.init(buffer_writer.written);
     out.setOutputEncoding();
 
-    return out.toValueGC(globalThis);
+    return out.toJS(globalThis);
 }
 
 fn namedExportsToJS(global: *JSGlobalObject, named_exports: *JSAst.Ast.NamedExports) JSC.JSValue {
@@ -1234,8 +1237,8 @@ fn namedImportsToJS(
         if (record.is_internal) continue;
 
         array.ensureStillAlive();
-        const path = JSC.ZigString.init(record.path.text).toValueGC(global);
-        const kind = JSC.ZigString.init(record.kind.label()).toValueGC(global);
+        const path = JSC.ZigString.init(record.path.text).toJS(global);
+        const kind = JSC.ZigString.init(record.kind.label()).toJS(global);
         array.putIndex(global, @as(u32, @truncate(i)), JSC.JSValue.createObject2(global, path_label, kind_label, path, kind));
     }
 
@@ -1246,7 +1249,7 @@ pub fn scanImports(
     this: *Transpiler,
     globalThis: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue {
+) JSC.JSValue {
     const arguments = callframe.arguments(2);
     var exception_val = [_]JSC.C.JSValueRef{null};
     const exception: JSC.C.ExceptionRef = &exception_val;

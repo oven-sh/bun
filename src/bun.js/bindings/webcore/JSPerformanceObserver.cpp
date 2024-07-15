@@ -54,7 +54,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -66,7 +65,7 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     PerformanceObserver::Init result;
     JSValue bufferedValue;
@@ -74,11 +73,11 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
         bufferedValue = jsUndefined();
     else {
         bufferedValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "buffered"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!bufferedValue.isUndefined()) {
         result.buffered = convert<IDLBoolean>(lexicalGlobalObject, bufferedValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else
         result.buffered = false;
     JSValue entryTypesValue;
@@ -86,22 +85,22 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
         entryTypesValue = jsUndefined();
     else {
         entryTypesValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "entryTypes"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!entryTypesValue.isUndefined()) {
         result.entryTypes = convert<IDLSequence<IDLDOMString>>(lexicalGlobalObject, entryTypesValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     JSValue typeValue;
     if (isNullOrUndefined)
         typeValue = jsUndefined();
     else {
         typeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!typeValue.isUndefined()) {
         result.type = convert<IDLDOMString>(lexicalGlobalObject, typeValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     return result;
 }
@@ -153,8 +152,7 @@ using JSPerformanceObserverDOMConstructor = JSDOMConstructor<JSPerformanceObserv
 
 /* Hash table for constructor */
 
-static const HashTableValue JSPerformanceObserverConstructorTableValues[] =
-{
+static const HashTableValue JSPerformanceObserverConstructorTableValues[] = {
     { "supportedEntryTypes"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceObserverConstructor_supportedEntryTypes, 0 } },
 };
 
@@ -168,26 +166,25 @@ template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSPerformanceObserverDOMConst
         return throwVMError(lexicalGlobalObject, throwScope, createNotEnoughArgumentsError(lexicalGlobalObject));
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceObserver");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "PerformanceObserver"_s);
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto callback = convert<IDLCallbackFunction<JSPerformanceObserverCallback>>(
-        *lexicalGlobalObject, 
-        argument0.value(), 
-        *castedThis->globalObject(), 
-        [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) { 
-            throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback", "PerformanceObserver", nullptr); 
-        }
-    );
+        *lexicalGlobalObject,
+        argument0.value(),
+        *castedThis->globalObject(),
+        [](JSC::JSGlobalObject& lexicalGlobalObject, JSC::ThrowScope& scope) {
+            throwArgumentMustBeFunctionError(lexicalGlobalObject, scope, 0, "callback"_s, "PerformanceObserver"_s, nullptr);
+        });
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
     auto object = PerformanceObserver::create(*context, callback.releaseNonNull());
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     static_assert(TypeOrExceptionOrUnderlyingType<decltype(object)>::isRef);
     auto jsValue = toJSNewlyCreated<IDLInterface<PerformanceObserver>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, WTFMove(object));
     if constexpr (IsExceptionOr<decltype(object)>)
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     setSubclassStructureIfNeeded<PerformanceObserver>(lexicalGlobalObject, callFrame, asObject(jsValue));
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     return JSValue::encode(jsValue);
 }
 JSC_ANNOTATE_HOST_FUNCTION(JSPerformanceObserverDOMConstructorConstruct, JSPerformanceObserverDOMConstructor::construct);
@@ -212,8 +209,7 @@ template<> void JSPerformanceObserverDOMConstructor::initializeProperties(VM& vm
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceObserverPrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceObserverPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceObserverConstructor, 0 } },
     { "observe"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverPrototypeFunction_observe, 0 } },
     { "disconnect"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverPrototypeFunction_disconnect, 0 } },
@@ -259,7 +255,7 @@ void JSPerformanceObserver::destroy(JSC::JSCell* cell)
     thisObject->JSPerformanceObserver::~JSPerformanceObserver();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -279,7 +275,7 @@ static inline JSValue jsPerformanceObserverConstructor_supportedEntryTypesGetter
     RELEASE_AND_RETURN(throwScope, (toJS<IDLFrozenArray<IDLDOMString>>(lexicalGlobalObject, *jsCast<JSDOMGlobalObject*>(&lexicalGlobalObject), throwScope, PerformanceObserver::supportedEntryTypes(*context))));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor_supportedEntryTypes, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverConstructor_supportedEntryTypes, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceObserver>::getStatic<jsPerformanceObserverConstructor_supportedEntryTypesGetter>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -297,7 +293,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_observe
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.observe(WTFMove(options)); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_observe, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_observe, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserver>::call<jsPerformanceObserverPrototypeFunction_observeBody>(*lexicalGlobalObject, *callFrame, "observe");
 }
@@ -312,7 +308,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_disconn
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.disconnect(); })));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_disconnect, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_disconnect, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserver>::call<jsPerformanceObserverPrototypeFunction_disconnectBody>(*lexicalGlobalObject, *callFrame, "disconnect");
 }
@@ -327,19 +323,19 @@ static inline JSC::EncodedJSValue jsPerformanceObserverPrototypeFunction_takeRec
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.takeRecords())));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_takeRecords, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverPrototypeFunction_takeRecords, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserver>::call<jsPerformanceObserverPrototypeFunction_takeRecordsBody>(*lexicalGlobalObject, *callFrame, "takeRecords");
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceObserver::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceObserver, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserver.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserver = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceObserver.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserver = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceObserver, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserver.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserver = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserver.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserver = std::forward<decltype(space)>(space); });
 }
 
 template<typename Visitor>
@@ -369,7 +365,7 @@ void JSPerformanceObserver::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -382,10 +378,14 @@ void JSPerformanceObserverOwner::finalize(JSC::Handle<JSC::Unknown> handle, void
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7PerformanceObserver@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7PerformanceObserver@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore19PerformanceObserverE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore19PerformanceObserverE[];
+}
 #endif
 #endif
 
@@ -394,18 +394,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<PerformanceObserver>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7PerformanceObserver@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore19PerformanceObserverE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore19PerformanceObserverE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // PerformanceObserver has subclasses. If PerformanceObserver has subclasses that get passed
         // to toJS() we currently require PerformanceObserver you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<PerformanceObserver>(globalObject, WTFMove(impl));

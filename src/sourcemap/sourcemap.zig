@@ -17,6 +17,7 @@ const URL = bun.URL;
 const FileSystem = bun.fs.FileSystem;
 
 const SourceMap = @This();
+const debug = bun.Output.scoped(.SourceMap, false);
 
 /// Coordinates in source maps are stored using relative offsets for size
 /// reasons. When joining together chunks of a source map that were emitted
@@ -76,7 +77,9 @@ pub fn parseUrl(
 ) !ParseUrl {
     const json_bytes = json_bytes: {
         const data_prefix = "data:application/json";
+
         if (bun.strings.hasPrefixComptime(source, data_prefix) and source.len > (data_prefix.len + 1)) try_data_url: {
+            debug("parse (data url, {d} bytes)", .{source.len});
             switch (source[data_prefix.len]) {
                 ';' => {
                     const encoding = bun.sliceTo(source[data_prefix.len + 1 ..], ',');
@@ -118,16 +121,20 @@ pub fn parseJSON(
     var log = bun.logger.Log.init(arena);
     defer log.deinit();
 
-    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
-        return error.InvalidJSON;
-    };
-
     // the allocator given to the JS parser is not respected for all parts
     // of the parse, so we need to remember to reset the ast store
+    bun.JSAst.Expr.Data.Store.reset();
+    bun.JSAst.Stmt.Data.Store.reset();
     defer {
+        // the allocator given to the JS parser is not respected for all parts
+        // of the parse, so we need to remember to reset the ast store
         bun.JSAst.Expr.Data.Store.reset();
         bun.JSAst.Stmt.Data.Store.reset();
     }
+    debug("parse (JSON, {d} bytes)", .{source.len});
+    var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch {
+        return error.InvalidJSON;
+    };
 
     if (json.get("version")) |version| {
         if (version.data != .e_number or version.data.e_number.value != 3.0) {
@@ -192,12 +199,11 @@ pub fn parseJSON(
             .fail => |fail| return fail.err,
         };
 
-        const ptr = bun.default_allocator.create(Mapping.ParsedSourceMap) catch bun.outOfMemory();
-        ptr.* = map_data;
+        const ptr = Mapping.ParsedSourceMap.new(map_data);
         ptr.external_source_names = source_paths_slice.?;
         break :map ptr;
     } else null;
-    errdefer if (map) |m| m.deinit(bun.default_allocator);
+    errdefer if (map) |m| m.deref();
 
     const mapping, const source_index = switch (hint) {
         .source_only => |index| .{ null, index },
@@ -244,7 +250,7 @@ pub const Mapping = struct {
 
     pub const Lookup = struct {
         mapping: Mapping,
-        source_map: *ParsedSourceMap,
+        source_map: ?*ParsedSourceMap = null,
         /// Owned by default_allocator always
         /// use `getSourceCode` to access this as a Slice
         prefetched_source_code: ?[]const u8,
@@ -252,17 +258,18 @@ pub const Mapping = struct {
         /// This creates a bun.String if the source remap *changes* the source url,
         /// a case that happens only when the source map points to another file.
         pub fn displaySourceURLIfNeeded(lookup: Lookup, base_filename: []const u8) ?bun.String {
+            const source_map = lookup.source_map orelse return null;
             // See doc comment on `external_source_names`
-            if (lookup.source_map.external_source_names.len == 0)
+            if (source_map.external_source_names.len == 0)
                 return null;
-            if (lookup.mapping.source_index >= lookup.source_map.external_source_names.len)
+            if (lookup.mapping.source_index >= source_map.external_source_names.len)
                 return null;
 
-            const name = lookup.source_map.external_source_names[@intCast(lookup.mapping.source_index)];
+            const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
 
             if (std.fs.path.isAbsolute(base_filename)) {
                 const dir = bun.path.dirname(base_filename, .auto);
-                return bun.String.init(bun.path.joinAbs(dir, .auto, name));
+                return bun.String.createUTF8(bun.path.joinAbs(dir, .auto, name));
             }
 
             return bun.String.init(name);
@@ -272,28 +279,30 @@ pub const Mapping = struct {
         /// This has the possibility of invoking a call to the filesystem.
         pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
             const bytes = bytes: {
-                assert(lookup.source_map.isExternal());
                 if (lookup.prefetched_source_code) |code| {
                     break :bytes code;
                 }
 
-                const provider = lookup.source_map.underlying_provider.provider() orelse
+                const source_map = lookup.source_map orelse return null;
+                assert(source_map.isExternal());
+
+                const provider = source_map.underlying_provider.provider() orelse
                     return null;
 
                 const index = lookup.mapping.source_index;
 
                 if (provider.getSourceMap(
                     base_filename,
-                    lookup.source_map.underlying_provider.load_hint,
+                    source_map.underlying_provider.load_hint,
                     .{ .source_only = @intCast(index) },
                 )) |parsed|
                     if (parsed.source_contents) |contents|
                         break :bytes contents;
 
-                if (index >= lookup.source_map.external_source_names.len)
+                if (index >= source_map.external_source_names.len)
                     return null;
 
-                const name = lookup.source_map.external_source_names[@intCast(index)];
+                const name = source_map.external_source_names[@intCast(index)];
 
                 var buf: bun.PathBuffer = undefined;
                 const normalized = bun.path.joinAbsStringBufZ(
@@ -379,6 +388,8 @@ pub const Mapping = struct {
         sources_count: i32,
         input_line_count: usize,
     ) ParseResult {
+        debug("parse mappings ({d} bytes)", .{bytes.len});
+
         var mapping = Mapping.List{};
         if (estimated_mapping_count) |count| {
             mapping.ensureTotalCapacity(allocator, count) catch unreachable;
@@ -597,7 +608,7 @@ pub const Mapping = struct {
         /// maps `source_index` to the correct filename.
         external_source_names: []const []const u8 = &.{},
         /// In order to load source contents from a source-map after the fact,
-        /// a handle to the underying source provider is stored. Within this pointer,
+        // / a handle to the underlying source provider is stored. Within this pointer,
         /// a flag is stored if it is known to be an inline or external source map.
         ///
         /// Source contents are large, we don't preserve them in memory. This has
@@ -605,6 +616,10 @@ pub const Mapping = struct {
         /// are emitted (specifically with Bun.inspect / unhandled; the ones that
         /// rely on source contents)
         underlying_provider: SourceContentPtr = .{ .data = 0 },
+
+        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+
+        pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
 
         const SourceContentPtr = packed struct(u64) {
             load_hint: SourceMapLoadHint = .none,
@@ -623,7 +638,11 @@ pub const Mapping = struct {
             return psm.external_source_names.len != 0;
         }
 
-        pub fn deinit(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
+        fn deinitFn(this: *ParsedSourceMap) void {
+            this.deinitWithAllocator(bun.default_allocator);
+        }
+
+        fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
             this.mappings.deinit(allocator);
 
             if (this.external_source_names.len > 0) {
@@ -632,7 +651,7 @@ pub const Mapping = struct {
                 allocator.free(this.external_source_names);
             }
 
-            allocator.destroy(this);
+            this.destroy();
         }
 
         pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
@@ -681,14 +700,14 @@ pub const Mapping = struct {
 /// bother loading source code into memory. Most uses of source maps only care
 /// about filenames and source mappings, and we should avoid loading contents
 /// whenever possible.
-pub const SourceContentHandling = enum {
+pub const SourceContentHandling = enum(u1) {
     no_source_contents,
     source_contents,
 };
 
 /// For some sourcemap loading code, this enum is used as a hint if we already
 /// know if the sourcemap is located on disk or inline in the source code.
-pub const SourceMapLoadHint = enum {
+pub const SourceMapLoadHint = enum(u2) {
     none,
     is_inline_map,
     is_external_map,
@@ -726,6 +745,7 @@ pub const SourceProviderMap = opaque {
         var sfb = std.heap.stackFallback(65536, bun.default_allocator);
         var arena = bun.ArenaAllocator.init(sfb.get());
         defer arena.deinit();
+        const allocator = arena.allocator();
 
         const new_load_hint: SourceMapLoadHint, const parsed = parsed: {
             var inline_err: ?anyerror = null;
@@ -737,9 +757,9 @@ pub const SourceProviderMap = opaque {
                 bun.assert(source.tag == .ZigString);
 
                 const found_url = (if (source.is8Bit())
-                    findSourceMappingURL(u8, source.latin1(), arena.allocator())
+                    findSourceMappingURL(u8, source.latin1(), allocator)
                 else
-                    findSourceMappingURL(u16, source.utf16(), arena.allocator())) orelse
+                    findSourceMappingURL(u16, source.utf16(), allocator)) orelse
                     break :try_inline;
                 defer found_url.deinit();
 
@@ -747,7 +767,7 @@ pub const SourceProviderMap = opaque {
                     .is_inline_map,
                     parseUrl(
                         bun.default_allocator,
-                        arena.allocator(),
+                        allocator,
                         found_url.slice(),
                         result,
                     ) catch |err| {
@@ -766,7 +786,7 @@ pub const SourceProviderMap = opaque {
                 @memcpy(load_path_buf[source_filename.len..][0..4], ".map");
 
                 const load_path = load_path_buf[0 .. source_filename.len + 4];
-                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, arena.allocator())) {
+                const data = switch (bun.sys.File.readFrom(std.fs.cwd(), load_path, allocator)) {
                     .err => break :try_external,
                     .result => |data| data,
                 };
@@ -775,7 +795,7 @@ pub const SourceProviderMap = opaque {
                     .is_external_map,
                     parseJSON(
                         bun.default_allocator,
-                        arena.allocator(),
+                        allocator,
                         data,
                         result,
                     ) catch |err| {
@@ -1904,7 +1924,7 @@ pub const DebugIDFormatter = struct {
         // We fill the end of the id with "bun!bun!" hex encoded
         var buf: [32]u8 = undefined;
         const formatter = bun.fmt.hexIntUpper(self.id);
-        _ = std.fmt.bufPrint(&buf, "{}64756e2164756e21", .{formatter}) catch unreachable;
+        _ = std.fmt.bufPrint(&buf, "{}64756E2164756E21", .{formatter}) catch unreachable;
         try writer.writeAll(&buf);
     }
 };

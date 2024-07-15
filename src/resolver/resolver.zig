@@ -481,6 +481,13 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
     };
 }
 
+fn isExternalModuleLike(import_path: string) bool {
+    if (strings.startsWith(import_path, ".") or strings.startsWith(import_path, "/") or strings.startsWith(import_path, "..")) {
+        return false;
+    }
+    return true;
+}
+
 pub const Resolver = struct {
     const ThisResolver = @This();
     opts: options.BundleOptions,
@@ -563,7 +570,7 @@ pub const Resolver = struct {
 
     pub fn getPackageManager(this: *Resolver) *PackageManager {
         return this.package_manager orelse brk: {
-            bun.HTTPThread.init() catch unreachable;
+            bun.HTTPThread.init();
             const pm = PackageManager.initWithRuntime(
                 this.log,
                 this.opts.install,
@@ -625,6 +632,9 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
+        if (r.opts.packages == .external and isExternalModuleLike(import_path)) {
+            return true;
+        }
         for (r.opts.external.patterns) |pattern| {
             if (import_path.len >= pattern.prefix.len + pattern.suffix.len and (strings.startsWith(
                 import_path,
@@ -768,14 +778,14 @@ pub const Resolver = struct {
                         var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, route_dir };
                         const abs = r.fs.join(&parts);
                         // must end in trailing slash
-                        break :brk (std.os.realpath(abs, &buf) catch continue);
+                        break :brk (std.posix.realpath(abs, &buf) catch continue);
                     }
                     return error.MissingRouteDir;
                 } else {
                     var parts = [_]string{ r.fs.top_level_dir, std.fs.path.sep_str, pair.router.dir };
                     const abs = r.fs.join(&parts);
                     // must end in trailing slash
-                    break :brk std.os.realpath(abs, &buf) catch return error.MissingRouteDir;
+                    break :brk std.posix.realpath(abs, &buf) catch return error.MissingRouteDir;
                 }
             };
 
@@ -3333,7 +3343,7 @@ pub const Resolver = struct {
         };
     }
 
-    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub export fn Resolver__nodeModulePathsForJS(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
         bun.JSC.markBinding(@src());
         const argument: bun.JSC.JSValue = callframe.argument(0);
 
@@ -3348,7 +3358,7 @@ pub const Resolver = struct {
         return nodeModulePathsJSValue(r, in_str, globalThis);
     }
 
-    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) bun.JSC.JSValue {
+    pub export fn Resolver__propForRequireMainPaths(globalThis: *bun.JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
         bun.JSC.markBinding(@src());
 
         const in_str = bun.String.createUTF8(".");
@@ -3385,6 +3395,7 @@ pub const Resolver = struct {
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
         var stack_fallback_allocator = std.heap.stackFallback(1024, arena.allocator());
+        const alloc = stack_fallback_allocator.get();
 
         if (r.readDirInfo(str) catch null) |result| {
             var dir_info = result;
@@ -3398,7 +3409,7 @@ pub const Resolver = struct {
 
                     break :brk [2]string{ path_without_trailing_slash, std.fs.path.sep_str ++ "node_modules" };
                 };
-                const nodemodules_path = bun.strings.concat(stack_fallback_allocator.get(), &path_parts) catch unreachable;
+                const nodemodules_path = bun.strings.concat(alloc, &path_parts) catch unreachable;
                 bun.path.posixToPlatformInPlace(u8, nodemodules_path);
                 list.append(bun.String.createUTF8(nodemodules_path)) catch unreachable;
                 dir_info = (r.readDirInfo(std.fs.path.dirname(path_without_trailing_slash) orelse break) catch null) orelse break;
@@ -3413,7 +3424,7 @@ pub const Resolver = struct {
                 list.append(
                     bun.String.createUTF8(
                         bun.strings.concat(
-                            stack_fallback_allocator.get(),
+                            alloc,
                             &[_]string{
                                 path_without_trailing_slash,
                                 std.fs.path.sep_str ++ "node_modules",

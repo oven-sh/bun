@@ -11,14 +11,20 @@ import {
   toMatchNodeModulesAt,
   runBunInstall,
   runBunUpdate,
+  tempDirWithFiles,
+  randomPort,
+  mergeWindowEnvs,
 } from "harness";
 import { join, sep, resolve } from "path";
+import { mkdirSync, copyFileSync } from "fs";
 import { rm, writeFile, mkdir, exists, cp, readlink } from "fs/promises";
 import { readdirSorted } from "../dummy.registry";
 import { fork, ChildProcess } from "child_process";
-import { beforeAll, afterAll, beforeEach, test, expect, describe, setDefaultTimeout } from "bun:test";
+import { beforeAll, afterAll, beforeEach, test, expect, describe, it, setDefaultTimeout } from "bun:test";
 import { install_test_helpers } from "bun:internal-for-testing";
 const { parseLockfile } = install_test_helpers;
+const { iniInternals } = require("bun:internal-for-testing");
+const { loadNpmrc } = iniInternals;
 
 expect.extend({
   toBeValidBin,
@@ -27,16 +33,39 @@ expect.extend({
 });
 
 var verdaccioServer: ChildProcess;
-var port: number = 4873;
+var port: number = randomPort();
 var packageDir: string;
 
+let users: Record<string, string> = {};
+
 beforeAll(async () => {
+  console.log("STARTING VERDACCIO");
   setDefaultTimeout(1000 * 60 * 5);
   verdaccioServer = fork(
     require.resolve("verdaccio/bin/verdaccio"),
     ["-c", join(import.meta.dir, "verdaccio.yaml"), "-l", `${port}`],
-    { silent: true, execPath: "bun" },
+    {
+      silent: true,
+      // Prefer using a release build of Bun since it's faster
+      execPath: Bun.which("bun") || bunExe(),
+    },
   );
+
+  verdaccioServer.stderr?.on("data", data => {
+    console.error(`Error: ${data}`);
+  });
+
+  verdaccioServer.on("error", error => {
+    console.error(`Failed to start child process: ${error}`);
+  });
+
+  verdaccioServer.on("exit", (code, signal) => {
+    if (code !== 0) {
+      console.error(`Child process exited with code ${code} and signal ${signal}`);
+    } else {
+      console.log("Child process exited successfully");
+    }
+  });
 
   await new Promise<void>(done => {
     verdaccioServer.on("message", (msg: { verdaccio_started: boolean }) => {
@@ -48,12 +77,16 @@ beforeAll(async () => {
   });
 });
 
-afterAll(() => {
-  verdaccioServer.kill();
+afterAll(async () => {
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+  if (verdaccioServer) verdaccioServer.kill();
 });
 
 beforeEach(async () => {
   packageDir = tmpdirSync();
+  await Bun.$`rm -f ${import.meta.dir}/htpasswd`.throws(false);
+  await Bun.$`rm -rf ${import.meta.dir}/packages/private-pkg-dont-touch`.throws(false);
+  users = {};
   env.BUN_INSTALL_CACHE_DIR = join(packageDir, ".bun-cache");
   env.BUN_TMPDIR = env.TMPDIR = env.TEMP = join(packageDir, ".bun-tmp");
   await writeFile(
@@ -64,6 +97,367 @@ cache = false
 registry = "http://localhost:${port}/"
 `,
   );
+});
+
+/**
+ * Returns auth token
+ */
+async function generateRegistryUser(username: string, password: string): Promise<string> {
+  console.log("GENERATE REGISTRY USER");
+  if (users[username]) {
+    throw new Error("that user already exists");
+  } else users[username] = password;
+
+  const url = `http://localhost:${port}/-/user/org.couchdb.user:${username}`;
+  const user = {
+    name: username,
+    password: password,
+    email: `${username}@example.com`,
+  };
+
+  const response = await fetch(url, {
+    method: "PUT",
+    headers: {
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(user),
+  });
+
+  if (response.ok) {
+    const data = await response.json();
+    console.log(`Token: ${data.token}`);
+    return data.token;
+  } else {
+    throw new Error("Failed to create user:", response.statusText);
+  }
+}
+
+describe("npmrc", async () => {
+  const isBase64Encoded = (opt: string) => opt === "_auth" || opt === "_password";
+
+  it("works with empty file", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ ``;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {},
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets default registry", async () => {
+    console.log("package dir", packageDir);
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry = http://localhost:${port}/
+`;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("sets scoped registry", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+  @types:registry=http://localhost:${port}/
+  `;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "@types/no-deps": "1.0.0",
+      },
+    })} > package.json`.cwd(packageDir);
+    await Bun.$`${bunExe()} install`.cwd(packageDir).throws(true);
+  });
+
+  it("default registry from env variable", async () => {
+    const ini = /* ini */ `
+registry=\${LOL}
+  `;
+
+    const result = loadNpmrc(ini, { LOL: `http://localhost:${port}/` });
+
+    expect(result.default_registry_url).toBe(`http://localhost:${port}/`);
+  });
+
+  it("default registry from env variable 2", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry=http://localhost:\${PORT}/
+  `;
+
+    const result = loadNpmrc(ini, { ...env, PORT: port });
+
+    expect(result.default_registry_url).toEqual(`http://localhost:${port}/`);
+  });
+
+  async function makeTest(
+    options: [option: string, value: string][],
+    check: (result: {
+      default_registry_url: string;
+      default_registry_token: string;
+      default_registry_username: string;
+      default_registry_password: string;
+    }) => void,
+  ) {
+    const optionName = await Promise.all(options.map(async ([name, val]) => `${name} = ${val}`));
+    test(optionName.join(" "), async () => {
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      const iniInner = await Promise.all(
+        options.map(async ([option, value]) => {
+          let finalValue = value;
+          finalValue = isBase64Encoded(option) ? Buffer.from(finalValue).toString("base64") : finalValue;
+          return `//registry.npmjs.org/:${option}=${finalValue}`;
+        }),
+      );
+
+      const ini = /* ini */ `
+${iniInner.join("\n")}
+`;
+
+      await Bun.$`echo ${JSON.stringify({
+        name: "hello",
+        main: "index.js",
+        version: "1.0.0",
+        dependencies: {
+          "is-even": "1.0.0",
+        },
+      })} > package.json`.cwd(packageDir);
+
+      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+
+      const result = loadNpmrc(ini);
+
+      check(result);
+    });
+  }
+
+  await makeTest([["_authToken", "skibidi"]], result => {
+    expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+    expect(result.default_registry_token).toEqual("skibidi");
+  });
+
+  await makeTest(
+    [
+      ["username", "zorp"],
+      ["_password", "skibidi"],
+    ],
+    result => {
+      expect(result.default_registry_url).toEqual("https://registry.npmjs.org/");
+      expect(result.default_registry_username).toEqual("zorp");
+      expect(result.default_registry_password).toEqual("skibidi");
+    },
+  );
+
+  it("authentication works", async () => {
+    await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+    const ini = /* ini */ `
+registry = http://localhost:${port}/
+//localhost:${port}/:_authToken=${await generateRegistryUser("bilbo_swaggins", "verysecure")}
+`;
+
+    await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+    await Bun.$`echo ${JSON.stringify({
+      name: "hi",
+      main: "index.js",
+      version: "1.0.0",
+      dependencies: {
+        "@needs-auth/test-pkg": "1.0.0",
+      },
+      "publishConfig": {
+        "registry": `http://localhost:${port}`,
+      },
+    })} > package.json`.cwd(packageDir);
+
+    await Bun.$`${bunExe()} install`.env(env).cwd(packageDir).throws(true);
+  });
+
+  type EnvMap =
+    | Omit<
+        {
+          [key: string]: string;
+        },
+        "dotEnv"
+      >
+    | { dotEnv?: Record<string, string> };
+
+  function registryConfigOptionTest(
+    name: string,
+    _opts: Record<string, string> | (() => Promise<Record<string, string>>),
+    _env?: EnvMap | (() => Promise<EnvMap>),
+    check?: (stdout: string, stderr: string) => void,
+  ) {
+    it(`sets scoped registry option: ${name}`, async () => {
+      console.log("PACKAGE DIR", packageDir);
+      await Bun.$`rm -rf ${packageDir}/bunfig.toml`;
+
+      const { dotEnv, ...restOfEnv } = _env
+        ? typeof _env === "function"
+          ? await _env()
+          : _env
+        : { dotEnv: undefined };
+      const opts = _opts ? (typeof _opts === "function" ? await _opts() : _opts) : {};
+      const dotEnvInner = dotEnv
+        ? Object.entries(dotEnv)
+            .map(([k, v]) => `${k}=${k.includes("SECRET_") ? Buffer.from(v).toString("base64") : v}`)
+            .join("\n")
+        : "";
+
+      const ini = /* ini */ `
+registry = http://localhost:${port}/
+${Object.keys(opts)
+  .map(
+    k =>
+      `//localhost:${port}/:${k}=${isBase64Encoded(k) && !opts[k].includes("${") ? Buffer.from(opts[k]).toString("base64") : opts[k]}`,
+  )
+  .join("\n")}
+`;
+
+      if (dotEnvInner.length > 0) await Bun.$`echo ${dotEnvInner} > ${packageDir}/.env`;
+      await Bun.$`echo ${ini} > ${packageDir}/.npmrc`;
+      await Bun.$`echo ${JSON.stringify({
+        name: "hi",
+        main: "index.js",
+        version: "1.0.0",
+        dependencies: {
+          "@needs-auth/test-pkg": "1.0.0",
+        },
+        "publishConfig": {
+          "registry": `http://localhost:${port}`,
+        },
+      })} > package.json`.cwd(packageDir);
+
+      const { stdout, stderr } = await Bun.$`${bunExe()} install`
+        .env({ ...env, ...restOfEnv })
+        .cwd(packageDir)
+        .throws(check === undefined);
+
+      if (check) check(stdout.toString(), stderr.toString());
+    });
+  }
+
+  registryConfigOptionTest("_authToken", async () => ({
+    "_authToken": await generateRegistryUser("bilbo_baggins", "verysecure"),
+  }));
+  registryConfigOptionTest(
+    "_authToken with env variable value",
+    async () => ({ _authToken: "${SUPER_SECRET_TOKEN}" }),
+    async () => ({ SUPER_SECRET_TOKEN: await generateRegistryUser("bilbo_baggins420", "verysecure") }),
+  );
+  registryConfigOptionTest("username and password", async () => {
+    await generateRegistryUser("gandalf429", "verysecure");
+    return { username: "gandalf429", _password: "verysecure" };
+  });
+  registryConfigOptionTest(
+    "username and password with env variable password",
+    async () => {
+      await generateRegistryUser("gandalf422", "verysecure");
+      return { username: "gandalf422", _password: "${SUPER_SECRET_PASSWORD}" };
+    },
+    {
+      SUPER_SECRET_PASSWORD: Buffer.from("verysecure").toString("base64"),
+    },
+  );
+  registryConfigOptionTest(
+    "username and password with .env variable password",
+    async () => {
+      await generateRegistryUser("gandalf421", "verysecure");
+      return { username: "gandalf421", _password: "${SUPER_SECRET_PASSWORD}" };
+    },
+    {
+      dotEnv: { SUPER_SECRET_PASSWORD: "verysecure" },
+    },
+  );
+
+  registryConfigOptionTest("_auth", async () => {
+    await generateRegistryUser("linus", "verysecure");
+    const _auth = "linus:verysecure";
+    return { _auth };
+  });
+
+  registryConfigOptionTest(
+    "_auth from .env variable",
+    async () => {
+      await generateRegistryUser("zack", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "zack:verysecure" },
+    },
+  );
+
+  registryConfigOptionTest(
+    "_auth from .env variable with no value",
+    async () => {
+      await generateRegistryUser("zack420", "verysecure");
+      return { _auth: "${SECRET_AUTH}" };
+    },
+    {
+      dotEnv: { SECRET_AUTH: "" },
+    },
+    (stdout: string, stderr: string) => {
+      expect(stderr).toContain("got an empty string");
+    },
+  );
+});
+
+describe("package.json indentation", async () => {
+  test("works for root and workspace packages", async () => {
+    await Promise.all([
+      // 5 space indentation
+      write(join(packageDir, "package.json"), `\n{\n\n     "name": "foo",\n"workspaces": ["packages/*"]\n}`),
+      // 1 tab indentation
+      write(join(packageDir, "packages", "bar", "package.json"), `\n{\n\n\t"name": "bar",\n}`),
+    ]);
+
+    let { exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: packageDir,
+      stdout: "ignore",
+      stderr: "ignore",
+      env,
+    });
+
+    expect(await exited).toBe(0);
+
+    const rootPackageJson = await file(join(packageDir, "package.json")).text();
+
+    expect(rootPackageJson).toBe(
+      `{\n     "name": "foo",\n     "workspaces": ["packages/*"],\n     "dependencies": {\n          "no-deps": "^2.0.0"\n     }\n}`,
+    );
+
+    // now add to workspace. it should keep tab indentation
+    ({ exited } = spawn({
+      cmd: [bunExe(), "add", "no-deps"],
+      cwd: join(packageDir, "packages", "bar"),
+      stdout: "inherit",
+      stderr: "inherit",
+      env,
+    }));
+
+    expect(await exited).toBe(0);
+
+    expect(await file(join(packageDir, "package.json")).text()).toBe(rootPackageJson);
+    const workspacePackageJson = await file(join(packageDir, "packages", "bar", "package.json")).text();
+    expect(workspacePackageJson).toBe(`{\n\t"name": "bar",\n\t"dependencies": {\n\t\t"no-deps": "^2.0.0"\n\t}\n}`);
+  });
 });
 
 describe("optionalDependencies", () => {
@@ -117,9 +511,31 @@ describe("optionalDependencies", () => {
         savesLockfile: !rootOptional,
       });
 
-      expect(err).toContain("warn: GET http://localhost:4873/this-package-does-not-exist-in-the-registry - ");
+      expect(err).toMatch(`warn: GET http://localhost:${port}/this-package-does-not-exist-in-the-registry - 404`);
     });
   }
+});
+
+test("tarball override does not crash", async () => {
+  await write(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      dependencies: {
+        "two-range-deps": "||",
+      },
+      overrides: {
+        "no-deps": `http://localhost:${port}/no-deps/-/no-deps-2.0.0.tgz`,
+      },
+    }),
+  );
+
+  await runBunInstall(env, packageDir);
+
+  expect(await file(join(packageDir, "node_modules", "no-deps", "package.json")).json()).toMatchObject({
+    name: "no-deps",
+    version: "2.0.0",
+  });
 });
 
 describe.each(["--production", "without --production"])("%s", flag => {
@@ -449,7 +865,7 @@ registry = "http://localhost:${port}"
   const lockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(lockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).toContain(`http://localhost:${port}`);
     }
   }
 
@@ -470,7 +886,7 @@ cache = "${cacheDir}"
   const npmLockfile = await parseLockfile(packageDir);
   for (const pkg of Object.values(npmLockfile.packages) as any) {
     if (pkg.tag === "npm") {
-      expect(pkg.resolution.resolved).not.toContain("http://localhost:4873");
+      expect(pkg.resolution.resolved).not.toContain(`http://localhost:${port}`);
     }
   }
 });
@@ -656,6 +1072,46 @@ describe("peerDependency index out of bounds", async () => {
       });
     }
   }
+
+  // Install 2 dependencies, one is a normal dependency, the other is a dependency with a optional
+  // peer dependency on the first dependency. Delete node_modules and cache, then update the dependency
+  // with the optional peer to a new version. Doing this will cause the peer dependency to get enqueued
+  // internally, testing for index out of bounds. It's also important cache is deleted to ensure a tarball
+  // task is created for it.
+  test("optional", async () => {
+    await write(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        dependencies: {
+          "optional-peer-deps": "1.0.0",
+          "no-deps": "1.0.0",
+        },
+      }),
+    );
+
+    await runBunInstall(env, packageDir);
+
+    // update version and delete node_modules and cache
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          dependencies: {
+            "optional-peer-deps": "1.0.1",
+            "no-deps": "1.0.0",
+          },
+        }),
+      ),
+      rm(join(packageDir, "node_modules"), { recursive: true, force: true }),
+    ]);
+
+    // this install would trigger the index out of bounds error
+    await runBunInstall(env, packageDir);
+    const lockfile = parseLockfile(packageDir);
+    expect(lockfile).toMatchNodeModulesAt(packageDir);
+  });
 });
 
 test("peerDependency in child npm dependency should not maintain old version when package is upgraded", async () => {
@@ -971,148 +1427,293 @@ test("--production without a lockfile will install and not save lockfile", async
   expect(await exists(join(packageDir, "node_modules", "no-deps", "index.js"))).toBeTrue();
 });
 
-test("it should correctly link binaries after deleting node_modules", async () => {
-  const json: any = {
-    name: "foo",
-    version: "1.0.0",
-    dependencies: {
-      "what-bin": "1.0.0",
-      "uses-what-bin": "1.5.0",
-    },
-  };
-  await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
+describe("binaries", () => {
+  for (const global of [false, true]) {
+    describe(`existing destinations${global ? " (global)" : ""}`, () => {
+      test("existing non-symlink", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                "what-bin": "1.0.0",
+              },
+            }),
+          ),
+          write(join(packageDir, "node_modules", ".bin", "what-bin"), "hi"),
+        ]);
 
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  });
-
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
-    "",
-    expect.stringContaining("3 packages installed"),
-    "",
-    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-    "",
-  ]);
-  expect(await exited).toBe(0);
-
-  await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
-
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
-
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
-  expect(err).not.toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ uses-what-bin@1.5.0",
-    "+ what-bin@1.0.0",
-    "",
-    expect.stringContaining("3 packages installed"),
-    "",
-    "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
-    "",
-  ]);
-  expect(await exited).toBe(0);
-});
-
-test("it should re-symlink binaries that become invalid when updating package versions", async () => {
-  await writeFile(
-    join(packageDir, "package.json"),
-    JSON.stringify({
+        await runBunInstall(env, packageDir);
+        expect(join(packageDir, "node_modules", ".bin", "what-bin")).toBeValidBin(
+          join("..", "what-bin", "what-bin.js"),
+        );
+      });
+    });
+  }
+  test("it should correctly link binaries after deleting node_modules", async () => {
+    const json: any = {
       name: "foo",
       version: "1.0.0",
       dependencies: {
-        "bin-change-dir": "1.0.0",
+        "what-bin": "1.0.0",
+        "uses-what-bin": "1.5.0",
       },
-      scripts: {
-        postinstall: "bin-change-dir",
-      },
-    }),
-  );
+    };
+    await writeFile(join(packageDir, "package.json"), JSON.stringify(json));
 
-  var { stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ uses-what-bin@1.5.0",
+      "+ what-bin@1.0.0",
+      "",
+      expect.stringContaining("3 packages installed"),
+      "",
+      "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+      "",
+    ]);
+    expect(await exited).toBe(0);
+
+    await rm(join(packageDir, "node_modules"), { recursive: true, force: true });
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).not.toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ uses-what-bin@1.5.0",
+      "+ what-bin@1.0.0",
+      "",
+      expect.stringContaining("3 packages installed"),
+      "",
+      "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
+      "",
+    ]);
+    expect(await exited).toBe(0);
   });
 
-  var err = await new Response(stderr).text();
-  var out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bin-change-dir@1.0.0",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
-  expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
+  test("will link binaries for packages installed multiple times", async () => {
+    await Promise.all([
+      write(
+        join(packageDir, "package.json"),
+        JSON.stringify({
+          name: "foo",
+          version: "1.0.0",
+          dependencies: {
+            "uses-what-bin": "1.5.0",
+          },
+          workspaces: ["packages/*"],
+          trustedDependencies: ["uses-what-bin"],
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg1", "package.json"),
+        JSON.stringify({
+          name: "pkg1",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+      write(
+        join(packageDir, "packages", "pkg2", "package.json"),
+        JSON.stringify({
+          name: "pkg2",
+          dependencies: {
+            "uses-what-bin": "1.0.0",
+          },
+        }),
+      ),
+    ]);
 
-  await writeFile(
-    join(packageDir, "package.json"),
-    JSON.stringify({
-      name: "foo",
-      version: "1.0.0",
-      dependencies: {
-        "bin-change-dir": "1.0.1",
-      },
-      scripts: {
-        postinstall: "bin-change-dir",
-      },
-    }),
-  );
+    // Root dependends on `uses-what-bin@1.5.0` and both packages depend on `uses-what-bin@1.0.0`.
+    // This test makes sure the binaries used by `pkg1` and `pkg2` are the correct version (`1.0.0`)
+    // instead of using the root version (`1.5.0`).
 
-  ({ stdout, stderr, exited } = spawn({
-    cmd: [bunExe(), "install"],
-    cwd: packageDir,
-    stdout: "pipe",
-    stdin: "pipe",
-    stderr: "pipe",
-    env,
-  }));
+    await runBunInstall(env, packageDir);
+    const results = await Promise.all([
+      file(join(packageDir, "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+      file(join(packageDir, "packages", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+      file(join(packageDir, "packages", "pkg2", "node_modules", "uses-what-bin", "what-bin.txt")).text(),
+    ]);
 
-  err = await new Response(stderr).text();
-  out = await new Response(stdout).text();
-  expect(err).toContain("Saved lockfile");
-  expect(err).not.toContain("not found");
-  expect(err).not.toContain("error:");
-  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
-    "",
-    "+ bin-change-dir@1.0.1",
-    "",
-    "1 package installed",
-  ]);
-  expect(await exited).toBe(0);
-  expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
-  expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
+    expect(results).toEqual(["what-bin@1.5.0", "what-bin@1.0.0", "what-bin@1.0.0"]);
+  });
+
+  test("it should re-symlink binaries that become invalid when updating package versions", async () => {
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "bin-change-dir": "1.0.0",
+        },
+        scripts: {
+          postinstall: "bin-change-dir",
+        },
+      }),
+    );
+
+    var { stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    });
+
+    var err = await new Response(stderr).text();
+    var out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bin-change-dir@1.0.0",
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+    expect(await exists(join(packageDir, "bin-1.0.1.txt"))).toBeFalse();
+
+    await writeFile(
+      join(packageDir, "package.json"),
+      JSON.stringify({
+        name: "foo",
+        version: "1.0.0",
+        dependencies: {
+          "bin-change-dir": "1.0.1",
+        },
+        scripts: {
+          postinstall: "bin-change-dir",
+        },
+      }),
+    );
+
+    ({ stdout, stderr, exited } = spawn({
+      cmd: [bunExe(), "install"],
+      cwd: packageDir,
+      stdout: "pipe",
+      stdin: "pipe",
+      stderr: "pipe",
+      env,
+    }));
+
+    err = await new Response(stderr).text();
+    out = await new Response(stdout).text();
+    expect(err).toContain("Saved lockfile");
+    expect(err).not.toContain("not found");
+    expect(err).not.toContain("error:");
+    expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+      "",
+      "+ bin-change-dir@1.0.1",
+      "",
+      "1 package installed",
+    ]);
+    expect(await exited).toBe(0);
+    expect(await file(join(packageDir, "bin-1.0.0.txt")).text()).toEqual("success!");
+    expect(await file(join(packageDir, "bin-1.0.1.txt")).text()).toEqual("success!");
+  });
+  for (const global of [false, true]) {
+    test(`bin types${global ? " (global)" : ""}`, async () => {
+      if (global) {
+        await write(
+          join(packageDir, "bunfig.toml"),
+          `
+          [install]
+          cache = false
+          registry = "http://localhost:${port}/"
+          globalBinDir = "${join(packageDir, "global-bin-dir").replace(/\\/g, "\\\\")}"
+          `,
+        );
+      } else {
+        await write(
+          join(packageDir, "package.json"),
+          JSON.stringify({
+            name: "foo",
+          }),
+        );
+      }
+
+      const args = [
+        bunExe(),
+        "install",
+        ...(global ? ["-g"] : []),
+        ...(global ? [`--config=${join(packageDir, "bunfig.toml")}`] : []),
+        "dep-with-file-bin",
+        "dep-with-single-entry-map-bin",
+        "dep-with-directory-bins",
+        "dep-with-map-bins",
+      ];
+      const { stdout, stderr, exited } = spawn({
+        cmd: args,
+        cwd: packageDir,
+        stdout: "pipe",
+        stderr: "pipe",
+        env: global ? { ...env, BUN_INSTALL: join(packageDir, "global-install-dir") } : env,
+      });
+
+      const err = await Bun.readableStreamToText(stderr);
+      expect(err).not.toContain("error:");
+
+      const out = await Bun.readableStreamToText(stdout);
+      expect(await exited).toBe(0);
+
+      const cwd = global ? join(packageDir, "global-bin-dir") : packageDir;
+
+      await runBin("dep-with-file-bin", "file-bin\n", cwd, global);
+      await runBin("single-entry-map-bin", "single-entry-map-bin\n", cwd, global);
+      await runBin("directory-bin-1", "directory-bin-1\n", cwd, global);
+      await runBin("directory-bin-2", "directory-bin-2\n", cwd, global);
+      await runBin("map-bin-1", "map-bin-1\n", cwd, global);
+      await runBin("map-bin-2", "map-bin-2\n", cwd, global);
+    });
+  }
+
+  async function runBin(binName: string, expected: string, cwd: string, global: boolean) {
+    const args = [bunExe(), ...(global ? ["run"] : []), `${!isWindows && global ? "./" : ""}${binName}`];
+    const result = Bun.spawn({
+      cmd: args,
+      stdout: "pipe",
+      stderr: "pipe",
+      cwd,
+      env,
+    });
+
+    const out = await Bun.readableStreamToText(result.stdout);
+    expect(out).toEqual(expected);
+    const err = await Bun.readableStreamToText(result.stderr);
+    expect(err).toBeEmpty();
+    expect(await result.exited).toBe(0);
+  }
 });
 
 test("it should install with missing bun.lockb, node_modules, and/or cache", async () => {
@@ -3763,7 +4364,8 @@ describe("update", () => {
       "+ uses-what-bin@1.5.0",
       "+ what-bin@1.5.0",
       "",
-      expect.stringContaining("20 packages installed"),
+      // Due to optional-native dependency, this can be either 20 or 19 packages
+      expect.stringMatching(/(?:20|19) packages installed/),
       "",
       "Blocked 1 postinstall. Run `bun pm untrusted` for details.",
       "",
@@ -4217,7 +4819,7 @@ test("duplicate dependency in optionalDependencies maintains sort order", async 
   });
 
   const out = await Bun.readableStreamToText(stdout);
-  expect(out).toMatchSnapshot();
+  expect(out.replaceAll(`${port}`, "4873")).toMatchSnapshot();
   expect(await exited).toBe(0);
 });
 
@@ -5985,6 +6587,56 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
     });
 
     describe("--trust", async () => {
+      test("unhoisted untrusted scripts, none at root node_modules", async () => {
+        await Promise.all([
+          write(
+            join(packageDir, "package.json"),
+            JSON.stringify({
+              name: "foo",
+              dependencies: {
+                // prevents real `uses-what-bin` from hoisting to root
+                "uses-what-bin": "npm:a-dep@1.0.3",
+              },
+              workspaces: ["pkg1"],
+            }),
+          ),
+          write(
+            join(packageDir, "pkg1", "package.json"),
+            JSON.stringify({
+              name: "pkg1",
+              dependencies: {
+                "uses-what-bin": "1.0.0",
+              },
+            }),
+          ),
+        ]);
+
+        await runBunInstall(testEnv, packageDir);
+
+        const results = await Promise.all([
+          exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin")),
+          exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")),
+        ]);
+
+        expect(results).toEqual([true, false]);
+
+        const { stderr, exited } = spawn({
+          cmd: [bunExe(), "pm", "trust", "--all"],
+          cwd: packageDir,
+          stdout: "ignore",
+          stderr: "pipe",
+          env: testEnv,
+        });
+
+        const err = await Bun.readableStreamToText(stderr);
+        expect(err).not.toContain("error:");
+
+        expect(await exited).toBe(0);
+
+        expect(
+          await exists(join(packageDir, "node_modules", "pkg1", "node_modules", "uses-what-bin", "what-bin.txt")),
+        ).toBeTrue();
+      });
       const trustTests = [
         {
           label: "only name",
@@ -7268,6 +7920,66 @@ describe("semver", () => {
     expect(err).toContain('InvalidDependencyVersion parsing version "pre-1 || pre-2"');
     expect(await exited).toBe(1);
     expect(out).toBeEmpty();
+  });
+});
+
+test("doesn't error when the migration is out of sync", async () => {
+  const cwd = tempDirWithFiles("out-of-sync-1", {
+    "package.json": JSON.stringify({
+      "devDependencies": {
+        "no-deps": "1.0.0",
+      },
+    }),
+    "package-lock.json": JSON.stringify({
+      "name": "reproo",
+      "lockfileVersion": 3,
+      "requires": true,
+      "packages": {
+        "": {
+          "name": "reproo",
+          "dependencies": {
+            "no-deps": "2.0.0",
+          },
+          "devDependencies": {
+            "no-deps": "1.0.0",
+          },
+        },
+        "node_modules/no-deps": {
+          "version": "1.0.0",
+          "resolved": `http://localhost:${port}/no-deps/-/no-deps-1.0.0.tgz`,
+          "integrity":
+            "sha512-v4w12JRjUGvfHDUP8vFDwu0gUWu04j0cv9hLb1Abf9VdaXu4XcrddYFTMVBVvmldKViGWH7jrb6xPJRF0wq6gw==",
+          "dev": true,
+        },
+      },
+    }),
+  });
+
+  const subprocess = Bun.spawn([bunExe(), "install"], {
+    env,
+    cwd,
+    stdio: ["ignore", "ignore", "inherit"],
+  });
+
+  await subprocess.exited;
+
+  expect(subprocess.exitCode).toBe(0);
+
+  let { stdout, exitCode } = Bun.spawnSync({
+    cmd: [bunExe(), "pm", "ls"],
+    env,
+    cwd,
+    stdio: ["ignore", "pipe", "inherit"],
+  });
+  let out = stdout.toString().trim();
+  expect(out).toContain("no-deps@1.0.0");
+  // only one no-deps is installed
+  expect(out.lastIndexOf("no-deps")).toEqual(out.indexOf("no-deps"));
+  expect(exitCode).toBe(0);
+
+  expect(await file(join(cwd, "node_modules/no-deps/package.json")).json()).toMatchObject({
+    version: "1.0.0",
+    name: "no-deps",
   });
 });
 
@@ -8786,4 +9498,165 @@ test("tarball `./` prefix, duplicate directory with file, and empty directory", 
       version: "1.0.0",
     },
   );
+});
+
+// TODO: setup verdaccio to run across multiple test files, then move this and a few other describe
+// scopes (update, hoisting, ...) to other files
+//
+// test/cli/install/registry/bun-install-windowsshim.test.ts:
+//
+// This test is to verify that BinLinkingShim.zig creates correct shim files as
+// well as bun_shim_impl.exe works in various edge cases. There are many fast
+// paths for many many cases.
+describe("windows bin linking shim should work", async () => {
+  if (!isWindows) return;
+
+  const packageDir = tmpdirSync();
+
+  await writeFile(
+    join(packageDir, "bunfig.toml"),
+    `
+[install]
+cache = false
+registry = "http://localhost:${port}/"
+`,
+  );
+
+  await writeFile(
+    join(packageDir, "package.json"),
+    JSON.stringify({
+      name: "foo",
+      version: "1.0.0",
+      dependencies: {
+        "bunx-bins": "*",
+      },
+    }),
+  );
+  console.log(packageDir);
+
+  var { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install", "--dev"],
+    cwd: packageDir,
+    stdout: "pipe",
+    stdin: "pipe",
+    stderr: "pipe",
+    env,
+  });
+
+  var err = await new Response(stderr).text();
+  var out = await new Response(stdout).text();
+  console.log(err);
+  expect(err).toContain("Saved lockfile");
+  expect(err).not.toContain("error:");
+  expect(err).not.toContain("panic:");
+  expect(err).not.toContain("not found");
+  expect(out.replace(/\s*\[[0-9\.]+m?s\]\s*$/, "").split(/\r?\n/)).toEqual([
+    "",
+    "+ bunx-bins@1.0.0",
+    "",
+    expect.stringContaining("1 package installed"),
+  ]);
+  expect(await exited).toBe(0);
+
+  const temp_bin_dir = join(packageDir, "temp");
+  mkdirSync(temp_bin_dir);
+
+  for (let i = 1; i <= 7; i++) {
+    const target = join(temp_bin_dir, "a".repeat(i) + ".exe");
+    copyFileSync(bunExe(), target);
+  }
+
+  copyFileSync(join(packageDir, "node_modules\\bunx-bins\\native.exe"), join(temp_bin_dir, "native.exe"));
+
+  const PATH = process.env.PATH + ";" + temp_bin_dir;
+
+  const bins = [
+    { bin: "bin1", name: "bin1" },
+    { bin: "bin2", name: "bin2" },
+    { bin: "bin3", name: "bin3" },
+    { bin: "bin4", name: "bin4" },
+    { bin: "bin5", name: "bin5" },
+    { bin: "bin6", name: "bin6" },
+    { bin: "bin7", name: "bin7" },
+    { bin: "bin-node", name: "bin-node" },
+    { bin: "bin-bun", name: "bin-bun" },
+    { bin: "native", name: "exe" },
+    { bin: "uses-native", name: `exe ${packageDir}\\node_modules\\bunx-bins\\uses-native.ts` },
+  ];
+
+  for (const { bin, name } of bins) {
+    test(`bun run ${bin} arg1 arg2`, async () => {
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "run", bin, "arg1", "arg2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
+      });
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+      expect(err.trim()).toBe("");
+      const out = await new Response(stdout).text();
+      expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+      expect(await exited).toBe(0);
+    });
+  }
+
+  for (const { bin, name } of bins) {
+    test(`bun --bun run ${bin} arg1 arg2`, async () => {
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "--bun", "run", bin, "arg1", "arg2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
+      });
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+      expect(err.trim()).toBe("");
+      const out = await new Response(stdout).text();
+      expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+      expect(await exited).toBe(0);
+    });
+  }
+
+  for (const { bin, name } of bins) {
+    test(`bun --bun x ${bin} arg1 arg2`, async () => {
+      var { stdout, stderr, exited } = spawn({
+        cmd: [bunExe(), "--bun", "x", bin, "arg1", "arg2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
+      });
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+      expect(err.trim()).toBe("");
+      const out = await new Response(stdout).text();
+      expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+      expect(await exited).toBe(0);
+    });
+  }
+
+  for (const { bin, name } of bins) {
+    test(`${bin} arg1 arg2`, async () => {
+      var { stdout, stderr, exited } = spawn({
+        cmd: [join(packageDir, "node_modules", ".bin", bin + ".exe"), "arg1", "arg2"],
+        cwd: packageDir,
+        stdout: "pipe",
+        stdin: "pipe",
+        stderr: "pipe",
+        env: mergeWindowEnvs([env, { PATH: PATH }]),
+      });
+      expect(stderr).toBeDefined();
+      const err = await new Response(stderr).text();
+      expect(err.trim()).toBe("");
+      const out = await new Response(stdout).text();
+      expect(out.trim()).toBe(`i am ${name} arg1 arg2`);
+      expect(await exited).toBe(0);
+    });
+  }
 });

@@ -299,7 +299,7 @@ pub fn longestCommonPathPosix(input: []const []const u8) []const u8 {
     return longestCommonPathGeneric(input, .posix);
 }
 
-threadlocal var relative_to_common_path_buf: [4096]u8 = undefined;
+threadlocal var relative_to_common_path_buf: bun.PathBuffer = undefined;
 
 /// Find a relative path from a common path
 // Loosely based on Node.js' implementation of path.relative
@@ -454,7 +454,7 @@ pub fn relativeToCommonPath(
     return out_slice;
 }
 
-pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+pub fn relativeNormalizedBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     if ((if (platform == .windows)
         strings.eqlCaseInsensitiveASCII(from, to, true)
     else
@@ -466,7 +466,11 @@ pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: P
     const two = [_][]const u8{ from, to };
     const common_path = longestCommonPathGeneric(&two, platform);
 
-    return relativeToCommonPath(common_path, from, to, &relative_to_common_path_buf, always_copy, platform);
+    return relativeToCommonPath(common_path, from, to, buf, always_copy, platform);
+}
+
+pub fn relativeNormalized(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    return relativeNormalizedBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
 }
 
 pub fn dirname(str: []const u8, comptime platform: Platform) []const u8 {
@@ -507,7 +511,17 @@ pub fn relative(from: []const u8, to: []const u8) []const u8 {
     return relativePlatform(from, to, .auto, false);
 }
 
-pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+pub fn relativeZ(from: []const u8, to: []const u8) [:0]const u8 {
+    return relativeBufZ(&relative_to_common_path_buf, from, to, .auto, true);
+}
+
+pub fn relativeBufZ(buf: []u8, from: []const u8, to: []const u8) [:0]const u8 {
+    const rel = relativePlatformBuf(buf, from, to, .auto, true);
+    buf[rel.len] = 0;
+    return buf[0..rel.len :0];
+}
+
+pub fn relativePlatformBuf(buf: []u8, from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
     const normalized_from = if (platform.isAbsolute(from)) brk: {
         if (platform == .loose and bun.Environment.isWindows) {
             // we want to invoke the windows resolution behavior but end up with a
@@ -548,7 +562,11 @@ pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Pla
         platform,
     );
 
-    return relativeNormalized(normalized_from, normalized_to, platform, always_copy);
+    return relativeNormalizedBuf(buf, normalized_from, normalized_to, platform, always_copy);
+}
+
+pub fn relativePlatform(from: []const u8, to: []const u8, comptime platform: Platform, comptime always_copy: bool) []const u8 {
+    return relativePlatformBuf(&relative_to_common_path_buf, from, to, platform, always_copy);
 }
 
 pub fn relativeAlloc(allocator: std.mem.Allocator, from: []const u8, to: []const u8) ![]const u8 {
@@ -758,16 +776,16 @@ pub fn normalizeStringGenericTZ(
     if (isWindows and !options.allow_above_root) {
         if (volLen > 0) {
             if (options.add_nt_prefix) {
-                @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "\\??\\"));
+                @memcpy(buf[buf_i .. buf_i + 4], comptime strings.literal(T, "\\??\\"));
                 buf_i += 4;
             }
             if (path_[1] != ':') {
                 // UNC paths
                 if (options.add_nt_prefix) {
-                    @memcpy(buf[buf_i .. buf_i + 4], &comptime strings.literalBuf(T, "UNC" ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 4], comptime strings.literal(T, "UNC" ++ sep_str));
                     buf_i += 2;
                 } else {
-                    @memcpy(buf[buf_i .. buf_i + 2], &comptime strings.literalBuf(T, sep_str ++ sep_str));
+                    @memcpy(buf[buf_i .. buf_i + 2], comptime strings.literal(T, sep_str ++ sep_str));
                 }
                 @memcpy(buf[buf_i + 2 .. buf_i + indexOfThirdUNCSlash + 1], path_[2 .. indexOfThirdUNCSlash + 1]);
                 buf[buf_i + indexOfThirdUNCSlash] = options.separator;
@@ -866,10 +884,10 @@ pub fn normalizeStringGenericTZ(
                 }
             } else if (options.allow_above_root) {
                 if (buf_i > buf_start) {
-                    buf[buf_i..][0..3].* = comptime strings.literalBuf(T, sep_str ++ "..");
+                    buf[buf_i..][0..3].* = (comptime strings.literal(T, sep_str ++ "..")).*;
                     buf_i += 3;
                 } else {
-                    buf[buf_i..][0..2].* = comptime strings.literalBuf(T, "..");
+                    buf[buf_i..][0..2].* = (comptime strings.literal(T, "..")).*;
                     buf_i += 2;
                 }
                 dotdot = buf_i;
@@ -1915,7 +1933,7 @@ pub const PosixToWinNormalizer = struct {
             if (root.len == 1) {
                 assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
-                    const cwd = try std.os.getcwd(buf);
+                    const cwd = try std.posix.getcwd(buf);
                     assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
                     assert(source_root.ptr == source_root.ptr);
@@ -1941,7 +1959,7 @@ pub const PosixToWinNormalizer = struct {
             if (root.len == 1) {
                 assert(isSepAny(root[0]));
                 if (bun.strings.isWindowsAbsolutePathMissingDriveLetter(u8, maybe_posix_path)) {
-                    const cwd = try std.os.getcwd(buf);
+                    const cwd = try std.posix.getcwd(buf);
                     assert(cwd.ptr == buf.ptr);
                     const source_root = windowsFilesystemRoot(cwd);
                     assert(source_root.ptr == source_root.ptr);

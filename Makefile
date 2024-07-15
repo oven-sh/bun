@@ -28,6 +28,9 @@ DOCKER_BUILDARCH = arm64
 BREW_PREFIX_PATH = /opt/homebrew
 DEFAULT_MIN_MACOS_VERSION = 11.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+ifeq ($(OS_NAME),linux)
+MARCH_NATIVE = -march=armv8-a+crc -mtune=ampere1
+endif
 else
 ARCH_NAME = x64
 DOCKER_BUILDARCH = amd64
@@ -129,7 +132,7 @@ SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
-BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)

@@ -2677,7 +2677,7 @@ pub const PathTemplate = struct {
         // reminder: this cannot be base64 or any encoding which is case
         // sensitive as these hashes are often used in file paths, in which
         // Windows and some macOS systems treat as case-insensitive.
-        comptime std.debug.assert(fmt.len == 0);
+        comptime assert(fmt.len == 0);
         const in_bytes = std.mem.asBytes(&int);
         const chars = "0123456789abcdefghjkmnpqrstvwxyz";
         try writer.writeAll(&.{

@@ -2673,6 +2673,10 @@ pub const PathTemplate = struct {
         // is not exactly that, but it will appear as such. the character list
         // chosen omits similar characters in the unlikely case someone is
         // trying to memorize a hash.
+        //
+        // reminder: this cannot be base64 or any encoding which is case
+        // sensitive as these hashes are often used in file paths, in which
+        // Windows and some macOS systems treat as case-insensitive.
         comptime std.debug.assert(fmt.len == 0);
         const in_bytes = std.mem.asBytes(&int);
         const chars = "0123456789abcdefghjkmnpqrstvwxyz";

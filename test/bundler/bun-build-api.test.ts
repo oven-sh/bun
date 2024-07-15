@@ -344,7 +344,7 @@ describe("Bun.build", () => {
 
     // ensure that the hashes are in the path
     for (const out of allFiles) {
-      expect(out.path).toInclude(out.hash);
+      expect(out.path).toInclude(out.hash!);
     }
 
     Bun.gc(true);

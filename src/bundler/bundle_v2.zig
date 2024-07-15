@@ -9153,13 +9153,10 @@ const LinkerContext = struct {
             // paths of each chunk. This can technically be done in parallel but it
             // probably doesn't matter so much because we're not hashing that much data.
             for (chunks, 0..) |*chunk, index| {
-                // Only compute the final hash if required
-                if (chunk.template.needs(.hash)) {
-                    var hash: ContentHasher = .{};
-                    c.appendIsolatedHashesForImportedChunks(&hash, chunks, @intCast(index), &chunk_visit_map);
-                    chunk_visit_map.setAll(false);
-                    chunk.template.placeholder.hash = hash.digest();
-                }
+                var hash: ContentHasher = .{};
+                c.appendIsolatedHashesForImportedChunks(&hash, chunks, @intCast(index), &chunk_visit_map);
+                chunk_visit_map.setAll(false);
+                chunk.template.placeholder.hash = hash.digest();
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch bun.outOfMemory();
                 bun.path.platformToPosixInPlace(u8, rel_path);
@@ -9495,7 +9492,7 @@ const LinkerContext = struct {
                                     .allocator = Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                                 },
                             },
-                            .hash = chunk.isolated_hash,
+                            .hash = chunk.template.placeholder.hash,
                             .loader = .js,
                             .input_path = input_path,
                             .display_size = @as(u32, @truncate(display_size)),
@@ -9811,7 +9808,7 @@ const LinkerContext = struct {
                             c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
                         else
                             .js,
-                        .hash = chunk.isolated_hash,
+                        .hash = chunk.template.placeholder.hash,
                         .output_kind = if (chunk.entry_point.is_entry_point)
                             c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
                         else

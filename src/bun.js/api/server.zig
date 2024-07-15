@@ -1551,8 +1551,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
         fn deinit(this: *RequestContext) void {
-            ctxLog("deinit<d> ({*})<r>", .{this});
-
             this.detachResponse();
             // TODO: has_marked_complete is doing something?
             this.flags.has_marked_complete = true;
@@ -1931,7 +1929,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (this.request_body) |body| {
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
-
                     if (body.value == .Locked) {
                         body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
                         any_js_calls = true;
@@ -1940,10 +1937,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                 if (this.response_ptr) |response| {
                     if (response.body.value == .Locked) {
-                        var readable_stream = response.body.value.Locked.readable;
+                        var strong_readable = response.body.value.Locked.readable;
                         response.body.value.Locked.readable = .{};
-                        defer readable_stream.deinit();
-                        if (readable_stream.get()) |readable| {
+                        defer strong_readable.deinit();
+                        if (strong_readable.get()) |readable| {
                             readable.abort(this.server.globalThis);
                             any_js_calls = true;
                         }
@@ -2616,6 +2613,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
+            if(this.resp) |resp| {
+                resp.clearAborted();
+            }
             this.resp = null;
         }
 

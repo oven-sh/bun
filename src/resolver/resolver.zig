@@ -3836,16 +3836,21 @@ pub const Resolver = struct {
         // https://github.com/microsoft/TypeScript/issues/4595
         if (strings.lastIndexOfChar(base, '.')) |last_dot| {
             const ext = base[last_dot..base.len];
-            if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") and (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path)))) {
+            if ((strings.eqlComptime(ext, ".js") or strings.eqlComptime(ext, ".jsx") or strings.eqlComptime(ext, ".mjs") and
+                (!FeatureFlags.disable_auto_js_to_ts_in_node_modules or !strings.pathContainsNodeModulesFolder(path))))
+            {
                 const segment = base[0..last_dot];
                 var tail = bufs(.load_as_file)[path.len - base.len ..];
                 bun.copy(u8, tail, segment);
 
-                const exts = .{ ".ts", ".tsx" };
+                const exts: []const string = if (strings.eqlComptime(ext, ".mjs"))
+                    &.{".mts"}
+                else
+                    &.{ ".ts", ".tsx", ".mts" };
 
-                inline for (exts) |ext_to_replace| {
+                for (exts) |ext_to_replace| {
                     var buffer = tail[0 .. segment.len + ext_to_replace.len];
-                    buffer[segment.len..buffer.len][0..ext_to_replace.len].* = ext_to_replace.*;
+                    @memcpy(buffer[segment.len..buffer.len][0..ext_to_replace.len], ext_to_replace);
 
                     if (entries.get(buffer)) |query| {
                         if (query.entry.kind(rfs, r.store_fd) == .file) {

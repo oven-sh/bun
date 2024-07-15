@@ -1536,9 +1536,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.render(response);
         }
 
-          pub fn isDeadRequest(this: *RequestContext) bool {
+        pub fn isDeadRequest(this: *RequestContext) bool {
             if (this.ref_count > 1) return false;
-
 
             if (this.request_body) |body| {
                 if (body.value == .Locked) {
@@ -2613,7 +2612,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
-            if(this.resp) |resp| {
+            if (this.resp) |resp| {
                 resp.clearAborted();
             }
             this.resp = null;

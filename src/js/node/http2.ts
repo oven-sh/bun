@@ -27,7 +27,6 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
-const StringPrototypeSlice = String.prototype.slice;
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -1261,8 +1260,29 @@ function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Fu
   return ClientHttp2Session.connect(url, options, listener);
 }
 
-function createServer() {
-  throwNotImplemented("node:http2 createServer", 8823);
+class Http2Server extends net.Server {
+  static #connectionListener(self: Http2Server, socket: TLSSocket | Socket) {
+    // const session = new ClientHttp2Session(socket);
+    // self.emit("session", session);
+
+    console.log("connectionListener", socket);
+  }
+  constructor(options, onRequestHandler) {
+    if (typeof options === "function") {
+      onRequestHandler = options;
+      options = {};
+    } else if (options == null || typeof options == "object") {
+      options = {};
+    } else {
+      throw new TypeError("ERR_INVALID_ARG_TYPE: options must be an object");
+    }
+    super(options, Http2Server.#connectionListener);
+
+    this.on("stream", onRequestHandler);
+  }
+}
+function createServer(options, onRequestHandler) {
+  return new Http2Server(options, onRequestHandler);
 }
 function createSecureServer() {
   throwNotImplemented("node:http2 createSecureServer", 8823);

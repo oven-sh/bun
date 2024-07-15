@@ -2917,9 +2917,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     RETURN_IF_EXCEPTION(scope, {});
 
     if (auto* exception = returnedException.get()) {
-#if BUN_DEBUG
-        Zig::GlobalObject::reportUncaughtExceptionAtEventLoop(globalObject, exception);
-#endif
         scope.throwException(globalObject, exception->value());
         returnedException.clear();
         return {};

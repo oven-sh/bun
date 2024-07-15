@@ -39,3 +39,4 @@ new_test("ipc-throw.ts");
 new_test("worker-disconnect-on-error.ts");
 new_test("bind-twice.ts");
 new_test("rr-handle-keep-loop-alive.ts");
+new_test("worker-exit.ts");

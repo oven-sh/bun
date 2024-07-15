@@ -123,27 +123,12 @@ pub fn exitWide(code: u32) noreturn {
     bun.C.quick_exit(@bitCast(code));
 }
 
-pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
-    if (comptime @TypeOf(sig) == bun.SignalCode) {
-        return raiseIgnoringPanicHandler(@intFromEnum(sig));
-    }
-
+pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
-
-    if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.posix.SIG.STOP and sig != std.posix.SIG.KILL) {
-            const act = std.posix.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.posix.SIG.DFL)) },
-                .mask = std.posix.empty_sigset,
-                .flags = 0,
-            };
-            std.posix.sigaction(@intCast(sig), &act, null) catch {};
-        }
-    }
-
     Output.Source.Stdio.restore();
 
-    _ = std.c.raise(sig);
+    bun.crash_handler.resetSegfaultHandler();
+    _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
 

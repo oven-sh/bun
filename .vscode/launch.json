@@ -145,7 +145,11 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/bun-debug",
+<<<<<<< HEAD
       "args": ["run", "${file}"],
+=======
+      "args": ["run", "${fileBasename}"],
+>>>>>>> c935f864d (fix: make raiseIgnoringPanicHandler ignore the panic handler)
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",

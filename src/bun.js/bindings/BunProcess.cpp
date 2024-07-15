@@ -205,7 +205,7 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
     auto* release = JSC::constructEmptyObject(globalObject);
 
     // SvelteKit compatibility hack
-    release->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, WTF::String("node"_s)), 0);
+    release->putDirect(vm, vm.propertyNames->name, jsString(vm, WTF::String("node"_s)), 0);
 
     release->putDirect(vm, Identifier::fromString(vm, "lts"_s), jsBoolean(false), 0);
     release->putDirect(vm, Identifier::fromString(vm, "sourceUrl"_s), jsString(vm, WTF::String(std::span { Bun__githubURL, strlen(Bun__githubURL) })), 0);
@@ -1068,7 +1068,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_emitWarning, (JSGlobalObject * lexicalGlobalObj
         return createError(globalObject, str);
     })();
 
-    errorInstance->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
+    errorInstance->putDirect(vm, vm.propertyNames->name, jsString(vm, String("warn"_s)), JSC::PropertyAttribute::DontEnum | 0);
 
     auto ident = Identifier::fromString(vm, "warning"_s);
     if (process->wrapped().hasEventListeners(ident)) {

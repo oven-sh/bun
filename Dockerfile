@@ -213,13 +213,14 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
+COPY scripts ${BUN_DIR}/scripts
 
 ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd ${BUN_DIR} \
-  && make mimalloc \
+  && bash ./scripts/build-mimalloc.sh \
   && rm -rf src/deps/mimalloc Makefile
 
 FROM bun-base as mimalloc-debug
@@ -298,6 +299,7 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
@@ -307,7 +309,7 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd ${BUN_DIR} \
-  && make boringssl \
+  && bash ./scripts/build-boringssl.sh \
   && rm -rf src/deps/boringssl Makefile
 
 
@@ -323,12 +325,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make zstd
+  && bash ./scripts/build-zstd.sh \
+  && rm -rf src/deps/zstd scripts
 
 FROM bun-base as ls-hpack
 
@@ -342,12 +346,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make lshpack
+  && bash ./scripts/build-lshpack.sh \
+  && rm -rf src/deps/ls-hpack scripts
 
 FROM bun-base-with-zig as bun-identifier-cache
 

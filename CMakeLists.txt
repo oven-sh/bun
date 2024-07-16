@@ -18,6 +18,8 @@ set(CMAKE_C_STANDARD_REQUIRED ON)
 # Used in process.version, process.versions.node, napi, and elsewhere
 set(REPORTED_NODEJS_VERSION "22.3.0")
 
+set(CMAKE_POSITION_INDEPENDENT_CODE OFF)
+
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)

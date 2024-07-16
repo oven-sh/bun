@@ -6,7 +6,10 @@ test("Bun.file in CryptoHasher is not supported yet", () => {
   expect(() => new Bun.CryptoHasher("sha1").update(Bun.file(import.meta.path))).toThrow();
   expect(() => new Bun.SHA1().update(Bun.file(import.meta.path))).toThrow();
 });
-
+test("CryptoHasher update should throw when no parameter is set", () => {
+  // @ts-expect-error
+  expect(() => new Bun.CryptoHasher("sha1").update()).toThrow();
+});
 describe("Hash is consistent", () => {
   const sourceInputs = [
     Buffer.from([

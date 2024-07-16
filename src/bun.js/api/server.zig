@@ -1802,40 +1802,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_for_request_body) {
-                    this.flags.is_waiting_for_request_body = false;
-                    resp.clearOnData();
-                }
-                resp.end(data, closeConnection);
                 this.detachResponse();
+                resp.end(data, closeConnection);
             }
         }
 
         pub fn endStream(this: *RequestContext, closeConnection: bool) void {
             ctxLog("endStream", .{});
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_for_request_body) {
-                    this.flags.is_waiting_for_request_body = false;
-                    resp.clearOnData();
-                }
-
+                this.detachResponse();
                 // This will send a terminating 0\r\n\r\n chunk to the client
                 // We only want to do that if they're still expecting a body
                 // We cannot call this function if the Content-Length header was previously set
                 if (resp.state().isResponsePending())
                     resp.endStream(closeConnection);
-                this.detachResponse();
             }
         }
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
             if (this.resp) |resp| {
-                if (this.flags.is_waiting_for_request_body) {
-                    this.flags.is_waiting_for_request_body = false;
-                    resp.clearOnData();
-                }
-                resp.endWithoutBody(closeConnection);
                 this.detachResponse();
+                resp.endWithoutBody(closeConnection);
             }
         }
 
@@ -1902,6 +1889,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(!this.flags.aborted);
             // mark request as aborted
             this.flags.aborted = true;
+            // we should not use the response anymore
+            this.resp = null;
             var any_js_calls = false;
             var vm = this.server.vm;
             defer {
@@ -2627,6 +2616,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
+            if (this.resp) |resp| {
+                // onAbort should have set this to null
+                bun.assert(!this.flags.aborted);
+                if (this.flags.is_waiting_for_request_body) {
+                    this.flags.is_waiting_for_request_body = false;
+                    resp.clearOnData();
+                }
+                if (this.flags.has_abort_handler) {
+                    resp.clearAborted();
+                    this.flags.has_abort_handler = false;
+                }
+            }
             this.resp = null;
         }
 

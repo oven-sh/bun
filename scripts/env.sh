@@ -35,6 +35,11 @@ if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm
   export CXXFLAGS="$CXXFLAGS -march=armv8-a+crc -mtune=ampere1 "
 fi
 
+if 9[[ $(uname -s) == 'Linux' ]]; then
+  export CFLAGS="$CFLAGS -fno-asynchronous-unwind-tables "
+  export CXXFLAGS="$CXXFLAGS -fno-asynchronous-unwind-tables "
+fi
+
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"
   -DCMAKE_CXX_COMPILER="${CXX}"

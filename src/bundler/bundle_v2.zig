@@ -9146,7 +9146,7 @@ const LinkerContext = struct {
             };
             var duplicates_map: bun.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
 
-            var chunk_visit_map = try BitSet.initEmpty(c.allocator, chunks.len);
+            var chunk_visit_map = try AutoBitSet.initEmpty(c.allocator, chunks.len);
             defer chunk_visit_map.deinit(c.allocator);
 
             // Compute the final hashes of each chunk, then use those to create the final
@@ -9545,7 +9545,7 @@ const LinkerContext = struct {
         hash: *ContentHasher,
         chunks: []Chunk,
         index: u32,
-        chunk_visit_map: *BitSet,
+        chunk_visit_map: *AutoBitSet,
     ) void {
         // Only visit each chunk at most once. This is important because there may be
         // cycles in the chunk import graph. If there's a cycle, we want to include

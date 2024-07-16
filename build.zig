@@ -338,7 +338,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
-        .pic = true,
+        .pic = false,
         .strip = false, // stripped at the end
     });
 
@@ -359,9 +359,9 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
 
     if (opts.os == .linux) {
-        obj.link_emit_relocs = true;
-        obj.link_eh_frame_hdr = true;
-        obj.link_function_sections = true;
+        obj.link_emit_relocs = false;
+        obj.link_eh_frame_hdr = false;
+        obj.link_function_sections = false;
 
         if (opts.optimize == .Debug) {
             obj.root_module.valgrind = true;

@@ -2627,9 +2627,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
-            if (this.resp) |resp| {
-                resp.clearAborted();
-            }
             this.resp = null;
         }
 

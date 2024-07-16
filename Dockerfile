@@ -517,7 +517,8 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
-COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/*.a ${BUN_DIR}/build/
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/*.o ${BUN_DIR}/build/ 
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 
 WORKDIR $BUN_DIR/build

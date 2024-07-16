@@ -1209,6 +1209,7 @@ endif()
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
         "-fuse-ld=lld"
+        "-Wl,-z,lazy"
         "-Wl,-z,norelro"
         "-static-libstdc++"
         "-static-libgcc"

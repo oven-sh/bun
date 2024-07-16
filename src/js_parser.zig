@@ -3373,6 +3373,10 @@ pub const Parser = struct {
     }
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
+        const prev_action = bun.crash_handler.current_action;
+        defer bun.crash_handler.current_action = prev_action;
+        bun.crash_handler.current_action = .{ .parse = self.source.path.text };
+
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -3461,6 +3465,8 @@ pub const Parser = struct {
         if (self.log.errors > orig_error_count) {
             return error.SyntaxError;
         }
+
+        bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
@@ -18966,7 +18972,7 @@ fn NewParser_(
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
                         const use = p.symbol_uses.getPtr(id.ref).?;
-                        use.count_estimate -= 1;
+                        use.count_estimate -|= 1;
                         // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead

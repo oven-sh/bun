@@ -1182,7 +1182,6 @@ if(WIN32)
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
-        -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
@@ -1211,7 +1210,6 @@ if(UNIX AND NOT APPLE)
         "-fuse-ld=lld"
         "-static-libstdc++"
         "-static-libgcc"
-        "-Wl,-z,now"
         "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"

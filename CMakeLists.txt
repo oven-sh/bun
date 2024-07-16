@@ -1202,13 +1202,11 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        "-fuse-ld=lld"
-        "-fno-pic"
-        "-no-pie"
-        "-Wl,-z,lazy"
-        "-Wl,-z,norelro"
-        "-static-libstdc++"
-        "-static-libgcc"
+        -fuse-ld=lld
+        -fno-pic
+        -static-libstdc++
+        -static-libgcc
+        "-Wl,-no-pie,-relative-cap-relocs"
         "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
@@ -1238,6 +1236,8 @@ if(UNIX AND NOT APPLE)
         "-rdynamic"
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
+        -Wl,-z,lazy
+        -Wl,-z,norelro
     )
 
     target_link_libraries(${bun} PRIVATE "c")

@@ -342,6 +342,7 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         // https://github.com/ziglang/zig/issues/17430
         .pic = true,
 
+        .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
     obj.bundle_compiler_rt = false;

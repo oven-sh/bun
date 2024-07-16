@@ -90,6 +90,8 @@ RUN install_packages \
   clangd-${LLVM_VERSION} \
   libc++-${LLVM_VERSION}-dev \
   libc++abi-${LLVM_VERSION}-dev \
+  llvm-${LLVM_VERSION}-runtime \
+  llvm-${LLVM_VERSION}-dev \
   make \
   cmake \
   ninja-build \
@@ -123,6 +125,7 @@ RUN install_packages \
   && ln -sf /usr/bin/clang /usr/bin/c99 \
   && ln -sf /usr/bin/clang++ /usr/bin/c++ \
   && ln -sf /usr/bin/clang++ /usr/bin/g++ \
+  && ln -sf /usr/bin/llvm-ar /usr/bin/ar \
   && ln -sf /usr/bin/clang /usr/bin/gcc \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \

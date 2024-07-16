@@ -1136,9 +1136,6 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
-            if (std.mem.indexOf(u8, import_path, "Test") != null)
-                @breakpoint();
-
             var normalizer = ResolvePath.PosixToWinNormalizer{};
             if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{

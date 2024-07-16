@@ -1535,10 +1535,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctx.render(response);
         }
+        
+        pub fn shouldRenderMissing(this: *RequestContext) bool {
+            // If we did not respond yet, we should render missing
+            // To allow this all the conditions above should be true:
+            // 1 - still has a response (not detached)
+            // 2 - not aborted
+            // 3 - not marked completed
+            // 4 - not marked pending
+            // 5 - is the only reference of the context
+            // 6 - is not waiting for request body
+            // 7 - did not call sendfile
+            return this.resp != null and !this.flags.aborted and !this.flags.has_marked_complete and !this.flags.has_marked_pending and this.ref_count == 1 and !this.flags.is_waiting_for_request_body and !this.flags.has_sendfile_ctx;
+        }
 
         pub fn isDeadRequest(this: *RequestContext) bool {
+            // check if has pending promise or extra reference (aka not the only reference)
             if (this.ref_count > 1) return false;
-
+            // check if the body is Locked (streaming)
             if (this.request_body) |body| {
                 if (body.value == .Locked) {
                     return false;
@@ -6317,7 +6331,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.ref_count == 1 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
+            if (ctx.shouldRenderMissing()) {
                 ctx.renderMissing();
                 return;
             }
@@ -6386,7 +6400,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return;
             }
 
-            if (!ctx.flags.has_marked_complete and !ctx.flags.has_marked_pending and ctx.ref_count == 1 and !ctx.flags.is_waiting_for_request_body and !ctx.flags.has_sendfile_ctx) {
+            if (ctx.shouldRenderMissing()) {
                 ctx.renderMissing();
                 return;
             }

@@ -2772,7 +2772,7 @@ pub const Crypto = struct {
             const thisValue = callframe.this();
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
-            if(input.isEmptyOrUndefinedOrNull()) {
+            if (input.isEmptyOrUndefinedOrNull()) {
                 globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return JSC.JSValue.zero;
             }

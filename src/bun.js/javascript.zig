@@ -564,10 +564,13 @@ comptime {
 }
 
 pub const ExitHandler = struct {
-    exit_code: u8 = 0,
+    exit_code: ?u8 = null,
 
-    pub export fn Bun__getExitCode(vm: *VirtualMachine) u8 {
-        return vm.exit_handler.exit_code;
+    pub export fn Bun__getExitCode(vm: *VirtualMachine) JSC.JSValue {
+        if (vm.exit_handler.exit_code) |code| {
+            return JSValue.jsNumber(code);
+        }
+        return JSValue.jsUndefined();
     }
 
     pub export fn Bun__setExitCode(vm: *VirtualMachine, code: u8) void {
@@ -581,7 +584,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnExit(vm.global, this.exit_code);
+        Process__dispatchOnExit(vm.global, this.exit_code orelse 0);
         if (vm.isMainThread()) {
             Bun__closeAllSQLiteDatabasesForTermination();
         }
@@ -590,7 +593,7 @@ pub const ExitHandler = struct {
     pub fn dispatchOnBeforeExit(this: *ExitHandler) void {
         JSC.markBinding(@src());
         const vm: *VirtualMachine = @alignCast(@fieldParentPtr("exit_handler", this));
-        Process__dispatchOnBeforeExit(vm.global, this.exit_code);
+        Process__dispatchOnBeforeExit(vm.global, this.exit_code orelse 0);
     }
 };
 

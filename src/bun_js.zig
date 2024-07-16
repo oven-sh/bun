@@ -418,7 +418,7 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
-        if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
+        if (this.any_unhandled and this.vm.exit_handler.exit_code == null) {
             this.vm.exit_handler.exit_code = 1;
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
@@ -428,7 +428,7 @@ pub const Run = struct {
                 .{Global.unhandled_error_bun_version_string},
             );
         }
-        const exit_code = this.vm.exit_handler.exit_code;
+        const exit_code = this.vm.exit_handler.exit_code orelse 0;
 
         vm.onExit();
 
@@ -441,7 +441,7 @@ pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callfr
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
-    Global.exit(global.bunVM().exit_handler.exit_code);
+    Global.exit(global.bunVM().exit_handler.exit_code orelse 0);
     return .undefined;
 }
 
@@ -449,7 +449,7 @@ pub export fn Bun__onRejectEntryPointResult(global: *JSC.JSGlobalObject, callfra
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];
     result.print(global, .Log, .Log);
-    Global.exit(global.bunVM().exit_handler.exit_code);
+    Global.exit(global.bunVM().exit_handler.exit_code orelse 0);
     return .undefined;
 }
 

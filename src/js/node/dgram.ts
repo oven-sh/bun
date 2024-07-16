@@ -400,7 +400,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       },
     }).$then(
       socket => {
-        if (state.unrefOnBind) socket.unref();
+        if (state.unrefOnBind) {
+          socket.unref();
+          state.unrefOnBind = false;
+        }
         state.handle.socket = socket;
         state.receiving = true;
         state.bindState = BIND_STATE_BOUND;

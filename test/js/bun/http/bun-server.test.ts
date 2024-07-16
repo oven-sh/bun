@@ -1,4 +1,4 @@
-import type { ServerWebSocket, Server } from "bun";
+import type { ServerWebSocket, Server, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
 import path from "path";
@@ -542,4 +542,84 @@ test("should be able to async upgrade using custom protocol", async () => {
   };
 
   expect(await promise).toBe(true);
+});
+
+test("should be able to abrubtly close a upload request", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    hostname: "localhost",
+    maxRequestBodySize: 1024 * 1024 * 1024 * 16,
+    async fetch(req) {
+      let total_size = 0;
+      req.signal.addEventListener("abort", resolve);
+
+      for await (const chunk of req.body as ReadableStream) {
+        total_size += chunk.length;
+        if (total_size > 1024 * 1024 * 1024) {
+          return new Response("too big", { status: 413 });
+        }
+      }
+
+      return new Response("Received " + total_size);
+    },
+  });
+  // ~100KB
+  const chunk = Buffer.alloc(1024 * 100, "a");
+  // ~1GB
+  const MAX_PAYLOAD = 1024 * 1024 * 1024;
+  const request = Buffer.from(
+    `POST / HTTP/1.1\r\nHost: ${server.hostname}:${server.port}\r\nContent-Length: ${MAX_PAYLOAD}\r\n\r\n`,
+  );
+
+  type SocketInfo = { state: number; pending: Buffer | null };
+  function tryWritePending(socket: Socket<SocketInfo>) {
+    if (socket.data.pending === null) {
+      // first write
+      socket.data.pending = request;
+    }
+    const data = socket.data.pending as Buffer;
+    const written = socket.write(data);
+    if (written < data.byteLength) {
+      // partial write
+      socket.data.pending = data.slice(0, written);
+      return false;
+    }
+
+    // full write got to next state
+    if (socket.data.state === 0) {
+      // request sent -> send chunk
+      socket.data.pending = chunk;
+    } else {
+      // chunk sent -> delay shutdown
+      setTimeout(() => socket.shutdown(), 100);
+    }
+    socket.data.state++;
+    socket.flush();
+    return true;
+  }
+
+  function trySend(socket: Socket<SocketInfo>) {
+    while (socket.data.state < 2) {
+      if (!tryWritePending(socket)) {
+        return;
+      }
+    }
+    return;
+  }
+  await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    data: {
+      state: 0,
+      pending: null,
+    } as SocketInfo,
+    socket: {
+      open: trySend,
+      drain: trySend,
+      data(socket, data) {},
+    },
+  });
+  await promise;
+  expect().pass();
 });

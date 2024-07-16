@@ -1467,7 +1467,6 @@ file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
 add_library(brotli STATIC ${BROTLI_FILES})
 target_include_directories(brotli PRIVATE "${BROTLI_SRC}/include")
 target_compile_definitions(brotli PRIVATE "BROTLI_STATIC")
-target_compile_options(brotli PRIVATE -fPIC)
 
 if(WIN32)
     target_compile_options(brotli PRIVATE /MT /U_DLL)

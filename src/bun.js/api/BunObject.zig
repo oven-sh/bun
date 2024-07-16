@@ -2772,6 +2772,10 @@ pub const Crypto = struct {
             const thisValue = callframe.this();
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
+            if (input.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                return JSC.JSValue.zero;
+            }
             const encoding = arguments.ptr[1];
             const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
                 globalThis.throwInvalidArguments("expected blob, string or buffer", .{});

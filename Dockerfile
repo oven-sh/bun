@@ -54,10 +54,6 @@ ENV BUILDARCH=${BUILDARCH}
 ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
 ENV BUN_ENABLE_LTO 1
 
-ENV CXX=clang++-${LLVM_VERSION}
-ENV CC=clang-${LLVM_VERSION}
-ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
-ENV LD=lld-${LLVM_VERSION}
 ENV LC_CTYPE=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
@@ -120,6 +116,13 @@ RUN install_packages \
   && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
   && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
   && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+  && ln -sf /usr/bin/ld.lld /usr/bin/ld \
+  && ln -sf /usr/bin/llvm-ranlib-${LLVM_VERSION} /usr/bin/ranlib \
+  && ln -sf /usr/bin/clang /usr/bin/cc && \
+  && ln -sf /usr/bin/clang /usr/bin/c89 && \
+  && ln -sf /usr/bin/clang /usr/bin/c99 && \
+  && ln -sf /usr/bin/clang++ /usr/bin/c++ && \
+  && ln -sf /usr/bin/clang++ /usr/bin/g++ && \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
@@ -132,6 +135,7 @@ RUN install_packages \
   && ln -s /usr/bin/bun /usr/bin/bunx \
   && rm -rf bun-linux-${variant} bun-linux-${variant}.zip \
   && mkdir -p ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+
 # && if [ -n "${SCCACHE_BUCKET}" ]; then \
 #   echo "Setting up sccache" \
 #   && wget https://github.com/mozilla/sccache/releases/download/v0.5.4/sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \

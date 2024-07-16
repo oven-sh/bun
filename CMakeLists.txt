@@ -1192,6 +1192,7 @@ else()
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
         -fno-pic
+        -no-pie
         -faddrsig
     )
 endif()
@@ -1209,6 +1210,8 @@ endif()
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
         "-fuse-ld=lld"
+        "-fno-pic"
+        "-no-pie"
         "-Wl,-z,lazy"
         "-Wl,-z,norelro"
         "-static-libstdc++"

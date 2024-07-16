@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("Bun.build", () => {
@@ -284,5 +284,69 @@ describe("Bun.build", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  test("hash considers cross chunk imports", async () => {
+    Bun.gc(true);
+    const fixture = tempDirWithFiles("build", {
+      "entry1.ts": `
+        import { bar } from './bar'
+        export const entry1 = () => {
+          console.log('FOO')
+          bar()
+        }
+      `,
+      "entry2.ts": `
+        import { bar } from './bar'
+        export const entry1 = () => {
+          console.log('FOO')
+          bar()
+        }
+      `,
+      "bar.ts": `
+        export const bar = () => {
+          console.log('BAR')
+        }
+      `,
+    });
+    const first = await Bun.build({
+      entrypoints: [join(fixture, "entry1.ts"), join(fixture, "entry2.ts")],
+      outdir: join(fixture, "out"),
+      target: "browser",
+      splitting: true,
+      minify: false,
+      naming: "[dir]/[name]-[hash].[ext]",
+    });
+    if (!first.success) throw new AggregateError(first.logs);
+    expect(first.outputs.length).toBe(3);
+
+    writeFileSync(join(fixture, "bar.ts"), readFileSync(join(fixture, "bar.ts"), "utf8").replace("BAR", "BAZ"));
+
+    const second = await Bun.build({
+      entrypoints: [join(fixture, "entry1.ts"), join(fixture, "entry2.ts")],
+      outdir: join(fixture, "out2"),
+      target: "browser",
+      splitting: true,
+      minify: false,
+      naming: "[dir]/[name]-[hash].[ext]",
+    });
+    if (!second.success) throw new AggregateError(second.logs);
+    expect(second.outputs.length).toBe(3);
+
+    const totalUniqueHashes = new Set();
+    const allFiles = [...first.outputs, ...second.outputs];
+    for (const out of allFiles) totalUniqueHashes.add(out.hash);
+
+    expect(
+      totalUniqueHashes.size,
+      "number of unique hashes should be 6: three per bundle. the changed foo.ts affects all chunks",
+    ).toBe(6);
+
+    // ensure that the hashes are in the path
+    for (const out of allFiles) {
+      expect(out.path).toInclude(out.hash!);
+    }
+
+    Bun.gc(true);
   });
 });

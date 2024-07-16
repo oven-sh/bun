@@ -1334,6 +1334,26 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/IntegerUnderflow#12547", {
+    files: {
+      "/entry.js": `
+        import { a } from 'external';
+
+        function func() {
+            const b = 1 + a.c;
+            return b;
+        }
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    external: ["external"],
+    onAfterBundle(api) {
+      // DCE is not yet able to eliminate the `a` or even the `as c`. Equivalent to esbuild as of 2024-07-15
+      api.expectFile("/out.js").toBe(`import{a as c}from"external";\n`);
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

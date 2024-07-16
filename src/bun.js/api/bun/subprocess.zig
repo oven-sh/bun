@@ -2301,11 +2301,14 @@ pub const Subprocess = struct {
     pub fn handleIPCClose(this: *Subprocess) void {
         IPClog("Subprocess#handleIPCClose\n", .{});
         this.updateHasPendingActivity();
+        const ok = this.ipc_data != null;
+        this.ipc_data = null;
 
         const this_jsvalue = this.this_jsvalue;
         this_jsvalue.ensureStillAlive();
         if (this.on_disconnect_callback.trySwap()) |callback| {
             _ = callback.call(this.globalThis, this_jsvalue, &.{
+                JSValue.jsBoolean(ok),
             });
         }
     }

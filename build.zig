@@ -330,7 +330,6 @@ pub inline fn addMultiCheck(
 }
 
 pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
-    const disable_pie = opts.os == .linux;
     const obj = b.addObject(.{
         .name = if (opts.optimize == .Debug) "bun-debug" else "bun",
         .root_source_file = switch (opts.os) {
@@ -339,10 +338,9 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
-        .pic = !disable_pie,
+        .pic = opts.target.result.isAndroid() or opts.target.result.isDarwin(),
         .strip = false, // stripped at the end
     });
-    obj.pie = !disable_pie;
     obj.bundle_compiler_rt = false;
     obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;

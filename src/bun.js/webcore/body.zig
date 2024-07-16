@@ -861,7 +861,7 @@ pub const Body = struct {
             error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
-
+                // will be unprotected by body value deinit
                 error_instance.protect();
                 this.* = .{ .Error = error_instance };
 

@@ -1473,7 +1473,7 @@ if(WIN32)
     target_compile_options(brotli PRIVATE /MT /U_DLL)
 endif()
 
-target_link_libraries(${bun} PRIVATE ${brotli})
+target_link_libraries(${bun} PRIVATE brotli)
 include_directories("${BUN_DEPS_DIR}/brotli/include")
 
 if(USE_CUSTOM_LSHPACK)

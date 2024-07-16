@@ -1215,6 +1215,9 @@ pub const Resolver = struct {
             }
 
             // Run node's resolution rules (e.g. adding ".js")
+            if (std.mem.indexOf(u8, import_path, "Test") != null)
+                @breakpoint();
+
             var normalizer = ResolvePath.PosixToWinNormalizer{};
             if (r.loadAsFileOrDirectory(normalizer.resolve(source_dir, import_path), kind)) |entry| {
                 return .{
@@ -4180,7 +4183,12 @@ pub const Dirname = struct {
             if (Environment.isWindows) {
                 const root = ResolvePath.windowsFilesystemRoot(path);
                 assert(root.len > 0);
-                break :brk root;
+
+                // Preserve the trailing slash for UNC paths.
+                // Going from `\\server\share\folder` should end up
+                // at `\\server\share\`, not `\\server\share`
+                bun.unsafeAssert(root.ptr == path.ptr);
+                break :brk if (root.len >= 5) path[0 .. root.len + 1] else root;
             }
             break :brk "/";
         };

@@ -126,6 +126,7 @@ pub fn indexOfAny16(self: []const u16, comptime str: anytype) ?OptionalUsize {
 
 pub fn indexOfAnyT(comptime T: type, str: []const T, comptime chars: anytype) ?OptionalUsize {
     if (T == u8) return indexOfAny(str, chars);
+
     for (str, 0..) |c, i| {
         inline for (chars) |a| {
             if (c == a) {
@@ -620,34 +621,24 @@ pub fn withoutTrailingSlash(this: string) []const u8 {
     return href;
 }
 
-/// Does not strip the C:\
-pub fn withoutTrailingSlashWindowsPath(this: string) []const u8 {
-    if (this.len < 3 or
-        this[1] != ':') return withoutTrailingSlash(this);
+/// Does not strip the device root (C:\ or \\Server\Share\ portion off of the path)
+pub fn withoutTrailingSlashWindowsPath(input: string) []const u8 {
+    if (Environment.isPosix or input.len < 3 or input[1] != ':')
+        return withoutTrailingSlash(input);
 
-    var href = this;
-    while (href.len > 3 and (switch (href[href.len - 1]) {
+    const root_len = bun.path.windowsFilesystemRoot(input).len + 1;
+
+    var path = input;
+    while (path.len > root_len and (switch (path[path.len - 1]) {
         '/', '\\' => true,
         else => false,
     })) {
-        href.len -= 1;
+        path.len -= 1;
     }
 
-    return href;
-}
+    bun.assert(!isWindowsAbsolutePathMissingDriveLetter(u8, path));
 
-/// This will remove ONE trailing slash at the end of a string,
-/// but on Windows it will not remove the \ in "C:\"
-pub fn pathWithoutTrailingSlashOne(str: []const u8) []const u8 {
-    return if (str.len > 0 and charIsAnySlash(str[str.len - 1]))
-        if (Environment.isWindows and str.len == 3 and str[1] == ':')
-            // Preserve "C:\"
-            str
-        else
-            // Remove one slash
-            str[0 .. str.len - 1]
-    else
-        str;
+    return path;
 }
 
 pub fn withoutLeadingSlash(this: string) []const u8 {
@@ -1601,24 +1592,20 @@ pub fn utf16Codepoint(comptime Type: type, input: Type) UTF16Replacement {
     }
 }
 
-/// Checks if a path is missing a windows drive letter. Not a perfect check,
-/// but it is good enough for most cases. For windows APIs, this is used for
-/// an assertion, and PosixToWinNormalizer can help make an absolute path
-/// contain a drive letter.
+/// Checks if a path is missing a windows drive letter. For windows APIs,
+/// this is used for an assertion, and PosixToWinNormalizer can help make
+/// an absolute path contain a drive letter.
 pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const T) bool {
     bun.unsafeAssert(bun.path.Platform.windows.isAbsoluteT(T, chars));
     bun.unsafeAssert(chars.len > 0);
 
     // 'C:\hello' -> false
+    // This is the most common situation, so we check it first
     if (!(chars[0] == '/' or chars[0] == '\\')) {
         bun.unsafeAssert(chars.len > 2);
         bun.unsafeAssert(chars[1] == ':');
         return false;
     }
-
-    // '\\hello' -> false (probably a UNC path)
-    if (chars.len > 1 and
-        (chars[1] == '/' or chars[1] == '\\')) return false;
 
     if (chars.len > 4) {
         // '\??\hello' -> false (has the NT object prefix)
@@ -1634,9 +1621,13 @@ pub fn isWindowsAbsolutePathMissingDriveLetter(comptime T: type, chars: []const 
             return false;
     }
 
-    // oh no, '/hello/world'
-    // where is the drive letter!
-    return true;
+    // A path starting with `/` can be a UNC path with forward slashes,
+    // or actually just a posix path.
+    //
+    // '\\Server\Share' -> false (unc)
+    // '\\Server\\Share' -> true (not unc because extra slashes)
+    // '\Server\Share' -> true (posix path)
+    return bun.path.windowsFilesystemRootT(T, chars).len == 1;
 }
 
 pub fn fromWPath(buf: []u8, utf16: []const u16) [:0]const u8 {

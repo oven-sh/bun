@@ -314,10 +314,21 @@ it.todo("import override to bun:test", async () => {
 });
 
 it.if(isWindows)("directory cache key computation", () => {
-  // two slashes
   expect(import(`${process.cwd()}\\\\doesnotexist.ts`)).rejects.toThrow();
   expect(import(`${process.cwd()}\\\\\\doesnotexist.ts`)).rejects.toThrow();
-  expect(import(`\\\\Temp\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Temp\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
-  expect(import(`\\\\Temp\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\doesnotexist.ts\\\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\\\\\\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
+  expect(import(`\\\\\\Test\\doesnotexist.ts\\\\` as any)).rejects.toThrow();
 });

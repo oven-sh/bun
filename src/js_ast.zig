@@ -407,9 +407,7 @@ pub const Binding = struct {
                     loc,
                 );
             },
-            else => {
-                Global.panic("Internal error", .{});
-            },
+            else => |tag| Output.panic("Unexpected binding .{s}", .{@tagName(tag)}),
         }
     }
 

@@ -711,14 +711,14 @@ extern Structure* createMockResultStructure(JSC::VM& vm, JSC::JSGlobalObject* gl
     structure = structure->addPropertyTransition(
         vm,
         structure,
-        JSC::Identifier::fromString(vm, "type"_s),
+        vm.propertyNames->type,
         0,
         offset);
 
     structure = structure->addPropertyTransition(
         vm,
         structure,
-        JSC::Identifier::fromString(vm, "value"_s),
+        vm.propertyNames->value,
         0, offset);
     return structure;
 }

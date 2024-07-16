@@ -118,11 +118,11 @@ RUN install_packages \
   && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
   && ln -sf /usr/bin/ld.lld /usr/bin/ld \
   && ln -sf /usr/bin/llvm-ranlib-${LLVM_VERSION} /usr/bin/ranlib \
-  && ln -sf /usr/bin/clang /usr/bin/cc && \
-  && ln -sf /usr/bin/clang /usr/bin/c89 && \
-  && ln -sf /usr/bin/clang /usr/bin/c99 && \
-  && ln -sf /usr/bin/clang++ /usr/bin/c++ && \
-  && ln -sf /usr/bin/clang++ /usr/bin/g++ && \
+  && ln -sf /usr/bin/clang /usr/bin/cc \
+  && ln -sf /usr/bin/clang /usr/bin/c89 \
+  && ln -sf /usr/bin/clang /usr/bin/c99 \
+  && ln -sf /usr/bin/clang++ /usr/bin/c++ \
+  && ln -sf /usr/bin/clang++ /usr/bin/g++ \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \

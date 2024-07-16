@@ -176,13 +176,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make c-ares \
-  && rm -rf ${BUN_DIR}/src/deps/c-ares ${BUN_DIR}/Makefile
+  && bash ./scripts/build-cares.sh \
+  && rm -rf ${BUN_DIR}/src/deps/c-ares ${BUN_DIR}/Makefile ${BUN_DIR}/scripts
 
 FROM bun-base as lolhtml
 

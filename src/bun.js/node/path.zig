@@ -453,7 +453,7 @@ pub inline fn basenameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, 
 }
 
 pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const suffix_ptr: ?JSC.JSValue = if (args_len > 1) args_ptr[1] else null;
+    const suffix_ptr: ?JSC.JSValue = if (args_len > 1 and args_ptr[1] != .undefined) args_ptr[1] else null;
 
     if (suffix_ptr) |_suffix_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.

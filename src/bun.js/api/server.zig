@@ -1594,8 +1594,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn deref(this: *RequestContext) void {
             streamLog("deref", .{});
             bun.assert(this.ref_count > 0);
-            this.ref_count -|= 1;
-            if (this.ref_count == 0) {
+            const ref_count = this.ref_count;
+            this.ref_count -= 1;
+            if (ref_count == 1) {
                 this.finalizeWithoutDeinit();
                 this.deinit();
             }

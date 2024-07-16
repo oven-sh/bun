@@ -123,6 +123,7 @@ RUN install_packages \
   && ln -sf /usr/bin/clang /usr/bin/c99 \
   && ln -sf /usr/bin/clang++ /usr/bin/c++ \
   && ln -sf /usr/bin/clang++ /usr/bin/g++ \
+  && ln -sf /usr/bin/clang /usr/bin/gcc \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \

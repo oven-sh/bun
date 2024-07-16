@@ -394,7 +394,7 @@ pub const StringOrBuffer = union(enum) {
     }
 
     pub fn fromJSMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, is_async: bool) ?StringOrBuffer {
-        if(value.isEmptyOrUndefinedOrNull()) {
+        if (value.isEmptyOrUndefinedOrNull()) {
             return null;
         }
         return switch (value.jsType()) {
@@ -446,7 +446,7 @@ pub const StringOrBuffer = union(enum) {
     }
 
     pub fn fromJSWithEncodingMaybeAsync(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue, encoding: Encoding, is_async: bool) ?StringOrBuffer {
-        if(value.isEmptyOrUndefinedOrNull()) {
+        if (value.isEmptyOrUndefinedOrNull()) {
             return null;
         }
         if (value.isCell() and value.jsType().isTypedArray()) {

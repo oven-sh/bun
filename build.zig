@@ -363,7 +363,8 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     if (opts.os == .linux) {
         obj.link_emit_relocs = false;
         obj.link_eh_frame_hdr = false;
-        obj.link_function_sections = false;
+        obj.link_function_sections = true;
+        obj.link_data_sections = true;
 
         if (opts.optimize == .Debug) {
             obj.root_module.valgrind = true;

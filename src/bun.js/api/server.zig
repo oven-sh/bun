@@ -1535,7 +1535,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             ctx.render(response);
         }
-        
+
         pub fn shouldRenderMissing(this: *RequestContext) bool {
             // If we did not respond yet, we should render missing
             // To allow this all the conditions above should be true:

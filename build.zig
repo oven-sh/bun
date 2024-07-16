@@ -338,7 +338,10 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
-        .pic = opts.target.result.isAndroid() or opts.target.result.isDarwin(),
+
+        // https://github.com/ziglang/zig/issues/17430
+        .pic = true,
+
         .strip = false, // stripped at the end
     });
     obj.bundle_compiler_rt = false;

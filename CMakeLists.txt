@@ -1206,7 +1206,7 @@ if(UNIX AND NOT APPLE)
         -fno-pic
         -static-libstdc++
         -static-libgcc
-        "-Wl,-no-pie,-relative-cap-relocs"
+        "-Wl,-no-pie"
         "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"

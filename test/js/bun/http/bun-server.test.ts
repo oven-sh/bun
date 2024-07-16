@@ -1,4 +1,4 @@
-import type { ServerWebSocket, Server } from "bun";
+import type { ServerWebSocket, Server, Socket } from "bun";
 import { describe, expect, test } from "bun:test";
 import { bunExe, bunEnv, rejectUnauthorizedScope } from "harness";
 import path from "path";
@@ -542,4 +542,51 @@ test("should be able to async upgrade using custom protocol", async () => {
   };
 
   expect(await promise).toBe(true);
+});
+
+test("should be able to abrubtly close a upload request", async () => {
+  const { promise, resolve } = Promise.withResolvers();
+  using server = Bun.serve({
+    port: 0,
+    hostname: "localhost",
+    maxRequestBodySize: 1024 * 1024 * 1024 * 16,
+    async fetch(req) {
+      let total_size = 0;
+      req.signal.addEventListener("abort", resolve);
+
+      for await (const chunk of req.body as ReadableStream) {
+        total_size += chunk.length;
+        if (total_size > 1024 * 1024 * 1024) {
+          return new Response("too big", { status: 413 });
+        }
+      }
+
+      return new Response("Received " + total_size);
+    },
+  });
+  // ~100KB
+  const chunk = Buffer.alloc(1024 * 100, "a");
+  // ~1GB
+  const MAX_PAYLOAD = 1024 * 1024 * 1024;
+  const request = Buffer.from(
+    `POST / HTTP/1.1\r\nHost: ${server.hostname}:${server.port}\r\nContent-Length: ${MAX_PAYLOAD}\r\n\r\n`,
+  );
+
+  await Bun.connect({
+    hostname: server.hostname,
+    port: server.port,
+    data: 0,
+    socket: {
+      open(socket) {
+        socket.write(request);
+        socket.flush();
+        socket.write(chunk);
+        socket.flush();
+        setTimeout(() => socket.shutdown(), 100);
+      },
+      data(socket, data) {},
+    },
+  });
+  await promise;
+  expect().pass();
 });

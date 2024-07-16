@@ -4637,8 +4637,6 @@ fn NewPrinter(
                         else => {},
                     }
 
-                    var item_count: usize = 0;
-
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
@@ -4757,6 +4755,8 @@ fn NewPrinter(
 
                     p.print("import");
 
+                    var item_count: usize = 0;
+
                     if (s.default_name) |name| {
                         p.print(" ");
                         p.printSymbol(name.ref.?);
@@ -4812,7 +4812,11 @@ fn NewPrinter(
                     }
 
                     if (item_count > 0) {
-                        p.print(" ");
+                        if (!p.options.minify_whitespace or
+                            record.contains_import_star or
+                            s.items.len == 0)
+                            p.print(" ");
+
                         p.printWhitespacer(ws("from "));
                     }
 
@@ -6286,6 +6290,10 @@ pub fn printWithWriterAndPlatform(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
+    const prev_action = bun.crash_handler.current_action;
+    defer bun.crash_handler.current_action = prev_action;
+    bun.crash_handler.current_action = .{ .print = source.path.text };
+
     const PrinterType = NewPrinter(
         // if it's bun, it is also ascii_only
         is_bun_platform,
@@ -6354,6 +6362,10 @@ pub fn printCommonJS(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
+    const prev_action = bun.crash_handler.current_action;
+    defer bun.crash_handler.current_action = prev_action;
+    bun.crash_handler.current_action = .{ .print = source.path.text };
+
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
     const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);

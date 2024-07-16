@@ -2313,7 +2313,7 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_fucntion: JSValue = value.call(globalThis, &.{});
+            const return_value_from_fucntion: JSValue = value.call(globalThis, .undefined, &.{});
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
@@ -2406,7 +2406,7 @@ pub const Expect = struct {
 
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
-                    const matches = test_fn.callWithThis(globalThis, expected_value, &.{received_message});
+                    const matches = test_fn.call(globalThis, expected_value, &.{received_message});
                     if (!matches.toBooleanSlow(globalThis)) return .undefined;
                 }
 
@@ -2484,7 +2484,7 @@ pub const Expect = struct {
                 if (_received_message) |received_message| {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                     if (expected_value.get(globalThis, "test")) |test_fn| {
-                        const matches = test_fn.callWithThis(globalThis, expected_value, &.{received_message});
+                        const matches = test_fn.call(globalThis, expected_value, &.{received_message});
                         if (matches.toBooleanSlow(globalThis)) return .undefined;
                     }
                 }
@@ -3740,7 +3740,7 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const result = predicate.call(globalThis, &.{value});
+        const result = predicate.call(globalThis, .undefined, &.{value});
 
         if (result.toError()) |err| {
             var errors: [1]*anyopaque = undefined;
@@ -4612,7 +4612,7 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var result = matcher_fn.callWithThis(globalThis, matcher_context_jsvalue, args);
+        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args);
         assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalThis.throwValue(err);
@@ -5365,7 +5365,7 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     args.appendAssumeCapacity(arg);
                 }
 
-                var result = matcher_fn.callWithThis(globalThis, thisValue, args.items);
+                var result = matcher_fn.call(globalThis, thisValue, args.items);
                 if (result.toError()) |err| {
                     if (dontThrow) {
                         return false;

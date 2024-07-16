@@ -38,7 +38,7 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     const callback = this.config.on_drain;
     if (callback == .zero) return;
 
-    const result = callback.callWithThis(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
+    const result = callback.call(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
     if (result.toError()) |err| {
         _ = this.callErrorHandler(.zero, &[_]JSValue{err});
     }
@@ -87,7 +87,7 @@ fn onData(socket: *uws.udp.Socket, buf: *uws.udp.PacketBuffer, packets: c_int) c
         _ = udpSocket.js_refcount.fetchAdd(1, .monotonic);
         defer _ = udpSocket.js_refcount.fetchSub(1, .monotonic);
 
-        const result = callback.callWithThis(globalThis, udpSocket.thisValue, &[_]JSValue{
+        const result = callback.call(globalThis, udpSocket.thisValue, &[_]JSValue{
             udpSocket.thisValue,
             udpSocket.config.binary_type.toJS(slice, globalThis),
             JSC.jsNumber(port),
@@ -364,7 +364,7 @@ pub const UDPSocket = struct {
             return false;
         }
 
-        const result = callback.callWithThis(globalThis, thisValue, err);
+        const result = callback.call(globalThis, thisValue, err);
         if (result.isAnyError()) {
             _ = vm.uncaughtException(globalThis, result, false);
         }

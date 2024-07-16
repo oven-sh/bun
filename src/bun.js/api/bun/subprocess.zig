@@ -2305,8 +2305,7 @@ pub const Subprocess = struct {
         const this_jsvalue = this.this_jsvalue;
         this_jsvalue.ensureStillAlive();
         if (this.on_disconnect_callback.trySwap()) |callback| {
-            _ = callback.call(this.globalThis, &.{
-                this_jsvalue,
+            _ = callback.call(this.globalThis, this_jsvalue, &.{
             });
         }
     }

@@ -572,18 +572,51 @@ test("should be able to abrubtly close a upload request", async () => {
     `POST / HTTP/1.1\r\nHost: ${server.hostname}:${server.port}\r\nContent-Length: ${MAX_PAYLOAD}\r\n\r\n`,
   );
 
+  type SocketInfo = { state: number; pending: Buffer | null };
+  function tryWritePending(socket: Socket<SocketInfo>) {
+    if (socket.data.pending === null) {
+      // first write
+      socket.data.pending = request;
+    }
+    const data = socket.data.pending as Buffer;
+    const written = socket.write(data);
+    if (written < data.byteLength) {
+      // partial write
+      socket.data.pending = data.slice(0, written);
+      return false;
+    }
+
+    // full write got to next state
+    if (socket.data.state === 0) {
+      // request sent -> send chunk
+      socket.data.pending = chunk;
+    } else {
+      // chunk sent -> delay shutdown
+      setTimeout(() => socket.shutdown(), 100);
+    }
+    socket.data.state++;
+    socket.flush();
+    return true;
+  }
+
+  function trySend(socket: Socket<SocketInfo>) {
+    while (socket.data.state < 2) {
+      if (!tryWritePending(socket)) {
+        return;
+      }
+    }
+    return;
+  }
   await Bun.connect({
     hostname: server.hostname,
     port: server.port,
-    data: 0,
+    data: {
+      state: 0,
+      pending: null,
+    } as SocketInfo,
     socket: {
-      open(socket) {
-        socket.write(request);
-        socket.flush();
-        socket.write(chunk);
-        socket.flush();
-        setTimeout(() => socket.shutdown(), 100);
-      },
+      open: trySend,
+      drain: trySend,
       data(socket, data) {},
     },
   });

@@ -241,14 +241,16 @@ ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make zlib \
-  && rm -rf src/deps/zlib Makefile
+  && bash ./scripts/build-zlib.sh && rm -rf src/deps/zlib scripts
+
 
 FROM bun-base as libarchive
 

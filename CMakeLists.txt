@@ -1194,6 +1194,12 @@ else()
         -mno-omit-leaf-frame-pointer
         -faddrsig
     )
+
+    if(LINUX)
+        target_compile_options(${bun} PUBLIC
+            -fno-asynchronous-unwind-tables
+        )
+    endif()
 endif()
 
 if(APPLE)

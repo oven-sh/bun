@@ -2617,6 +2617,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn detachResponse(this: *RequestContext) void {
             if (this.resp) |resp| {
+                this.resp = null;
+
                 // onAbort should have set this to null
                 bun.assert(!this.flags.aborted);
                 if (this.flags.is_waiting_for_request_body) {
@@ -2628,7 +2630,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     this.flags.has_abort_handler = false;
                 }
             }
-            this.resp = null;
         }
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {

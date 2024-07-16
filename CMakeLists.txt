@@ -1192,7 +1192,7 @@ else()
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
         -fno-pic
-        -no-pie
+        -fno-pie
         -faddrsig
     )
 endif()

@@ -244,6 +244,7 @@ COPY Makefile ${BUN_DIR}/Makefile
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 
 WORKDIR $BUN_DIR
 

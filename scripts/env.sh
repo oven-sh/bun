@@ -27,18 +27,15 @@ export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
+export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables '
 
 if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
   export CFLAGS="$CFLAGS -march=armv8-a+crc -mtune=ampere1 "
   export CXXFLAGS="$CXXFLAGS -march=armv8-a+crc -mtune=ampere1 "
 fi
 
-if 9[[ $(uname -s) == 'Linux' ]]; then
-  export CFLAGS="$CFLAGS -fno-asynchronous-unwind-tables "
-  export CXXFLAGS="$CXXFLAGS -fno-asynchronous-unwind-tables "
-fi
+
 
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"

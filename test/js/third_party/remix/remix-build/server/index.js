@@ -1,44 +1,16 @@
 import { jsx, jsxs } from "react/jsx-runtime";
 import { PassThrough } from "node:stream";
 import { createReadableStreamFromReadable } from "@remix-run/node";
-import {
-  RemixServer,
-  Outlet,
-  Meta,
-  Links,
-  ScrollRestoration,
-  Scripts,
-} from "@remix-run/react";
+import { RemixServer, Outlet, Meta, Links, ScrollRestoration, Scripts } from "@remix-run/react";
 import { isbot } from "isbot";
 import { renderToPipeableStream } from "react-dom/server";
 const ABORT_DELAY = 5e3;
-function handleRequest(
-  request,
-  responseStatusCode,
-  responseHeaders,
-  remixContext,
-  loadContext
-) {
+function handleRequest(request, responseStatusCode, responseHeaders, remixContext, loadContext) {
   return isbot(request.headers.get("user-agent") || "")
-    ? handleBotRequest(
-        request,
-        responseStatusCode,
-        responseHeaders,
-        remixContext
-      )
-    : handleBrowserRequest(
-        request,
-        responseStatusCode,
-        responseHeaders,
-        remixContext
-      );
+    ? handleBotRequest(request, responseStatusCode, responseHeaders, remixContext)
+    : handleBrowserRequest(request, responseStatusCode, responseHeaders, remixContext);
 }
-function handleBotRequest(
-  request,
-  responseStatusCode,
-  responseHeaders,
-  remixContext
-) {
+function handleBotRequest(request, responseStatusCode, responseHeaders, remixContext) {
   return new Promise((resolve, reject) => {
     let shellRendered = false;
     const { pipe, abort } = renderToPipeableStream(
@@ -58,7 +30,7 @@ function handleBotRequest(
             new Response(stream, {
               headers: responseHeaders,
               status: responseStatusCode,
-            })
+            }),
           );
           pipe(body);
         },
@@ -71,17 +43,12 @@ function handleBotRequest(
             console.error(error);
           }
         },
-      }
+      },
     );
     setTimeout(abort, ABORT_DELAY);
   });
 }
-function handleBrowserRequest(
-  request,
-  responseStatusCode,
-  responseHeaders,
-  remixContext
-) {
+function handleBrowserRequest(request, responseStatusCode, responseHeaders, remixContext) {
   return new Promise((resolve, reject) => {
     let shellRendered = false;
     const { pipe, abort } = renderToPipeableStream(
@@ -100,7 +67,7 @@ function handleBrowserRequest(
             new Response(stream, {
               headers: responseHeaders,
               status: responseStatusCode,
-            })
+            }),
           );
           pipe(body);
         },
@@ -113,7 +80,7 @@ function handleBrowserRequest(
             console.error(error);
           }
         },
-      }
+      },
     );
     setTimeout(abort, ABORT_DELAY);
   });
@@ -125,8 +92,8 @@ const entryServer = /* @__PURE__ */ Object.freeze(
       default: handleRequest,
     },
     Symbol.toStringTag,
-    { value: "Module" }
-  )
+    { value: "Module" },
+  ),
 );
 function Layout({ children }) {
   return /* @__PURE__ */ jsxs("html", {
@@ -144,11 +111,7 @@ function Layout({ children }) {
         ],
       }),
       /* @__PURE__ */ jsxs("body", {
-        children: [
-          children,
-          /* @__PURE__ */ jsx(ScrollRestoration, {}),
-          /* @__PURE__ */ jsx(Scripts, {}),
-        ],
+        children: [children, /* @__PURE__ */ jsx(ScrollRestoration, {}), /* @__PURE__ */ jsx(Scripts, {})],
       }),
     ],
   });
@@ -164,14 +127,11 @@ const route0 = /* @__PURE__ */ Object.freeze(
       default: App,
     },
     Symbol.toStringTag,
-    { value: "Module" }
-  )
+    { value: "Module" },
+  ),
 );
 const meta = () => {
-  return [
-    { title: "New Remix App" },
-    { name: "description", content: "Welcome to Remix!" },
-  ];
+  return [{ title: "New Remix App" }, { name: "description", content: "Welcome to Remix!" }];
 };
 function Index() {
   return /* @__PURE__ */ jsxs("div", {
@@ -224,16 +184,13 @@ const route1 = /* @__PURE__ */ Object.freeze(
       meta,
     },
     Symbol.toStringTag,
-    { value: "Module" }
-  )
+    { value: "Module" },
+  ),
 );
 const serverManifest = {
   entry: {
     module: "/assets/entry.client-ER-smVHW.js",
-    imports: [
-      "/assets/jsx-runtime-56DGgGmo.js",
-      "/assets/components-BI_hnQlH.js",
-    ],
+    imports: ["/assets/jsx-runtime-56DGgGmo.js", "/assets/components-BI_hnQlH.js"],
     css: [],
   },
   routes: {
@@ -249,10 +206,7 @@ const serverManifest = {
       hasClientLoader: false,
       hasErrorBoundary: false,
       module: "/assets/root-CBMuz_vA.js",
-      imports: [
-        "/assets/jsx-runtime-56DGgGmo.js",
-        "/assets/components-BI_hnQlH.js",
-      ],
+      imports: ["/assets/jsx-runtime-56DGgGmo.js", "/assets/components-BI_hnQlH.js"],
       css: ["/assets/root-BFUH26ow.css"],
     },
     "routes/_index": {
@@ -305,14 +259,4 @@ const routes = {
     module: route1,
   },
 };
-export {
-  serverManifest as assets,
-  assetsBuildDirectory,
-  basename,
-  entry,
-  future,
-  isSpaMode,
-  mode,
-  publicPath,
-  routes,
-};
+export { serverManifest as assets, assetsBuildDirectory, basename, entry, future, isSpaMode, mode, publicPath, routes };

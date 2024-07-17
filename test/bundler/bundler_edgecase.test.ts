@@ -1199,6 +1199,19 @@ describe("bundler", () => {
       stdout: "false",
     },
   });
+  itBundled("edgecase/ImportOptionsArgument", {
+    files: {
+      "/entry.js": `
+        import('ext', { with: { get ''() { KEEP } } })
+          .then(function (error) {
+            console.log(error);
+          });
+      `,
+    },
+    dce: true,
+    external: ["ext"],
+    target: "bun",
+  });
   itBundled("edgecase/ConstantFoldingShiftOperations", {
     files: {
       "/entry.ts": `

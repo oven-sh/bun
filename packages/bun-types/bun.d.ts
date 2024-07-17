@@ -1516,6 +1516,7 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com

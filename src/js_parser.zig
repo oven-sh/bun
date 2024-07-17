@@ -451,36 +451,29 @@ const VisitArgsOpts = struct {
     is_unique_formal_parameters: bool = false,
 };
 
-const BunJSX = struct {
-    pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
-};
 pub fn ExpressionTransposer(
-    comptime Kontext: type,
-    comptime visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
+    comptime ContextType: type,
+    comptime StateType: type,
+    comptime visitor: fn (ptr: *ContextType, arg: Expr, state: StateType) Expr,
 ) type {
     return struct {
-        pub const Context = Kontext;
+        pub const Context = ContextType;
         pub const This = @This();
+
         context: *Context,
 
         pub fn init(c: *Context) This {
-            return This{
-                .context = c,
-            };
+            return .{ .context = c };
         }
 
-        pub fn maybeTransposeIf(self: *This, arg: Expr, state: anytype) Expr {
+        pub fn maybeTransposeIf(self: *This, arg: Expr, state: StateType) Expr {
             switch (arg.data) {
                 .e_if => |ex| {
-                    return Expr.init(
-                        E.If,
-                        E.If{
-                            .yes = self.maybeTransposeIf(ex.yes, state),
-                            .no = self.maybeTransposeIf(ex.no, state),
-                            .test_ = ex.test_,
-                        },
-                        arg.loc,
-                    );
+                    return Expr.init(E.If, .{
+                        .yes = self.maybeTransposeIf(ex.yes, state),
+                        .no = self.maybeTransposeIf(ex.no, state),
+                        .test_ = ex.test_,
+                    }, arg.loc);
                 },
                 else => {
                     return visitor(self.context, arg, state);
@@ -488,16 +481,12 @@ pub fn ExpressionTransposer(
             }
         }
 
-        pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
-            return Expr.init(
-                E.If,
-                E.If{
-                    .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
-                    .no = self.maybeTransposeIf(arg.data.e_if.no, state),
-                    .test_ = arg.data.e_if.test_,
-                },
-                arg.loc,
-            );
+        pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: StateType) Expr {
+            return Expr.init(E.If, .{
+                .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
+                .no = self.maybeTransposeIf(arg.data.e_if.no, state),
+                .test_ = arg.data.e_if.test_,
+            }, arg.loc);
         }
     };
 }
@@ -517,7 +506,8 @@ const TransposeState = struct {
     is_then_catch_target: bool = false,
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
-    type_attribute: E.Import.TypeAttribute = .none,
+    import_record_tag: ?ImportRecord.Tag = null,
+    import_options: Expr = Expr.empty,
 };
 
 var true_args = &[_]Expr{
@@ -3373,6 +3363,10 @@ pub const Parser = struct {
     }
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
+        const prev_action = bun.crash_handler.current_action;
+        defer bun.crash_handler.current_action = prev_action;
+        bun.crash_handler.current_action = .{ .parse = self.source.path.text };
+
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -3461,6 +3455,8 @@ pub const Parser = struct {
         if (self.log.errors > orig_error_count) {
             return error.SyntaxError;
         }
+
+        bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
@@ -5321,9 +5317,9 @@ fn NewParser_(
             return p.options.bundle and p.source.index.isRuntime();
         }
 
-        pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeImport(p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
-            if (@as(Expr.Tag, arg.data) == .e_string) {
+            if (arg.data.as(.e_string)) |str| {
                 // Ignore calls to import() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -5331,18 +5327,19 @@ fn NewParser_(
                     return p.newExpr(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
+                const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.slice(p.allocator));
 
-                if (state.type_attribute.tag() != .none) {
-                    p.import_records.items[import_record_index].tag = state.type_attribute.tag();
+                if (state.import_record_tag) |tag| {
+                    p.import_records.items[import_record_index].tag = tag;
                 }
+
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+
                 return p.newExpr(E.Import{
                     .expr = arg,
                     .import_record_index = Ref.toInt(import_record_index),
-                    .type_attribute = state.type_attribute,
-                    // .leading_interior_comments = arg.getString().
+                    .options = state.import_options,
                 }, state.loc);
             }
 
@@ -5354,12 +5351,12 @@ fn NewParser_(
 
             return p.newExpr(E.Import{
                 .expr = arg,
+                .options = state.import_options,
                 .import_record_index = std.math.maxInt(u32),
-                .type_attribute = state.type_attribute,
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: anytype) Expr {
+        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: Expr) Expr {
             // The argument must be a string
             if (arg.data == .e_string) {
                 return p.transposeRequireResolveKnownString(arg);
@@ -5403,7 +5400,7 @@ fn NewParser_(
             );
         }
 
-        pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeRequire(p: *P, arg: Expr, state: *const TransposeState) Expr {
             if (!p.options.features.allow_runtime) {
                 const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
                 args[0] = arg;
@@ -5719,9 +5716,9 @@ fn NewParser_(
             }
         }
 
-        const ImportTransposer = ExpressionTransposer(P, P.transposeImport);
-        const RequireTransposer = ExpressionTransposer(P, P.transposeRequire);
-        const RequireResolveTransposer = ExpressionTransposer(P, P.transposeRequireResolve);
+        const ImportTransposer = ExpressionTransposer(P, *const TransposeState, P.transposeImport);
+        const RequireTransposer = ExpressionTransposer(P, *const TransposeState, P.transposeRequire);
+        const RequireResolveTransposer = ExpressionTransposer(P, Expr, P.transposeRequireResolve);
 
         const Binding2ExprWrapper = struct {
             pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace);
@@ -11066,7 +11063,6 @@ fn NewParser_(
                     inline .s_namespace, .s_enum => |ns| {
                         if (ns.is_export) {
                             if (p.ref_to_ts_namespace_member.get(ns.name.ref.?)) |member_data| {
-                                bun.assert(member_data == .namespace);
                                 try exported_members.put(
                                     p.allocator,
                                     p.symbols.items[ns.name.ref.?.inner_index].original_name,
@@ -11075,11 +11071,11 @@ fn NewParser_(
                                         .loc = ns.name.loc,
                                     },
                                 );
-                                // try p.ref_to_ts_namespace_member.put(
-                                //     p.allocator,
-                                //     id.ref,
-                                //     member_data,
-                                // );
+                                try p.ref_to_ts_namespace_member.put(
+                                    p.allocator,
+                                    ns.name.ref.?,
+                                    member_data,
+                                );
                             }
                         }
                     },
@@ -11102,8 +11098,7 @@ fn NewParser_(
             // them entirely from the output. That can cause the namespace itself
             // to be considered empty and thus be removed.
             var import_equal_count: usize = 0;
-            const _stmts: []Stmt = stmts.items;
-            for (_stmts) |stmt| {
+            for (stmts.items) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.was_ts_import_equals and !local.is_export) {
@@ -15639,40 +15634,17 @@ fn NewParser_(
 
             const value = try p.parseExpr(.comma);
 
-            var type_attribute = E.Import.TypeAttribute.none;
-
+            var import_options = Expr.empty;
             if (p.lexer.token == .t_comma) {
                 // "import('./foo.json', )"
                 try p.lexer.next();
 
                 if (p.lexer.token != .t_close_paren) {
-                    // for now, we silently strip import assertions
                     // "import('./foo.json', { assert: { type: 'json' } })"
-                    const import_expr = try p.parseExpr(.comma);
-                    if (import_expr.data == .e_object) {
-                        if (import_expr.data.e_object.get("with") orelse import_expr.data.e_object.get("assert")) |with| {
-                            if (with.data == .e_object) {
-                                const with_object = with.data.e_object;
-                                if (with_object.get("type")) |field| {
-                                    if (field.data == .e_string) {
-                                        const str = field.data.e_string;
-                                        if (str.eqlComptime("json")) {
-                                            type_attribute = .json;
-                                        } else if (str.eqlComptime("toml")) {
-                                            type_attribute = .toml;
-                                        } else if (str.eqlComptime("text")) {
-                                            type_attribute = .text;
-                                        } else if (str.eqlComptime("file")) {
-                                            type_attribute = .file;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    import_options = try p.parseExpr(.comma);
 
                     if (p.lexer.token == .t_comma) {
-                        // "import('./foo.json', { assert: { type: 'json' } }, , )"
+                        // "import('./foo.json', { assert: { type: 'json' } }, )"
                         try p.lexer.next();
                     }
                 }
@@ -15688,18 +15660,20 @@ fn NewParser_(
 
                     return p.newExpr(E.Import{
                         .expr = value,
-                        .leading_interior_comments = comments,
+                        // .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
-                        .type_attribute = type_attribute,
+                        .options = import_options,
                     }, loc);
                 }
             }
 
+            _ = comments; // TODO: leading_interior comments
+
             return p.newExpr(E.Import{
                 .expr = value,
-                .type_attribute = type_attribute,
-                .leading_interior_comments = comments,
+                // .leading_interior_comments = comments,
                 .import_record_index = std.math.maxInt(u32),
+                .options = import_options,
             }, loc);
         }
 
@@ -17562,20 +17536,6 @@ fn NewParser_(
                     }
                 },
                 .e_import => |e_| {
-                    const state = TransposeState{
-                        // we must check that the await_target is an e_import or it will crash
-                        // example from next.js where not checking causes a panic:
-                        // ```
-                        // const {
-                        //     normalizeLocalePath,
-                        //   } = require('../shared/lib/i18n/normalize-locale-path') as typeof import('../shared/lib/i18n/normalize-locale-path')
-                        // ```
-                        .is_await_target = if (p.await_target != null) p.await_target.? == .e_import and p.await_target.?.e_import == e_ else false,
-                        .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
-                        .loc = e_.expr.loc,
-                        .type_attribute = e_.type_attribute,
-                    };
-
                     // We want to forcefully fold constants inside of imports
                     // even when minification is disabled, so that if we have an
                     // import based on a string template, it does not cause a
@@ -17589,7 +17549,32 @@ fn NewParser_(
                     p.should_fold_typescript_constant_expressions = true;
 
                     e_.expr = p.visitExpr(e_.expr);
-                    return p.import_transposer.maybeTransposeIf(e_.expr, state);
+                    e_.options = p.visitExpr(e_.options);
+
+                    // Import transposition is able to duplicate the options structure, so
+                    // only perform it if the expression is side effect free.
+                    //
+                    // TODO: make this more like esbuild by emitting warnings that explain
+                    // why this import was not analyzed. (see esbuild 'unsupported-dynamic-import')
+                    if (p.exprCanBeRemovedIfUnused(&e_.options)) {
+                        const state = TransposeState{
+                            .is_await_target = if (p.await_target) |await_target|
+                                await_target == .e_import and await_target.e_import == e_
+                            else
+                                false,
+
+                            .is_then_catch_target = p.then_catch_chain.has_catch and
+                                p.then_catch_chain.next_target == .e_import and
+                                expr.data.e_import == p.then_catch_chain.next_target.e_import,
+
+                            .import_options = e_.options,
+
+                            .loc = e_.expr.loc,
+                            .import_record_tag = e_.importRecordTag(),
+                        };
+
+                        return p.import_transposer.maybeTransposeIf(e_.expr, &state);
+                    }
                 },
                 .e_call => |e_| {
                     p.call_target = e_.target.data;
@@ -17601,8 +17586,8 @@ fn NewParser_(
                     };
 
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
-                    e_.target = p.visitExprInOut(e_.target, ExprIn{
-                        .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .continuation,
+                    e_.target = p.visitExprInOut(e_.target, .{
+                        .has_chain_parent = e_.optional_chain == .continuation,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -17688,17 +17673,18 @@ fn NewParser_(
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
                             const state = TransposeState{
-                                .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and first.data == .e_string,
+                                .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and
+                                    first.data == .e_string,
                             };
                             switch (first.data) {
                                 .e_string => {
                                     // require(FOO) => require(FOO)
-                                    return p.transposeRequire(first, state);
+                                    return p.transposeRequire(first, &state);
                                 },
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.transposeKnownToBeIf(first, state);
+                                    return p.require_transposer.transposeKnownToBeIf(first, &state);
                                 },
                                 else => {},
                             }
@@ -18966,7 +18952,7 @@ fn NewParser_(
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
                         const use = p.symbol_uses.getPtr(id.ref).?;
-                        use.count_estimate -= 1;
+                        use.count_estimate -|= 1;
                         // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead

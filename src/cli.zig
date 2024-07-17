@@ -227,6 +227,7 @@ pub const Arguments = struct {
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
         clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+        clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -694,6 +695,17 @@ pub const Arguments = struct {
                     externals[i] = @constCast(external);
                 }
                 opts.external = externals;
+            }
+
+            if (args.option("--packages")) |packages| {
+                if (strings.eqlComptime(packages, "bundle")) {
+                    opts.packages = .bundle;
+                } else if (strings.eqlComptime(packages, "external")) {
+                    opts.packages = .external;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
             }
 
             const TargetMatcher = strings.ExactSizeMatcher(8);
@@ -1198,13 +1210,7 @@ pub const Command = struct {
     };
 
     var global_cli_ctx: Context = undefined;
-
-    var context_data: ContextData = ContextData{
-        .args = std.mem.zeroes(Api.TransformOptions),
-        .log = undefined,
-        .start_time = 0,
-        .allocator = undefined,
-    };
+    var context_data: ContextData = undefined;
 
     pub const init = ContextData.create;
 
@@ -1248,10 +1254,13 @@ pub const Command = struct {
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
+            context_data = .{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = allocator,
+            };
             global_cli_ctx = &context_data;
-            global_cli_ctx.log = log;
-            global_cli_ctx.start_time = start_time;
-            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);

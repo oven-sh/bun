@@ -407,9 +407,7 @@ pub const Binding = struct {
                     loc,
                 );
             },
-            else => {
-                Global.panic("Internal error", .{});
-            },
+            else => |tag| Output.panic("Unexpected binding .{s}", .{@tagName(tag)}),
         }
     }
 
@@ -2776,10 +2774,10 @@ pub const E = struct {
 
     pub const Import = struct {
         expr: ExprNodeIndex,
+        options: ExprNodeIndex = Expr.empty,
         import_record_index: u32,
-        // This will be dynamic at some point.
-        type_attribute: TypeAttribute = .none,
 
+        /// TODO:
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
         /// esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
@@ -2787,30 +2785,43 @@ pub const E = struct {
         /// because esbuild is not Webpack. But we do preserve them since doing so is
         /// harmless, easy to maintain, and useful to people. See the Webpack docs for
         /// more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        /// TODO:
-        leading_interior_comments: []G.Comment = &([_]G.Comment{}),
+        // leading_interior_comments: []G.Comment = &([_]G.Comment{}),
 
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub const TypeAttribute = enum {
-            none,
-            json,
-            toml,
-            text,
-            file,
+        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+            const obj = import.options.data.as(.e_object) orelse
+                return null;
+            const with = obj.get("with") orelse obj.get("assert") orelse
+                return null;
+            const with_obj = with.data.as(.e_object) orelse
+                return null;
+            const str = (with_obj.get("type") orelse
+                return null).data.as(.e_string) orelse
+                return null;
 
-            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
-                return switch (this) {
-                    .none => .none,
-                    .json => .with_type_json,
-                    .toml => .with_type_toml,
-                    .text => .with_type_text,
-                    .file => .with_type_file,
+            if (str.eqlComptime("json")) {
+                return .with_type_json;
+            } else if (str.eqlComptime("toml")) {
+                return .with_type_toml;
+            } else if (str.eqlComptime("text")) {
+                return .with_type_text;
+            } else if (str.eqlComptime("file")) {
+                return .with_type_file;
+            } else if (str.eqlComptime("sqlite")) {
+                const embed = brk: {
+                    const embed = with_obj.get("embed") orelse break :brk false;
+                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
+                    break :brk embed_str.eqlComptime("true");
                 };
+
+                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
             }
-        };
+
+            return null;
+        }
     };
 };
 
@@ -5463,9 +5474,8 @@ pub const Expr = struct {
                 .e_import => |el| {
                     const item = bun.create(allocator, E.Import, .{
                         .expr = try el.expr.deepClone(allocator),
+                        .options = try el.options.deepClone(allocator),
                         .import_record_index = el.import_record_index,
-                        .type_attribute = el.type_attribute,
-                        .leading_interior_comments = el.leading_interior_comments,
                     });
                     return .{ .e_import = item };
                 },

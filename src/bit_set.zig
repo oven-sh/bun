@@ -517,6 +517,16 @@ pub fn ArrayBitSet(comptime MaskIntType: type, comptime size: usize) type {
             }
         }
 
+        /// Sets all bits
+        pub fn setAll(self: *Self, value: bool) void {
+            @memset(&self.masks, if (value) std.math.maxInt(MaskInt) else 0);
+
+            // Zero the padding bits
+            if (num_masks > 0) {
+                self.masks[num_masks - 1] &= last_item_mask;
+            }
+        }
+
         /// Performs a union of two bit sets, and stores the
         /// result in the first one.  Bits in the result are
         /// set if the corresponding bits were set in either input.
@@ -1244,6 +1254,12 @@ pub const AutoBitSet = union(enum) {
                 }
             },
         };
+    }
+
+    pub fn setAll(this: *AutoBitSet, value: bool) void {
+        switch (this.*) {
+            inline else => |*bitset| bitset.setAll(value),
+        }
     }
 
     pub fn deinit(this: *AutoBitSet, allocator: std.mem.Allocator) void {

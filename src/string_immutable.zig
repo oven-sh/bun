@@ -51,21 +51,19 @@ pub inline fn removeLeadingDotSlash(slice: []const u8) []const u8 {
 pub const w = toUTF16Literal;
 
 pub fn toUTF16Literal(comptime str: []const u8) [:0]const u16 {
-    return comptime literal(u16, str);
+    return literal(u16, str);
 }
 
 pub fn literal(comptime T: type, comptime str: []const u8) *const [literalLength(T, str):0]T {
-    if (!@inComptime()) @compileError("strings.literal() must be called in a comptime context");
-    return comptime switch (T) {
-        u8 => brk: {
-            var data: [str.len:0]u8 = undefined;
-            @memcpy(&data, str);
-            const final = data[0..].*;
-            break :brk &final;
-        },
-        u16 => return std.unicode.utf8ToUtf16LeStringLiteral(str),
-        else => @compileError("unsupported type " ++ @typeName(T) ++ " in strings.literal() call."),
+    const Holder = struct {
+        pub const value = switch (T) {
+            u8 => (str[0..str.len].* ++ .{0})[0..str.len :0],
+            u16 => std.unicode.utf8ToUtf16LeStringLiteral(str),
+            else => @compileError("unsupported type " ++ @typeName(T) ++ " in strings.literal() call."),
+        };
     };
+
+    return Holder.value;
 }
 
 fn literalLength(comptime T: type, comptime str: string) usize {
@@ -173,7 +171,7 @@ pub inline fn containsAny(in: anytype, target: string) bool {
 /// - The name ends up being part of a URL, an argument on the command line, and
 ///   a folder name. Therefore, the name can't contain any non-URL-safe
 ///   characters.
-pub inline fn isNPMPackageName(target: string) bool {
+pub fn isNPMPackageName(target: string) bool {
     if (target.len == 0) return false;
     if (target.len > 214) return false;
 
@@ -207,7 +205,7 @@ pub inline fn isNPMPackageName(target: string) bool {
     return !scoped or slash_index > 0 and slash_index + 1 < target.len;
 }
 
-pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
+pub fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
             if (char == parent) return i;
@@ -216,7 +214,7 @@ pub inline fn indexAnyComptime(target: string, comptime chars: string) ?usize {
     return null;
 }
 
-pub inline fn indexAnyComptimeT(comptime T: type, target: []const T, comptime chars: []const T) ?usize {
+pub fn indexAnyComptimeT(comptime T: type, target: []const T, comptime chars: []const T) ?usize {
     for (target, 0..) |parent, i| {
         inline for (chars) |char| {
             if (char == parent) return i;
@@ -225,7 +223,7 @@ pub inline fn indexAnyComptimeT(comptime T: type, target: []const T, comptime ch
     return null;
 }
 
-pub inline fn indexEqualAny(in: anytype, target: string) ?usize {
+pub fn indexEqualAny(in: anytype, target: string) ?usize {
     for (in, 0..) |str, i| if (eqlLong(str, target, true)) return i;
     return null;
 }
@@ -795,8 +793,9 @@ pub fn hasSuffixComptime(self: string, comptime alt: anytype) bool {
     return self.len >= alt.len and eqlComptimeCheckLenWithType(u8, self[self.len - alt.len ..], alt, false);
 }
 
-inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
+fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime check_len: bool) bool {
     @setEvalBranchQuota(9999);
+
     if (comptime check_len) {
         if (a.len != b.len) return false;
     }
@@ -833,7 +832,7 @@ inline fn eqlComptimeCheckLenU8(a: []const u8, comptime b: []const u8, comptime 
     return true;
 }
 
-inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
+fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type, comptime b: []const Type, comptime check_len: bool) bool {
     if (comptime Type != u8) {
         return eqlComptimeCheckLenU8(std.mem.sliceAsBytes(a), comptime std.mem.sliceAsBytes(b), comptime check_len);
     }
@@ -844,18 +843,18 @@ inline fn eqlComptimeCheckLenWithKnownType(comptime Type: type, a: []const Type,
 ///
 ///   strings.eqlComptime(input, "hello world");
 ///   strings.eqlComptime(input, "hai");
-pub inline fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
+pub fn eqlComptimeCheckLenWithType(comptime Type: type, a: []const Type, comptime b: anytype, comptime check_len: bool) bool {
     return eqlComptimeCheckLenWithKnownType(comptime Type, a, if (@typeInfo(@TypeOf(b)) != .Pointer) &b else b, comptime check_len);
 }
 
-pub inline fn eqlCaseInsensitiveASCIIIgnoreLength(
+pub fn eqlCaseInsensitiveASCIIIgnoreLength(
     a: string,
     b: string,
 ) bool {
     return eqlCaseInsensitiveASCII(a, b, false);
 }
 
-pub inline fn eqlCaseInsensitiveASCIIICheckLength(
+pub fn eqlCaseInsensitiveASCIIICheckLength(
     a: string,
     b: string,
 ) bool {
@@ -886,7 +885,7 @@ pub fn eqlLong(a_str: string, b_str: string, comptime check_len: bool) bool {
             return false;
         }
     } else {
-        if (comptime Environment.allow_assert) assert(b_str.len == a_str.len);
+        if (comptime Environment.allow_assert) assert(b_str.len <= a_str.len);
     }
 
     const end = b_str.ptr + len;

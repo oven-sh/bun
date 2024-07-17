@@ -1199,6 +1199,19 @@ describe("bundler", () => {
       stdout: "false",
     },
   });
+  itBundled("edgecase/ImportOptionsArgument", {
+    files: {
+      "/entry.js": `
+        import('ext', { with: { get ''() { KEEP } } })
+          .then(function (error) {
+            console.log(error);
+          });
+      `,
+    },
+    dce: true,
+    external: ["ext"],
+    target: "bun",
+  });
   itBundled("edgecase/ConstantFoldingShiftOperations", {
     files: {
       "/entry.ts": `
@@ -1308,6 +1321,127 @@ describe("bundler", () => {
     },
     target: "bun",
     run: true,
+  });
+  itBundled("edgecase/PackageExternalDoNotBundleNodeModules", {
+    files: {
+      "/entry.ts": /* ts */ `
+        import { a } from "foo";
+        console.log(a);
+      `,
+    },
+    packages: "external",
+    target: "bun",
+    runtimeFiles: {
+      "/node_modules/foo/index.js": `export const a = "Hello World";`,
+      "/node_modules/foo/package.json": /* json */ `
+        {
+          "name": "foo",
+          "version": "2.0.0",
+          "main": "index.js"
+        }
+      `,
+    },
+    run: {
+      stdout: `
+        Hello World
+      `,
+    },
+  });
+  itBundled("edgecase/IntegerUnderflow#12547", {
+    files: {
+      "/entry.js": `
+        import { a } from 'external';
+
+        function func() {
+            const b = 1 + a.c;
+            return b;
+        }
+      `,
+    },
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    external: ["external"],
+    onAfterBundle(api) {
+      // DCE is not yet able to eliminate the `a` or even the `as c`. Equivalent to esbuild as of 2024-07-15
+      api.expectFile("/out.js").toBe(`import{a as c}from"external";\n`);
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingFunction", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export function Y() {
+            return 2;
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(X, X.Y(), X.Y.Z);
+      `,
+    },
+    run: {
+      stdout: "{\n  Y: [Function: Y],\n} 2 1",
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingClass", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export class Y {
+            constructor(v) {
+              this.value = v;
+            }
+
+            toJSON() {
+              return this.value;
+            }
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(X, new X.Y(2).toJSON(), X.Y.Z);
+      `,
+    },
+    run: {
+      stdout: "{\n  Y: [class Y],\n} 2 1",
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingEnum", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export enum Y {
+            A,
+            B,
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(JSON.stringify([X, X.Y.A, X.Y.Z]));
+      `,
+    },
+    run: {
+      stdout: '[{"Y":{"0":"A","1":"B","A":0,"B":1,"Z":1}},0,1]',
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingVariable", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export let Y = {};
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": [`"Y" has already been declared`],
+    },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

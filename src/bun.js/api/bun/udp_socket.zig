@@ -27,7 +27,7 @@ fn onClose(socket: *uws.udp.Socket) callconv(.C) void {
 
     const this: *UDPSocket = bun.cast(*UDPSocket, socket.user().?);
     this.closed = true;
-    this.poll_ref.unref(this.globalThis.bunVM());
+    this.poll_ref.disable();
     _ = this.js_refcount.fetchSub(1, .monotonic);
 }
 
@@ -38,6 +38,10 @@ fn onDrain(socket: *uws.udp.Socket) callconv(.C) void {
     const callback = this.config.on_drain;
     if (callback == .zero) return;
 
+    const vm = JSC.VirtualMachine.get();
+    const event_loop = vm.eventLoop();
+    event_loop.enter();
+    defer event_loop.exit();
     const result = callback.callWithThis(this.globalThis, this.thisValue, &[_]JSValue{this.thisValue});
     if (result.toError()) |err| {
         _ = this.callErrorHandler(.zero, &[_]JSValue{err});
@@ -575,9 +579,7 @@ pub const UDPSocket = struct {
     }
 
     pub fn unref(this: *This, globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
-        if (!this.closed) {
-            this.poll_ref.unref(globalThis.bunVM());
-        }
+        this.poll_ref.unref(globalThis.bunVM());
 
         return .undefined;
     }

@@ -159,6 +159,8 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  /** Defaults to "bundle" */
+  packages?: "bundle" | "external";
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
@@ -400,6 +402,7 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    packages,
     files,
     format,
     globalName,
@@ -621,6 +624,7 @@ function expectBundled(
               `--target=${target}`,
               // `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -658,6 +662,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
+              packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
@@ -927,6 +932,7 @@ function expectBundled(
         const buildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          packages,
           minify: {
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,

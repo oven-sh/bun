@@ -550,7 +550,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
         }
     }
     if (format == "der"_s) {
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         WTF::String type = "pkcs8"_s;
         if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
             if (!typeJSValue.isString()) {
@@ -1138,7 +1138,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
         }
     }
     if (format == "der"_s) {
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         WTF::String type = "spki"_s;
         if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
             if (!typeJSValue.isString()) {
@@ -1800,7 +1800,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__Exports, (JSC::JSGlobalObject * globalObject
     auto id = wrapped.keyClass();
     if (auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1))) {
         JSValue formatJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "format"_s)));
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
         KeyPassphrase passphrase(passphraseJSValue, globalObject, scope);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());

@@ -67,6 +67,7 @@ pub const JSBundler = struct {
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        packages: options.PackagesOption = .bundle,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -221,6 +222,10 @@ pub const JSBundler = struct {
                         options.SourceMapOption,
                     );
                 }
+            }
+
+            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+                this.packages = packages;
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {

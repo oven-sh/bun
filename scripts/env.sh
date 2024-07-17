@@ -30,6 +30,11 @@ export CMAKE_C_COMPILER=${CC}
 export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
 
+if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
+  export CFLAGS="$CFLAGS -march=armv8-a+crc -mtune=ampere1 "
+  export CXXFLAGS="$CXXFLAGS -march=armv8-a+crc -mtune=ampere1 "
+fi
+
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"
   -DCMAKE_CXX_COMPILER="${CXX}"

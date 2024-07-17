@@ -95,7 +95,7 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
     if (isNullOrUndefined)
         typeValue = jsUndefined();
     else {
-        typeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
+        typeValue = object->get(&lexicalGlobalObject, vm.propertyNames->type);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!typeValue.isUndefined()) {

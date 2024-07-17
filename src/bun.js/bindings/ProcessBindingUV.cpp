@@ -156,12 +156,12 @@ JSObject* create(VM& vm, JSGlobalObject* globalObject)
     // Inlining each of these via macros costs like 300 KB.
     // Before: 96305608
     // After:  95992520
-    const auto putNamedProperty = [&](const String& name, int value) -> void {
-        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, name), JSC::jsNumber(value));
+    const auto putNamedProperty = [](JSC::VM& vm, JSObject* bindingObject, const ASCIILiteral name, int value) -> void {
+        bindingObject->putDirect(vm, JSC::Identifier::fromString(vm, makeString("UV_"_s, name)), JSC::jsNumber(value));
     };
 
 #define PUT_PROPERTY(name, value, desc) \
-    putNamedProperty(makeString("UV_"_s, "#name"##_s), value);
+    putNamedProperty(vm, bindingObject, #name##_s, value);
     BUN_UV_ERRNO_MAP(PUT_PROPERTY)
 #undef PUT_PROPERTY
 

@@ -1210,13 +1210,7 @@ pub const Command = struct {
     };
 
     var global_cli_ctx: Context = undefined;
-
-    var context_data: ContextData = ContextData{
-        .args = std.mem.zeroes(Api.TransformOptions),
-        .log = undefined,
-        .start_time = 0,
-        .allocator = undefined,
-    };
+    var context_data: ContextData = undefined;
 
     pub const init = ContextData.create;
 
@@ -1260,6 +1254,12 @@ pub const Command = struct {
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
+            context_data = .{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = undefined,
+                .start_time = 0,
+                .allocator = undefined,
+            };
             global_cli_ctx = &context_data;
             global_cli_ctx.log = log;
             global_cli_ctx.start_time = start_time;

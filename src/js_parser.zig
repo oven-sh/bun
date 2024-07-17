@@ -451,9 +451,6 @@ const VisitArgsOpts = struct {
     is_unique_formal_parameters: bool = false,
 };
 
-const BunJSX = struct {
-    pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
-};
 pub fn ExpressionTransposer(
     comptime ContextType: type,
     comptime StateType: type,
@@ -462,26 +459,21 @@ pub fn ExpressionTransposer(
     return struct {
         pub const Context = ContextType;
         pub const This = @This();
+
         context: *Context,
 
         pub fn init(c: *Context) This {
-            return This{
-                .context = c,
-            };
+            return .{ .context = c };
         }
 
         pub fn maybeTransposeIf(self: *This, arg: Expr, state: StateType) Expr {
             switch (arg.data) {
                 .e_if => |ex| {
-                    return Expr.init(
-                        E.If,
-                        E.If{
-                            .yes = self.maybeTransposeIf(ex.yes, state),
-                            .no = self.maybeTransposeIf(ex.no, state),
-                            .test_ = ex.test_,
-                        },
-                        arg.loc,
-                    );
+                    return Expr.init(E.If, .{
+                        .yes = self.maybeTransposeIf(ex.yes, state),
+                        .no = self.maybeTransposeIf(ex.no, state),
+                        .test_ = ex.test_,
+                    }, arg.loc);
                 },
                 else => {
                     return visitor(self.context, arg, state);
@@ -490,15 +482,11 @@ pub fn ExpressionTransposer(
         }
 
         pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: StateType) Expr {
-            return Expr.init(
-                E.If,
-                E.If{
-                    .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
-                    .no = self.maybeTransposeIf(arg.data.e_if.no, state),
-                    .test_ = arg.data.e_if.test_,
-                },
-                arg.loc,
-            );
+            return Expr.init(E.If, .{
+                .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
+                .no = self.maybeTransposeIf(arg.data.e_if.no, state),
+                .test_ = arg.data.e_if.test_,
+            }, arg.loc);
         }
     };
 }

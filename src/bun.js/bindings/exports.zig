@@ -954,6 +954,10 @@ comptime {
 /// Using characters16() does not seem to always have the sentinel. or something else
 /// broke when I just used it. Not sure. ... but this works!
 pub export fn Bun__LoadLibraryBunString(str: *bun.String) ?*anyopaque {
+    if (comptime !Environment.isWindows) {
+        unreachable;
+    }
+
     var buf: bun.WPathBuffer = undefined;
     const data = switch (str.encoding()) {
         .utf8 => bun.strings.convertUTF8toUTF16InBuffer(&buf, str.utf8()),

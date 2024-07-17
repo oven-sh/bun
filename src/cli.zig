@@ -1256,14 +1256,11 @@ pub const Command = struct {
             Cli.cmd = command;
             context_data = .{
                 .args = std.mem.zeroes(Api.TransformOptions),
-                .log = undefined,
-                .start_time = 0,
-                .allocator = undefined,
+                .log = log,
+                .start_time = start_time,
+                .allocator = allocator,
             };
             global_cli_ctx = &context_data;
-            global_cli_ctx.log = log;
-            global_cli_ctx.start_time = start_time;
-            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);

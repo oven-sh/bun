@@ -1354,6 +1354,82 @@ describe("bundler", () => {
       api.expectFile("/out.js").toBe(`import{a as c}from"external";\n`);
     },
   });
+  itBundled("edgecase/TypeScriptNamespaceSiblingFunction", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export function Y() {
+            return 2;
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(X, X.Y(), X.Y.Z);
+      `,
+    },
+    run: {
+      stdout: "{\n  Y: [Function: Y],\n} 2 1",
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingClass", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export class Y {
+            constructor(v) {
+              this.value = v;
+            }
+
+            toJSON() {
+              return this.value;
+            }
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(X, new X.Y(2).toJSON(), X.Y.Z);
+      `,
+    },
+    run: {
+      stdout: "{\n  Y: [class Y],\n} 2 1",
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingEnum", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export enum Y {
+            A,
+            B,
+          }
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+        console.log(JSON.stringify([X, X.Y.A, X.Y.Z]));
+      `,
+    },
+    run: {
+      stdout: '[{"Y":{"0":"A","1":"B","A":0,"B":1,"Z":1}},0,1]',
+    },
+  });
+  itBundled("edgecase/TypeScriptNamespaceSiblingVariable", {
+    files: {
+      "/entry.ts": `
+        namespace X {
+          export let Y = {};
+          export namespace Y {
+            export const Z = 1;
+          }
+        }
+      `,
+    },
+    bundleErrors: {
+      "/entry.ts": [`"Y" has already been declared`],
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

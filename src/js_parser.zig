@@ -11072,7 +11072,6 @@ fn NewParser_(
                     inline .s_namespace, .s_enum => |ns| {
                         if (ns.is_export) {
                             if (p.ref_to_ts_namespace_member.get(ns.name.ref.?)) |member_data| {
-                                bun.assert(member_data == .namespace);
                                 try exported_members.put(
                                     p.allocator,
                                     p.symbols.items[ns.name.ref.?.inner_index].original_name,
@@ -11081,11 +11080,11 @@ fn NewParser_(
                                         .loc = ns.name.loc,
                                     },
                                 );
-                                // try p.ref_to_ts_namespace_member.put(
-                                //     p.allocator,
-                                //     id.ref,
-                                //     member_data,
-                                // );
+                                try p.ref_to_ts_namespace_member.put(
+                                    p.allocator,
+                                    ns.name.ref.?,
+                                    member_data,
+                                );
                             }
                         }
                     },
@@ -11108,8 +11107,7 @@ fn NewParser_(
             // them entirely from the output. That can cause the namespace itself
             // to be considered empty and thus be removed.
             var import_equal_count: usize = 0;
-            const _stmts: []Stmt = stmts.items;
-            for (_stmts) |stmt| {
+            for (stmts.items) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.was_ts_import_equals and !local.is_export) {

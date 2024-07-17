@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.20")
-set(WEBKIT_TAG b49be549da59347762aa83f849a65158d2a0d724)
+set(WEBKIT_TAG dac47fbd5444cbd4e3568267099ae276c547e897)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -22,6 +22,7 @@ set(REPORTED_NODEJS_VERSION "22.3.0")
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)
     set(CMAKE_CXX_EXTENSIONS ON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
 endif()
 
 # --- Build Type ---
@@ -645,16 +646,6 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
-# -- Brotli --
-set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
-file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
-    "${BROTLI_SRC}/common/*.c"
-    "${BROTLI_SRC}/enc/*.c"
-    "${BROTLI_SRC}/dec/*.c"
-)
-list(APPEND BUN_RAW_SOURCES ${BROTLI_FILES})
-include_directories("${BUN_DEPS_DIR}/brotli/include")
-
 # -- uSockets --
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
@@ -902,6 +893,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${ZIG_COMPILER}" "build" "obj"
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
         "--prefix" "${BUN_ZIG_OBJ_DIR}"
+        "--verbose"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
@@ -1182,7 +1174,6 @@ if(WIN32)
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
-        -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
@@ -1192,6 +1183,8 @@ else()
         -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
+        -fno-pic
+        -fno-pie
         -faddrsig
     )
 endif()
@@ -1208,10 +1201,11 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        "-fuse-ld=lld"
-        "-static-libstdc++"
-        "-static-libgcc"
-        "-Wl,-z,now"
+        -fuse-ld=lld
+        -fno-pic
+        -static-libstdc++
+        -static-libgcc
+        "-Wl,-no-pie"
         "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
@@ -1241,6 +1235,8 @@ if(UNIX AND NOT APPLE)
         "-rdynamic"
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
+        -Wl,-z,lazy
+        -Wl,-z,norelro
     )
 
     target_link_libraries(${bun} PRIVATE "c")
@@ -1274,11 +1270,12 @@ endif()
 
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
-    if(CI AND APPLE)
+    # if(CI AND APPLE)
+    if(APPLE)
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()
@@ -1462,6 +1459,24 @@ else()
     message(STATUS "Using dynamicly linked sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
+
+# -- Brotli --
+set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
+file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
+    "${BROTLI_SRC}/common/*.c"
+    "${BROTLI_SRC}/enc/*.c"
+    "${BROTLI_SRC}/dec/*.c"
+)
+add_library(brotli STATIC ${BROTLI_FILES})
+target_include_directories(brotli PRIVATE "${BROTLI_SRC}/include")
+target_compile_definitions(brotli PRIVATE "BROTLI_STATIC")
+
+if(WIN32)
+    target_compile_options(brotli PRIVATE /MT /U_DLL)
+endif()
+
+target_link_libraries(${bun} PRIVATE brotli)
+include_directories("${BUN_DEPS_DIR}/brotli/include")
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

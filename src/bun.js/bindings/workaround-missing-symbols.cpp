@@ -358,6 +358,10 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
 
 #endif
 
+#ifndef U_SHOW_CPLUSPLUS_API
+#define U_SHOW_CPLUSPLUS_API 0
+#endif
+
 #include <unicode/uchar.h>
 
 extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)

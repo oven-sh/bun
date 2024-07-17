@@ -338,10 +338,13 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
+
+        // https://github.com/ziglang/zig/issues/17430
         .pic = true,
+
+        .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
-
     obj.bundle_compiler_rt = false;
     obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;
@@ -359,9 +362,10 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
 
     if (opts.os == .linux) {
-        obj.link_emit_relocs = true;
-        obj.link_eh_frame_hdr = true;
+        obj.link_emit_relocs = false;
+        obj.link_eh_frame_hdr = false;
         obj.link_function_sections = true;
+        obj.link_data_sections = true;
 
         if (opts.optimize == .Debug) {
             obj.root_module.valgrind = true;

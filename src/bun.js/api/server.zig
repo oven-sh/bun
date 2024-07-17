@@ -1517,13 +1517,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.renderMissing();
         }
 
-        
-        fn renderPolyfill(ctx: *RequestContext, value: JSC.JSValue, comptime renderMissingIfInvalid: bool) bool { 
+        fn renderPolyfill(ctx: *RequestContext, value: JSC.JSValue, comptime renderMissingIfInvalid: bool) bool {
             // We need at least know the status, headers and can have or not a body
             // { status: number, headers: Header, body: ReadableStream | null }
             value.ensureStillAlive();
-            if(!value.isObject()) {
-                if(comptime renderMissingIfInvalid) {
+            if (!value.isObject()) {
+                if (comptime renderMissingIfInvalid) {
                     renderMissingInvalidResponse(ctx, value);
                 }
                 return false;
@@ -1531,41 +1530,40 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const globalThis = ctx.server.globalThis;
             var status_code: u16 = 0;
             // status is required
-            if(value.get(globalThis, "status")) |status_js| {
-                if(status_js.isNumber()) {
+            if (value.get(globalThis, "status")) |status_js| {
+                if (status_js.isNumber()) {
                     status_code = status_js.to(u16);
                 } else {
-                    if(comptime renderMissingIfInvalid) {
+                    if (comptime renderMissingIfInvalid) {
                         renderMissingInvalidResponse(ctx, value);
                     }
                     return false;
                 }
             } else {
-                if(comptime renderMissingIfInvalid) {
+                if (comptime renderMissingIfInvalid) {
                     renderMissingInvalidResponse(ctx, value);
                 }
                 return false;
             }
 
-
             var headers: ?*JSC.FetchHeaders = null;
             var deinit_headers = false;
             // headers are required
             if (value.get(globalThis, "headers")) |js_headers| {
-                if(js_headers.as(JSC.FetchHeaders)) |headers_| {
+                if (js_headers.as(JSC.FetchHeaders)) |headers_| {
                     headers = headers_;
-                } else if(JSC.FetchHeaders.createFromJS(globalThis, js_headers)) |headers_| {
+                } else if (JSC.FetchHeaders.createFromJS(globalThis, js_headers)) |headers_| {
                     // should we allow this branch? maybe Headers are also Polyfill?
                     headers = headers_;
                     deinit_headers = true;
                 } else {
-                    if(comptime renderMissingIfInvalid) {
+                    if (comptime renderMissingIfInvalid) {
                         renderMissingInvalidResponse(ctx, value);
                     }
                     return false;
                 }
             } else {
-                if(comptime renderMissingIfInvalid) {
+                if (comptime renderMissingIfInvalid) {
                     renderMissingInvalidResponse(ctx, value);
                 }
                 return false;
@@ -1576,23 +1574,23 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.flags.response_protected = true;
             JSC.C.JSValueProtect(globalThis, value.asObjectRef());
 
-            defer if(deinit_headers) headers.?.deref();
-                                                                      
+            defer if (deinit_headers) headers.?.deref();
+
             ctx.renderPolyfillMetadata(status_code, headers);
 
             // body is optional
             if (value.get(globalThis, "body")) |body| {
-                if(JSC.WebCore.ReadableStream.fromJS(body, globalThis)) |stream| {
+                if (JSC.WebCore.ReadableStream.fromJS(body, globalThis)) |stream| {
                     ctx.setAbortHandler();
                     var body_value: JSC.WebCore.Body.Value = .{
-                        .Locked  = .{
+                        .Locked = .{
                             .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
                             .global = globalThis,
                         },
                     };
                     ctx.doRenderWithBody(&body_value);
                 } else {
-                     ctx.renderMissingCorked();
+                    ctx.renderMissingCorked();
                 }
             } else {
                 ctx.renderMissingCorked();
@@ -2578,7 +2576,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             // TODO: should this timeout?
                             this.setAbortHandler();
                             this.ref();
-                            if(this.response_ptr) |response_ptr| {
+                            if (this.response_ptr) |response_ptr| {
                                 response_ptr.body.value = .{
                                     .Locked = .{
                                         .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
@@ -3286,7 +3284,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     } else if (result.as(Response)) |response| {
                         this.render(response);
                         return;
-                    } else if(this.renderPolyfill(result, false)) {
+                    } else if (this.renderPolyfill(result, false)) {
                         return;
                     }
                 }
@@ -3489,7 +3487,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.flags.needs_content_range = false;
             }
         }
-        
+
         pub fn renderPolyfillMetadata(this: *RequestContext, status_code: u16, headers: ?*JSC.FetchHeaders) void {
             if (this.resp == null) return;
             const resp = this.resp.?;

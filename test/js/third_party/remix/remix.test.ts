@@ -1,6 +1,7 @@
 import { describe, it, expect, test } from "bun:test";
 test("remix works", async () => {
   process.env.PORT = "0";
+  process.exitCode = 1;
   process.env.NODE_ENV = "production";
   process.env.HOST = "localhost";
   process.argv = [process.argv[0], ".", require("path").join(__dirname, "remix-build", "server", "index.js")];
@@ -39,4 +40,5 @@ test("remix works", async () => {
   await promise;
   const data = Buffer.concat(chunks).toString();
   expect(data).toContain("Remix Docs");
+  process.exitCode = 0;
 });

@@ -26,10 +26,10 @@ export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
-export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
+export LDFLAGS="${LDFLAGS}  "
 
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -faddrsig '
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -faddrsig '
+export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
 
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"

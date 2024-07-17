@@ -1649,3 +1649,190 @@ it("should be able to abrupt stop the server", async () => {
     }
   }
 });
+
+describe("should allow Polyfill Response ", () => {
+  it("with a ReadableStream", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      fetch() {
+        return {
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue("Hello, ");
+            },
+            async pull(controller) {
+              await Bun.sleep(10);
+              controller.enqueue("World!");
+              await Bun.sleep(10);
+              controller.close();
+            },
+          }),
+          status: 201,
+          headers: new Headers({
+            "Content-Type": "text/test",
+          }),
+        } as Response;
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+  it("with a ReadableStream using async", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      async fetch() {
+        await Bun.sleep(10);
+        return {
+          body: new ReadableStream({
+            start(controller) {
+              controller.enqueue("Hello, ");
+            },
+            async pull(controller) {
+              await Bun.sleep(10);
+              controller.enqueue("World!");
+              controller.close();
+            },
+          }),
+          status: 201,
+          headers: new Headers({
+            "Content-Type": "text/test",
+          }),
+        } as Response;
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+
+  it("with inheritance", async () => {
+    class MyResponse extends Response {
+      constructor() {
+        super("Hello, World!", {
+          status: 201,
+          headers: {
+            "Content-Type": "text/test",
+          },
+        });
+      }
+    }
+    using serve = Bun.serve({
+      port: 0,
+      fetch() {
+        return new MyResponse();
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+
+  it("with inheritance using async", async () => {
+    class MyResponse extends Response {
+      constructor() {
+        super("Hello, World!", {
+          status: 201,
+          headers: {
+            "Content-Type": "text/test",
+          },
+        });
+      }
+    }
+    using serve = Bun.serve({
+      port: 0,
+      fetch() {
+        return new MyResponse();
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+
+  it("without body", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      fetch() {
+        return {
+          status: 201,
+          headers: new Headers({
+            "Content-Type": "text/test",
+          }),
+        } as Response;
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("");
+  });
+  it("with error handler", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      error() {
+        return {
+          status: 201,
+          headers: new Headers({
+            "Content-Type": "text/test",
+          }),
+          body: new ReadableStream({
+            async pull(controller) {
+              controller.enqueue("Hello,");
+              await Bun.sleep(10);
+              controller.enqueue(" World!");
+              controller.close();
+            },
+          }),
+        } as Response;
+      },
+      fetch() {
+        throw new Error("Ooopsie!");
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+  it("with async error handler", async () => {
+    using serve = Bun.serve({
+      port: 0,
+      async error() {
+        await Bun.sleep(10);
+        return {
+          status: 201,
+          headers: new Headers({
+            "Content-Type": "text/test",
+          }),
+          body: new ReadableStream({
+            async pull(controller) {
+              controller.enqueue("Hello,");
+              await Bun.sleep(10);
+              controller.enqueue(" World!");
+              controller.close();
+            },
+          }),
+        } as Response;
+      },
+      fetch() {
+        throw new Error("Ooopsie!");
+      },
+    });
+
+    const response = await fetch(serve.url);
+    expect(response.status).toBe(201);
+    expect(response.headers.get("Content-Type")).toBe("text/test");
+    expect(await response.text()).toBe("Hello, World!");
+  });
+});

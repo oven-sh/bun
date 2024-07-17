@@ -33,6 +33,7 @@ export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
   export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
+  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
 fi
 
 # libarchive needs position-independent executables to compile successfully
@@ -42,7 +43,6 @@ if [ -n "$FORCE_PIC" ]; then
 else
   export CFLAGS="$CFLAGS -fno-pie -fno-pic "
   export CXXFLAGS="$CXXFLAGS -fno-pie -fno-pic "
-  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
 fi
 
 if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then

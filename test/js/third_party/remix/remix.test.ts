@@ -39,7 +39,4 @@ test("remix works", async () => {
   await promise;
   const data = Buffer.concat(chunks).toString();
   expect(data).toContain("Remix Docs");
-
-  // Don't wait for the server to close.
-  process.exit(0);
 });

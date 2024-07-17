@@ -1919,6 +1919,8 @@ fn NewPrinter(
             level_: Level,
             flags: ExprFlag.Set,
         ) void {
+            _ = leading_interior_comments; // TODO:
+
             var level = level_;
             const wrap = level.gte(.new) or flags.contains(.forbid_call);
             if (wrap) p.print("(");
@@ -2090,14 +2092,14 @@ fn NewPrinter(
             }
 
             // External import()
-            if (leading_interior_comments.len > 0) {
-                p.printNewline();
-                p.indent();
-                for (leading_interior_comments) |comment| {
-                    p.printIndentedComment(comment.text);
-                }
-                p.printIndent();
-            }
+            // if (leading_interior_comments.len > 0) {
+            //     p.printNewline();
+            //     p.indent();
+            //     for (leading_interior_comments) |comment| {
+            //         p.printIndentedComment(comment.text);
+            //     }
+            //     p.printIndent();
+            // }
             p.addSourceMapping(record.range.loc);
 
             p.printSpaceBeforeIdentifier();
@@ -2138,11 +2140,11 @@ fn NewPrinter(
             }
             p.print(")");
 
-            if (leading_interior_comments.len > 0) {
-                p.printNewline();
-                p.unindent();
-                p.printIndent();
-            }
+            // if (leading_interior_comments.len > 0) {
+            //     p.printNewline();
+            //     p.unindent();
+            //     p.printIndent();
+            // }
 
             return;
         }
@@ -2514,7 +2516,6 @@ fn NewPrinter(
                     }
                 },
                 .e_import => |e| {
-
                     // Handle non-string expressions
                     if (e.isImportRecordNull()) {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
@@ -2525,47 +2526,44 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.print("import(");
-                        if (e.leading_interior_comments.len > 0) {
-                            p.printNewline();
-                            p.indent();
-                            for (e.leading_interior_comments) |comment| {
-                                p.printIndentedComment(comment.text);
-                            }
-                            p.printIndent();
-                        }
+                        // TODO:
+                        // if (e.leading_interior_comments.len > 0) {
+                        //     p.printNewline();
+                        //     p.indent();
+                        //     for (e.leading_interior_comments) |comment| {
+                        //         p.printIndentedComment(comment.text);
+                        //     }
+                        //     p.printIndent();
+                        // }
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
-                        if (comptime is_bun_platform) {
+                        if (!e.options.isMissing()) {
                             // since we previously stripped type, it is a breaking change to
                             // enable this for non-bun platforms
-                            switch (e.type_attribute) {
-                                .none => {},
-                                .text => {
-                                    p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
-                                },
-                                .json => {
-                                    p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
-                                },
-                                .toml => {
-                                    p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
-                                },
-                                .file => {
-                                    p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
-                                },
+                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
+                                p.printWhitespacer(ws(", "));
+                                p.printExpr(e.options, .comma, .{});
                             }
                         }
 
-                        if (e.leading_interior_comments.len > 0) {
-                            p.printNewline();
-                            p.unindent();
-                            p.printIndent();
-                        }
+                        // TODO:
+                        // if (e.leading_interior_comments.len > 0) {
+                        //     p.printNewline();
+                        //     p.unindent();
+                        //     p.printIndent();
+                        // }
                         p.print(")");
                         if (wrap) {
                             p.print(")");
                         }
                     } else {
-                        p.printRequireOrImportExpr(e.import_record_index, false, e.leading_interior_comments, level, flags);
+                        p.printRequireOrImportExpr(
+                            e.import_record_index,
+                            false,
+                            &.{}, // e.leading_interior_comments,
+                            level,
+                            flags,
+                        );
                     }
                 },
                 .e_dot => |e| {

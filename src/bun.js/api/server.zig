@@ -1489,7 +1489,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             handleResolve(ctx, result);
             return JSValue.jsUndefined();
         }
-
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
             var class_name = value.getClassInfoName() orelse bun.String.empty;
             defer class_name.deref();
@@ -1499,7 +1498,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             var writer = Output.errorWriter();
 
             if (class_name.eqlComptime("Response")) {
-                Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
+                Output.errGeneric("Expected a Response object, but received a invalid polyfilled Response object.", .{});
             } else if (!value.isEmpty() and !globalThis.hasException()) {
                 var formatter = JSC.ConsoleObject.Formatter{
                     .globalThis = globalThis,
@@ -1518,6 +1517,89 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.renderMissing();
         }
 
+        
+        fn renderPolyfill(ctx: *RequestContext, value: JSC.JSValue, comptime renderMissingIfInvalid: bool) bool { 
+            // We need at least know the status, headers and can have or not a body
+            // { status: number, headers: Header, body: ReadableStream | null }
+            value.ensureStillAlive();
+            if(!value.isObject()) {
+                if(comptime renderMissingIfInvalid) {
+                    renderMissingInvalidResponse(ctx, value);
+                }
+                return false;
+            }
+            const globalThis = ctx.server.globalThis;
+            var status_code: u16 = 0;
+            // status is required
+            if(value.get(globalThis, "status")) |status_js| {
+                if(status_js.isNumber()) {
+                    status_code = status_js.to(u16);
+                } else {
+                    if(comptime renderMissingIfInvalid) {
+                        renderMissingInvalidResponse(ctx, value);
+                    }
+                    return false;
+                }
+            } else {
+                if(comptime renderMissingIfInvalid) {
+                    renderMissingInvalidResponse(ctx, value);
+                }
+                return false;
+            }
+
+
+            var headers: ?*JSC.FetchHeaders = null;
+            var deinit_headers = false;
+            // headers are required
+            if (value.get(globalThis, "headers")) |js_headers| {
+                if(js_headers.as(JSC.FetchHeaders)) |headers_| {
+                    headers = headers_;
+                } else if(JSC.FetchHeaders.createFromJS(globalThis, js_headers)) |headers_| {
+                    // should we allow this branch? maybe Headers are also Polyfill?
+                    headers = headers_;
+                    deinit_headers = true;
+                } else {
+                    if(comptime renderMissingIfInvalid) {
+                        renderMissingInvalidResponse(ctx, value);
+                    }
+                    return false;
+                }
+            } else {
+                if(comptime renderMissingIfInvalid) {
+                    renderMissingInvalidResponse(ctx, value);
+                }
+                return false;
+            }
+
+            ctx.response_jsvalue = value;
+            assert(!ctx.flags.response_protected);
+            ctx.flags.response_protected = true;
+            JSC.C.JSValueProtect(globalThis, value.asObjectRef());
+
+            defer if(deinit_headers) headers.?.deref();
+                                                                      
+            ctx.renderPolyfillMetadata(status_code, headers);
+
+            // body is optional
+            if (value.get(globalThis, "body")) |body| {
+                if(JSC.WebCore.ReadableStream.fromJS(body, globalThis)) |stream| {
+                    ctx.setAbortHandler();
+                    var body_value: JSC.WebCore.Body.Value = .{
+                        .Locked  = .{
+                            .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
+                            .global = globalThis,
+                        },
+                    };
+                    ctx.doRenderWithBody(&body_value);
+                } else {
+                     ctx.renderMissingCorked();
+                }
+            } else {
+                ctx.renderMissingCorked();
+            }
+            return true;
+        }
+
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
             if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
                 ctx.renderMissingInvalidResponse(value);
@@ -1525,7 +1607,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             const response = value.as(JSC.WebCore.Response) orelse {
-                ctx.renderMissingInvalidResponse(value);
+                _ = ctx.renderPolyfill(value, true);
                 return;
             };
             ctx.response_jsvalue = value;
@@ -2496,12 +2578,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             // TODO: should this timeout?
                             this.setAbortHandler();
                             this.ref();
-                            this.response_ptr.?.body.value = .{
-                                .Locked = .{
-                                    .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
-                                    .global = globalThis,
-                                },
-                            };
+                            if(this.response_ptr) |response_ptr| {
+                                response_ptr.body.value = .{
+                                    .Locked = .{
+                                        .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
+                                        .global = globalThis,
+                                    },
+                                };
+                            }
                             assignment_result.then(
                                 globalThis,
                                 this,
@@ -2733,7 +2817,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             return;
                         }
                         var response = fulfilled_value.as(JSC.WebCore.Response) orelse {
-                            ctx.renderMissingInvalidResponse(fulfilled_value);
+                            _ = ctx.renderPolyfill(fulfilled_value, true);
                             return;
                         };
 
@@ -2766,6 +2850,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     },
                 }
                 wait_for_promise = true;
+            } else {
+                // we are not a promise and not a Response and not .empty/undefined/null
+                _ = ctx.renderPolyfill(response_value, true);
             }
 
             if (wait_for_promise) {
@@ -3199,6 +3286,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     } else if (result.as(Response)) |response| {
                         this.render(response);
                         return;
+                    } else if(this.renderPolyfill(result, false)) {
+                        return;
                     }
                 }
             }
@@ -3346,6 +3435,117 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.writeHeaders(headers_);
                 response.init.headers = null;
                 headers_.deref();
+            } else if (needs_content_range) {
+                status = 206;
+                this.writeStatus(status);
+            } else {
+                this.writeStatus(status);
+            }
+
+            if (needs_content_type and
+                // do not insert the content type if it is the fallback value
+                // we may not know the content-type when streaming
+                (!this.blob.isDetached() or content_type.value.ptr != MimeType.other.value.ptr))
+            {
+                resp.writeHeader("content-type", content_type.value);
+            }
+
+            // automatically include the filename when:
+            // 1. Bun.file("foo")
+            // 2. The content-disposition header is not present
+            if (!has_content_disposition and content_type.category.autosetFilename()) {
+                if (this.blob.getFileName()) |filename| {
+                    const basename = std.fs.path.basename(filename);
+                    if (basename.len > 0) {
+                        var filename_buf: [1024]u8 = undefined;
+
+                        resp.writeHeader(
+                            "content-disposition",
+                            std.fmt.bufPrint(&filename_buf, "filename=\"{s}\"", .{basename[0..@min(basename.len, 1024 - 32)]}) catch "",
+                        );
+                    }
+                }
+            }
+
+            if (this.flags.needs_content_length) {
+                resp.writeHeaderInt("content-length", size);
+                this.flags.needs_content_length = false;
+            }
+
+            if (needs_content_range and !has_content_range) {
+                var content_range_buf: [1024]u8 = undefined;
+
+                resp.writeHeader(
+                    "content-range",
+                    std.fmt.bufPrint(
+                        &content_range_buf,
+                        // we omit the full size of the Blob because it could
+                        // change between requests and this potentially leaks
+                        // PII undesirably
+                        "bytes {d}-{d}/*",
+                        .{ this.sendfile.offset, this.sendfile.offset + (this.sendfile.remain -| 1) },
+                    ) catch "bytes */*",
+                );
+                this.flags.needs_content_range = false;
+            }
+        }
+        
+        pub fn renderPolyfillMetadata(this: *RequestContext, status_code: u16, headers: ?*JSC.FetchHeaders) void {
+            if (this.resp == null) return;
+            const resp = this.resp.?;
+
+            var needs_content_range = this.flags.needs_content_range and this.sendfile.remain < this.blob.size();
+
+            const size = if (needs_content_range)
+                this.sendfile.remain
+            else
+                this.blob.size();
+
+            var status = if (status_code == 200 and size == 0 and !this.blob.isDetached())
+                204
+            else
+                status_code;
+
+            var needs_content_type = true;
+            var content_type_needs_free = false;
+
+            const content_type: MimeType = brk: {
+                if (headers) |headers_| {
+                    if (headers_.fastGet(.ContentType)) |content| {
+                        needs_content_type = false;
+
+                        var content_slice = content.toSlice(this.allocator);
+                        defer content_slice.deinit();
+
+                        const content_type_allocator = if (content_slice.allocator.isNull()) null else this.allocator;
+                        break :brk MimeType.init(content_slice.slice(), content_type_allocator, &content_type_needs_free);
+                    }
+                }
+
+                break :brk if (this.blob.contentType().len > 0)
+                    MimeType.byName(this.blob.contentType())
+                else if (MimeType.sniff(this.blob.slice())) |content|
+                    content
+                else if (this.blob.wasString())
+                    MimeType.text
+                    // TODO: should we get the mime type off of the Blob.Store if it exists?
+                    // A little wary of doing this right now due to causing some breaking change
+                else
+                    MimeType.other;
+            };
+            defer if (content_type_needs_free) content_type.deinit(this.allocator);
+            var has_content_disposition = false;
+            var has_content_range = false;
+            if (headers) |headers_| {
+                has_content_disposition = headers_.fastHas(.ContentDisposition);
+                has_content_range = headers_.fastHas(.ContentRange);
+                needs_content_range = needs_content_range and has_content_range;
+                if (needs_content_range) {
+                    status = 206;
+                }
+
+                this.writeStatus(status);
+                this.writeHeaders(headers_);
             } else if (needs_content_range) {
                 status = 206;
                 this.writeStatus(status);

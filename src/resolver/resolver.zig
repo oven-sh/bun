@@ -807,6 +807,26 @@ pub const Resolver = struct {
         const tracer = bun.tracy.traceNamed(@src(), "ModuleResolver.resolve");
         defer tracer.end();
 
+        // Only setting 'current_action' in debug mode because module resolution
+        // is done very often, and has a very low crash rate.
+        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        if (Environment.isDebug) bun.crash_handler.current_action = .{ .resolver = .{
+            .source_dir = source_dir,
+            .import_path = import_path,
+            .kind = kind,
+        } };
+        defer if (Environment.isDebug) {
+            bun.crash_handler.current_action = prev_action;
+        };
+
+        if (Environment.isDebug and bun.CLI.debug_flags.hasResolveBreakpoint(import_path)) {
+            bun.Output.debug("Resolving <green>{s}<r> from <blue>{s}<r>", .{
+                import_path,
+                source_dir,
+            });
+            @breakpoint();
+        }
+
         const original_order = r.extension_order;
         defer r.extension_order = original_order;
         r.extension_order = switch (kind) {
@@ -1143,13 +1163,13 @@ pub const Resolver = struct {
     pub fn resolveWithoutSymlinks(
         r: *ThisResolver,
         source_dir: string,
-        import_path_: string,
+        input_import_path: string,
         kind: ast.ImportKind,
         global_cache: GlobalCache,
     ) Result.Union {
         assert(std.fs.path.isAbsolute(source_dir));
 
-        var import_path = import_path_;
+        var import_path = input_import_path;
 
         // This implements the module resolution algorithm from node.js, which is
         // described here: https://nodejs.org/api/modules.html#modules_all_together
@@ -1375,7 +1395,10 @@ pub const Resolver = struct {
             }
 
             // Check for external packages first
-            if (r.opts.external.node_modules.count() > 0) {
+            if (r.opts.external.node_modules.count() > 0 and
+                // Imports like "process/" need to resolve to the filesystem, not a builtin
+                !strings.hasSuffixComptime(import_path, "/"))
+            {
                 var query = import_path;
                 while (true) {
                     if (r.opts.external.node_modules.contains(query)) {

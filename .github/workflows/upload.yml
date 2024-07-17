@@ -80,3 +80,15 @@ jobs:
             bun upgrade --canary
             # bun upgrade --stable <- to downgrade
             ```
+      # If notifying sentry fails, don't fail the rest of the build.
+      - name: Notify Sentry
+        uses: getsentry/action-release@v1.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        with:
+          ignore_missing: true
+          ignore_empty: true
+          version: ${{ github.event.workflow_run.head_sha || github.sha }}-canary
+          environment: canary

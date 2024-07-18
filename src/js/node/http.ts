@@ -1,8 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
-const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
-const cluster = require("node:cluster");
+const { Duplex, Readable, Writable } = require("node:stream");
 
 const {
   getHeader,
@@ -85,9 +84,6 @@ const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
 
-const kCorked = Symbol.for("kCorked");
-const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
-
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
 const StringPrototypeStartsWith = String.prototype.startsWith;
@@ -136,7 +132,7 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
+  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -147,7 +143,8 @@ var FakeSocket = class Socket extends Duplex {
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
-    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
+    return (this.#address ??=
+      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -158,7 +155,12 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _destroy(err, callback) {}
+  _destroy(err, callback) {
+    console.log(process.pid, "FakeSocket#_destroy");
+    this[kInternalSocketData][0][connectionsSymbol]--;
+    this[kInternalSocketData][1].end();
+    this[kInternalSocketData][0]._emitCloseIfDrained();
+  }
 
   _final(callback) {}
 
@@ -353,6 +355,7 @@ var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
 var serverSymbol = Symbol("server");
+const connectionsSymbol = Symbol("connections");
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
@@ -360,6 +363,7 @@ function Server(options, callback) {
   this.listening = false;
   this._unref = false;
   this[serverSymbol] = undefined;
+  this[connectionsSymbol] = 0;
 
   if (typeof options === "function") {
     callback = options;
@@ -470,7 +474,16 @@ Server.prototype.close = function (optionalCallback?) {
   this[serverSymbol] = undefined;
   if (typeof optionalCallback === "function") this.once("close", optionalCallback);
   server.stop();
-  this.emit("close");
+  this._emitCloseIfDrained();
+};
+
+Server.prototype._emitCloseIfDrained = function () {
+  if (!this[serverSymbol] || this[connectionsSymbol] > 0) {
+    return;
+  }
+  process.nextTick(() => {
+    this.emit("close");
+  });
 };
 
 Server.prototype[Symbol.asyncDispose] = function () {
@@ -487,6 +500,7 @@ Server.prototype.address = function () {
   return this[serverSymbol].address;
 };
 
+let cluster;
 Server.prototype.listen = function (port, host, backlog, onListen) {
   const server = this;
   let socketPath;
@@ -515,110 +529,153 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     onListen = backlog;
   }
 
-  const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
-  const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-  let isHTTPS = false;
+  if (typeof port === "string" && !Number.isNaN(parseInt(port))) {
+    port = parseInt(port);
+  }
 
   try {
-    const tls = this[tlsSymbol];
-    if (tls) {
-      this.serverName = tls.serverName || host || "localhost";
-    }
-    this[serverSymbol] = Bun.serve<any>({
-      tls,
-      port,
-      hostname: host,
-      unix: socketPath,
-      // Bindings to be used for WS Server
-      websocket: {
-        open(ws) {
-          ws.data.open(ws);
-        },
-        message(ws, message) {
-          ws.data.message(ws, message);
-        },
-        close(ws, code, reason) {
-          ws.data.close(ws, code, reason);
-        },
-        drain(ws) {
-          ws.data.drain(ws);
-        },
-        ping(ws, data) {
-          ws.data.ping(ws, data);
-        },
-        pong(ws, data) {
-          ws.data.pong(ws, data);
-        },
-      },
-      maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-      // Be very careful not to access (web) Request object
-      // properties:
-      // - request.url
-      // - request.headers
-      //
-      // We want to avoid triggering the getter for these properties because
-      // that will cause the data to be cloned twice, which costs memory & performance.
-      fetch(req, _server) {
-        var pendingResponse;
-        var pendingError;
-        var reject = err => {
-          if (pendingError) return;
-          pendingError = err;
-          if (rejectFunction) rejectFunction(err);
-        };
+    // listenInCluster
+    if (cluster === undefined) cluster = require("node:cluster");
 
-        var reply = function (resp) {
-          if (pendingResponse) return;
-          pendingResponse = resp;
-          if (resolveFunction) resolveFunction(resp);
-        };
-
-        const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
-        isNextIncomingMessageHTTPS = isHTTPS;
-        const http_req = new RequestClass(req);
-        isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
-
-        const upgrade = http_req.headers.upgrade;
-
-        const http_res = new ResponseClass(http_req, reply);
-
-        http_req.socket[kInternalSocketData] = [_server, http_res, req];
-        server.emit("connection", http_req.socket);
-
-        const rejectFn = err => reject(err);
-        http_req.once("error", rejectFn);
-        http_res.once("error", rejectFn);
-
-        if (upgrade) {
-          server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
-        } else {
-          server.emit("request", http_req, http_res);
-        }
-
-        if (pendingError) {
-          throw pendingError;
-        }
-
-        if (pendingResponse) {
-          return pendingResponse;
-        }
-
-        var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-        return promise;
-      },
-    });
-    isHTTPS = this[serverSymbol].protocol === "https";
-
-    if (this?._unref) {
-      this[serverSymbol]?.unref?.();
+    if (cluster.isPrimary) {
+      server._listen3(port, host, socketPath, false, onListen);
+      return this;
     }
 
-    setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
+    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+
+    // const serverQuery = {
+    //   // address: address,
+    //   port: port,
+    //   addressType: 4,
+    //   // fd: fd,
+    //   // flags,
+    //   // backlog,
+    //   // ...options,
+    // };
+    // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+    //   // err = checkBindError(err, port, handle);
+    //   // if (err) {
+    //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
+    //   // }
+    //   if (err) {
+    //     throw err;
+    //   }
+    //   server._listen3(port, host, socketPath, onListen);
+    // });
+    server._listen3(port, host, socketPath, true, onListen);
   } catch (err) {
     setTimeout(emitErrorNextTick, 1, this, err);
   }
 
   return this;
+};
+
+Server.prototype._listen3 = function (port, host, socketPath, reusePort, onListen) {
+  const tls = this[tlsSymbol];
+  if (tls) {
+    this.serverName = tls.serverName || host || "localhost";
+  }
+
+  const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
+  const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+  let isHTTPS = false;
+  const server = this;
+
+  this[serverSymbol] = Bun.serve<any>({
+    tls,
+    port,
+    hostname: host,
+    unix: socketPath,
+    reusePort,
+    // Bindings to be used for WS Server
+    websocket: {
+      open(ws) {
+        server[connectionsSymbol]++;
+        ws.data.open(ws);
+      },
+      message(ws, message) {
+        ws.data.message(ws, message);
+      },
+      close(ws, code, reason) {
+        server[connectionsSymbol]--;
+        ws.data.close(ws, code, reason);
+      },
+      drain(ws) {
+        ws.data.drain(ws);
+      },
+      ping(ws, data) {
+        ws.data.ping(ws, data);
+      },
+      pong(ws, data) {
+        ws.data.pong(ws, data);
+      },
+    },
+    maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+    // Be very careful not to access (web) Request object
+    // properties:
+    // - request.url
+    // - request.headers
+    //
+    // We want to avoid triggering the getter for these properties because
+    // that will cause the data to be cloned twice, which costs memory & performance.
+    fetch(req, _server) {
+      server[connectionsSymbol]++;
+      var pendingResponse;
+      var pendingError;
+      var reject = err => {
+        if (pendingError) return;
+        pendingError = err;
+        if (rejectFunction) rejectFunction(err);
+      };
+
+      var reply = function (resp) {
+        if (pendingResponse) return;
+        pendingResponse = resp;
+        if (resolveFunction) resolveFunction(resp);
+      };
+
+      const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+      isNextIncomingMessageHTTPS = isHTTPS;
+      const http_req = new RequestClass(req);
+      isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
+
+      const upgrade = http_req.headers.upgrade;
+
+      const http_res = new ResponseClass(http_req, reply);
+
+      http_req.socket[kInternalSocketData] = [server, http_res, req];
+      server.emit("connection", http_req.socket);
+
+      const rejectFn = err => reject(err);
+      http_req.once("error", rejectFn);
+      http_res.once("error", rejectFn);
+
+      if (upgrade) {
+        server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+      } else {
+        server.emit("request", http_req, http_res);
+      }
+
+      if (pendingError) {
+        throw pendingError;
+      }
+
+      if (pendingResponse) {
+        return pendingResponse;
+      }
+
+      var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+      return promise;
+    },
+  });
+  isHTTPS = this[serverSymbol].protocol === "https";
+
+  if (this?._unref) {
+    this[serverSymbol]?.unref?.();
+  }
+
+  setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
 };
 
 Server.prototype.setTimeout = function (msecs, callback) {
@@ -1379,6 +1436,7 @@ class ClientRequest extends OutgoingMessage {
     if (err) {
       this.emit("error", err);
     }
+    this.socket.destroy();
     callback();
   }
 

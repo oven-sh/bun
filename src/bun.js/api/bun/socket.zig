@@ -1137,6 +1137,26 @@ pub const Listener = struct {
             return promise_value;
         }
     }
+
+    pub fn getsockname(this: *Listener, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+        log("getsockname()", .{});
+        const arguments = callframe.arguments(1).slice();
+        if (arguments.len < 1) {
+            globalObject.throw("Expected 1 argument, got 0", .{});
+            return .zero;
+        }
+        const out = arguments[0];
+        if (!out.isObject()) {
+            globalObject.throwValue(globalObject.ERR_INVALID_ARG_TYPE(
+                ZigString.static("out").toJS(globalObject),
+                ZigString.static("object").toJS(globalObject),
+                out,
+            ));
+            return .zero;
+        }
+        out.put(globalObject, ZigString.static("port"), this.getPort(globalObject));
+        return out;
+    }
 };
 
 fn JSSocketType(comptime ssl: bool) type {

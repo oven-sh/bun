@@ -73,6 +73,8 @@ const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const kServerSocket = Symbol("kServerSocket");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
+const kRealListen = Symbol("kRealListen");
+
 function closeNT(self) {
   self.emit("close");
 }
@@ -967,7 +969,7 @@ class Server extends EventEmitter {
     return this;
   }
 
-  _listen3(path, port, hostname, exclusive, tls, contexts, onListen) {
+  [kRealListen](path, port, hostname, exclusive, tls, contexts, onListen) {
     if (path) {
       this[bunSocketInternal] = Bun.listen({
         unix: path,
@@ -1057,7 +1059,7 @@ function listenInCluster(
   if (cluster === undefined) cluster = require("node:cluster");
 
   if (cluster.isPrimary || exclusive) {
-    server._listen3(path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
     return;
   }
 
@@ -1075,7 +1077,7 @@ function listenInCluster(
     if (err) {
       throw new ExceptionWithHostPort(err, "bind", address, port);
     }
-    server._listen3(path, port, hostname, exclusive, tls, contexts, onListen);
+    server[kRealListen](path, port, hostname, exclusive, tls, contexts, onListen);
   });
 }
 

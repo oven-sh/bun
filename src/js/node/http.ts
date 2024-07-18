@@ -83,6 +83,7 @@ const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
+const kRealListen = Symbol("kRealListen");
 
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
@@ -538,7 +539,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     if (cluster === undefined) cluster = require("node:cluster");
 
     if (cluster.isPrimary) {
-      server._listen3(port, host, socketPath, false, onListen);
+      server[kRealListen](port, host, socketPath, false, onListen);
       return this;
     }
 
@@ -561,9 +562,9 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     //   if (err) {
     //     throw err;
     //   }
-    //   server._listen3(port, host, socketPath, onListen);
+    //   server[kRealListen](port, host, socketPath, onListen);
     // });
-    server._listen3(port, host, socketPath, true, onListen);
+    server[kRealListen](port, host, socketPath, true, onListen);
   } catch (err) {
     setTimeout(emitErrorNextTick, 1, this, err);
   }
@@ -571,7 +572,7 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
   return this;
 };
 
-Server.prototype._listen3 = function (port, host, socketPath, reusePort, onListen) {
+Server.prototype[kRealListen] = function (port, host, socketPath, reusePort, onListen) {
   const tls = this[tlsSymbol];
   if (tls) {
     this.serverName = tls.serverName || host || "localhost";

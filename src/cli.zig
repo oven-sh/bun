@@ -70,6 +70,19 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
+pub const debug_flags = if (Environment.isDebug) struct {
+    var resolve_breakpoints: []const []const u8 = &.{};
+
+    pub fn hasResolveBreakpoint(str: []const u8) bool {
+        for (resolve_breakpoints) |bp| {
+            if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+} else @compileError("Do not access this namespace []const u8; in a release build");
+
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
@@ -146,7 +159,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = [_]ParamType{
+    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -156,6 +169,10 @@ pub const Arguments = struct {
         // This will print more error return traces, as a debug aid
         clap.parseParam("--verbose-error-trace") catch unreachable,
     } else [_]ParamType{};
+
+    const debug_params = [_]ParamType{
+        clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+    };
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -957,6 +974,10 @@ pub const Arguments = struct {
                     Global.exit(1);
                 }
             }
+        }
+
+        if (Environment.isDebug) {
+            debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
         }
 
         return opts;

@@ -35,6 +35,8 @@ export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-
 if [ "$BUN_ENABLE_LTO" == "1" ]; then
   export CFLAGS="$CFLAGS -flto=full "
   export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
+  export LDFLAGS="$LDFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
+fi
 
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"

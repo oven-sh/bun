@@ -8,20 +8,20 @@ import { test, expect } from "bun:test";
 
 test("fs.stats truncate", async () => {
   const stats = new Stats(...Array.from({ length: 14 }, () => Number.MAX_VALUE));
-  expect(stats.dev).toBeNumber();
-  expect(stats.mode).toBeNumber();
-  expect(stats.nlink).toBeNumber();
-  expect(stats.uid).toBeNumber();
-  expect(stats.gid).toBeNumber();
-  expect(stats.rdev).toBeNumber();
-  expect(stats.blksize).toBeNumber();
-  expect(stats.ino).toBeNumber();
-  expect(stats.size).toBeNumber();
-  expect(stats.blocks).toBeNumber();
-  expect(stats.atimeMs).toBeNumber();
-  expect(stats.mtimeMs).toBeNumber();
-  expect(stats.ctimeMs).toBeNumber();
-  expect(stats.birthtimeMs).toBeNumber();
+  expect(stats.dev).toBeGreaterThan(0);
+  expect(stats.mode).toBeGreaterThan(0);
+  expect(stats.nlink).toBeGreaterThan(0);
+  expect(stats.uid).toBeGreaterThan(0);
+  expect(stats.gid).toBeGreaterThan(0);
+  expect(stats.rdev).toBeGreaterThan(0);
+  expect(stats.blksize).toBeGreaterThan(0);
+  expect(stats.ino).toBeGreaterThan(0);
+  expect(stats.size).toBeGreaterThan(0);
+  expect(stats.blocks).toBeGreaterThan(0);
+  expect(stats.atimeMs).toBeGreaterThan(0);
+  expect(stats.mtimeMs).toBeGreaterThan(0);
+  expect(stats.ctimeMs).toBeGreaterThan(0);
+  expect(stats.birthtimeMs).toBeGreaterThan(0);
 });
 
 test("fs.stats truncate (bigint)", async () => {

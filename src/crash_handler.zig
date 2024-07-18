@@ -51,7 +51,12 @@ var panic_mutex = std.Thread.Mutex{};
 threadlocal var panic_stage: usize = 0;
 
 /// This can be set by various parts of the codebase to indicate a broader
-/// action being taken, for example "Crashed while parsing /path/to/file.js"
+/// action being taken. It is printed when a crash happens, which can help
+/// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
+///
+/// Some of these are enabled in release builds, which may encourage users to
+/// attach the affected files to crash report. Others, which may have low crash
+/// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
@@ -102,11 +107,24 @@ pub const Action = union(enum) {
     visit: []const u8,
     print: []const u8,
 
+    resolver: if (bun.Environment.isDebug) struct {
+        source_dir: []const u8,
+        import_path: []const u8,
+        kind: bun.ImportKind,
+    } else void,
+
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
             .print => |path| try writer.print("printing {s}", .{path}),
+            .resolver => |res| if (bun.Environment.isDebug) {
+                try writer.print("resolving {s} from {s} ({s})", .{
+                    res.import_path,
+                    res.source_dir,
+                    res.kind.label(),
+                });
+            },
         }
     }
 };

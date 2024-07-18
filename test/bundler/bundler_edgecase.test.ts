@@ -1443,6 +1443,20 @@ describe("bundler", () => {
       "/entry.ts": [`"Y" has already been declared`],
     },
   });
+  itBundled("edgecase/BuiltinWithTrailingSlash", {
+    files: {
+      "/entry.js": `
+        import * as process from 'process/';
+        console.log(JSON.stringify(process));
+      `,
+      "/node_modules/process/index.js": `
+        export default { hello: 'world' };
+      `,
+    },
+    run: {
+      stdout: `{"default":{"hello":"world"}}`,
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

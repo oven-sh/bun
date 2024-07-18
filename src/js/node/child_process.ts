@@ -1224,15 +1224,6 @@ class ChildProcess extends EventEmitter {
     const has_ipc = $isJSArray(stdio) && stdio[3] === "ipc";
     var env = options.envPairs || process.env;
 
-    if (has_ipc) {
-      // Let child process know about opened IPC channel
-      if (env === undefined) env = {};
-      else validateObject(env, "options.envPairs");
-
-      // env.NODE_CHANNEL_FD = `3`;
-      // env.NODE_CHANNEL_SERIALIZATION_MODE = serialization;
-    }
-
     const detachedOption = options.detached;
     this.#encoding = options.encoding || undefined;
     this.#stdioOptions = bunStdio;

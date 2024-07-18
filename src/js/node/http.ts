@@ -23,6 +23,11 @@ const {
   headersTuple: any;
 };
 
+// TODO: make this more robust.
+function isAbortError(err) {
+  return err?.name === "AbortError";
+}
+
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -797,6 +802,11 @@ IncomingMessage.prototype = Object.setPrototypeOf(
         this.emit("aborted");
       }
 
+      // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
+      if (isAbortError(err)) {
+        err = undefined;
+      }
+
       const stream = this[bodyStreamSymbol];
       this[bodyStreamSymbol] = undefined;
       const streamState = stream?.$state;
@@ -1522,7 +1532,7 @@ class ClientRequest extends OutgoingMessage {
         .catch(err => {
           // Node treats AbortError separately.
           // The "abort" listener on the abort controller should have called this
-          if (err?.name === "AbortError") {
+          if (isAbortError(err)) {
             return;
           }
 

@@ -1936,10 +1936,10 @@ it("destroy should end download", async () => {
       });
     },
   });
-  {
-    let receivedByteLength = 0;
 
-    let { promise, resolve } = Promise.withResolvers();
+  async function run() {
+    let receivedByteLength = 0;
+    const { promise, resolve } = Promise.withResolvers();
     const req = request(server.url, res => {
       res.on("data", data => {
         receivedByteLength += data.length;
@@ -1950,15 +1950,19 @@ it("destroy should end download", async () => {
       });
     });
     req.end();
-    // wait for the first chunk
     await promise;
     req.destroy();
     await Bun.sleep(10);
     const initialByteLength = receivedByteLength;
     expect(receivedByteLength).toBeLessThanOrEqual(payload.length * 3);
-    await Bun.sleep(50);
+    await Bun.sleep(10);
     expect(initialByteLength).toBe(receivedByteLength);
+    await Bun.sleep(10);
   }
+
+  const runCount = 50;
+  const runs = Array.from({ length: runCount }, run);
+  await Promise.all(runs);
 });
 
 it("can send brotli from Server and receive with fetch", async () => {

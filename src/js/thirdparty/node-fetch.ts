@@ -1,13 +1,13 @@
 import type * as s from "stream";
 
-const {
-  Headers: WebHeaders,
-  Request: WebRequest,
-  Response: WebResponse,
-  Blob,
-  File = Blob,
-  FormData,
-} = globalThis as any;
+// Users may override the global fetch implementation, so we need to ensure these are the originals.
+const bindings = $cpp("NodeFetch.cpp", "createNodeFetchInternalBinding");
+const WebResponse: typeof globalThis.Response = bindings[0];
+const WebRequest: typeof globalThis.Request = bindings[1];
+const Blob: typeof globalThis.Blob = bindings[2];
+const WebHeaders: typeof globalThis.Headers = bindings[3];
+const FormData: typeof globalThis.FormData = bindings[4];
+const File: typeof globalThis.File = bindings[5];
 const nativeFetch = Bun.fetch;
 
 // node-fetch extends from URLSearchParams in their implementation...

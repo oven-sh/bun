@@ -116,6 +116,7 @@ extern "C" JSC::EncodedJSValue Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" bool Bun__closeChildIPC(JSGlobalObject*);
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
@@ -1912,13 +1913,7 @@ static JSValue constructProcessSend(VM& vm, JSObject* processObject)
 
 JSC_DEFINE_HOST_FUNCTION(processDisonnectFinish, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    assert(Bun__GlobalObject__hasIPC(globalObject));
-
-    close(3); // hardcoded ipc fd
-
-    auto global = jsCast<GlobalObject*>(globalObject);
-    Process__emitDisconnectEvent(global);
-
+    Bun__closeChildIPC(globalObject);
     return {};
 }
 

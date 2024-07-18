@@ -3708,6 +3708,13 @@ pub const VirtualMachine = struct {
             this.destroy();
         }
 
+        extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+
+        export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
+            global.bunVM().ipc.?.initialized.handleIPCClose();
+            (std.fs.File{ .handle = 3 }).close(); // hardcoded ipc fd
+        }
+
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 

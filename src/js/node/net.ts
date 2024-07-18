@@ -69,6 +69,7 @@ const bunSocketServerConnections = Symbol.for("::bunnetserverconnections::");
 const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
+const kServerSocket = Symbol("kServerSocket");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
 function closeNT(self) {
@@ -226,14 +227,15 @@ const Socket = (function (InternalSocket) {
       data: Socket.#Handlers.data,
       close(socket) {
         Socket.#Handlers.close(socket);
-        this.data[bunSocketServerConnections]--;
+        this.data.server[bunSocketServerConnections]--;
+        this.data.server._emitCloseIfDrained();
       },
       end(socket) {
         Socket.#Handlers.end(socket);
-        this.data[bunSocketServerConnections]--;
       },
       open(socket) {
         const self = this.data;
+        socket[kServerSocket] = self[bunSocketInternal];
         const options = self[bunSocketServerOptions];
         const { pauseOnConnect, connectionListener, InternalSocketClass, requestCert, rejectUnauthorized } = options;
         const _socket = new InternalSocketClass({});
@@ -775,24 +777,36 @@ class Server extends EventEmitter {
   }
 
   close(callback) {
-    if (this[bunSocketInternal]) {
-      this[bunSocketInternal].stop(true);
-      this[bunSocketInternal] = null;
-      this[bunSocketServerConnections] = 0;
-      this.emit("close");
-      if (typeof callback === "function") {
-        callback();
-      }
-
-      return this;
-    }
 
     if (typeof callback === "function") {
-      const error = new Error("Server is not running");
-      error.code = "ERR_SERVER_NOT_RUNNING";
-      callback(error);
+      if (!this[bunSocketInternal]) {
+        this.once("close", function close() {
+          callback(new ERR_SERVER_NOT_RUNNING());
+        });
+      } else {
+        this.once("close", callback);
+      }
     }
+
+    if (this[bunSocketInternal]) {
+      if (!cluster.isPrimary) process.channel?.unref();
+
+      this[bunSocketInternal].stop(false);
+      this[bunSocketInternal] = null;
+    }
+
+    this._emitCloseIfDrained();
+
     return this;
+  }
+
+  _emitCloseIfDrained() {
+    if (this[bunSocketInternal] || this[bunSocketServerConnections] > 0) {
+      return;
+    }
+    process.nextTick(() => {
+      this.emit("close");
+    });
   }
 
   address() {

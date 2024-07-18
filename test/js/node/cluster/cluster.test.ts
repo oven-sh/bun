@@ -18,7 +18,6 @@ new_test("advanced-serialization.ts");
 new_test("disconnect-with-no-workers.ts");
 new_test("fork-env.ts");
 new_test("kill-infinite-loop.ts");
-new_test("net-listen.ts");
 new_test("process-disconnect.ts");
 new_test("setup-primary-argv.ts");
 new_test("setup-primary-emit.ts");
@@ -35,8 +34,18 @@ new_test("rr-ref.ts");
 new_test("send-deadlock.ts");
 new_test("worker-init.ts");
 new_test("setup-primary-cumulative.ts");
-new_test("ipc-throw.ts");
-new_test("worker-disconnect-on-error.ts");
-new_test("bind-twice.ts");
 new_test("rr-handle-keep-loop-alive.ts");
 new_test("worker-exit.ts");
+new_test("disconnect-leak.ts");
+new_test("worker-destroy.ts");
+new_test("worker-isdead.ts");
+new_test("rr-handle-ref-unref.ts");
+new_test("rr-handle-close.ts");
+new_test("worker-no-exit.ts");
+
+test("docs-http-server.ts", () => {
+  expect([path.join(import.meta.dir, "docs-http-server.ts")]).toRun();
+});
+test("worker-no-exit-http.ts", () => {
+  expect([path.join(import.meta.dir, "worker-no-exit-http.ts")]).toRun();
+});

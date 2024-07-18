@@ -93,11 +93,11 @@ const constants = {
 };
 
 // https://www.sqlite.org/c3ref/c_alter_table.html
-const sqliteActionCodes = {
-  SQLITE_DELETE: 9,
-  SQLITE_INSERT: 18,
-  SQLITE_UPDATE: 23,
-};
+const enum sqliteActionCodes {
+  SQLITE_DELETE = 9,
+  SQLITE_INSERT = 18,
+  SQLITE_UPDATE = 23,
+}
 
 var SQL;
 

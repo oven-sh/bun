@@ -1775,11 +1775,14 @@ void on_update_hook(void * dataPtr, int type, const char * dbName, const char * 
     UpdateHookData* data = (UpdateHookData *)dataPtr;
 
     auto globalObject = data->globalObject.get();
+    auto &vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RETURN_IF_EXCEPTION(scope, void());
     auto callback = data->callback.get();
 
     JSValue typeValue = jsNumber(type);
-    JSValue dbNameValue = jsString(globalObject->vm(), makeString(ASCIILiteral::fromLiteralUnsafe(dbName)));
-    JSValue tableNameValue = jsString(globalObject->vm(), makeString(ASCIILiteral::fromLiteralUnsafe(tableName)));
+    JSValue dbNameValue = jsString(globalObject->vm(), String::fromUTF8(dbName));
+    JSValue tableNameValue = jsString(globalObject->vm(), String::fromUTF8(tableName));
     JSValue rowIdValue = jsNumber(rowId);
 
     JSC::CallData callData = JSC::getCallData(callback);

@@ -10,6 +10,7 @@ const net = require("node:net");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 type Http2ConnectOptions = { settings?: Settings; protocol?: "https:" | "http:"; createConnection?: Function };
 const TLSSocket = tls.TLSSocket;
+const Socket = net.Socket;
 const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const primordials = require("internal/primordials");
@@ -677,6 +678,330 @@ function emitAbortedNT(self, streams, streamId, error) {
     stream.emit("aborted");
   }
 }
+
+class ServerHttp2Session extends Http2Session {
+  /// close indicates that we called closed
+  #closed: boolean = false;
+  /// connected indicates that the connection/socket is connected
+  #connected: boolean = false;
+  #queue: Array<Buffer> = [];
+  #connections: number = 0;
+  [bunHTTP2Socket]: TLSSocket | Socket | null;
+  #socket_proxy: Proxy<TLSSocket | Socket>;
+  #parser: typeof H2FrameParser | null;
+  #url: URL;
+  #originSet = new Set<string>();
+  #streams = new Map<number, any>();
+  #isServer: boolean = false;
+  #alpnProtocol: string | undefined = undefined;
+  #localSettings: Settings | null = {
+    headerTableSize: 4096,
+    enablePush: true,
+    maxConcurrentStreams: 100,
+    initialWindowSize: 65535,
+    maxFrameSize: 16384,
+    maxHeaderListSize: 65535,
+    maxHeaderSize: 65535,
+  };
+  #encrypted: boolean = false;
+  #pendingSettingsAck: boolean = true;
+  #remoteSettings: Settings | null = null;
+  #pingCallbacks: Array<[Function, number]> | null = null;
+
+  #onRead(data: Buffer) {
+    this.#parser?.read(data);
+  }
+
+  #onClose() {
+    this.#parser = null;
+    this[bunHTTP2Socket] = null;
+    this.emit("close");
+  }
+  #onError(error: Error) {
+    this.#parser = null;
+    this[bunHTTP2Socket] = null;
+    this.emit("error", error);
+  }
+  #onTimeout() {
+    for (let [_, stream] of this.#streams) {
+      stream.emit("timeout");
+    }
+    this.emit("timeout");
+    this.destroy();
+  }
+  get originSet() {
+    if (this.encrypted) {
+      return Array.from(this.#originSet);
+    }
+  }
+
+  constructor(socket: TLSSocket | Socket) {
+    super();
+    this.#connected = true;
+    // check if h2 is supported only for TLSSocket
+    if (socket instanceof TLSSocket) {
+      if (socket.alpnProtocol !== "h2") {
+        socket.end();
+        const error = new Error("ERR_HTTP2_ERROR: h2 is not supported");
+        error.code = "ERR_HTTP2_ERROR";
+        this.emit("error", error);
+      }
+      this.#alpnProtocol = "h2";
+
+      const origin = socket[bunTLSConnectOptions]?.serverName || socket.remoteAddress;
+      this.#originSet.add(origin);
+      this.emit("origin", this.originSet);
+    } else {
+      this.#alpnProtocol = "h2c";
+    }
+    this.#isServer = true;
+  }
+
+  get alpnProtocol() {
+    return this.#alpnProtocol;
+  }
+  get connecting() {
+    const socket = this[bunHTTP2Socket];
+    if (!socket) {
+      return false;
+    }
+    return socket.connecting || false;
+  }
+  get connected() {
+    return this[bunHTTP2Socket]?.connecting === false;
+  }
+  get destroyed() {
+    return this[bunHTTP2Socket] === null;
+  }
+  get encrypted() {
+    return this.#encrypted;
+  }
+  get closed() {
+    return this.#closed;
+  }
+
+  get remoteSettings() {
+    return this.#remoteSettings;
+  }
+
+  get localSettings() {
+    return this.#localSettings;
+  }
+
+  get pendingSettingsAck() {
+    return this.#pendingSettingsAck;
+  }
+
+  get type() {
+    if (this.#isServer) return 0;
+    return 1;
+  }
+
+  get socket() {
+    const socket = this[bunHTTP2Socket];
+    if (!socket) return null;
+    if (this.#socket_proxy) return this.#socket_proxy;
+    this.#socket_proxy = new Proxy(this, proxySocketHandler);
+    return this.#socket_proxy;
+  }
+  get state() {
+    return this.#parser?.getCurrentState();
+  }
+
+  get [bunHTTP2Native]() {
+    return this.#parser;
+  }
+
+  unref() {
+    return this[bunHTTP2Socket]?.unref();
+  }
+  ref() {
+    return this[bunHTTP2Socket]?.ref();
+  }
+  setTimeout(msecs, callback) {
+    return this[bunHTTP2Socket]?.setTimeout(msecs, callback);
+  }
+
+  ping(payload, callback) {
+    if (typeof payload === "function") {
+      callback = payload;
+      payload = Buffer.alloc(8);
+    } else {
+      payload = payload || Buffer.alloc(8);
+    }
+    if (!(payload instanceof Buffer) && !isTypedArray(payload)) {
+      const error = new TypeError("ERR_INVALID_ARG_TYPE: payload must be a Buffer or TypedArray");
+      error.code = "ERR_INVALID_ARG_TYPE";
+      throw error;
+    }
+    const parser = this.#parser;
+    if (!parser) return false;
+    if (!this[bunHTTP2Socket]) return false;
+
+    if (typeof callback === "function") {
+      if (payload.byteLength !== 8) {
+        const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
+        error.code = "ERR_HTTP2_PING_LENGTH";
+        callback(error, 0, payload);
+        return;
+      }
+      if (this.#pingCallbacks) {
+        this.#pingCallbacks.push([callback, Date.now()]);
+      } else {
+        this.#pingCallbacks = [[callback, Date.now()]];
+      }
+    } else if (payload.byteLength !== 8) {
+      const error = new RangeError("ERR_HTTP2_PING_LENGTH: HTTP2 ping payload must be 8 bytes");
+      error.code = "ERR_HTTP2_PING_LENGTH";
+      throw error;
+    }
+
+    parser.ping(payload);
+    return true;
+  }
+  goaway(errorCode, lastStreamId, opaqueData) {
+    return this.#parser?.goaway(errorCode, lastStreamId, opaqueData);
+  }
+
+  setLocalWindowSize(windowSize) {
+    return this.#parser?.setLocalWindowSize(windowSize);
+  }
+
+  settings(settings: Settings, callback) {
+    this.#pendingSettingsAck = true;
+    this.#parser?.settings(settings);
+    if (typeof callback === "function") {
+      const start = Date.now();
+      this.once("localSettings", () => {
+        callback(null, this.#localSettings, Date.now() - start);
+      });
+    }
+  }
+
+  // Gracefully closes the Http2Session, allowing any existing streams to complete on their own and preventing new Http2Stream instances from being created. Once closed, http2session.destroy() might be called if there are no open Http2Stream instances.
+  // If specified, the callback function is registered as a handler for the 'close' event.
+  close(callback: Function) {
+    this.#closed = true;
+
+    if (typeof callback === "function") {
+      this.once("close", callback);
+    }
+    if (this.#connections === 0) {
+      this.destroy();
+    }
+  }
+
+  destroy(error?: Error, code?: number) {
+    const socket = this[bunHTTP2Socket];
+    this.#closed = true;
+    this.#connected = false;
+    code = code || constants.NGHTTP2_NO_ERROR;
+    if (socket) {
+      this.goaway(code, 0, Buffer.alloc(0));
+      socket.end();
+    }
+    this[bunHTTP2Socket] = null;
+    // this should not be needed since RST + GOAWAY should be sent
+    for (let [_, stream] of this.#streams) {
+      if (error) {
+        stream.emit("error", error);
+      }
+      stream.destroy();
+      stream.rstCode = code;
+      stream.emit("close");
+    }
+
+    if (error) {
+      this.emit("error", error);
+    }
+
+    this.emit("close");
+  }
+
+  // request(headers: any, options?: any) {
+  //   if (this.destroyed || this.closed) {
+  //     const error = new Error(`ERR_HTTP2_INVALID_STREAM: The stream has been destroyed`);
+  //     error.code = "ERR_HTTP2_INVALID_STREAM";
+  //     throw error;
+  //   }
+
+  //   if (this.sentTrailers) {
+  //     const error = new Error(`ERR_HTTP2_TRAILERS_ALREADY_SENT: Trailing headers have already been sent`);
+  //     error.code = "ERR_HTTP2_TRAILERS_ALREADY_SENT";
+  //     throw error;
+  //   }
+
+  //   if (!$isObject(headers)) {
+  //     throw new Error("ERR_HTTP2_INVALID_HEADERS: headers must be an object");
+  //   }
+
+  //   const sensitives = headers[sensitiveHeaders];
+  //   const sensitiveNames = {};
+  //   if (sensitives) {
+  //     if (!$isArray(sensitives)) {
+  //       const error = new TypeError("ERR_INVALID_ARG_VALUE: The arguments headers[http2.neverIndex] is invalid");
+  //       error.code = "ERR_INVALID_ARG_VALUE";
+  //       throw error;
+  //     }
+  //     for (let i = 0; i < sensitives.length; i++) {
+  //       sensitiveNames[sensitives[i]] = true;
+  //     }
+  //   }
+  //   const url = this.#url;
+
+  //   let authority = headers[":authority"];
+  //   if (!authority) {
+  //     authority = url.host;
+  //     headers[":authority"] = authority;
+  //   }
+  //   let method = headers[":method"];
+  //   if (!method) {
+  //     method = "GET";
+  //     headers[":method"] = method;
+  //   }
+
+  //   let scheme = headers[":scheme"];
+  //   if (!scheme) {
+  //     let protocol: string = url.protocol || options?.protocol || "https:";
+  //     switch (protocol) {
+  //       case "https:":
+  //         scheme = "https";
+  //         break;
+  //       case "http:":
+  //         scheme = "http";
+  //         break;
+  //       default:
+  //         scheme = protocol;
+  //     }
+  //     headers[":scheme"] = scheme;
+  //   }
+
+  //   if (NoPayloadMethods.has(method.toUpperCase())) {
+  //     options = options || {};
+  //     options.endStream = true;
+  //   }
+  //   let stream_id: number;
+  //   if (typeof options === "undefined") {
+  //     stream_id = this.#parser.request(headers, sensitiveNames);
+  //   } else {
+  //     stream_id = this.#parser.request(headers, sensitiveNames, options);
+  //   }
+
+  //   if (stream_id < 0) {
+  //     const error = new Error(
+  //       "ERR_HTTP2_OUT_OF_STREAMS: No stream ID is available because maximum stream ID has been reached",
+  //     );
+  //     error.code = "ERR_HTTP2_OUT_OF_STREAMS";
+  //     this.emit("error", error);
+  //     return null;
+  //   }
+  //   const req = new ClientHttp2Stream(stream_id, this, headers);
+  //   req.authority = authority;
+  //   this.#streams.set(stream_id, req);
+  //   req.emit("ready");
+  //   return req;
+  // }
+}
 class ClientHttp2Session extends Http2Session {
   /// close indicates that we called closed
   #closed: boolean = false;
@@ -1069,7 +1394,7 @@ class ClientHttp2Session extends Http2Session {
       listener = options;
       options = undefined;
     }
-    this.#isServer = true;
+    this.#isServer = false;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
@@ -1264,6 +1589,9 @@ class Http2Server extends net.Server {
   static #connectionListener(self: Http2Server, socket: TLSSocket | Socket) {
     // const session = new ClientHttp2Session(socket);
     // self.emit("session", session);
+
+    "PRI * HTTP/2.0\r\n\r\nSM\r\n\r\n";
+    socket.on("data", this.#onRead.bind(this));
 
     console.log("connectionListener", socket);
   }

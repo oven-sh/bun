@@ -1390,8 +1390,8 @@ pub fn StatType(comptime Big: bool) type {
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
         // On windows, these two need to be u64 as the numbers are often very large.
-        dev: if (Environment.isWindows) u64 else Int,
-        ino: if (Environment.isWindows) u64 else Int,
+        dev: u64,
+        ino: u64,
         mode: Int,
         nlink: Int,
         uid: Int,
@@ -1441,10 +1441,16 @@ pub fn StatType(comptime Big: bool) type {
             return struct {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
-                    if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
+                    const Type = @TypeOf(value);
+                    if (comptime Big and @typeInfo(Type) == .Int) {
+                        if (Type == u64) {
+                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, @intCast(value));
+                        }
+
                         return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
                     }
-                    return globalObject.toJS(value, .temporary);
+
+                    return JSC.JSValue.jsNumber(value);
                 }
             }.callback;
         }
@@ -1565,8 +1571,8 @@ pub fn StatType(comptime Big: bool) type {
             const cTime = stat_.ctime();
 
             return .{
-                .dev = if (Environment.isWindows) stat_.dev else @truncate(@as(i64, @intCast(stat_.dev))),
-                .ino = if (Environment.isWindows) stat_.ino else @truncate(@as(i64, @intCast(stat_.ino))),
+                .dev = @intCast(@max(stat_.dev, 0)),
+                .ino = @intCast(@max(stat_.ino, 0)),
                 .mode = @truncate(@as(i64, @intCast(stat_.mode))),
                 .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
                 .uid = @truncate(@as(i64, @intCast(stat_.uid))),

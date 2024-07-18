@@ -1939,7 +1939,7 @@ it("destroy should end download", async () => {
 
   async function run() {
     let receivedByteLength = 0;
-    const { promise, resolve } = Promise.withResolvers();
+    let { promise, resolve } = Promise.withResolvers();
     const req = request(server.url, res => {
       res.on("data", data => {
         receivedByteLength += data.length;

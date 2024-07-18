@@ -179,8 +179,7 @@ const Handlers = struct {
         socket_context: ?*uws.SocketContext,
 
         pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
-            var vm = this.handlers.vm;
-            defer vm.eventLoop().exit();
+            this.handlers.vm.eventLoop().exit();
             this.handlers.markInactive(ssl, this.socket_context, wrapped);
         }
     };
@@ -220,7 +219,7 @@ const Handlers = struct {
     }
 
     pub fn markInactive(this: *Handlers, ssl: bool, ctx: ?*uws.SocketContext, wrapped: WrappedType) void {
-        Listener.log("markInactive", .{});
+        Listener.log("markInactive {d} {} {} {}", .{ this.active_connections - 1, this.is_server, wrapped != .tls, ctx != null });
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {
@@ -228,6 +227,7 @@ const Handlers = struct {
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == null) {
                     listen_socket.strong_self.clear();
+                    listen_socket.strong_data.clear();
                 }
             } else {
                 this.unprotect();
@@ -905,7 +905,7 @@ pub const Listener = struct {
     }
 
     pub fn finalize(this: *Listener) callconv(.C) void {
-        log("Finalize", .{});
+        log("finalize", .{});
         if (this.listener) |listener| {
             this.listener = null;
             listener.close(this.ssl);
@@ -915,6 +915,7 @@ pub const Listener = struct {
     }
 
     pub fn deinit(this: *Listener) void {
+        log("deinit", .{});
         this.strong_self.deinit();
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);

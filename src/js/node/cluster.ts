@@ -15,7 +15,7 @@ function initializeClusterIPC() {
     // Make sure it's not accidentally inherited by child processes.
     delete process.env.NODE_UNIQUE_ID;
 
-    Bun.setRef(false);
+    process.channel.unref();
   }
 }
 

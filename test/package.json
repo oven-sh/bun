@@ -61,5 +61,8 @@
   "private": true,
   "scripts": {
     "typecheck": "tsc --noEmit"
+  },
+  "resolutions": {
+    "react": "../node_modules/react"
   }
 }

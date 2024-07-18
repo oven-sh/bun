@@ -4,8 +4,7 @@ const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
-
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;

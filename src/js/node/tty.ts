@@ -4,7 +4,7 @@ const {
   getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 // primordials
 const NumberIsInteger = Number.isInteger;

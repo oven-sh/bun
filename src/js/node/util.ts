@@ -2,8 +2,8 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 const internalErrorName = $zig("node_util_binding.zig", "internalErrorName");
 
 const NumberIsSafeInteger = Number.isSafeInteger;

@@ -1,8 +1,8 @@
 const dns = require("node:dns");
 const { guessHandleType } = require("internal/shared");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const ERR_SOCKET_BAD_TYPE = $zig("node_error_binding.zig", "ERR_SOCKET_BAD_TYPE");
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 const UV_EINVAL = -4071;
 
 export const kStateSymbol = Symbol("state symbol");

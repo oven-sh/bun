@@ -2,7 +2,7 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 // BEGIN moved from require_readable
 // when we split this stuff up again, we can move this back

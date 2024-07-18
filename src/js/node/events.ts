@@ -2,8 +2,7 @@
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const { throwNotImplemented } = require("internal/shared");
-
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const SymbolFor = Symbol.for;
 

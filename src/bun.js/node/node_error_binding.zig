@@ -29,18 +29,13 @@ fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCo
     return R.cbb;
 }
 
-pub fn ERR_INVALID_ARG_TYPE(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
-    const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-            const arguments = callframe.arguments(3);
-            if (arguments.len < 3) {
-                globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 2, arguments.len);
-                return .zero;
-            }
-            return globalThis.ERR_INVALID_ARG_TYPE(arguments.ptr[0], arguments.ptr[1], arguments.ptr[2]);
-        }
-    };
-    return JSC.JSFunction.create(global, "ERR_INVALID_ARG_TYPE", S.cb, 3, .{});
+pub fn ERR_INVALID_ARG_TYPE(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    const arguments = callframe.arguments(3);
+    if (arguments.len < 3) {
+        globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 2, arguments.len);
+        return .zero;
+    }
+    return globalThis.ERR_INVALID_ARG_TYPE(arguments.ptr[0], arguments.ptr[1], arguments.ptr[2]);
 }
 
 pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {

@@ -4,8 +4,7 @@ const { isTypedArray } = require("node:util/types");
 
 // This is a stub! None of this is actually implemented yet.
 const { hideFromStack, throwNotImplemented } = require("internal/shared");
-
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const tls = require("node:tls");
 const net = require("node:net");

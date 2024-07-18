@@ -2,14 +2,13 @@
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
 } = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
-
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;

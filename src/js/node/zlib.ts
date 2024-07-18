@@ -1,8 +1,7 @@
 // Hardcoded module "node:zlib"
 
 const stream = require("node:stream");
-
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 

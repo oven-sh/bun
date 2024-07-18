@@ -1,7 +1,7 @@
 // Hardcoded module "node:trace_events"
 // This is a stub! This is not actually implemented yet.
 
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 class Tracing {
   enabled = false;

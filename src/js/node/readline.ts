@@ -27,9 +27,9 @@
 // ----------------------------------------------------------------------------
 const EventEmitter = require("node:events");
 const { StringDecoder } = require("node:string_decoder");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const internalGetStringWidth = $newZigFunction("string.zig", "String.jsGetStringWidth", 1);
-const ERR_INVALID_ARG_TYPE = $zig("node_error_binding.zig", "ERR_INVALID_ARG_TYPE");
 
 const ObjectGetPrototypeOf = Object.getPrototypeOf;
 const ObjectGetOwnPropertyDescriptors = Object.getOwnPropertyDescriptors;

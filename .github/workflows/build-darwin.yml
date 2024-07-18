@@ -277,10 +277,10 @@ jobs:
           chmod +x bun-profile bun
           mkdir -p bun-${{ inputs.tag }}-profile/ bun-${{ inputs.tag }}/
           mv bun-profile bun-${{ inputs.tag }}-profile/bun-profile
-          if [ -f bun-profile.dSYM ]; then
+          if [ -f bun-profile.dSYM || -d bun-profile.dSYM ]; then
             mv bun-profile.dSYM bun-${{ inputs.tag }}-profile/bun-profile.dSYM
           fi
-          if [ -f bun.dSYM ]; then
+          if [ -f bun.dSYM || -d bun.dSYM ]; then
             mv bun.dSYM bun-${{ inputs.tag }}-profile/bun-profile.dSYM
           fi
           mv bun bun-${{ inputs.tag }}/bun

@@ -23,12 +23,18 @@ export CC=${CC:-$(which clang-16 || which clang || which cc)}
 export CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
 export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
+export RANLIB=${RANLIB:-$(which llvm-ranlib-16 || which llvm-ranlib || which ranlib)}
 
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
 export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig -fno-c++-static-destructors '
+
+# Add flags for LTO
+if [ "$BUN_ENABLE_LTO" == "1" ]; then
+  export CFLAGS="$CFLAGS -flto=full "
+  export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
 
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"

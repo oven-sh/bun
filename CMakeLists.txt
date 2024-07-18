@@ -1080,7 +1080,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -1178,6 +1178,9 @@ else()
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti

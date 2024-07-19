@@ -784,7 +784,6 @@ class Server extends EventEmitter {
   }
 
   close(callback) {
-
     if (typeof callback === "function") {
       if (!this[bunSocketInternal]) {
         this.once("close", function close() {

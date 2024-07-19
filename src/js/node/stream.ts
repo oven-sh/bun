@@ -5718,7 +5718,7 @@ function createNativeStreamReadable(Readable) {
       ProcessNextTick(() => {
         this.push(null);
       });
-      return view?.byteLength ?? 0 > 0 ? view : undefined;
+      return (view?.byteLength ?? 0 > 0) ? view : undefined;
     } else if ($isTypedArrayView(result)) {
       if (result.byteLength >= this[highWaterMark] && !this[hasResized] && !isClosed) {
         this[_adjustHighWaterMark]();

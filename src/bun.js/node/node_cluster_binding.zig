@@ -53,7 +53,6 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         InternalMsgHolder.callbacks.put(bun.default_allocator, InternalMsgHolder.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
-    message.put(globalThis, ZigString.static("cmd"), ZigString.static("NODE_CLUSTER").toJS(globalThis)); // temporary
     message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(InternalMsgHolder.seq));
     InternalMsgHolder.seq +%= 1;
 
@@ -161,7 +160,6 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
         ipc_data.iimh.callbacks.put(bun.default_allocator, ipc_data.iimh.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
-    message.put(globalThis, ZigString.static("cmd"), ZigString.static("NODE_CLUSTER").toJS(globalThis)); // temporary
     message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(ipc_data.iimh.seq));
     ipc_data.iimh.seq +%= 1;
 

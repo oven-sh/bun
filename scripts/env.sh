@@ -25,6 +25,12 @@ export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 export RANLIB=${RANLIB:-$(which llvm-ranlib-16 || which llvm-ranlib || which ranlib)}
 
+# on Linux, force using lld as the linker
+if [[ $(uname -s) == 'Linux' ]]; then
+  export LD=${LD:-$(which ld.lld-16 || which ld.lld || which ld)}
+  export LDFLAGS="${LDFLAGS} -fuse-ld=lld "
+fi
+
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
@@ -41,7 +47,7 @@ fi
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
   export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
-  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
+  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro"
 fi
 
 # libarchive needs position-independent executables to compile successfully

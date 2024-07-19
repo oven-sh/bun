@@ -70,6 +70,11 @@ uplinks:
 # https://verdaccio.org/docs/protect-your-dependencies/
 # https://verdaccio.org/docs/configuration#packages
 packages:
+  "@needs-auth/*":
+    access: $authenticated
+    publish: $authenticated
+    unpublish: $authenticated
+
   "@*/*":
     # scoped packages
     access: $all

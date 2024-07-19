@@ -42,6 +42,7 @@
 #define HAS_MSGX
 #endif
 
+
 /* We need to emulate sendmmsg, recvmmsg on platform who don't have it */
 int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int flags) {
 #if defined(_WIN32)// || defined(__APPLE__)
@@ -397,7 +398,9 @@ int bsd_addr_get_port(struct bsd_addr_t *addr) {
 // called by dispatch_ready_poll
 LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd_addr_t *addr) {
     LIBUS_SOCKET_DESCRIPTOR accepted_fd;
-    addr->len = sizeof(addr->mem);
+
+    while (1) {
+        addr->len = sizeof(addr->mem);
 
 #if defined(SOCK_CLOEXEC) && defined(SOCK_NONBLOCK)
     // Linux, FreeBSD
@@ -405,12 +408,18 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #else
     // Windows, OS X
     accepted_fd = accept(fd, (struct sockaddr *) addr, &addr->len);
-
 #endif
 
-    /* We cannot rely on addr since it is not initialized if failed */
-    if (accepted_fd == LIBUS_SOCKET_ERROR) {
-        return LIBUS_SOCKET_ERROR;
+        if (UNLIKELY(IS_EINTR(accepted_fd))) {
+            continue;
+        }
+
+        /* We cannot rely on addr since it is not initialized if failed */
+        if (accepted_fd == LIBUS_SOCKET_ERROR) {
+            return LIBUS_SOCKET_ERROR;
+        }
+
+        break;
     }
 
     internal_finalize_bsd_addr(addr);
@@ -423,14 +432,22 @@ LIBUS_SOCKET_DESCRIPTOR bsd_accept_socket(LIBUS_SOCKET_DESCRIPTOR fd, struct bsd
 #endif
 }
 
-int bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
-    return recv(fd, buf, length, flags);
+ssize_t bsd_recv(LIBUS_SOCKET_DESCRIPTOR fd, void *buf, int length, int flags) {
+    while (1) {
+        ssize_t ret = recv(fd, buf, length, flags);
+
+        if (UNLIKELY(IS_EINTR(ret))) {
+            continue;
+        }
+
+        return ret;
+    }
 }
 
 #if !defined(_WIN32)
 #include <sys/uio.h>
 
-int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
     struct iovec chunks[2];
 
     chunks[0].iov_base = (char *)header;
@@ -438,13 +455,21 @@ int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length
     chunks[1].iov_base = (char *)payload;
     chunks[1].iov_len = payload_length;
 
-    return writev(fd, chunks, 2);
+    while (1) {
+        ssize_t written = writev(fd, chunks, 2);
+
+        if (UNLIKELY(IS_EINTR(written))) {
+            continue;
+        }
+
+        return written;
+    }
 }
 #else
-int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
-    int written = bsd_send(fd, header, header_length, 0);
+ssize_t bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length, const char *payload, int payload_length) {
+    ssize_t written = bsd_send(fd, header, header_length, 0);
     if (written == header_length) {
-        int second_write = bsd_send(fd, payload, payload_length, 0);
+        ssize_t second_write = bsd_send(fd, payload, payload_length, 0);
         if (second_write > 0) {
             written += second_write;
         }
@@ -453,26 +478,28 @@ int bsd_write2(LIBUS_SOCKET_DESCRIPTOR fd, const char *header, int header_length
 }
 #endif
 
-int bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
-
+ssize_t bsd_send(LIBUS_SOCKET_DESCRIPTOR fd, const char *buf, int length, int msg_more) {
+    while (1) {
     // MSG_MORE (Linux), MSG_PARTIAL (Windows), TCP_NOPUSH (BSD)
 
 #ifndef MSG_NOSIGNAL
 #define MSG_NOSIGNAL 0
 #endif
 
-#ifdef MSG_MORE
+        #ifdef MSG_MORE
+            // for Linux we do not want signals
+            ssize_t rc = send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
+        #else
+            // use TCP_NOPUSH
+            ssize_t rc = send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
+        #endif
 
-    // for Linux we do not want signals
-    return send(fd, buf, length, ((msg_more != 0) * MSG_MORE) | MSG_NOSIGNAL | MSG_DONTWAIT);
+        if (UNLIKELY(IS_EINTR(rc))) {
+            continue;
+        }
 
-#else
-
-    // use TCP_NOPUSH
-
-    return send(fd, buf, length, MSG_NOSIGNAL | MSG_DONTWAIT);
-
-#endif
+        return rc;
+    }
 }
 
 int bsd_would_block() {
@@ -481,6 +508,23 @@ int bsd_would_block() {
 #else
     return errno == EWOULDBLOCK;// || errno == EAGAIN;
 #endif
+}
+
+static int us_internal_bind_and_listen(LIBUS_SOCKET_DESCRIPTOR listenFd, struct sockaddr *listenAddr, socklen_t listenAddrLength, int backlog) {
+    int result;
+    do 
+        result = bind(listenFd, listenAddr, listenAddrLength);
+    while (IS_EINTR(result));
+
+    if (result == -1) {
+        return -1;
+    }
+
+    do 
+        result = listen(listenFd, backlog);
+    while (IS_EINTR(result));
+
+    return result;
 }
 
 inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd(
@@ -512,7 +556,7 @@ inline __attribute__((always_inline)) LIBUS_SOCKET_DESCRIPTOR bsd_bind_listen_fd
     setsockopt(listenFd, IPPROTO_IPV6, IPV6_V6ONLY, (void *) &disabled, sizeof(disabled));
 #endif
 
-    if (bind(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen) || listen(listenFd, 512)) {
+    if (us_internal_bind_and_listen(listenFd, listenAddr->ai_addr, (socklen_t) listenAddr->ai_addrlen, 512)) {
         return LIBUS_SOCKET_ERROR;
     }
 
@@ -690,7 +734,7 @@ static LIBUS_SOCKET_DESCRIPTOR internal_bsd_create_listen_socket_unix(const char
     unlink(path);
 #endif
 
-    if (bind(listenFd, (struct sockaddr *)server_address, addrlen) || listen(listenFd, 512)) {
+    if (us_internal_bind_and_listen(listenFd, (struct sockaddr *) server_address, (socklen_t) addrlen, 512)) {
         #if defined(_WIN32)
           int shouldSimulateENOENT = WSAGetLastError() == WSAENETDOWN;
         #endif
@@ -838,7 +882,7 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     }
 
     freeaddrinfo(result);
-    return LIBUS_SOCKET_ERROR;
+    return (int)LIBUS_SOCKET_ERROR;
 }
 
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {
@@ -925,7 +969,7 @@ static int bsd_do_connect_raw(LIBUS_SOCKET_DESCRIPTOR fd, struct sockaddr *addr,
      do {
         errno = 0;
         r = connect(fd, (struct sockaddr *)addr, namelen);
-    } while (r == -1 && errno == EINTR);
+    } while (IS_EINTR(r));
     
     // connect() can return -1 with an errno of 0.
     // the errno is the correct one in that case.

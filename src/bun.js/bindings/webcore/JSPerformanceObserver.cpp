@@ -95,7 +95,7 @@ template<> PerformanceObserver::Init convertDictionary<PerformanceObserver::Init
     if (isNullOrUndefined)
         typeValue = jsUndefined();
     else {
-        typeValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "type"_s));
+        typeValue = object->get(&lexicalGlobalObject, vm.propertyNames->type);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!typeValue.isUndefined()) {
@@ -365,7 +365,7 @@ void JSPerformanceObserver::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceObserver*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 

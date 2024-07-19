@@ -32,7 +32,7 @@ const debug = std.debug;
 /// This is useful for testing as a crash in here will not 'panicked during a panic'.
 pub const enable = true;
 
-/// Override with BUN_CRASH_REPORT_URL enviroment variable.
+/// Overridable with BUN_CRASH_REPORT_URL environment variable.
 const default_report_base_url = "https://bun.report";
 
 /// Only print the `Bun has crashed` message once. Once this is true, control
@@ -49,6 +49,17 @@ var panic_mutex = std.Thread.Mutex{};
 /// Counts how many times the panic handler is invoked by this thread.
 /// This is used to catch and handle panics triggered by the panic handler.
 threadlocal var panic_stage: usize = 0;
+
+/// This can be set by various parts of the codebase to indicate a broader
+/// action being taken. It is printed when a crash happens, which can help
+/// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
+///
+/// Some of these are enabled in release builds, which may encourage users to
+/// attach the affected files to crash report. Others, which may have low crash
+/// rate or only crash due to assertion failures, are debug-only. See `Action`.
+pub threadlocal var current_action: ?Action = null;
+
+const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
 
 /// This structure and formatter must be kept in sync with `bun.report`'s decoder implementation.
 pub const CrashReason = union(enum) {
@@ -75,9 +86,9 @@ pub const CrashReason = union(enum) {
 
     out_of_memory,
 
-    pub fn format(self: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
-        switch (self) {
-            .panic => try writer.print("{s}", .{self.panic}),
+    pub fn format(reason: CrashReason, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (reason) {
+            .panic => |message| try writer.print("{s}", .{message}),
             .@"unreachable" => try writer.writeAll("reached unreachable code"),
             .segmentation_fault => |addr| try writer.print("Segmentation fault at address 0x{X}", .{addr}),
             .illegal_instruction => |addr| try writer.print("Illegal instruction at address 0x{X}", .{addr}),
@@ -91,7 +102,34 @@ pub const CrashReason = union(enum) {
     }
 };
 
-/// This function is invoked when a crash happpens. A crash is classified in `CrashReason`.
+pub const Action = union(enum) {
+    parse: []const u8,
+    visit: []const u8,
+    print: []const u8,
+
+    resolver: if (bun.Environment.isDebug) struct {
+        source_dir: []const u8,
+        import_path: []const u8,
+        kind: bun.ImportKind,
+    } else void,
+
+    pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        switch (act) {
+            .parse => |path| try writer.print("parsing {s}", .{path}),
+            .visit => |path| try writer.print("visiting {s}", .{path}),
+            .print => |path| try writer.print("printing {s}", .{path}),
+            .resolver => |res| if (bun.Environment.isDebug) {
+                try writer.print("resolving {s} from {s} ({s})", .{
+                    res.import_path,
+                    res.source_dir,
+                    res.kind.label(),
+                });
+            },
+        }
+    }
+};
+
+/// This function is invoked when a crash happens. A crash is classified in `CrashReason`.
 pub fn crashHandler(
     reason: CrashReason,
     // TODO: if both of these are specified, what is supposed to happen?
@@ -125,7 +163,7 @@ pub fn crashHandler(
                 // is not configured correctly, so that would also mask the message.
                 //
                 // Output.errorWriter() is not used here because it may not be configured
-                // if the program crashes immediatly at startup.
+                // if the program crashes immediately at startup.
                 const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
@@ -194,6 +232,10 @@ pub fn crashHandler(
                         writer.writeAll(Output.prettyFmt("<r>", true)) catch std.posix.abort();
                     }
                     writer.print("{}\n", .{reason}) catch std.posix.abort();
+                }
+
+                if (current_action) |action| {
+                    writer.print("Crashed while {}\n", .{action}) catch std.posix.abort();
                 }
 
                 var addr_buf: [10]usize = undefined;
@@ -746,6 +788,7 @@ pub fn printMetadata(writer: anytype) !void {
     try writer.writeAll(metadata_version_line);
     {
         const platform = bun.Analytics.GenerateHeader.GeneratePlatform.forOS();
+        const cpu_features = CPUFeatures.get();
         if (bun.Environment.isLinux) {
             // TODO: musl
             const version = gnu_get_libc_version() orelse "";
@@ -758,6 +801,11 @@ pub fn printMetadata(writer: anytype) !void {
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
         }
+
+        if (!cpu_features.isEmpty()) {
+            try writer.print("CPU: {}\n", .{cpu_features});
+        }
+
         try writer.print("Args: ", .{});
         var arg_chars_left: usize = if (bun.Environment.isDebug) 4096 else 196;
         for (bun.argv, 0..) |arg, i| {
@@ -1029,7 +1077,7 @@ const StackLine = struct {
 const TraceString = struct {
     trace: *const std.builtin.StackTrace,
     reason: CrashReason,
-    action: Action,
+    action: TraceString.Action,
 
     const Action = enum {
         /// Open a pre-filled GitHub issue with the expanded trace

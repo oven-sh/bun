@@ -1474,7 +1474,7 @@ void ${name}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<${name}*>(cell);
     if (void* wrapped = thisObject->wrapped()) {
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }
@@ -1828,7 +1828,7 @@ pub const ${className(typeName)} = struct {
     /// Return the pointer to the wrapped object.
     /// If the object does not match the type, return null.
     pub fn fromJS(value: JSC.JSValue) ?*${typeName} {
-        JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>fromJS", .{});
         return ${symbolName(typeName, "fromJS")}(value);
     }
 
@@ -1837,7 +1837,7 @@ pub const ${className(typeName)} = struct {
     /// If the object is a subclass of the type or has mutated the structure, return null.
     /// Note: this may return null for direct instances of the type if the user adds properties to the object.
     pub fn fromJSDirect(value: JSC.JSValue) ?*${typeName} {
-        JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>fromJSDirect", .{});
         return ${symbolName(typeName, "fromJSDirect")}(value);
     }
 
@@ -1849,7 +1849,7 @@ pub const ${className(typeName)} = struct {
     /// Get the ${typeName} constructor value.
     /// This loads lazily from the global object.
     pub fn getConstructor(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>getConstructor", .{});
         return ${symbolName(typeName, "getConstructor")}(globalObject);
     }
   `
@@ -1861,7 +1861,7 @@ pub const ${className(typeName)} = struct {
         ? `
     /// Create a new instance of ${typeName}
     pub fn toJS(this: *${typeName}, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
-        JSC.markBinding(@src());
+        if (comptime Environment.enable_logs) zig("<r>${typeName}<d>.<r>toJS", .{});
         if (comptime Environment.allow_assert) {
             const value__ = ${symbolName(typeName, "create")}(globalObject, this);
             @import("root").bun.assert(value__.as(${typeName}).? == this); // If this fails, likely a C ABI issue.

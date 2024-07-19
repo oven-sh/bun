@@ -217,9 +217,9 @@ size_t toISOString(JSC::VM& vm, double date, char in[64])
     GregorianDateTime gregorianDateTime;
     vm.dateCache.msToGregorianDateTime(date, WTF::TimeType::UTCTime, gregorianDateTime);
 
-    // Maximum amount of space we need in buffer: 7 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
-    // 6 for formatting and one for null termination = 28. We add one extra character to allow us to force null termination.
-    char buffer[28];
+    // Maximum amount of space we need in buffer: 8 (max. digits in year) + 2 * 5 (2 characters each for month, day, hour, minute, second) + 4 (. + 3 digits for milliseconds)
+    // 6 for formatting and one for null termination = 29.
+    char buffer[29];
     // If the year is outside the bounds of 0 and 9999 inclusive we want to use the extended year format (ES 15.9.1.15.1).
     int ms = static_cast<int>(fmod(date, msPerSecond));
     if (ms < 0)

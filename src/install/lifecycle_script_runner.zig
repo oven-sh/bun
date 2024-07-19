@@ -106,7 +106,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         const manager = this.manager;
         const original_script = this.scripts.items[next_script_index].?;
-        const cwd = bun.path.z(this.scripts.cwd, &cwd_z_buf);
+        const cwd = this.scripts.cwd;
         const env = manager.env;
         this.stdout.setParent(this);
         this.stderr.setParent(this);

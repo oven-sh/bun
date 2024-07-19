@@ -70,6 +70,19 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
+pub const debug_flags = if (Environment.isDebug) struct {
+    var resolve_breakpoints: []const []const u8 = &.{};
+
+    pub fn hasResolveBreakpoint(str: []const u8) bool {
+        for (resolve_breakpoints) |bp| {
+            if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+} else @compileError("Do not access this namespace []const u8; in a release build");
+
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
@@ -146,7 +159,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = [_]ParamType{
+    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -156,6 +169,10 @@ pub const Arguments = struct {
         // This will print more error return traces, as a debug aid
         clap.parseParam("--verbose-error-trace") catch unreachable,
     } else [_]ParamType{};
+
+    const debug_params = [_]ParamType{
+        clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+    };
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -227,6 +244,7 @@ pub const Arguments = struct {
         clap.parseParam("--splitting                      Enable code splitting") catch unreachable,
         clap.parseParam("--public-path <STR>              A prefix to be appended to any import paths in bundled code") catch unreachable,
         clap.parseParam("-e, --external <STR>...          Exclude module from transpilation (can use * wildcards). ex: -e react") catch unreachable,
+        clap.parseParam("--packages <STR>                 Add dependencies to bundle or keep them external. \"external\", \"bundle\" is supported. Defaults to \"bundle\".") catch unreachable,
         clap.parseParam("--entry-naming <STR>             Customize entry point filenames. Defaults to \"[dir]/[name].[ext]\"") catch unreachable,
         clap.parseParam("--chunk-naming <STR>             Customize chunk filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
@@ -244,7 +262,7 @@ pub const Arguments = struct {
     // TODO: update test completions
     const test_only_params = [_]ParamType{
         clap.parseParam("--timeout <NUMBER>               Set the per-test timeout in milliseconds, default is 5000.") catch unreachable,
-        clap.parseParam("--update-snapshots               Update snapshot files") catch unreachable,
+        clap.parseParam("-u, --update-snapshots           Update snapshot files") catch unreachable,
         clap.parseParam("--rerun-each <NUMBER>            Re-run each test file <NUMBER> times, helps catch certain bugs") catch unreachable,
         clap.parseParam("--only                           Only run tests that are marked with \"test.only()\"") catch unreachable,
         clap.parseParam("--todo                           Include tests that are marked with \"test.todo()\"") catch unreachable,
@@ -279,8 +297,8 @@ pub const Arguments = struct {
             Global.exit(1);
         };
 
-        js_ast.Stmt.Data.Store.create(allocator);
-        js_ast.Expr.Data.Store.create(allocator);
+        js_ast.Stmt.Data.Store.create();
+        js_ast.Expr.Data.Store.create();
         defer {
             js_ast.Stmt.Data.Store.reset();
             js_ast.Expr.Data.Store.reset();
@@ -696,6 +714,17 @@ pub const Arguments = struct {
                 opts.external = externals;
             }
 
+            if (args.option("--packages")) |packages| {
+                if (strings.eqlComptime(packages, "bundle")) {
+                    opts.packages = .bundle;
+                } else if (strings.eqlComptime(packages, "external")) {
+                    opts.packages = .external;
+                } else {
+                    Output.prettyErrorln("<r><red>error<r>: Invalid packages setting: \"{s}\"", .{packages});
+                    Global.crash();
+                }
+            }
+
             const TargetMatcher = strings.ExactSizeMatcher(8);
             if (args.option("--target")) |_target| brk: {
                 if (comptime cmd == .BuildCommand) {
@@ -945,6 +974,10 @@ pub const Arguments = struct {
                     Global.exit(1);
                 }
             }
+        }
+
+        if (Environment.isDebug) {
+            debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
         }
 
         return opts;
@@ -1198,13 +1231,7 @@ pub const Command = struct {
     };
 
     var global_cli_ctx: Context = undefined;
-
-    var context_data: ContextData = ContextData{
-        .args = std.mem.zeroes(Api.TransformOptions),
-        .log = undefined,
-        .start_time = 0,
-        .allocator = undefined,
-    };
+    var context_data: ContextData = undefined;
 
     pub const init = ContextData.create;
 
@@ -1248,10 +1275,13 @@ pub const Command = struct {
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
+            context_data = .{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = allocator,
+            };
             global_cli_ctx = &context_data;
-            global_cli_ctx.log = log;
-            global_cli_ctx.start_time = start_time;
-            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);

@@ -31,6 +31,7 @@ env:
   BUN_VERSION: 1.1.8
   LC_CTYPE: "en_US.UTF-8"
   LC_ALL: "en_US.UTF-8"
+  BUN_ENABLE_LTO: "1"
 
 jobs:
   build-submodules:
@@ -276,6 +277,12 @@ jobs:
           chmod +x bun-profile bun
           mkdir -p bun-${{ inputs.tag }}-profile/ bun-${{ inputs.tag }}/
           mv bun-profile bun-${{ inputs.tag }}-profile/bun-profile
+          if [ -f bun-profile.dSYM || -d bun-profile.dSYM ]; then
+            mv bun-profile.dSYM bun-${{ inputs.tag }}-profile/bun-profile.dSYM
+          fi
+          if [ -f bun.dSYM || -d bun.dSYM ]; then
+            mv bun.dSYM bun-${{ inputs.tag }}-profile/bun-profile.dSYM
+          fi
           mv bun bun-${{ inputs.tag }}/bun
           zip -r bun-${{ inputs.tag }}-profile.zip bun-${{ inputs.tag }}-profile
           zip -r bun-${{ inputs.tag }}.zip bun-${{ inputs.tag }}

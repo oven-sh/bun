@@ -27,8 +27,28 @@ export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer'
+export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
+
+if [[ $(uname -s) == 'Linux' ]]; then
+  export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
+  export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
+  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
+fi
+
+# libarchive needs position-independent executables to compile successfully
+if [ -n "$FORCE_PIC" ]; then
+  export CFLAGS="$CFLAGS -fPIC "
+  export CXXFLAGS="$CXXFLAGS -fPIC "
+else
+  export CFLAGS="$CFLAGS -fno-pie -fno-pic "
+  export CXXFLAGS="$CXXFLAGS -fno-pie -fno-pic "
+fi
+
+if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
+  export CFLAGS="$CFLAGS -march=armv8-a+crc -mtune=ampere1 "
+  export CXXFLAGS="$CXXFLAGS -march=armv8-a+crc -mtune=ampere1 "
+fi
 
 export CMAKE_FLAGS=(
   -DCMAKE_C_COMPILER="${CC}"
@@ -43,7 +63,7 @@ export CMAKE_FLAGS=(
 )
 
 CCACHE=$(which ccache || which sccache || echo "")
-if [ -n "$CCACHE" ]; then
+if [ -f "$CCACHE" ]; then
   CMAKE_FLAGS+=(
     -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE"
     -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE"
@@ -56,22 +76,22 @@ if [[ $(uname -s) == 'Linux' ]]; then
 fi
 
 if [[ $(uname -s) == 'Darwin' ]]; then
-    export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
+  export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
 
-    CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
-    export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
-    export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
+  export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
+  export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
 fi
 
 mkdir -p $BUN_DEPS_OUT_DIR
 
 if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-    echo "C Compiler: ${CC}"
-    echo "C++ Compiler: ${CXX}"
-    if [ -n "$CCACHE" ]; then
-      echo "Ccache: ${CCACHE}"
-    fi
-    if [[ $(uname -s) == 'Darwin' ]]; then
-      echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
-    fi
+  echo "C Compiler: ${CC}"
+  echo "C++ Compiler: ${CXX}"
+  if [ -n "$CCACHE" ]; then
+    echo "Ccache: ${CCACHE}"
+  fi
+  if [[ $(uname -s) == 'Darwin' ]]; then
+    echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  fi
 fi

@@ -49,7 +49,7 @@ template<> CryptoEcKeyAlgorithm convertDictionary<CryptoEcKeyAlgorithm>(JSGlobal
     if (isNullOrUndefined)
         nameValue = jsUndefined();
     else {
-        nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
+        nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
@@ -85,7 +85,7 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
 
     auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
     RETURN_IF_EXCEPTION(throwScope, {});
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), nameValue);
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
     auto namedCurveValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.namedCurve);
     RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, JSC::Identifier::fromString(vm, "namedCurve"_s), namedCurveValue);

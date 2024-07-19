@@ -8,7 +8,21 @@ const {
   getHeader,
   setHeader,
   assignHeaders: assignHeadersFast,
-} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding");
+  Response,
+  Request,
+  Headers,
+  Blob,
+  headersTuple,
+} = $cpp("NodeHTTP.cpp", "createNodeHTTPInternalBinding") as {
+  getHeader: (headers: Headers, name: string) => string | undefined;
+  setHeader: (headers: Headers, name: string, value: string) => void;
+  assignHeaders: (object: any, req: Request, headersTuple: any) => boolean;
+  Response: (typeof globalThis)["Response"];
+  Request: (typeof globalThis)["Request"];
+  Headers: (typeof globalThis)["Headers"];
+  Blob: (typeof globalThis)["Blob"];
+  headersTuple: any;
+};
 
 const ObjectDefineProperty = Object.defineProperty;
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
@@ -721,10 +735,13 @@ function assignHeadersSlow(object, req) {
 
 function assignHeaders(object, req) {
   // This fast path is an 8% speedup for a "hello world" node:http server, and a 7% speedup for a "hello world" express server
-  const tuple = assignHeadersFast(req, object);
-  if (tuple !== null) {
-    object.headers = $getInternalField(tuple, 0);
-    object.rawHeaders = $getInternalField(tuple, 1);
+  if (assignHeadersFast(req, object, headersTuple)) {
+    const headers = $getInternalField(headersTuple, 0);
+    const rawHeaders = $getInternalField(headersTuple, 1);
+    $putInternalField(headersTuple, 0, undefined);
+    $putInternalField(headersTuple, 1, undefined);
+    object.headers = headers;
+    object.rawHeaders = rawHeaders;
     return true;
   } else {
     assignHeadersSlow(object, req);

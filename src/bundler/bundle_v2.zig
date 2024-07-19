@@ -735,6 +735,7 @@ pub const BundleV2 = struct {
                 .loop = event_loop,
                 .graph = .{
                     .allocator = undefined,
+                    .bundler_graph = undefined,
                 },
             },
         };
@@ -750,6 +751,7 @@ pub const BundleV2 = struct {
         generator.bundler.options.tree_shaking = true;
         generator.bundler.resolver.opts.tree_shaking = true;
 
+        generator.linker.graph.bundler_graph = &generator.graph;
         generator.linker.resolver = &generator.bundler.resolver;
         generator.linker.graph.code_splitting = bundler.options.code_splitting;
         generator.graph.code_splitting = bundler.options.code_splitting;
@@ -1567,13 +1569,9 @@ pub const BundleV2 = struct {
             while (instance.queue.pop()) |completion| {
                 generateInNewThread(completion, instance.generation) catch |err| {
                     completion.result = .{ .err = err };
-                    const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                    concurrent_task.* = JSC.ConcurrentTask{
-                        .auto_delete = true,
-                        .task = completion.task.task(),
-                        .next = null,
-                    };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+                    completion.jsc_event_loop.enqueueTaskConcurrent(
+                        JSC.ConcurrentTask.create(completion.task.task()),
+                    );
                 };
                 has_bundled = true;
             }
@@ -1648,6 +1646,7 @@ pub const BundleV2 = struct {
         bundler.options.minify_identifiers = config.minify.identifiers;
         bundler.options.inlining = config.minify.syntax;
         bundler.options.source_map = config.source_map;
+        bundler.options.packages = config.packages;
         bundler.resolver.generation = generation;
         bundler.options.code_splitting = config.code_splitting;
 
@@ -1682,16 +1681,10 @@ pub const BundleV2 = struct {
             },
         };
 
-        const concurrent_task = try bun.default_allocator.create(JSC.ConcurrentTask);
-        concurrent_task.* = JSC.ConcurrentTask{
-            .auto_delete = true,
-            .task = completion.task.task(),
-            .next = null,
-        };
         var out_log = Logger.Log.init(bun.default_allocator);
         this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
         completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
     }
 
     pub fn deinit(this: *BundleV2) void {
@@ -3299,6 +3292,8 @@ const AstSourceIDMapping = struct {
 
 const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
+
+    bundler_graph: *const Graph,
 
     files: File.List = .{},
     files_live: BitSet = undefined,
@@ -6766,8 +6761,8 @@ const LinkerContext = struct {
         const c = ctx.c;
         bun.assert(chunk.content == .javascript);
 
-        js_ast.Expr.Data.Store.create(bun.default_allocator);
-        js_ast.Stmt.Data.Store.create(bun.default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
 
         defer chunk.renamer.deinit(bun.default_allocator);
 
@@ -6785,12 +6780,11 @@ const LinkerContext = struct {
         const runtimeRequireRef = if (c.resolver.opts.target.isBun()) null else c.graph.symbols.follow(runtime_members.get("__require").?.ref);
 
         {
-            const indent: usize = 0;
             // TODO: IIFE indent
 
             const print_options = js_printer.Options{
-                // TODO: IIFE
-                .indent = indent,
+                // TODO: IIFE indent
+                .indent = .{},
                 .has_run_symbol_renamer = true,
 
                 .allocator = worker.allocator,
@@ -7235,7 +7229,7 @@ const LinkerContext = struct {
                     }
                 };
 
-                // Include the path namespace in the hash so that files with the same
+                // Include the path namespace in the hash
                 hasher.write(source.key_path.namespace);
 
                 // Then include the file path
@@ -7275,6 +7269,26 @@ const LinkerContext = struct {
                 hasher.write(e.slice);
             }
         }
+
+        // Also include the source map data in the hash. The source map is named the
+        // same name as the chunk name for ease of discovery. So we want the hash to
+        // change if the source map data changes even if the chunk data doesn't change.
+        // Otherwise the output path for the source map wouldn't change and the source
+        // map wouldn't end up being updated.
+        //
+        // Note that this means the contents of all input files are included in the
+        // hash because of "sourcesContent", so changing a comment in an input file
+        // can now change the hash of the output file. This only happens when you
+        // have source maps enabled (and "sourcesContent", which is on by default).
+        //
+        // The generated positions in the mappings here are in the output content
+        // *before* the final paths have been substituted. This may seem weird.
+        // However, I think this shouldn't cause issues because a) the unique key
+        // values are all always the same length so the offsets are deterministic
+        // and b) the final paths will be folded into the final hash later.
+        hasher.write(chunk.output_source_map.prefix.items);
+        hasher.write(chunk.output_source_map.mappings.items);
+        hasher.write(chunk.output_source_map.suffix.items);
 
         return hasher.digest();
     }
@@ -7678,8 +7692,8 @@ const LinkerContext = struct {
         }
 
         const print_options = js_printer.Options{
-            // TODO: IIFE
-            .indent = 0,
+            // TODO: IIFE indent
+            .indent = .{},
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,
@@ -8959,8 +8973,7 @@ const LinkerContext = struct {
 
         const print_options = js_printer.Options{
             // TODO: IIFE
-            .indent = 0,
-
+            .indent = .{},
             .commonjs_named_exports = ast.commonjs_named_exports,
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
@@ -9134,12 +9147,17 @@ const LinkerContext = struct {
             };
             var duplicates_map: bun.StringArrayHashMapUnmanaged(DuplicateEntry) = .{};
 
-            // Compute the final hashes of each chunk. This can technically be done in
-            // parallel but it probably doesn't matter so much because we're not hashing
-            // that much data.
-            for (chunks) |*chunk| {
-                // TODO: non-isolated-hash
-                chunk.template.placeholder.hash = chunk.isolated_hash;
+            var chunk_visit_map = try AutoBitSet.initEmpty(c.allocator, chunks.len);
+            defer chunk_visit_map.deinit(c.allocator);
+
+            // Compute the final hashes of each chunk, then use those to create the final
+            // paths of each chunk. This can technically be done in parallel but it
+            // probably doesn't matter so much because we're not hashing that much data.
+            for (chunks, 0..) |*chunk, index| {
+                var hash: ContentHasher = .{};
+                c.appendIsolatedHashesForImportedChunks(&hash, chunks, @intCast(index), &chunk_visit_map);
+                chunk_visit_map.setAll(false);
+                chunk.template.placeholder.hash = hash.digest();
 
                 const rel_path = std.fmt.allocPrint(c.allocator, "{any}", .{chunk.template}) catch bun.outOfMemory();
                 bun.path.platformToPosixInPlace(u8, rel_path);
@@ -9160,6 +9178,7 @@ const LinkerContext = struct {
                     chunk.final_rel_path = rel_path_fixed;
                     continue;
                 }
+
                 chunk.final_rel_path = rel_path;
             }
 
@@ -9474,7 +9493,7 @@ const LinkerContext = struct {
                                     .allocator = Chunk.IntermediateOutput.allocatorForSize(code_result.buffer.len),
                                 },
                             },
-                            .hash = chunk.isolated_hash,
+                            .hash = chunk.template.placeholder.hash,
                             .loader = .js,
                             .input_path = input_path,
                             .display_size = @as(u32, @truncate(display_size)),
@@ -9520,6 +9539,54 @@ const LinkerContext = struct {
         }
 
         return output_files;
+    }
+
+    fn appendIsolatedHashesForImportedChunks(
+        c: *LinkerContext,
+        hash: *ContentHasher,
+        chunks: []Chunk,
+        index: u32,
+        chunk_visit_map: *AutoBitSet,
+    ) void {
+        // Only visit each chunk at most once. This is important because there may be
+        // cycles in the chunk import graph. If there's a cycle, we want to include
+        // the hash of every chunk involved in the cycle (along with all of their
+        // dependencies). This depth-first traversal will naturally do that.
+        if (chunk_visit_map.isSet(index)) {
+            return;
+        }
+        chunk_visit_map.set(index);
+
+        // Visit the other chunks that this chunk imports before visiting this chunk
+        const chunk = &chunks[index];
+        for (chunk.cross_chunk_imports.slice()) |import| {
+            c.appendIsolatedHashesForImportedChunks(
+                hash,
+                chunks,
+                import.chunk_index,
+                chunk_visit_map,
+            );
+        }
+
+        // Mix in hashes for referenced asset paths (i.e. the "file" loader)
+        switch (chunk.intermediate_output) {
+            .pieces => |pieces| for (pieces.slice()) |piece| {
+                if (piece.index.kind == .asset) {
+                    var from_chunk_dir = std.fs.path.dirnamePosix(chunk.final_rel_path) orelse "";
+                    if (strings.eqlComptime(from_chunk_dir, "."))
+                        from_chunk_dir = "";
+
+                    const additional_files: []AdditionalFile = c.graph.bundler_graph.input_files.items(.additional_files)[piece.index.index].slice();
+                    bun.assert(additional_files.len == 1);
+                    const path = c.graph.bundler_graph.additional_output_files.items[additional_files[0].output_file].dest_path;
+                    hash.write(bun.path.relativePlatform(from_chunk_dir, path, .posix, false));
+                }
+            },
+            else => {},
+        }
+
+        // Mix in the hash for this chunk
+        hash.write(std.mem.asBytes(&chunk.isolated_hash));
     }
 
     fn writeOutputFilesToDisk(
@@ -9742,7 +9809,7 @@ const LinkerContext = struct {
                             c.parse_graph.input_files.items(.loader)[chunk.entry_point.source_index]
                         else
                             .js,
-                        .hash = chunk.isolated_hash,
+                        .hash = chunk.template.placeholder.hash,
                         .output_kind = if (chunk.entry_point.is_entry_point)
                             c.graph.files.items(.entry_point_kind)[chunk.entry_point.source_index].OutputKind()
                         else

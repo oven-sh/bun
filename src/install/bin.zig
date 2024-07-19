@@ -366,6 +366,8 @@ pub const Bin = extern struct {
                 return;
             }
 
+            bun.Analytics.Features.binlinks += 1;
+
             if (comptime Environment.isWindows)
                 this.createWindowsShim(abs_target, abs_dest, global)
             else
@@ -399,7 +401,7 @@ pub const Bin = extern struct {
             }
         }
 
-        pub fn createWindowsShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn createWindowsShim(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             const WinBinLinkingShim = @import("./windows-shim/BinLinkingShim.zig");
 
             var shim_buf: [65536]u8 = undefined;
@@ -486,7 +488,7 @@ pub const Bin = extern struct {
             };
         }
 
-        pub fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
+        fn createSymlink(this: *Linker, abs_target: [:0]const u8, abs_dest: [:0]const u8, global: bool) void {
             defer {
                 if (this.err == null) {
                     _ = bun.sys.chmod(abs_target, umask | 0o777);

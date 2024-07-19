@@ -30,6 +30,17 @@ function ensureCallback(callback) {
   return callback;
 }
 
+// Micro-optimization: avoid creating a new function for every call
+// bind() is slightly more optimized in JSC
+// This code is equivalent to:
+//
+// function () { callback(null); }
+//
+function nullcallback(callback) {
+  return FunctionPrototypeBind.$call(callback, undefined, null);
+}
+const FunctionPrototypeBind = nullcallback.bind;
+
 class FSWatcher extends EventEmitter {
   #watcher;
   #listener;
@@ -136,11 +147,25 @@ class StatWatcher extends EventEmitter {
   }
 }
 
-var access = function access(...args) {
-    callbackify(fs.access, args);
+var access = function access(path, mode, callback) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.access(path, mode).then(nullcallback(callback), callback);
   },
-  appendFile = function appendFile(...args) {
-    callbackify(fs.appendFile, args);
+  appendFile = function appendFile(path, data, options, callback) {
+    if (!$isCallable(callback)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.appendFile(path, data, options).then(nullcallback(callback), callback);
   },
   close = function close(fd, callback) {
     if ($isCallable(callback)) {
@@ -151,20 +176,36 @@ var access = function access(...args) {
       throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
     }
   },
-  rm = function rm(...args) {
-    callbackify(fs.rm, args);
+  rm = function rm(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+    fs.rm(path, options).then(nullcallback(callback), callback);
   },
-  rmdir = function rmdir(...args) {
-    callbackify(fs.rmdir, args);
+  rmdir = function rmdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    fs.rmdir(path, options).then(nullcallback(callback), callback);
   },
-  copyFile = function copyFile(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.copyFile(...args).then(result => callback(null, result), callback);
+  copyFile = function copyFile(src, dest, mode, callback) {
+    if ($isCallable(mode)) {
+      callback = mode;
+      mode = 0;
+    }
+
+    ensureCallback(callback);
+
+    fs.copyFile(src, dest, mode).then(nullcallback(callback), callback);
   },
   exists = function exists(path, callback) {
-    if (typeof callback !== "function") {
-      throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
-    }
+    ensureCallback(callback);
+
     try {
       fs.exists.$apply(fs, [path]).then(
         existed => callback(existed),
@@ -174,50 +215,111 @@ var access = function access(...args) {
       callback(false);
     }
   },
-  chown = function chown(...args) {
-    callbackify(fs.chown, args);
+  chown = function chown(path, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.chown(path, uid, gid).then(nullcallback(callback), callback);
   },
-  chmod = function chmod(...args) {
-    callbackify(fs.chmod, args);
+  chmod = function chmod(path, mode, callback) {
+    ensureCallback(callback);
+
+    fs.chmod(path, mode).then(nullcallback(callback), callback);
   },
-  fchmod = function fchmod(...args) {
-    callbackify(fs.fchmod, args);
+  fchmod = function fchmod(fd, mode, callback) {
+    ensureCallback(callback);
+
+    fs.fchmod(fd, mode).then(nullcallback(callback), callback);
   },
-  fchown = function fchown(...args) {
-    callbackify(fs.fchown, args);
+  fchown = function fchown(fd, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.fchown(fd, uid, gid).then(nullcallback(callback), callback);
   },
-  fstat = function fstat(...args) {
-    callbackify(fs.fstat, args);
+  fstat = function fstat(fd, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    fs.fstat(fd, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  fsync = function fsync(...args) {
-    callbackify(fs.fsync, args);
+  fsync = function fsync(fd, callback) {
+    ensureCallback(callback);
+
+    fs.fsync(fd).then(nullcallback(callback), callback);
   },
-  ftruncate = function ftruncate(...args) {
-    callbackify(fs.ftruncate, args);
+  ftruncate = function ftruncate(fd, len, callback) {
+    if ($isCallable(len)) {
+      callback = len;
+      len = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.ftruncate(fd, len).then(nullcallback(callback), callback);
   },
-  futimes = function futimes(...args) {
-    callbackify(fs.futimes, args);
+  futimes = function futimes(fd, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.futimes(fd, atime, mtime).then(nullcallback(callback), callback);
   },
-  lchmod = function lchmod(...args) {
-    callbackify(fs.lchmod, args);
+  lchmod = function lchmod(path, mode, callback) {
+    ensureCallback(callback);
+
+    fs.lchmod(path, mode).then(nullcallback(callback), callback);
   },
-  lchown = function lchown(...args) {
-    callbackify(fs.lchown, args);
+  lchown = function lchown(path, uid, gid, callback) {
+    ensureCallback(callback);
+
+    fs.lchown(path, uid, gid).then(nullcallback(callback), callback);
   },
-  link = function link(...args) {
-    callbackify(fs.link, args);
+  link = function link(existingPath, newPath, callback) {
+    ensureCallback(callback);
+
+    fs.link(existingPath, newPath).then(nullcallback(callback), callback);
   },
-  mkdir = function mkdir(...args) {
-    callbackify(fs.mkdir, args);
+  mkdir = function mkdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.mkdir(path, options).then(nullcallback(callback), callback);
   },
-  mkdtemp = function mkdtemp(...args) {
-    callbackify(fs.mkdtemp, args);
+  mkdtemp = function mkdtemp(prefix, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.mkdtemp(prefix, options).then(function (folder) {
+      callback(null, folder);
+    }, callback);
   },
-  open = function open(...args) {
-    callbackify(fs.open, args);
+  open = function open(path, flags, mode, callback) {
+    if (arguments.length < 3) {
+      callback = flags;
+    } else if ($isCallable(mode)) {
+      callback = mode;
+      mode = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.open(path, flags, mode).then(function (fd) {
+      callback(null, fd);
+    }, callback);
   },
-  fdatasync = function fdatasync(...args) {
-    callbackify(fs.fdatasync, args);
+  fdatasync = function fdatasync(fd, callback) {
+    ensureCallback(callback);
+
+    fs.fdatasync(fd).then(nullcallback(callback), callback);
   },
   read = function read(fd, buffer, offsetOrOptions, length, position, callback) {
     let offset = offsetOrOptions;
@@ -250,60 +352,151 @@ var access = function access(...args) {
       err => callback(err),
     );
   },
-  write = function write(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    const promise = fs.write(...args.slice(0, -1));
-    const bufferOrString = args[1];
+  write = function write(fd, buffer, offsetOrOptions, length, position, callback) {
+    function wrapper(bytesWritten) {
+      callback(null, bytesWritten, buffer);
+    }
 
-    promise.then(
-      bytesWritten => callback(null, bytesWritten, bufferOrString),
-      err => callback(err),
-    );
-  },
-  readdir = function readdir(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
+    if ($isTypedArrayView(buffer)) {
+      callback ||= position || length || offsetOrOptions;
+      ensureCallback(callback);
 
-    fs.readdir(...args.slice(0, -1)).then(result => callback(null, result), callback);
+      fs.write(fd, buffer, offsetOrOptions, length, position).then(wrapper, callback);
+      return;
+    }
+
+    if (!$isCallable(position)) {
+      if ($isCallable(offsetOrOptions)) {
+        position = offsetOrOptions;
+        offsetOrOptions = undefined;
+      } else {
+        position = length;
+      }
+      length = "utf8";
+    }
+
+    callback = position;
+    ensureCallback(callback);
+
+    fs.write(fd, buffer, offsetOrOptions, length).then(wrapper, callback);
   },
-  readFile = function readFile(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.readFile(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  readdir = function readdir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.readdir(path, options).then(function (files) {
+      callback(null, files);
+    }, callback);
   },
-  writeFile = function writeFile(...args) {
-    callbackify(fs.writeFile, args);
+  readFile = function readFile(path, options, callback) {
+    callback ||= options;
+    ensureCallback(callback);
+
+    fs.readFile(path, options).then(function (data) {
+      callback(null, data);
+    }, callback);
   },
-  readlink = function readlink(...args) {
-    callbackify(fs.readlink, args);
+  writeFile = function writeFile(path, data, options, callback) {
+    callback ||= options;
+    ensureCallback(callback);
+
+    fs.writeFile(path, data, options).then(nullcallback(callback), callback);
   },
-  realpath = function realpath(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.realpath(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  readlink = function readlink(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.readlink(path, options).then(function (linkString) {
+      callback(null, linkString);
+    }, callback);
   },
-  rename = function rename(...args) {
-    callbackify(fs.rename, args);
+  realpath = function realpath(p, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.realpath(p, options).then(function (resolvedPath) {
+      callback(null, resolvedPath);
+    }, callback);
   },
-  lstat = function lstat(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.lstat(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  rename = function rename(oldPath, newPath, callback) {
+    ensureCallback(callback);
+
+    fs.rename(oldPath, newPath).then(nullcallback(callback), callback);
   },
-  stat = function stat(...args) {
-    const callback = ensureCallback(args[args.length - 1]);
-    fs.stat(...args.slice(0, -1)).then(result => callback(null, result), callback);
+  lstat = function lstat(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.lstat(path, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  symlink = function symlink(...args) {
-    callbackify(fs.symlink, args);
+  stat = function stat(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    fs.stat(path, options).then(function (stats) {
+      callback(null, stats);
+    }, callback);
   },
-  truncate = function truncate(...args) {
-    callbackify(fs.truncate, args);
+  symlink = function symlink(target, path, type, callback) {
+    if (callback === undefined) {
+      callback = type;
+      ensureCallback(callback);
+      type = undefined;
+    }
+
+    fs.symlink(target, path, type).then(callback, callback);
   },
-  unlink = function unlink(...args) {
-    callbackify(fs.unlink, args);
+  truncate = function truncate(path, len, callback) {
+    if (typeof path === "number") {
+      // Apparently, node supports this
+      ftruncate(path, len, callback);
+      return;
+    }
+
+    if ($isCallable(len)) {
+      callback = len;
+      len = undefined;
+    }
+
+    ensureCallback(callback);
+    fs.truncate(path, len).then(nullcallback(callback), callback);
   },
-  utimes = function utimes(...args) {
-    callbackify(fs.utimes, args);
+  unlink = function unlink(path, callback) {
+    ensureCallback(callback);
+
+    fs.unlink(path).then(nullcallback(callback), callback);
   },
-  lutimes = function lutimes(...args) {
-    callbackify(fs.lutimes, args);
+  utimes = function utimes(path, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.utimes(path, atime, mtime).then(nullcallback(callback), callback);
+  },
+  lutimes = function lutimes(path, atime, mtime, callback) {
+    ensureCallback(callback);
+
+    fs.lutimes(path, atime, mtime).then(nullcallback(callback), callback);
   },
   accessSync = fs.accessSync.bind(fs),
   appendFileSync = fs.appendFileSync.bind(fs),
@@ -381,8 +574,17 @@ var access = function access(...args) {
   watch = function watch(path, options, listener) {
     return new FSWatcher(path, options, listener);
   },
-  opendir = function opendir(...args) {
-    callbackify(promises.opendir, args);
+  opendir = function opendir(path, options, callback) {
+    if ($isCallable(options)) {
+      callback = options;
+      options = undefined;
+    }
+
+    ensureCallback(callback);
+
+    promises.opendir(path, options).then(function (dir) {
+      callback(null, dir);
+    }, callback);
   };
 
 // TODO: make symbols a separate export somewhere
@@ -1319,3 +1521,103 @@ export default {
   //   return getLazyReadStream();
   // },
 };
+
+// Preserve the names
+function setName(fn, value) {
+  Object.$defineProperty(fn, "name", { value, enumerable: false, configurable: true });
+}
+setName(Dirent, "Dirent");
+setName(FSWatcher, "FSWatcher");
+setName(ReadStream, "ReadStream");
+setName(Stats, "Stats");
+setName(WriteStream, "WriteStream");
+setName(_toUnixTimestamp, "_toUnixTimestamp");
+setName(access, "access");
+setName(accessSync, "accessSync");
+setName(appendFile, "appendFile");
+setName(appendFileSync, "appendFileSync");
+setName(chmod, "chmod");
+setName(chmodSync, "chmodSync");
+setName(chown, "chown");
+setName(chownSync, "chownSync");
+setName(close, "close");
+setName(closeSync, "closeSync");
+setName(constants, "constants");
+setName(copyFile, "copyFile");
+setName(copyFileSync, "copyFileSync");
+setName(cp, "cp");
+setName(cpSync, "cpSync");
+setName(createReadStream, "createReadStream");
+setName(createWriteStream, "createWriteStream");
+setName(exists, "exists");
+setName(existsSync, "existsSync");
+setName(fchmod, "fchmod");
+setName(fchmodSync, "fchmodSync");
+setName(fchown, "fchown");
+setName(fchownSync, "fchownSync");
+setName(fstat, "fstat");
+setName(fstatSync, "fstatSync");
+setName(fsync, "fsync");
+setName(fsyncSync, "fsyncSync");
+setName(ftruncate, "ftruncate");
+setName(ftruncateSync, "ftruncateSync");
+setName(futimes, "futimes");
+setName(futimesSync, "futimesSync");
+setName(lchmod, "lchmod");
+setName(lchmodSync, "lchmodSync");
+setName(lchown, "lchown");
+setName(lchownSync, "lchownSync");
+setName(link, "link");
+setName(linkSync, "linkSync");
+setName(lstat, "lstat");
+setName(lstatSync, "lstatSync");
+setName(lutimes, "lutimes");
+setName(lutimesSync, "lutimesSync");
+setName(mkdir, "mkdir");
+setName(mkdirSync, "mkdirSync");
+setName(mkdtemp, "mkdtemp");
+setName(mkdtempSync, "mkdtempSync");
+setName(open, "open");
+setName(openSync, "openSync");
+setName(promises, "promises");
+setName(read, "read");
+setName(readFile, "readFile");
+setName(readFileSync, "readFileSync");
+setName(readSync, "readSync");
+setName(readdir, "readdir");
+setName(readdirSync, "readdirSync");
+setName(readlink, "readlink");
+setName(readlinkSync, "readlinkSync");
+setName(readv, "readv");
+setName(readvSync, "readvSync");
+setName(realpath, "realpath");
+setName(realpathSync, "realpathSync");
+setName(rename, "rename");
+setName(renameSync, "renameSync");
+setName(rm, "rm");
+setName(rmSync, "rmSync");
+setName(rmdir, "rmdir");
+setName(rmdirSync, "rmdirSync");
+setName(stat, "stat");
+setName(statSync, "statSync");
+setName(symlink, "symlink");
+setName(symlinkSync, "symlinkSync");
+setName(truncate, "truncate");
+setName(truncateSync, "truncateSync");
+setName(unlink, "unlink");
+setName(unlinkSync, "unlinkSync");
+setName(unwatchFile, "unwatchFile");
+setName(utimes, "utimes");
+setName(utimesSync, "utimesSync");
+setName(watch, "watch");
+setName(watchFile, "watchFile");
+setName(write, "write");
+setName(writeFile, "writeFile");
+setName(writeFileSync, "writeFileSync");
+setName(writeSync, "writeSync");
+setName(writev, "writev");
+setName(writevSync, "writevSync");
+setName(fdatasync, "fdatasync");
+setName(fdatasyncSync, "fdatasyncSync");
+setName(openAsBlob, "openAsBlob");
+setName(opendir, "opendir");

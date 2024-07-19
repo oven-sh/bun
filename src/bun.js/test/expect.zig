@@ -2382,7 +2382,7 @@ pub const Expect = struct {
             }
 
             if (expected_value.isString()) {
-                const received_message = result.getIfPropertyExistsImpl(globalThis, "message", 7);
+                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
 
                 // TODO: remove this allocation
                 // partial match
@@ -2402,7 +2402,7 @@ pub const Expect = struct {
             }
 
             if (expected_value.isRegExp()) {
-                const received_message = result.getIfPropertyExistsImpl(globalThis, "message", 7);
+                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
 
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
@@ -2417,8 +2417,8 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            if (expected_value.get(globalThis, "message")) |expected_message| {
-                const received_message = result.getIfPropertyExistsImpl(globalThis, "message", 7);
+            if (expected_value.fastGet(globalThis, .message)) |expected_message| {
+                const received_message = result.fastGet(globalThis, .message) orelse .undefined;
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
@@ -2430,7 +2430,7 @@ pub const Expect = struct {
 
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
-            const received_message = result.getIfPropertyExistsImpl(globalThis, "message", 7);
+            const received_message = result.fastGet(globalThis, .message) orelse .undefined;
             this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(globalThis, &formatter) });
             return .zero;
         }
@@ -2444,7 +2444,7 @@ pub const Expect = struct {
                 result_.?;
 
             const _received_message: ?JSValue = if (result.isObject())
-                result.get(globalThis, "message")
+                result.fastGet(globalThis, .message)
             else if (result.toStringOrNull(globalThis)) |js_str|
                 JSValue.fromCell(js_str)
             else
@@ -2593,7 +2593,7 @@ pub const Expect = struct {
             return .zero;
         }
 
-        if (expected_value.get(globalThis, "message")) |expected_message| {
+        if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
             this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(globalThis, &formatter)});
             return .zero;

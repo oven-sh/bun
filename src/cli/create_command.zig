@@ -50,8 +50,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 const skip_dirs = &[_]bun.OSPathSlice{
@@ -1436,7 +1436,7 @@ pub const CreateCommand = struct {
 
                 const package_json_writer = JSPrinter.NewFileWriter(package_json_file.?);
 
-                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source) catch |err| {
+                const written = JSPrinter.printJSON(@TypeOf(package_json_writer), package_json_writer, package_json_expr, &source, .{}) catch |err| {
                     Output.prettyErrorln("package.json failed to write due to error {s}", .{@errorName(err)});
                     package_json_file = null;
                     break :process_package_json;

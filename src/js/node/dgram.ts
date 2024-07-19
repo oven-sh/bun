@@ -242,6 +242,7 @@ function Socket(type, listener) {
     ipv6Only: options && options.ipv6Only,
     recvBufferSize,
     sendBufferSize,
+    unrefOnBind: false,
   };
 
   if (options?.signal !== undefined) {
@@ -394,6 +395,10 @@ Socket.prototype.bind = function (port_, address_ /* , callback */) {
       },
     }).$then(
       socket => {
+        if (state.unrefOnBind) {
+          socket.unref();
+          state.unrefOnBind = false;
+        }
         state.handle.socket = socket;
         state.receiving = true;
         state.bindState = BIND_STATE_BOUND;
@@ -929,7 +934,11 @@ Socket.prototype.ref = function () {
 Socket.prototype.unref = function () {
   const socket = this[kStateSymbol].handle?.socket;
 
-  if (socket) socket.unref();
+  if (socket) {
+    socket.unref();
+  } else {
+    this[kStateSymbol].unrefOnBind = true;
+  }
 
   return this;
 };

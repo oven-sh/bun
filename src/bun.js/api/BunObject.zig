@@ -1301,7 +1301,7 @@ extern fn dump_zone_malloc_stats() void;
 
 fn dump_mimalloc(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
     globalObject.bunVM().arena.dumpStats();
-    if (comptime bun.is_heap_breakdown_enabled) {
+    if (bun.heap_breakdown.enabled) {
         dump_zone_malloc_stats();
     }
     return .undefined;
@@ -1472,6 +1472,29 @@ pub const Crypto = struct {
         };
 
         pub const Digest = [BoringSSL.EVP_MAX_MD_SIZE]u8;
+
+        /// For usage in Zig
+        pub fn pbkdf2(
+            output: []u8,
+            password: []const u8,
+            salt: []const u8,
+            iteration_count: u32,
+            algorithm: Algorithm,
+        ) ?[]const u8 {
+            var pbk = PBKDF2{
+                .algorithm = algorithm,
+                .password = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(password) },
+                .salt = JSC.Node.StringOrBuffer{ .encoded_slice = JSC.ZigString.Slice.fromUTF8NeverFree(salt) },
+                .iteration_count = iteration_count,
+                .length = @intCast(output.len),
+            };
+
+            if (!pbk.run(output)) {
+                return null;
+            }
+
+            return output;
+        }
 
         pub const PBKDF2 = struct {
             password: JSC.Node.StringOrBuffer = JSC.Node.StringOrBuffer.empty,
@@ -2225,13 +2248,7 @@ pub const Crypto = struct {
                 };
                 this.ref = .{};
                 this.promise.strong = .{};
-
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = JSC.ConcurrentTask{
-                    .task = JSC.Task.init(&result.task),
-                    .auto_delete = true,
-                };
-                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
         };
@@ -2467,13 +2484,7 @@ pub const Crypto = struct {
                 };
                 this.ref = .{};
                 this.promise.strong = .{};
-
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = JSC.ConcurrentTask{
-                    .task = JSC.Task.init(&result.task),
-                    .auto_delete = true,
-                };
-                this.event_loop.enqueueTaskConcurrent(concurrent_task);
+                this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
                 this.deinit();
             }
         };
@@ -2763,6 +2774,10 @@ pub const Crypto = struct {
             const thisValue = callframe.this();
             const arguments = callframe.arguments(2);
             const input = arguments.ptr[0];
+            if (input.isEmptyOrUndefinedOrNull()) {
+                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                return JSC.JSValue.zero;
+            }
             const encoding = arguments.ptr[1];
             const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
                 globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
@@ -3902,7 +3917,7 @@ const TOMLObject = struct {
             return .zero;
         };
         var writer = js_printer.BufferPrinter.init(buffer_writer);
-        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source) catch {
+        _ = js_printer.printJSON(*js_printer.BufferPrinter, &writer, parse_result, &source, .{}) catch {
             globalThis.throwValue(log.toJS(globalThis, default_allocator, "Failed to print toml"));
             return .zero;
         };

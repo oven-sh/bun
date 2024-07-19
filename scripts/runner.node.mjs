@@ -1332,7 +1332,7 @@ function formatTestToMarkdown(result, concise) {
 
   let markdown = "";
   for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
-    if (ok) {
+    if (ok || error === "SIGTERM") {
       continue;
     }
 

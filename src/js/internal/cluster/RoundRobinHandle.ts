@@ -1,6 +1,8 @@
 const net = require("node:net");
-const { sendHelper } = require("internal/cluster/utils");
 const { append, init, isEmpty, peek, remove } = require("internal/linkedlist");
+const { kHandle } = require("internal/shared");
+
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
 
 const ArrayIsArray = Array.isArray;
 
@@ -127,7 +129,7 @@ export default class RoundRobinHandle {
 
     const message = { act: "newconn", key: this.key };
 
-    sendHelper(worker.process, message, handle, reply => {
+    sendHelper(worker.process[kHandle], message, handle, reply => {
       if (reply.accepted) handle.close();
       else this.distribute(0, handle); // Worker is shutting down. Send to another.
 

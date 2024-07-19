@@ -90,11 +90,6 @@ export default [
         fn: "doSend",
         length: 1,
       },
-      // temporary
-      sendInternal: {
-        fn: "doSendInternal",
-        length: 1,
-      },
       kill: {
         fn: "kill",
         length: 1,

@@ -3,6 +3,7 @@ const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { kHandle } = require("internal/shared");
 
 const ERR_IPC_DISCONNECTED = $zig("node_error_binding.zig", "ERR_IPC_DISCONNECTED");
 
@@ -1195,6 +1196,10 @@ class ChildProcess extends EventEmitter {
     return handle.connected ?? false;
   }
 
+  get [kHandle]() {
+    return this.#handle;
+  }
+
   spawn(options) {
     validateObject(options, "options");
 
@@ -1253,7 +1258,6 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
-      ipcInternal: has_ipc ? this.#emitIpcInternalMessage.bind(this) : undefined,
       onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
       serialization,
       argv0,
@@ -1283,10 +1287,6 @@ class ChildProcess extends EventEmitter {
     this.emit("message", message);
   }
 
-  #emitIpcInternalMessage(message) {
-    this.emit("internalMessage", message);
-  }
-
   #send(message, handle, options, callback) {
     if (typeof handle === "function") {
       callback = handle;
@@ -1312,12 +1312,7 @@ class ChildProcess extends EventEmitter {
 
     // Bun does not handle handles yet
     try {
-      // temporary
-      if (message?.cmd?.startsWith("NODE_")) {
-        this.#handle.sendInternal(message);
-      } else {
-        this.#handle.send(message);
-      }
+      this.#handle.send(message);
       if (callback) process.nextTick(callback);
       return true;
     } catch (error) {

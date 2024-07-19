@@ -12,6 +12,8 @@ const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
+const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+
 pub const log = Output.scoped(.IPC, false);
 
 /// Mode of Inter-Process Communication.
@@ -314,8 +316,8 @@ const SocketIPCData = struct {
 
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     outgoing: bun.io.StreamBuffer = .{},
-
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    iimh: node_cluster_binding.IInternalMsgHolder = .{},
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
@@ -404,8 +406,8 @@ const NamedPipeIPCData = struct {
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
-
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
+    iimh: node_cluster_binding.IInternalMsgHolder = .{},
 
     const CloseHandler = struct {
         callback: *const fn (*anyopaque) void,

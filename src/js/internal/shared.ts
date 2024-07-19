@@ -88,6 +88,7 @@ export default {
   fileSinkSymbol,
   guessHandleType,
   ExceptionWithHostPort,
+  kHandle: Symbol("kHandle"),
 };
 
 // \/ more stuff from node

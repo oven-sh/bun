@@ -2,9 +2,11 @@ const EventEmitter = require("node:events");
 const child_process = require("node:child_process");
 const Worker = require("internal/cluster/Worker");
 const RoundRobinHandle = require("internal/cluster/RoundRobinHandle");
-const { internal, sendHelper } = require("internal/cluster/utils");
 const path = require("node:path");
-const { throwNotImplemented } = require("internal/shared");
+const { throwNotImplemented, kHandle } = require("internal/shared");
+
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperPrimary", 4);
+const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessagePrimary", 3);
 
 const ArrayPrototypeSlice = Array.prototype.slice;
 const ObjectValues = Object.values;
@@ -169,7 +171,7 @@ cluster.fork = function (env) {
     cluster.emit("disconnect", worker);
   });
 
-  worker.process.on("internalMessage", internal(worker, onmessage));
+  onInternalMessage(worker.process[kHandle], worker, onmessage);
   process.nextTick(emitForkNT, worker);
   cluster.workers[worker.id] = worker;
   return worker;
@@ -296,7 +298,7 @@ function close(worker, message) {
 }
 
 function send(worker, message, handle?, cb?) {
-  return sendHelper(worker.process, message, handle, cb);
+  return sendHelper(worker.process[kHandle], message, handle, cb);
 }
 
 // Extend generic Worker with methods specific to the primary process.

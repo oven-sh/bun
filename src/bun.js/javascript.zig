@@ -3640,7 +3640,6 @@ pub const VirtualMachine = struct {
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
-    extern fn Process__emitInternalMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
     extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 

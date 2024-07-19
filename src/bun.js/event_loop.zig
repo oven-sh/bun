@@ -763,6 +763,7 @@ pub const EventLoop = struct {
     ///
     /// Having two queues avoids infinite loops creating by calling `setImmediate` in a `setImmediate` callback.
     immediate_tasks: Queue = undefined,
+    napi_finalizer_queue: JSC.napi.Finalizer.Queue = undefined,
     next_immediate_tasks: Queue = undefined,
 
     concurrent_tasks: ConcurrentTask.Queue = ConcurrentTask.Queue{},
@@ -1252,6 +1253,7 @@ pub const EventLoop = struct {
     }
 
     pub fn tickImmediateTasks(this: *EventLoop) void {
+        JSC.napi.Finalizer.drain(&this.napi_finalizer_queue, this.global);
         _ = this.tickQueueWithCount("immediate_tasks");
     }
 

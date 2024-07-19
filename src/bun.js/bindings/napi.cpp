@@ -1,5 +1,6 @@
 #include "node_api.h"
 #include "root.h"
+#include "JavaScriptCore/ConstructData.h"
 
 #include "JavaScriptCore/DateInstance.h"
 #include "JavaScriptCore/JSCast.h"
@@ -115,6 +116,7 @@ JSC::SourceCode generateSourceCode(WTF::String keyString, JSC::VM& vm, JSC::JSOb
 
 class NapiRefWeakHandleOwner final : public JSC::WeakHandleOwner {
 public:
+    // Equivalent to v8impl::Ownership::kUserland
     void finalize(JSC::Handle<JSC::Unknown>, void* context) final
     {
         auto* weakValue = reinterpret_cast<NapiRef*>(context);
@@ -122,10 +124,35 @@ public:
         auto finalizer = weakValue->finalizer;
         if (finalizer.finalize_cb) {
             weakValue->finalizer.finalize_cb = nullptr;
-            finalizer.call(weakValue->globalObject.get(), weakValue->data);
+            finalizer.call(weakValue->data);
         }
     }
 };
+
+class NapiRefSelfDeletingWeakHandleOwner final : public JSC::WeakHandleOwner {
+public:
+    // Equivalent to v8impl::Ownership::kRuntime
+    void finalize(JSC::Handle<JSC::Unknown>, void* context) final
+    {
+        auto* weakValue = reinterpret_cast<NapiRef*>(context);
+
+        auto finalizer = weakValue->finalizer;
+        if (finalizer.finalize_cb) {
+            weakValue->finalizer.finalize_cb = nullptr;
+            finalizer.call(weakValue->data);
+        }
+
+        delete weakValue;
+    }
+
+    static NapiRefSelfDeletingWeakHandleOwner& weakValueHandleOwner()
+    {
+        static NeverDestroyed<NapiRefSelfDeletingWeakHandleOwner> jscWeakValueHandleOwner;
+        return jscWeakValueHandleOwner;
+    }
+};
+
+extern "C" void napi_enqueue_finalizer(napi_finalize finalize_cb, void* data, void* hint);
 
 static NapiRefWeakHandleOwner& weakValueHandleOwner()
 {
@@ -133,11 +160,11 @@ static NapiRefWeakHandleOwner& weakValueHandleOwner()
     return jscWeakValueHandleOwner;
 }
 
-void NapiFinalizer::call(JSC::JSGlobalObject* globalObject, void* data)
+void NapiFinalizer::call(void* data)
 {
     if (this->finalize_cb) {
         NAPI_PREMABLE
-        this->finalize_cb(reinterpret_cast<napi_env>(globalObject), data, this->finalize_hint);
+        napi_enqueue_finalizer(this->finalize_cb, data, this->finalize_hint);
     }
 }
 
@@ -174,7 +201,7 @@ void NapiRef::unref()
 
 void NapiRef::clear()
 {
-    this->finalizer.call(this->globalObject.get(), this->data);
+    this->finalizer.call(this->data);
     this->globalObject.clear();
     this->weakValueRef.clear();
     this->strongRef.clear();
@@ -965,7 +992,12 @@ extern "C" napi_status napi_wrap(napi_env env,
     }
 
     auto* ref = new NapiRef(globalObject, 0);
-    ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
+
+    if (result) {
+        ref->weakValueRef.setObject(value.getObject(), weakValueHandleOwner(), ref);
+    } else {
+        ref->weakValueRef.setObject(value.getObject(), NapiRefSelfDeletingWeakHandleOwner::weakValueHandleOwner(), ref);
+    }
 
     if (finalize_cb) {
         ref->finalizer.finalize_cb = finalize_cb;
@@ -1017,7 +1049,14 @@ extern "C" napi_status napi_remove_wrap(napi_env env, napi_value js_object,
     if (result) {
         *result = ref->data;
     }
-    delete ref;
+
+    // RemoveWrap
+    if (ref->isOwnedByRuntime) {
+        delete ref;
+    } else {
+        ref->finalizer.finalize_cb = nullptr;
+        ref->finalizer.finalize_hint = nullptr;
+    }
 
     return napi_ok;
 }
@@ -1033,6 +1072,11 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
         return NAPI_OBJECT_EXPECTED;
     }
 
+    // KeepWrap
+    if (!result) {
+        return napi_invalid_arg;
+    }
+
     NapiRef* ref = nullptr;
     if (auto* val = jsDynamicCast<NapiPrototype*>(value)) {
         ref = val->napiRef;
@@ -1042,8 +1086,8 @@ extern "C" napi_status napi_unwrap(napi_env env, napi_value js_object,
         ASSERT(false);
     }
 
-    if (ref && result) {
-        *result = ref ? ref->data : nullptr;
+    if (ref) {
+        *result = ref->data;
     }
 
     return napi_ok;
@@ -1273,17 +1317,29 @@ extern "C" napi_status napi_add_finalizer(napi_env env, napi_value js_object,
     JSC::VM& vm = globalObject->vm();
 
     JSC::JSValue objectValue = toJS(js_object);
-    JSC::JSObject* object = objectValue.getObject();
-    if (!object) {
+    if (UNLIKELY(!objectValue.isObject())) {
         return napi_object_expected;
     }
+    if (UNLIKELY(!finalize_cb)) {
+        return napi_invalid_arg;
+    }
 
-    vm.heap.addFinalizer(object, [=](JSCell* cell) -> void {
-#if NAPI_VERBOSE
-        printf("napi_add_finalizer: %p\n", finalize_hint);
-#endif
-        finalize_cb(env, native_object, finalize_hint);
-    });
+    JSC::JSObject* object = objectValue.getObject();
+
+    if (result) {
+        // If they're expecting a Ref, use the ref.
+        auto* ref = new NapiRef(globalObject, 0);
+        ref->weakValueRef.setObject(object, weakValueHandleOwner(), ref);
+        ref->finalizer.finalize_cb = finalize_cb;
+        ref->finalizer.finalize_hint = finalize_hint;
+        ref->data = native_object;
+        *result = toNapi(ref);
+    } else {
+        // Otherwise, it's cheaper to just call .addFinalizer.
+        vm.heap.addFinalizer(object, [finalize_cb, native_object, finalize_hint](JSCell* cell) -> void {
+            napi_enqueue_finalizer(finalize_cb, native_object, finalize_hint);
+        });
+    }
 
     return napi_ok;
 }

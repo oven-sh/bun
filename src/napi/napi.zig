@@ -1393,6 +1393,22 @@ pub export fn napi_remove_env_cleanup_hook(env: napi_env, fun: ?*const fn (?*any
 pub const Finalizer = struct {
     fun: napi_finalize,
     data: ?*anyopaque = null,
+    hint: ?*anyopaque = null,
+
+    pub const Queue = std.fifo.LinearFifo(Finalizer, .Dynamic);
+
+    pub fn drain(this: *Finalizer.Queue, env: napi_env) void {
+        while (this.readItem()) |*finalizer| {
+            finalizer.fun.?(env, finalizer.data, finalizer.hint);
+        }
+    }
+
+    /// Node defers finalizers to the immediate task queue.
+    /// This is most likely to account for napi addons which cause GC inside of the finalizer.
+    pub export fn napi_enqueue_finalizer(fun: napi_finalize, data: ?*anyopaque, hint: ?*anyopaque) callconv(.C) void {
+        const vm = JSC.VirtualMachine.get();
+        vm.eventLoop().napi_finalizer_queue.writeItem(.{ .fun = fun, .data = data, .hint = hint }) catch bun.outOfMemory();
+    }
 };
 
 // TODO: generate comptime version of this instead of runtime checking

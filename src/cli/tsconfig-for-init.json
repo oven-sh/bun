@@ -22,6 +22,7 @@
     // Some stricter flags (disabled by default)
     "noUnusedLocals": false,
     "noUnusedParameters": false,
+    "noUncheckedIndexedAccess": false,
     "noPropertyAccessFromIndexSignature": false
   }
 }

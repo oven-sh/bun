@@ -95,12 +95,23 @@ private:
             // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
             // such as uv_tty_t 
             if(loop && cleanMe && !bun_is_exiting()) {
+                cleanMe = false;
                 loop->free();
             }
         }
         Loop *loop = nullptr;
         bool cleanMe = false;
     };
+
+    // Since we compile with -fno-c++-static-destructors
+    // we need to manually call this at thread exit
+    extern "C" void bun_clear_loop_at_thread_exit() {
+        auto &lazyLoop = getLazyLoop();
+        if (lazyLoop.loop && lazyLoop.cleanMe) {
+            lazyLoop.cleanMe = false;
+            lazyLoop.loop->free();
+        }
+    }
     
     static LoopCleaner &getLazyLoop() {
         static thread_local LoopCleaner lazyLoop;

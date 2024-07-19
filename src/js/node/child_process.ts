@@ -1253,6 +1253,7 @@ class ChildProcess extends EventEmitter {
       },
       lazy: true,
       ipc: has_ipc ? this.#emitIpcMessage.bind(this) : undefined,
+      ipcInternal: has_ipc ? this.#emitIpcInternalMessage.bind(this) : undefined,
       onDisconnect: has_ipc ? ok => this.#disconnect(ok) : undefined,
       serialization,
       argv0,
@@ -1279,11 +1280,11 @@ class ChildProcess extends EventEmitter {
   }
 
   #emitIpcMessage(message) {
-    if (message?.cmd?.startsWith("NODE_")) {
-      this.emit("internalMessage", message);
-      return;
-    }
     this.emit("message", message);
+  }
+
+  #emitIpcInternalMessage(message) {
+    this.emit("internalMessage", message);
   }
 
   #send(message, handle, options, callback) {
@@ -1311,7 +1312,12 @@ class ChildProcess extends EventEmitter {
 
     // Bun does not handle handles yet
     try {
-      this.#handle.send(message);
+      // temporary
+      if (message?.cmd?.startsWith("NODE_")) {
+        this.#handle.sendInternal(message);
+      } else {
+        this.#handle.send(message);
+      }
       if (callback) process.nextTick(callback);
       return true;
     } catch (error) {

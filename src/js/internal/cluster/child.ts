@@ -1,7 +1,9 @@
 const EventEmitter = require("node:events");
 const Worker = require("internal/cluster/Worker");
-const { internal, sendHelper } = require("internal/cluster/utils");
 const path = require("node:path");
+
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
+const onInternalMessage = $newZigFunction("node_cluster_binding.zig", "onInternalMessageChild", 2);
 
 const FunctionPrototype = Function.prototype;
 const ArrayPrototypeJoin = Array.prototype.join;
@@ -42,7 +44,7 @@ cluster._setupWorker = function () {
     }
   });
 
-  process.on("internalMessage", internal(worker, onmessage));
+  onInternalMessage(worker, onmessage);
   send({ act: "online" });
 
   function onmessage(message, handle) {
@@ -221,7 +223,7 @@ function onconnection(message, handle) {
 }
 
 function send(message, cb?) {
-  return sendHelper(process, message, null, cb);
+  return sendHelper(message, null, cb);
 }
 
 // Extend generic Worker with methods specific to worker processes.

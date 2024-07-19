@@ -3661,6 +3661,8 @@ pub const VirtualMachine = struct {
 
         pub usingnamespace bun.New(@This());
 
+        const node_cluster_binding = @import("./node/node_cluster_binding.zig");
+
         pub fn ipc(this: *IPCInstance) *IPC.IPCData {
             return &this.data;
         }
@@ -3679,17 +3681,13 @@ pub const VirtualMachine = struct {
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
                     if (this.globalThis) |global| {
-                        if (data.isObject()) {
-                            if (data.get(global, "cmd")) |prop| {
-                                if (prop.isString()) {
-                                    if (prop.toString(global).getZigString(global).hasPrefixComptime("NODE_")) {
-                                        Process__emitInternalMessageEvent(global, data);
-                                        return;
-                                    }
-                                }
-                            }
-                        }
                         Process__emitMessageEvent(global, data);
+                    }
+                },
+                .internal => |data| {
+                    IPC.log("Received IPC internal message from parent", .{});
+                    if (this.globalThis) |global| {
+                        node_cluster_binding.handleInternalMessageChild(global, data);
                     }
                 },
             }
@@ -3700,6 +3698,7 @@ pub const VirtualMachine = struct {
             if (this.globalThis) |global| {
                 var vm = global.bunVM();
                 vm.ipc = null;
+                node_cluster_binding.InternalMsgHolder.deinit();
                 Process__emitDisconnectEvent(global);
             }
             if (Environment.isPosix) {

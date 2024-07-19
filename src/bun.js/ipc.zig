@@ -36,6 +36,7 @@ pub const Mode = enum {
 pub const DecodedIPCMessage = union(enum) {
     version: u32,
     data: JSValue,
+    internal: JSValue,
 };
 
 pub const DecodeIPCMessageResult = struct {
@@ -64,6 +65,7 @@ const advanced = struct {
     pub const IPCMessageType = enum(u8) {
         Version = 1,
         SerializedMessage = 2,
+        SerializedInternalMessage = 3,
         _,
     };
 
@@ -112,7 +114,25 @@ const advanced = struct {
                     .message = .{ .data = deserialized },
                 };
             },
-            else => {
+            .SerializedInternalMessage => {
+                if (data.len < (header_length + message_len)) {
+                    log("Not enough bytes to decode IPC message body of len {d}, have {d} bytes", .{ message_len, data.len });
+                    return IPCDecodeError.NotEnoughBytes;
+                }
+
+                const message = data[header_length .. header_length + message_len];
+                const deserialized = JSValue.deserialize(message, global);
+
+                if (deserialized == .zero) {
+                    return IPCDecodeError.InvalidFormat;
+                }
+
+                return .{
+                    .bytes_consumed = header_length + message_len,
+                    .message = .{ .internal = deserialized },
+                };
+            },
+            _ => {
                 return IPCDecodeError.InvalidFormat;
             },
         }
@@ -139,6 +159,24 @@ const advanced = struct {
 
         return payload_length;
     }
+
+    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+        const serialized = value.serialize(global) orelse
+            return IPCSerializationError.SerializationFailed;
+        defer serialized.deinit();
+
+        const size: u32 = @intCast(serialized.data.len);
+
+        const payload_length: usize = @sizeOf(IPCMessageType) + @sizeOf(u32) + size;
+
+        try writer.ensureUnusedCapacity(payload_length);
+
+        writer.writeTypeAsBytesAssumeCapacity(IPCMessageType, .SerializedInternalMessage);
+        writer.writeTypeAsBytesAssumeCapacity(u32, size);
+        writer.writeAssumeCapacity(serialized.data);
+
+        return payload_length;
+    }
 };
 
 const json = struct {
@@ -155,7 +193,8 @@ const json = struct {
         globalThis: *JSC.JSGlobalObject,
     ) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
-            const json_data = data[0..idx];
+            const kind = data[0];
+            const json_data = data[1..idx];
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;
@@ -176,9 +215,16 @@ const json = struct {
 
             const deserialized = str.toJSByParseJSON(globalThis);
 
-            return .{
-                .bytes_consumed = idx + 1,
-                .message = .{ .data = deserialized },
+            return switch (kind) {
+                1 => .{
+                    .bytes_consumed = idx + 1,
+                    .message = .{ .data = deserialized },
+                },
+                2 => .{
+                    .bytes_consumed = idx + 1,
+                    .message = .{ .internal = deserialized },
+                },
+                else => @panic("invalid ipc json message kind this is a bug in Bun."),
             };
         }
         return IPCDecodeError.NotEnoughBytes;
@@ -197,12 +243,35 @@ const json = struct {
 
         const slice = str.slice();
 
-        try writer.ensureUnusedCapacity(slice.len + 1);
+        try writer.ensureUnusedCapacity(1 + slice.len + 1);
 
+        writer.writeAssumeCapacity(&.{1});
         writer.writeAssumeCapacity(slice);
         writer.writeAssumeCapacity("\n");
 
-        return slice.len + 1;
+        return 1 + slice.len + 1;
+    }
+
+    pub fn serializeInternal(_: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+        var out: bun.String = undefined;
+        value.jsonStringify(global, 0, &out);
+        defer out.deref();
+
+        if (out.tag == .Dead) return IPCSerializationError.SerializationFailed;
+
+        // TODO: it would be cool to have a 'toUTF8Into' which can write directly into 'ipc_data.outgoing.list'
+        const str = out.toUTF8(bun.default_allocator);
+        defer str.deinit();
+
+        const slice = str.slice();
+
+        try writer.ensureUnusedCapacity(1 + slice.len + 1);
+
+        writer.writeAssumeCapacity(&.{2});
+        writer.writeAssumeCapacity(slice);
+        writer.writeAssumeCapacity("\n");
+
+        return 1 + slice.len + 1;
     }
 };
 
@@ -225,6 +294,14 @@ pub fn getVersionPacket(mode: Mode) []const u8 {
 pub fn serialize(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
     return switch (data.mode) {
         inline else => |t| @field(@This(), @tagName(t)).serialize(data, writer, global, value),
+    };
+}
+
+/// Given a writer interface, serialize and write a value.
+/// Returns true if the value was written, false if it was not.
+pub fn serializeInternal(data: *IPCData, writer: anytype, global: *JSC.JSGlobalObject, value: JSValue) !usize {
+    return switch (data.mode) {
+        inline else => |t| @field(@This(), @tagName(t)).serializeInternal(data, writer, global, value),
     };
 }
 
@@ -265,6 +342,32 @@ const SocketIPCData = struct {
         const start_offset = ipc_data.outgoing.list.items.len;
 
         const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch
+            return false;
+
+        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
+
+        if (start_offset == 0) {
+            bun.assert(ipc_data.outgoing.cursor == 0);
+            const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
+            if (n == payload_length) {
+                ipc_data.outgoing.reset();
+            } else if (n > 0) {
+                ipc_data.outgoing.cursor = @intCast(n);
+            }
+        }
+
+        return true;
+    }
+
+    pub fn serializeAndSendInternal(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
+        if (Environment.allow_assert) {
+            bun.assert(ipc_data.has_written_version == 1);
+        }
+
+        // TODO: probably we should not direct access ipc_data.outgoing.list.items here
+        const start_offset = ipc_data.outgoing.list.items.len;
+
+        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch
             return false;
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);

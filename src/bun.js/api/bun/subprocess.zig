@@ -199,6 +199,7 @@ pub const Subprocess = struct {
     /// `null` indicates all of the IPC data is uninitialized.
     ipc_data: ?IPC.IPCData,
     ipc_callback: JSC.Strong = .{},
+    ipc_internal_callback: JSC.Strong = .{},
     flags: Flags = .{},
 
     weak_file_sink_stdin_ptr: ?*JSC.WebCore.FileSink = null,
@@ -735,6 +736,31 @@ pub const Subprocess = struct {
         const value = callFrame.argument(0);
 
         const success = ipc_data.serializeAndSend(global, value);
+        if (!success) return .zero;
+
+        return JSC.JSValue.jsUndefined();
+    }
+
+    // temporary
+    pub fn doSendInternal(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+        IPClog("Subprocess#doSendInternal", .{});
+        const ipc_data = &(this.ipc_data orelse {
+            if (this.hasExited()) {
+                global.throw("Subprocess.send() cannot be used after the process has exited.", .{});
+            } else {
+                global.throw("Subprocess.send() can only be used if an IPC channel is open.", .{});
+            }
+            return .zero;
+        });
+
+        if (callFrame.argumentsCount() == 0) {
+            global.throwInvalidArguments("Subprocess.send() requires one argument", .{});
+            return .zero;
+        }
+
+        const value = callFrame.argument(0);
+
+        const success = ipc_data.serializeAndSendInternal(global, value);
         if (!success) return .zero;
 
         return JSC.JSValue.jsUndefined();
@@ -1672,6 +1698,7 @@ pub const Subprocess = struct {
         var args = args_;
         var maybe_ipc_mode: if (is_sync) void else ?IPC.Mode = if (is_sync) {} else null;
         var ipc_callback: JSValue = .zero;
+        var ipc_internal_callback: JSValue = .zero;
         var extra_fds = std.ArrayList(bun.spawn.SpawnOptions.Stdio).init(bun.default_allocator);
         var argv0: ?[*:0]const u8 = null;
 
@@ -1805,6 +1832,10 @@ pub const Subprocess = struct {
                             };
 
                             ipc_callback = val.withAsyncContextIfNeeded(globalThis);
+
+                            if (args.get(globalThis, "ipcInternal")) |ipci| {
+                                ipc_internal_callback = ipci.withAsyncContextIfNeeded(globalThis);
+                            }
 
                             if (Environment.isPosix) {
                                 extra_fds.append(.{ .buffer = {} }) catch {
@@ -2142,6 +2173,7 @@ pub const Subprocess = struct {
             else
                 null,
             .ipc_callback = if (ipc_callback != .zero) JSC.Strong.create(ipc_callback, globalThis) else .{},
+            .ipc_internal_callback = if (ipc_internal_callback != .zero) JSC.Strong.create(ipc_internal_callback, globalThis) else .{},
             .flags = .{
                 .is_sync = is_sync,
             },
@@ -2287,6 +2319,17 @@ pub const Subprocess = struct {
             .data => |data| {
                 IPC.log("Received IPC message from child", .{});
                 if (this.ipc_callback.get()) |cb| {
+                    this.globalThis.bunVM().eventLoop().runCallback(
+                        cb,
+                        this.globalThis,
+                        this.this_jsvalue,
+                        &[_]JSValue{ data, this.this_jsvalue },
+                    );
+                }
+            },
+            .internal => |data| {
+                IPC.log("Received IPC internal message from child", .{});
+                if (this.ipc_internal_callback.get()) |cb| {
                     this.globalThis.bunVM().eventLoop().runCallback(
                         cb,
                         this.globalThis,

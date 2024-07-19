@@ -5338,7 +5338,7 @@ fn NewParser_(
 
                 return p.newExpr(E.Import{
                     .expr = arg,
-                    .import_record_index = Ref.toInt(import_record_index),
+                    .import_record_index = @intCast(import_record_index),
                     .options = state.import_options,
                 }, state.loc);
             }
@@ -5393,7 +5393,7 @@ fn NewParser_(
 
             return p.newExpr(
                 E.RequireResolveString{
-                    .import_record_index = Ref.toInt(import_record_index),
+                    .import_record_index = import_record_index,
                     // .leading_interior_comments = arg.getString().
                 },
                 arg.loc,
@@ -9473,7 +9473,7 @@ fn NewParser_(
 
             return Ref{
                 .inner_index = inner_index,
-                .source_index = Ref.toInt(p.source.index.get()),
+                .source_index = @intCast(p.source.index.get()),
                 .tag = .symbol,
             };
         }
@@ -12891,13 +12891,19 @@ fn NewParser_(
             }
 
             if (@intFromPtr(p.source.contents.ptr) <= @intFromPtr(name.ptr) and (@intFromPtr(name.ptr) + name.len) <= (@intFromPtr(p.source.contents.ptr) + p.source.contents.len)) {
-                const start = Ref.toInt(@intFromPtr(name.ptr) - @intFromPtr(p.source.contents.ptr));
-                const end = Ref.toInt(name.len);
-                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .tag = .source_contents_slice });
+                return Ref.initSourceEnd(.{
+                    .source_index = @intCast(@intFromPtr(name.ptr) - @intFromPtr(p.source.contents.ptr)),
+                    .inner_index = @intCast(name.len),
+                    .tag = .source_contents_slice,
+                });
             } else {
-                const inner_index = Ref.toInt(p.allocated_names.items.len);
+                const inner_index: u31 = @intCast(p.allocated_names.items.len);
                 try p.allocated_names.append(p.allocator, name);
-                return Ref.init(inner_index, p.source.index.get(), false);
+                return Ref.init(
+                    inner_index,
+                    p.source.index.get(),
+                    false,
+                );
             }
         }
 
@@ -22063,13 +22069,14 @@ fn NewParser_(
                             .s_function => |data| {
                                 if (
                                 // Hoist module-level functions when
-                                ((FeatureFlags.unwrap_commonjs_to_esm and p.current_scope == p.module_scope and !data.func.flags.contains(.is_export)) or
+                                // ((FeatureFlags.unwrap_commonjs_to_esm and p.current_scope == p.module_scope and !data.func.flags.contains(.is_export)) or
 
-                                    // Manually hoist block-level function declarations to preserve semantics.
-                                    // This is only done for function declarations that are not generators
-                                    // or async functions, since this is a backwards-compatibility hack from
-                                    // Annex B of the JavaScript standard.
-                                    !p.current_scope.kindStopsHoisting()) and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
+                                // Manually hoist block-level function declarations to preserve semantics.
+                                // This is only done for function declarations that are not generators
+                                // or async functions, since this is a backwards-compatibility hack from
+                                // Annex B of the JavaScript standard.
+                                !p.current_scope.kindStopsHoisting() and
+                                    p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
                                 {
                                     break :list_getter &before;
                                 }
@@ -22118,11 +22125,11 @@ fn NewParser_(
                                         // Merge the two identifiers back into a single one
                                         p.symbols.items[hoisted_ref.innerIndex()].link = name_ref;
                                     }
-                                    non_fn_stmts.append(stmt) catch unreachable;
+                                    non_fn_stmts.append(stmt) catch bun.outOfMemory();
                                     continue;
                                 }
 
-                                const gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
+                                const gpe = fn_stmts.getOrPut(name_ref) catch bun.outOfMemory();
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
                                     index = @as(u32, @intCast(let_decls.items.len));
@@ -22147,7 +22154,7 @@ fn NewParser_(
                                                 },
                                                 data.func.name.?.loc,
                                             ),
-                                        }) catch unreachable;
+                                        }) catch bun.outOfMemory();
                                     }
                                 }
 
@@ -23836,17 +23843,15 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle) {
+                if (p.options.bundle and p.needsWrapperRef(parts)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
                             p.allocator,
                             "require_{any}",
-                            .{
-                                p.source.fmtIdentifier(),
-                            },
-                        ) catch unreachable,
-                    ) catch unreachable;
+                            .{p.source.fmtIdentifier()},
+                        ) catch bun.outOfMemory(),
+                    ) catch bun.outOfMemory();
                 }
 
                 break :brk Ref.None;
@@ -23905,6 +23910,53 @@ fn NewParser_(
 
                 .import_meta_ref = p.import_meta_ref,
             };
+        }
+
+        /// The bundler will generate wrappers to contain top-level side effects using
+        /// the '__esm' helper. Example:
+        ///
+        ///     var init_foo = __esm(() => {
+        ///         someExport = Math.random();
+        ///     });
+        ///
+        /// This wrapper can be removed if all of the constructs get moved
+        /// outside of the file. Due to paralleization, we can't retroactively
+        /// delete the `init_foo` symbol, but instead it must be known far in
+        /// advance if the symbol is needed or not.
+        ///
+        /// The logic in this function must be in sync with the hoisting
+        /// logic in `LinkerContext.generateCodeForFileInChunkJS`
+        fn needsWrapperRef(p: *const P, parts: []const js_ast.Part) bool {
+            assert(p.options.bundle);
+            for (parts) |part| {
+                for (part.stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_function => {},
+                        .s_class => |class| if (!class.class.canBeMoved()) return true,
+                        .s_local => |local| {
+                            if (local.was_commonjs_export or p.commonjs_named_exports.count() == 0) {
+                                for (local.decls.slice()) |decl| {
+                                    if (decl.value) |value|
+                                        if (value.data != .e_missing and !value.canBeConstValue())
+                                            return true;
+                                }
+                                continue;
+                            }
+                            return true;
+                        },
+                        .s_export_default => |ed| {
+                            if (!ed.canBeMoved())
+                                return true;
+                        },
+                        .s_export_equals => |e| {
+                            if (!e.value.canBeConstValue())
+                                return true;
+                        },
+                        else => return true,
+                    }
+                }
+            }
+            return false;
         }
 
         pub fn init(

@@ -5509,7 +5509,13 @@ pub const Expr = struct {
 
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                .e_reg_exp,
+                .e_inlined_enum,
+                => true,
                 .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,

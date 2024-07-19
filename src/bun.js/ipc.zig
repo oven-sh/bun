@@ -493,6 +493,28 @@ const NamedPipeIPCData = struct {
         return true;
     }
 
+    pub fn serializeAndSendInternal(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
+        if (Environment.allow_assert) {
+            bun.assert(this.has_written_version == 1);
+        }
+
+        const start_offset = this.writer.outgoing.list.items.len;
+
+        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch
+            return false;
+
+        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
+
+        if (start_offset == 0) {
+            bun.assert(this.writer.outgoing.cursor == 0);
+            if (this.connected) {
+                _ = this.writer.flush();
+            }
+        }
+
+        return true;
+    }
+
     pub fn close(this: *NamedPipeIPCData) void {
         if (this.server) |server| {
             server.close(onServerClose);

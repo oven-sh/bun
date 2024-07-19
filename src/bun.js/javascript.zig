@@ -3752,7 +3752,7 @@ pub const VirtualMachine = struct {
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
             global.bunVM().ipc.?.initialized.handleIPCClose();
-            (std.fs.File{ .handle = 3 }).close(); // hardcoded ipc fd
+            (std.fs.File{ .handle = bun.toFD(3).cast() }).close(); // hardcoded ipc fd
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);

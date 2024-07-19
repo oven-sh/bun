@@ -93,8 +93,9 @@ pub fn internalErrorName(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSV
             const err_value = arguments[0];
             const err_int = err_value.toInt32();
             const err_i: isize = err_int;
-            const err_e: std.c.E = @enumFromInt(-err_i);
-            // Refactor this when https://github.com/ziglang/zig/issues/12845 lands.
+            const err_e = for (std.enums.values(std.c.E)) |e| {
+                if (@intFromEnum(e) == -err_i) break e;
+            } else return ZigString.static("").toJS(globalThis);
             return bun.String.init(@tagName(err_e)).toJS(globalThis);
         }
     };

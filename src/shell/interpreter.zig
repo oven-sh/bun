@@ -7298,31 +7298,34 @@ pub const Interpreter = struct {
                     return Maybe(void).success;
                 }
 
-                const first_arg = args[0][0..std.mem.len(args[0]) :0];
-                switch (first_arg[0]) {
-                    '-' => {
-                        switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
-                            .result => {},
-                            .err => |err| {
-                                return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prevCwdZ());
-                            },
-                        }
-                    },
-                    '~' => {
-                        const homedir = this.bltn.parentCmd().base.shell.getHomedir();
-                        homedir.deref();
-                        switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir.slice())) {
-                            .result => {},
-                            .err => |err| return this.handleChangeCwdErr(err, homedir.slice()),
-                        }
-                    },
-                    else => {
-                        switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, first_arg)) {
-                            .result => {},
-                            .err => |err| return this.handleChangeCwdErr(err, first_arg),
-                        }
-                    },
+                if (args.len == 1) {
+                    const first_arg = args[0][0..std.mem.len(args[0]) :0];
+                    switch (first_arg[0]) {
+                        '-' => {
+                            switch (this.bltn.parentCmd().base.shell.changePrevCwd(this.bltn.parentCmd().base.interpreter)) {
+                                .result => {},
+                                .err => |err| {
+                                    return this.handleChangeCwdErr(err, this.bltn.parentCmd().base.shell.prevCwdZ());
+                                },
+                            }
+                        },
+                        '~' => {
+                            const homedir = this.bltn.parentCmd().base.shell.getHomedir();
+                            homedir.deref();
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, homedir.slice())) {
+                                .result => {},
+                                .err => |err| return this.handleChangeCwdErr(err, homedir.slice()),
+                            }
+                        },
+                        else => {
+                            switch (this.bltn.parentCmd().base.shell.changeCwd(this.bltn.parentCmd().base.interpreter, first_arg)) {
+                                .result => {},
+                                .err => |err| return this.handleChangeCwdErr(err, first_arg),
+                            }
+                        },
+                    }
                 }
+
                 this.bltn.done(0);
                 return Maybe(void).success;
             }

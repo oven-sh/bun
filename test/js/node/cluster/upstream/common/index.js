@@ -21,15 +21,49 @@
 
 // /* eslint-disable node-core/crypto-check */
 "use strict";
+const process = global.process; // Some tests tamper with the process global.
 
 const assert = require("assert");
+const { exec, execSync, spawn, spawnSync } = require("child_process");
+const fs = require("fs");
+const net = require("net");
+// Do not require 'os' until needed so that test-os-checked-function can
+// monkey patch it. If 'os' is required here, that test will fail.
+const path = require("path");
 const { inspect } = require("util");
+const { isMainThread } = require("worker_threads");
+
+// Some tests assume a umask of 0o022 so set that up front. Tests that need a
+// different umask will set it themselves.
+//
+// Workers can read, but not set the umask, so check that this is the main
+// thread.
+if (isMainThread) process.umask(0o022);
 
 const noop = () => {};
 
 const isWindows = process.platform === "win32";
+const isSunOS = process.platform === "sunos";
+const isFreeBSD = process.platform === "freebsd";
+const isOpenBSD = process.platform === "openbsd";
 const isLinux = process.platform === "linux";
 const isOSX = process.platform === "darwin";
+const isPi = (() => {
+  try {
+    // Normal Raspberry Pi detection is to find the `Raspberry Pi` string in
+    // the contents of `/sys/firmware/devicetree/base/model` but that doesn't
+    // work inside a container. Match the chipset model number instead.
+    const cpuinfo = fs.readFileSync("/proc/cpuinfo", { encoding: "utf8" });
+    const ok = /^Hardware\s*:\s*(.*)$/im.exec(cpuinfo)?.[1] === "BCM2835";
+    /^/.test(""); // Clear RegExp.$_, some tests expect it to be empty.
+    return ok;
+  } catch {
+    return false;
+  }
+})();
+
+const isDumbTerminal = process.env.TERM === "dumb";
+
 
 const mustCallChecks = [];
 
@@ -154,16 +188,57 @@ function isAlive(pid) {
   }
 }
 
+function skipIf32Bits() {
+  if (bits < 64) {
+    skip("The tested feature is not available in 32bit builds");
+  }
+}
+
+function skipIfWorker() {
+  if (!isMainThread) {
+    skip("This test only works on a main thread");
+  }
+}
+
+function skipIfDumbTerminal() {
+  if (isDumbTerminal) {
+    skip("skipping - dumb terminal");
+  }
+}
+
 const common = {
   isAlive,
+  isDumbTerminal,
+  isFreeBSD,
   isLinux,
+  isMainThread,
+  isOpenBSD,
   isOSX,
+  isPi,
+  isSunOS,
   isWindows,
   mustCall,
   mustNotCall,
   mustSucceed,
   printSkipMessage,
   skip,
+  skipIf32Bits,
+  skipIfDumbTerminal,
+  // On IBMi, process.platform and os.platform() both return 'aix',
+  // when built with Python versions earlier than 3.9.
+  // It is not enough to differentiate between IBMi and real AIX system.
+  get isAIX() {
+    return require("os").type() === "AIX";
+  },
+
+  get isIBMi() {
+    return require("os").type() === "OS400";
+  },
+
+  get isLinuxPPCBE() {
+    return process.platform === "linux" && process.arch === "ppc64" && require("os").endianness() === "BE";
+  },
+
 };
 
 const validProperties = new Set(Object.keys(common));

@@ -2857,6 +2857,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
 
     if (result < 0) {
         throwSystemError(scope, globalObject, "kill"_s, errno);
+        return JSValue::encode({});
     }
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(true)));

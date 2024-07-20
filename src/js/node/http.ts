@@ -515,6 +515,7 @@ Server.prototype.address = function () {
 };
 
 let cluster;
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 Server.prototype.listen = function (port, host, backlog, onListen) {
   const server = this;
   let socketPath;

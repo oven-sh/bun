@@ -2859,7 +2859,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
         throwSystemError(scope, globalObject, "kill"_s, errno);
     }
 
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsBoolean(true)));
 }
 
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill,

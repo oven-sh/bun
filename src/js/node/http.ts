@@ -613,6 +613,7 @@ Server.prototype[kRealListen] = function (port, host, socketPath, reusePort, onL
       close(ws, code, reason) {
         server[connectionsSymbol]--;
         ws.data.close(ws, code, reason);
+        server._emitCloseIfDrained();
       },
       drain(ws) {
         ws.data.drain(ws);

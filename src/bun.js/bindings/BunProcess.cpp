@@ -2926,10 +2926,11 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     auto* process = static_cast<Process*>(global->processObject());
     auto& vm = global->vm();
 
-    if (process->wrapped().hasEventListeners(vm.propertyNames->message)) {
+    auto ident = vm.propertyNames->message;
+    if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(value));
-        process->wrapped().emit(vm.propertyNames->message, args);
+        process->wrapped().emit(ident, args);
     }
 }
 

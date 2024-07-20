@@ -634,7 +634,6 @@ Server.prototype[kRealListen] = function (port, host, socketPath, reusePort, onL
     // We want to avoid triggering the getter for these properties because
     // that will cause the data to be cloned twice, which costs memory & performance.
     fetch(req, _server) {
-      server[connectionsSymbol]++;
       var pendingResponse;
       var pendingError;
       var reject = err => {
@@ -679,8 +678,12 @@ Server.prototype[kRealListen] = function (port, host, socketPath, reusePort, onL
         return pendingResponse;
       }
 
+      server[connectionsSymbol]++;
       var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-      return promise;
+      return promise.finally(() => {
+        server[connectionsSymbol]--;
+        server._emitCloseIfDrained();
+      });
     },
   });
   isHTTPS = this[serverSymbol].protocol === "https";

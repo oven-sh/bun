@@ -668,7 +668,6 @@ const Socket = (function (InternalSocket) {
         return;
       }
       socket.ref();
-      process.channel.ref();
     }
 
     get remoteAddress() {
@@ -707,7 +706,6 @@ const Socket = (function (InternalSocket) {
         return;
       }
       socket.unref();
-      process.channel.unref();
     }
 
     _write(chunk, encoding, callback) {
@@ -775,13 +773,11 @@ class Server extends EventEmitter {
 
   ref() {
     this[bunSocketInternal]?.ref();
-    process.channel.ref();
     return this;
   }
 
   unref() {
     this[bunSocketInternal]?.unref();
-    process.channel.unref();
     return this;
   }
 
@@ -797,8 +793,6 @@ class Server extends EventEmitter {
     }
 
     if (this[bunSocketInternal]) {
-      if (!cluster.isPrimary) process.channel?.unref();
-
       this[bunSocketInternal].stop(false);
       this[bunSocketInternal] = null;
     }

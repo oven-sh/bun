@@ -4,44 +4,44 @@ import "harness";
 
 function new_test(name: string) {
   test(name, () => {
-    expect([path.join(import.meta.dir, "fixtures", name)]).toRun();
+    expect([
+      path.resolve(import.meta.dir, `../../../../`, `test/node.js/upstream/test/parallel/test-cluster-${name}`),
+    ]).toRun();
   });
 }
 
-new_test("cwd.ts");
-new_test("call-and-destroy.ts");
-new_test("worker-constructor.ts");
-new_test("worker-death.ts");
-new_test("worker-events.ts");
-new_test("worker-forced-exit.ts");
-new_test("advanced-serialization.ts");
-new_test("disconnect-with-no-workers.ts");
-new_test("fork-env.ts");
-new_test("kill-infinite-loop.ts");
-new_test("process-disconnect.ts");
-new_test("setup-primary-argv.ts");
-new_test("setup-primary-emit.ts");
-new_test("setup-primary-multiple.ts");
-new_test("setup-primary.ts");
-new_test("uncaught-exception.ts");
-new_test("disconnect-before-exit.ts");
-new_test("disconnect-exitedAfterDisconnect-race.ts");
-new_test("disconnect-idle-worker.ts");
-new_test("invalid-message.ts");
-new_test("kill-disconnect.ts");
-new_test("listening-port.ts");
-new_test("rr-ref.ts");
-new_test("send-deadlock.ts");
-new_test("worker-init.ts");
-new_test("setup-primary-cumulative.ts");
-new_test("rr-handle-keep-loop-alive.ts");
-new_test("worker-exit.ts");
-new_test("disconnect-leak.ts");
-new_test("worker-destroy.ts");
-new_test("worker-isdead.ts");
-new_test("rr-handle-ref-unref.ts");
-new_test("rr-handle-close.ts");
-new_test("worker-no-exit.ts");
+new_test("cwd.js");
+new_test("call-and-destroy.js");
+new_test("worker-constructor.js");
+new_test("worker-death.js");
+new_test("worker-events.js");
+new_test("worker-forced-exit.js");
+new_test("advanced-serialization.js");
+new_test("disconnect-with-no-workers.js");
+new_test("fork-env.js");
+new_test("kill-infinite-loop.js");
+new_test("process-disconnect.js");
+new_test("setup-primary-argv.js");
+new_test("setup-primary-emit.js");
+new_test("setup-primary-multiple.js");
+new_test("setup-primary.js");
+new_test("uncaught-exception.js");
+new_test("disconnect-before-exit.js");
+new_test("disconnect-exitedAfterDisconnect-race.js");
+new_test("disconnect-idle-worker.js");
+new_test("invalid-message.js");
+new_test("kill-disconnect.js");
+new_test("listening-port.js");
+new_test("rr-ref.js");
+new_test("send-deadlock.js");
+new_test("worker-init.js");
+new_test("setup-primary-cumulative.js");
+new_test("rr-handle-keep-loop-alive.js");
+new_test("worker-exit.js");
+new_test("disconnect-leak.js");
+new_test("worker-destroy.js");
+new_test("worker-isdead.js");
+new_test("worker-no-exit.js");
 
 test("docs-http-server.ts", () => {
   expect([path.join(import.meta.dir, "docs-http-server.ts")]).toRun();

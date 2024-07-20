@@ -1,5 +1,8 @@
+
 #include "root.h"
 
+#include "helpers.h"
+#include "JavaScriptCore/JSObject.h"
 #include "JavaScriptCore/JSGlobalObject.h"
 #include <JavaScriptCore/StructureInlines.h>
 #include <JavaScriptCore/ObjectPrototype.h>
@@ -266,7 +269,20 @@ extern "C" EncodedJSValue JSC__constructObjectFromDataCell(
 extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject, JSC::JSCell* owner, unsigned int inlineCapacity, BunString* names)
 {
     auto& vm = globalObject->vm();
-    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), inlineCapacity);
+    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
+    unsigned int totalCount = inlineCapacity;
+    for (unsigned i = 0; i < totalCount; i++) {
+        auto initialCount = propertyNames.size();
+        propertyNames.add(Identifier::fromString(vm, names[i].toWTFString()));
+
+        // Handle duplicates
+        if (UNLIKELY(propertyNames.size() == initialCount)) {
+            names[i].deref();
+            names[i] = BunStringEmpty;
+        }
+    }
+
+    Structure* structure = globalObject->structureCache().emptyObjectStructureForPrototype(globalObject, globalObject->objectPrototype(), std::min(static_cast<unsigned>(propertyNames.size()), JSFinalObject::maxInlineCapacity));
     if (owner) {
         vm.writeBarrier(owner, structure);
     } else {
@@ -274,14 +290,10 @@ extern "C" EncodedJSValue JSC__createStructure(JSC::JSGlobalObject* globalObject
     }
     ensureStillAliveHere(structure);
 
-    PropertyNameArray propertyNames(vm, PropertyNameMode::Strings, PrivateSymbolMode::Exclude);
-    for (unsigned i = 0; i < inlineCapacity; i++) {
-        propertyNames.add(Identifier::fromString(vm, names[i].toWTFString()));
-    }
-
     PropertyOffset offset = 0;
-    for (unsigned i = 0; i < inlineCapacity; i++) {
-        structure = structure->addPropertyTransition(vm, structure, propertyNames[i], 0, offset);
+
+    for (const auto& name : propertyNames) {
+        structure = structure->addPropertyTransition(vm, structure, name, 0, offset);
     }
 
     return JSValue::encode(structure);

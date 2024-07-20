@@ -88,6 +88,11 @@ if (!isCI) {
     await sql`drop table test`;
   });
 
+  test("Duplicate columns", async () => {
+    const [{ x }] = await sql`select 1 as x, 2 as x`;
+    expect(x).toBe(1);
+  });
+
   test("Drop table", async () => {
     await sql`create table test(int int)`;
     await sql`drop table test`;

@@ -930,6 +930,7 @@ pub const protocol = struct {
         table_oid: int4 = 0,
         column_index: short = 0,
         type_oid: int4 = 0,
+        is_duplicate_column: bool = false,
 
         pub fn typeTag(this: @This()) types.Tag {
             return @enumFromInt(@as(short, @truncate(this.type_oid)));
@@ -969,10 +970,10 @@ pub const protocol = struct {
     };
 
     pub const RowDescription = struct {
-        fields: []const FieldDescription = &[_]FieldDescription{},
+        fields: []FieldDescription = &[_]FieldDescription{},
         pub fn deinit(this: *@This()) void {
             for (this.fields) |*field| {
-                @constCast(field).deinit();
+                field.deinit();
             }
 
             bun.default_allocator.free(this.fields);
@@ -4062,7 +4063,7 @@ pub const PostgresSQLConnection = struct {
 pub const PostgresSQLStatement = struct {
     cached_structure: JSC.Strong = .{},
     ref_count: u32 = 1,
-    fields: []const protocol.FieldDescription = &[_]protocol.FieldDescription{},
+    fields: []protocol.FieldDescription = &[_]protocol.FieldDescription{},
     parameters: []const int4 = &[_]int4{},
     signature: Signature,
     status: Status = Status.parsing,
@@ -4107,7 +4108,10 @@ pub const PostgresSQLStatement = struct {
         return this.cached_structure.get() orelse {
             const names = bun.default_allocator.alloc(bun.String, this.fields.len) catch return .undefined;
             defer {
-                for (names) |*name| {
+                for (names, this.fields) |*name, *field| {
+                    if (name.isEmpty()) {
+                        field.is_duplicate_column = true;
+                    }
                     name.deref();
                 }
                 bun.default_allocator.free(names);
@@ -4121,6 +4125,7 @@ pub const PostgresSQLStatement = struct {
                 @truncate(this.fields.len),
                 names.ptr,
             );
+
             this.cached_structure.set(globalObject, structure_);
             return structure_;
         };

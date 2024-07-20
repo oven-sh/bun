@@ -42,6 +42,9 @@ new_test("disconnect-leak.js");
 new_test("worker-destroy.js");
 new_test("worker-isdead.js");
 new_test("worker-no-exit.js");
+new_test("worker-kill-signal.js");
+new_test("worker-kill.js");
+new_test("primary-kill.js");
 
 test("docs-http-server.ts", () => {
   expect([path.join(import.meta.dir, "docs-http-server.ts")]).toRun();

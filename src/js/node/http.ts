@@ -577,6 +577,19 @@ Server.prototype.listen = function (port, host, backlog, onListen) {
     //   }
     //   server[kRealListen](port, host, socketPath, onListen);
     // });
+
+    server.once("listening", () => {
+      cluster.worker.state = "listening";
+      const address = server.address();
+      const message = {
+        act: "listening",
+        port: (address && address.port) || port,
+        data: null,
+        addressType: 4,
+      };
+      sendHelper(message, null);
+    });
+
     server[kRealListen](port, host, socketPath, true, onListen);
   } catch (err) {
     setTimeout(emitErrorNextTick, 1, this, err);
@@ -1450,6 +1463,7 @@ class ClientRequest extends OutgoingMessage {
     this.#bodyChunks.push(...chunks);
     callback();
   }
+
   _destroy(err, callback) {
     this.destroyed = true;
     // If request is destroyed we abort the current response

@@ -171,6 +171,7 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   _destroy(err, callback) {
+    if (!this[kInternalSocketData]) return; // sometimes 'this' is Socket not FakeSocket
     this[kInternalSocketData][0][connectionsSymbol]--;
     this[kInternalSocketData][1].end();
     this[kInternalSocketData][0]._emitCloseIfDrained();

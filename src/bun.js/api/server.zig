@@ -4224,7 +4224,7 @@ pub const ServerWebSocket = struct {
 
         const result = cb.call(
             globalThis,
-            this.this_value,
+            .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
@@ -4253,7 +4253,7 @@ pub const ServerWebSocket = struct {
 
         const result = cb.call(
             globalThis,
-            this.this_value,
+            .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
@@ -4286,8 +4286,8 @@ pub const ServerWebSocket = struct {
             str.markUTF8();
             const result = handler.onClose.call(
                 globalObject,
-                this.this_value,
-                &[_]JSC.JSValue{ JSValue.jsNumber(code), str.toJS(globalObject) },
+                .undefined,
+                &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
             );
 
             if (result.toError()) |err| {

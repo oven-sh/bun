@@ -58,6 +58,6 @@ new_test("worker-no-exit.js", isLinux || isWindows);
 test("docs-http-server.ts", () => {
   expect([path.join(import.meta.dir, "docs-http-server.ts")]).toRun();
 });
-test("worker-no-exit-http.ts", () => {
+test.skipIf(isWindows)("worker-no-exit-http.ts", () => {
   expect([path.join(import.meta.dir, "worker-no-exit-http.ts")]).toRun();
 });

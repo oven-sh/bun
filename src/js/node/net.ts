@@ -668,6 +668,7 @@ const Socket = (function (InternalSocket) {
         return;
       }
       socket.ref();
+      return this;
     }
 
     get remoteAddress() {
@@ -706,6 +707,7 @@ const Socket = (function (InternalSocket) {
         return;
       }
       socket.unref();
+      return this;
     }
 
     _write(chunk, encoding, callback) {

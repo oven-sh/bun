@@ -13,6 +13,7 @@ pub const ERR_IPC_CHANNEL_CLOSED = createSimpleError(createError, .ERR_IPC_CHANN
 pub const ERR_INVALID_HANDLE_TYPE = createSimpleError(createTypeError, .ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent");
 pub const ERR_IPC_DISCONNECTED = createSimpleError(createError, .ERR_IPC_DISCONNECTED, "IPC channel is already disconnected");
 pub const ERR_CHILD_CLOSED_BEFORE_REPLY = createSimpleError(createError, .ERR_CHILD_CLOSED_BEFORE_REPLY, "Child closed before reply received");
+pub const ERR_SERVER_NOT_RUNNING = createSimpleError(createError, .ERR_SERVER_NOT_RUNNING, "Server is not running.");
 
 fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCode, comptime message: string) JSC.JS2NativeFunctionType {
     const R = struct {

@@ -24,6 +24,8 @@ const EventEmitter = require("node:events");
 const { addServerName } = require("../internal/net");
 const { ExceptionWithHostPort } = require("internal/shared");
 
+const ERR_SERVER_NOT_RUNNING = $zig("node_error_binding.zig", "ERR_SERVER_NOT_RUNNING");
+
 // IPv4 Segment
 const v4Seg = "(?:25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9][0-9]|[0-9])";
 const v4Str = `(?:${v4Seg}\\.){3}${v4Seg}`;

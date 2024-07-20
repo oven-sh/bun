@@ -19,55 +19,60 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 // Testing mutual send of handles: from primary to worker, and from worker to
 // primary.
 
-require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
-const net = require('net');
+require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
+const net = require("net");
 
 if (cluster.isPrimary) {
   const worker = cluster.fork();
-  worker.on('exit', (code, signal) => {
+  worker.on("exit", (code, signal) => {
     assert.strictEqual(code, 0, `Worker exited with an error code: ${code}`);
     assert(!signal, `Worker exited by a signal: ${signal}`);
     server.close();
   });
 
-  const server = net.createServer((socket) => {
-    worker.send('handle', socket);
+  const server = net.createServer(socket => {
+    worker.send("handle", socket);
   });
 
   server.listen(0, () => {
-    worker.send({ message: 'listen', port: server.address().port });
+    worker.send({ message: "listen", port: server.address().port });
   });
 } else {
-  process.on('message', (msg, handle) => {
-    if (msg.message && msg.message === 'listen') {
+  process.on("message", (msg, handle) => {
+    if (msg.message && msg.message === "listen") {
       assert(msg.port);
-      const client1 = net.connect({
-        host: 'localhost',
-        port: msg.port
-      }, () => {
-        const client2 = net.connect({
-          host: 'localhost',
-          port: msg.port
-        }, () => {
-          client1.on('close', onclose);
-          client2.on('close', onclose);
-          client1.end();
-          client2.end();
-        });
-      });
+      const client1 = net.connect(
+        {
+          host: "localhost",
+          port: msg.port,
+        },
+        () => {
+          const client2 = net.connect(
+            {
+              host: "localhost",
+              port: msg.port,
+            },
+            () => {
+              client1.on("close", onclose);
+              client2.on("close", onclose);
+              client1.end();
+              client2.end();
+            },
+          );
+        },
+      );
       let waiting = 2;
       const onclose = () => {
-        if (--waiting === 0)
-          cluster.worker.disconnect();
+        if (--waiting === 0) cluster.worker.disconnect();
       };
     } else {
-      process.send('reply', handle);
+      process.send("reply", handle);
     }
   });
 }

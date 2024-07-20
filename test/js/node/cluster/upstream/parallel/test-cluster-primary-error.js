@@ -19,47 +19,53 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const common = require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
+"use strict";
+const common = require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
 
 const totalWorkers = 2;
 
 // Cluster setup
 if (cluster.isWorker) {
-  const http = require('http');
-  http.Server(() => {}).listen(0, '127.0.0.1');
-} else if (process.argv[2] === 'cluster') {
+  const http = require("http");
+  http.Server(() => {}).listen(0, "127.0.0.1");
+} else if (process.argv[2] === "cluster") {
   // Send PID to testcase process
   let forkNum = 0;
-  cluster.on('fork', common.mustCall(function forkEvent(worker) {
-    // Send PID
-    process.send({
-      cmd: 'worker',
-      workerPID: worker.process.pid
-    });
+  cluster.on(
+    "fork",
+    common.mustCall(function forkEvent(worker) {
+      // Send PID
+      process.send({
+        cmd: "worker",
+        workerPID: worker.process.pid,
+      });
 
-    // Stop listening when done
-    if (++forkNum === totalWorkers) {
-      cluster.removeListener('fork', forkEvent);
-    }
-  }, totalWorkers));
+      // Stop listening when done
+      if (++forkNum === totalWorkers) {
+        cluster.removeListener("fork", forkEvent);
+      }
+    }, totalWorkers),
+  );
 
   // Throw accidental error when all workers are listening
   let listeningNum = 0;
-  cluster.on('listening', common.mustCall(function listeningEvent() {
-    // When all workers are listening
-    if (++listeningNum === totalWorkers) {
-      // Stop listening
-      cluster.removeListener('listening', listeningEvent);
+  cluster.on(
+    "listening",
+    common.mustCall(function listeningEvent() {
+      // When all workers are listening
+      if (++listeningNum === totalWorkers) {
+        // Stop listening
+        cluster.removeListener("listening", listeningEvent);
 
-      // Throw accidental error
-      process.nextTick(() => {
-        throw new Error('accidental error');
-      });
-    }
-  }, totalWorkers));
+        // Throw accidental error
+        process.nextTick(() => {
+          throw new Error("accidental error");
+        });
+      }
+    }, totalWorkers),
+  );
 
   // Startup a basic cluster
   cluster.fork();
@@ -67,38 +73,44 @@ if (cluster.isWorker) {
 } else {
   // This is the testcase
 
-  const fork = require('child_process').fork;
+  const fork = require("child_process").fork;
 
   // List all workers
   const workers = [];
 
   // Spawn a cluster process
-  const primary = fork(process.argv[1], ['cluster'], { silent: true });
+  const primary = fork(process.argv[1], ["cluster"], { silent: true });
 
   // Handle messages from the cluster
-  primary.on('message', common.mustCall((data) => {
-    // Add worker pid to list and progress tracker
-    if (data.cmd === 'worker') {
-      workers.push(data.workerPID);
-    }
-  }, totalWorkers));
+  primary.on(
+    "message",
+    common.mustCall(data => {
+      // Add worker pid to list and progress tracker
+      if (data.cmd === "worker") {
+        workers.push(data.workerPID);
+      }
+    }, totalWorkers),
+  );
 
   // When cluster is dead
-  primary.on('exit', common.mustCall((code) => {
-    // Check that the cluster died accidentally (non-zero exit code)
-    assert.strictEqual(code, 1);
+  primary.on(
+    "exit",
+    common.mustCall(code => {
+      // Check that the cluster died accidentally (non-zero exit code)
+      assert.strictEqual(code, 1);
 
-    // XXX(addaleax): The fact that this uses raw PIDs makes the test inherently
-    // flaky – another process might end up being started right after the
-    // workers finished and receive the same PID.
-    const pollWorkers = () => {
-      // When primary is dead all workers should be dead too
-      if (workers.some((pid) => common.isAlive(pid))) {
-        setTimeout(pollWorkers, 50);
-      }
-    };
+      // XXX(addaleax): The fact that this uses raw PIDs makes the test inherently
+      // flaky – another process might end up being started right after the
+      // workers finished and receive the same PID.
+      const pollWorkers = () => {
+        // When primary is dead all workers should be dead too
+        if (workers.some(pid => common.isAlive(pid))) {
+          setTimeout(pollWorkers, 50);
+        }
+      };
 
-    // Loop indefinitely until worker exit
-    pollWorkers();
-  }));
+      // Loop indefinitely until worker exit
+      pollWorkers();
+    }),
+  );
 }

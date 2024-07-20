@@ -19,28 +19,28 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
+"use strict";
 // test-cluster-worker-constructor.js
 // validates correct behavior of the cluster.Worker constructor
 
-require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
+require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
 let worker;
 
 worker = new cluster.Worker();
 assert.strictEqual(worker.exitedAfterDisconnect, undefined);
-assert.strictEqual(worker.state, 'none');
+assert.strictEqual(worker.state, "none");
 assert.strictEqual(worker.id, 0);
 assert.strictEqual(worker.process, undefined);
 
 worker = new cluster.Worker({
   id: 3,
-  state: 'online',
-  process: process
+  state: "online",
+  process: process,
 });
 assert.strictEqual(worker.exitedAfterDisconnect, undefined);
-assert.strictEqual(worker.state, 'online');
+assert.strictEqual(worker.state, "online");
 assert.strictEqual(worker.id, 3);
 assert.strictEqual(worker.process, process);
 

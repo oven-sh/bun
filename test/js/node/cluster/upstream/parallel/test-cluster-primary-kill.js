@@ -19,71 +19,67 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const common = require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
+"use strict";
+const common = require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
 
 if (cluster.isWorker) {
-
   // Keep the worker alive
-  const http = require('http');
-  http.Server().listen(0, '127.0.0.1');
-
-} else if (process.argv[2] === 'cluster') {
-
+  const http = require("http");
+  http.Server().listen(0, "127.0.0.1");
+} else if (process.argv[2] === "cluster") {
   const worker = cluster.fork();
 
   // send PID info to testcase process
   process.send({
-    pid: worker.process.pid
+    pid: worker.process.pid,
   });
 
   // Terminate the cluster process
-  worker.once('listening', common.mustCall(() => {
-    setTimeout(() => {
-      process.exit(0);
-    }, 1000);
-  }));
-
+  worker.once(
+    "listening",
+    common.mustCall(() => {
+      setTimeout(() => {
+        process.exit(0);
+      }, 1000);
+    }),
+  );
 } else {
-
   // This is the testcase
-  const fork = require('child_process').fork;
+  const fork = require("child_process").fork;
 
   // Spawn a cluster process
-  const primary = fork(process.argv[1], ['cluster']);
+  const primary = fork(process.argv[1], ["cluster"]);
 
   // get pid info
   let pid = null;
-  primary.once('message', (data) => {
+  primary.once("message", data => {
     pid = data.pid;
   });
 
   // When primary is dead
   let alive = true;
-  primary.on('exit', common.mustCall((code) => {
+  primary.on(
+    "exit",
+    common.mustCall(code => {
+      // Make sure that the primary died on purpose
+      assert.strictEqual(code, 0);
 
-    // Make sure that the primary died on purpose
-    assert.strictEqual(code, 0);
+      // Check worker process status
+      const pollWorker = () => {
+        alive = common.isAlive(pid);
+        if (alive) {
+          setTimeout(pollWorker, 50);
+        }
+      };
+      // Loop indefinitely until worker exit.
+      pollWorker();
+    }),
+  );
 
-    // Check worker process status
-    const pollWorker = () => {
-      alive = common.isAlive(pid);
-      if (alive) {
-        setTimeout(pollWorker, 50);
-      }
-    };
-    // Loop indefinitely until worker exit.
-    pollWorker();
-  }));
-
-  process.once('exit', () => {
-    assert.strictEqual(typeof pid, 'number',
-                       `got ${pid} instead of a worker pid`);
-    assert.strictEqual(alive, false,
-                       `worker was alive after primary died (alive = ${alive})`
-    );
+  process.once("exit", () => {
+    assert.strictEqual(typeof pid, "number", `got ${pid} instead of a worker pid`);
+    assert.strictEqual(alive, false, `worker was alive after primary died (alive = ${alive})`);
   });
-
 }

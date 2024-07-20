@@ -19,16 +19,18 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const common = require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
+"use strict";
+const common = require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
 const fork = cluster.fork;
 
 if (cluster.isPrimary) {
   fork(); // It is intentionally called `fork` instead of
   fork(); // `cluster.fork` to test that `this` is not used
-  cluster.disconnect(common.mustCall(() => {
-    assert.deepStrictEqual(Object.keys(cluster.workers), []);
-  }));
+  cluster.disconnect(
+    common.mustCall(() => {
+      assert.deepStrictEqual(Object.keys(cluster.workers), []);
+    }),
+  );
 }

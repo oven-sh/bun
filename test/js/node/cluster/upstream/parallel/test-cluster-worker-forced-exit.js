@@ -19,10 +19,10 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-const common = require('../common');
-const assert = require('assert');
-const cluster = require('cluster');
+"use strict";
+const common = require("../common");
+const assert = require("assert");
+const cluster = require("cluster");
 
 const SENTINEL = 42;
 
@@ -37,7 +37,7 @@ const SENTINEL = 42;
 // 3 disconnect worker with child_process's disconnect, confirm
 //   no sentinel value
 if (cluster.isWorker) {
-  process.on('disconnect', (msg) => {
+  process.on("disconnect", msg => {
     setTimeout(() => process.exit(SENTINEL), 10);
   });
   return;
@@ -49,15 +49,27 @@ checkForced();
 function checkUnforced() {
   const worker = cluster.fork();
   worker
-    .on('online', common.mustCall(() => worker.disconnect()))
-    .on('exit', common.mustCall((status) => {
-      assert.strictEqual(status, SENTINEL);
-    }));
+    .on(
+      "online",
+      common.mustCall(() => worker.disconnect()),
+    )
+    .on(
+      "exit",
+      common.mustCall(status => {
+        assert.strictEqual(status, SENTINEL);
+      }),
+    );
 }
 
 function checkForced() {
   const worker = cluster.fork();
   worker
-    .on('online', common.mustCall(() => worker.process.disconnect()))
-    .on('exit', common.mustCall((status) => assert.strictEqual(status, 0)));
+    .on(
+      "online",
+      common.mustCall(() => worker.process.disconnect()),
+    )
+    .on(
+      "exit",
+      common.mustCall(status => assert.strictEqual(status, 0)),
+    );
 }

@@ -19,52 +19,48 @@
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-'use strict';
-require('../common');
+"use strict";
+require("../common");
 
 // This test checks that arguments provided to cluster.fork() will create
 // new environment variables and override existing environment variables
 // in the created worker process.
 
-const assert = require('assert');
-const cluster = require('cluster');
+const assert = require("assert");
+const cluster = require("cluster");
 
 if (cluster.isWorker) {
   const result = cluster.worker.send({
     prop: process.env.cluster_test_prop,
-    overwrite: process.env.cluster_test_overwrite
+    overwrite: process.env.cluster_test_overwrite,
   });
 
   assert.strictEqual(result, true);
 } else if (cluster.isPrimary) {
-
   const checks = {
     using: false,
-    overwrite: false
+    overwrite: false,
   };
 
   // To check that the cluster extend on the process.env we will overwrite a
   // property
-  process.env.cluster_test_overwrite = 'old';
+  process.env.cluster_test_overwrite = "old";
 
   // Fork worker
   const worker = cluster.fork({
-    'cluster_test_prop': 'custom',
-    'cluster_test_overwrite': 'new'
+    "cluster_test_prop": "custom",
+    "cluster_test_overwrite": "new",
   });
 
   // Checks worker env
-  worker.on('message', function(data) {
-    checks.using = (data.prop === 'custom');
-    checks.overwrite = (data.overwrite === 'new');
+  worker.on("message", function (data) {
+    checks.using = data.prop === "custom";
+    checks.overwrite = data.overwrite === "new";
     process.exit(0);
   });
 
-  process.once('exit', function() {
-    assert.ok(checks.using, 'The worker did not receive the correct env.');
-    assert.ok(
-      checks.overwrite,
-      'The custom environment did not overwrite the existing environment.');
+  process.once("exit", function () {
+    assert.ok(checks.using, "The worker did not receive the correct env.");
+    assert.ok(checks.overwrite, "The custom environment did not overwrite the existing environment.");
   });
-
 }

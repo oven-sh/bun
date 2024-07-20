@@ -1444,10 +1444,10 @@ pub fn StatType(comptime Big: bool) type {
                     const Type = @TypeOf(value);
                     if (comptime Big and @typeInfo(Type) == .Int) {
                         if (Type == u64) {
-                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, @intCast(value));
+                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, value);
                         }
 
-                        return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
+                        return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
 
                     return JSC.JSValue.jsNumber(value);

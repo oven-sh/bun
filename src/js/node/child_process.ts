@@ -34,6 +34,7 @@ var StringPrototypeSlice = String.prototype.slice;
 var Uint8ArrayPrototypeIncludes = Uint8Array.prototype.includes;
 
 const MAX_BUFFER = 1024 * 1024;
+const kFromNode = Symbol("kFromNode");
 
 // Pass DEBUG_CHILD_PROCESS=1 to enable debug output
 if ($debug) {
@@ -136,6 +137,7 @@ function spawn(file, args, options) {
   const child = new ChildProcess();
 
   $debug("spawn", options);
+  options[kFromNode] = true;
   child.spawn(options);
 
   const timeout = options.timeout;
@@ -1273,7 +1275,7 @@ class ChildProcess extends EventEmitter {
     if (has_ipc) {
       this.send = this.#send;
       this.disconnect = this.#disconnect;
-      this.#closesNeeded += 1;
+      if (options[kFromNode]) this.#closesNeeded += 1;
     }
 
     if (hasSocketsToEagerlyLoad) {

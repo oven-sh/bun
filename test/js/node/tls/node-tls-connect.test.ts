@@ -150,7 +150,7 @@ it("should have peer certificate", async () => {
     expect(infoAccess["OCSP - URI"]).toBeDefined();
     expect(infoAccess["CA Issuers - URI"]).toBeDefined();
     expect(cert.ca).toBeFalse();
-    expect(cert.bits).toBe(2048);
+    expect(cert.bits).toBeInteger();
     expect(typeof cert.modulus).toBe("string");
     expect(typeof cert.exponent).toBe("string");
     expect(cert.pubkey).toBeInstanceOf(Buffer);

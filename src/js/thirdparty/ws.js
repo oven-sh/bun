@@ -1116,7 +1116,7 @@ class WebSocketServer extends EventEmitter {
    * @private
    */
   completeUpgrade(extensions, key, protocols, request, socket, head, cb) {
-    const [server, response, req] = socket[kBunInternals];
+    const [{ [kBunInternals]: server }, response, req] = socket[kBunInternals];
     if (this._state > RUNNING) return abortHandshake(response, 503);
 
     let protocol = "";

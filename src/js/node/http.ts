@@ -112,6 +112,7 @@ const NODE_HTTP_WARNING =
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
+const serverSymbol = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
@@ -367,7 +368,6 @@ function emitErrorNextTick(self, error) {
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
-var serverSymbol = Symbol("server");
 const connectionsSymbol = Symbol("connections");
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
@@ -375,7 +375,7 @@ function Server(options, callback) {
 
   this.listening = false;
   this._unref = false;
-  this[serverSymbol] = undefined;
+  this[kInternalSocketData] = undefined;
   this[connectionsSymbol] = 0;
 
   if (typeof options === "function") {

@@ -64,7 +64,6 @@ const isPi = (() => {
 
 const isDumbTerminal = process.env.TERM === "dumb";
 
-
 const mustCallChecks = [];
 
 function runCallChecks(exitCode) {
@@ -238,7 +237,6 @@ const common = {
   get isLinuxPPCBE() {
     return process.platform === "linux" && process.arch === "ppc64" && require("os").endianness() === "BE";
   },
-
 };
 
 const validProperties = new Set(Object.keys(common));

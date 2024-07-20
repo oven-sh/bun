@@ -6,16 +6,13 @@
 #include "CommonJSModuleRecord.h"
 #include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/CatchScope.h"
-#include "JavaScriptCore/EnumerationMode.h"
 #include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
-#include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
 #include "ModuleLoader.h"
-#include "PathInlines.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -23,7 +20,6 @@
 #include "headers.h"
 #include "JSEnvironmentVariableMap.h"
 #include "ImportMetaObject.h"
-#include <optional>
 #include <sys/stat.h>
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>

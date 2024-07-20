@@ -29,6 +29,12 @@ pub fn BabyList(comptime Type: type) type {
             this.* = .{};
         }
 
+        pub fn shrinkAndFree(this: *@This(), allocator: std.mem.Allocator, size: usize) void {
+            var list_ = this.listManaged(allocator);
+            list_.shrinkAndFree(size);
+            this.update(list_);
+        }
+
         pub fn orderedRemove(this: *@This(), index: usize) Type {
             var l = this.list();
             defer this.update(l);

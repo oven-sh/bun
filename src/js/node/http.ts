@@ -491,7 +491,7 @@ Server.prototype.close = function (optionalCallback?) {
 };
 
 Server.prototype._emitCloseIfDrained = function () {
-  if (!this[serverSymbol] || this[connectionsSymbol] > 0) {
+  if (this[serverSymbol] || this[connectionsSymbol] > 0) {
     return;
   }
   process.nextTick(() => {

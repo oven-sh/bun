@@ -2285,7 +2285,11 @@ pub const Expect = struct {
                 globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalThis, &fmt)});
                 return .zero;
             } else if (value.isObject()) {
-                if (ExpectAny.constructorValueGetCached(value)) |v| break :brk v;
+                if (ExpectAny.fromJSDirect(value)) |_| {
+                    if (ExpectAny.constructorValueGetCached(value)) |innerConstructorValue| {
+                        break :brk innerConstructorValue;
+                    }
+                }
             }
             break :brk value;
         } else .zero;

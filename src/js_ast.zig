@@ -3031,6 +3031,10 @@ pub const Stmt = struct {
         };
     }
 
+    pub fn allocateExpr(allocator: std.mem.Allocator, expr: Expr) Stmt {
+        return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
+    }
+
     pub const Tag = enum(u6) {
         s_block,
         s_break,
@@ -3257,8 +3261,13 @@ pub const Expr = struct {
             else => true,
         };
     }
+
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
+    }
+
+    pub fn canBeMoved(expr: Expr) bool {
+        return expr.data.canBeMoved();
     }
 
     pub fn unwrapInlined(expr: Expr) Expr {
@@ -5523,6 +5532,36 @@ pub const Expr = struct {
             };
         }
 
+        pub fn canBeMoved(data: Expr.Data) bool {
+            return switch (data) {
+                .e_class => |class| class.canBeMoved(),
+
+                .e_arrow,
+                .e_function,
+
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                .e_reg_exp,
+                .e_big_int,
+                .e_string,
+                .e_inlined_enum,
+                .e_import_meta,
+                .e_utf8_string,
+                => true,
+
+                .e_template => |template| template.parts.len == 0,
+
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+
+                // TODO: experiment with allowing some e_binary, e_unary, e_if as movable
+
+                else => false,
+            };
+        }
+
         pub fn knownPrimitive(data: Expr.Data) PrimitiveType {
             return switch (data) {
                 .e_big_int => .bigint,
@@ -6063,11 +6102,7 @@ pub const S = struct {
 
         pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
-                .expr => |e| switch (e.data) {
-                    .e_class => |class| class.canBeMoved(),
-                    .e_arrow, .e_function => true,
-                    else => e.canBeConstValue(),
-                },
+                .expr => |e| e.canBeMoved(),
                 .stmt => |s| switch (s.data) {
                     .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,

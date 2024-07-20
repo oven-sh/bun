@@ -171,9 +171,9 @@ pub const SideEffects = enum {
     /// known to not have side effects.
     no_side_effects__pure_data,
 
-    // / Same as above but it came from a plugin. We don't want to warn about
-    // / unused imports to these files since running the plugin is a side effect.
-    // / Removing the import would not call the plugin which is observable.
+    // /// Same as above but it came from a plugin. We don't want to warn about
+    // /// unused imports to these files since running the plugin is a side effect.
+    // /// Removing the import would not call the plugin which is observable.
     // no_side_effects__pure_data_from_plugin,
 };
 

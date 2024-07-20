@@ -1987,13 +1987,13 @@ pub const BundleV2 = struct {
                 continue;
             };
 
-            if (resolve_result.is_external) {
-                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
-                    import_record.path = resolve_result.path_pair.primary;
-                }
-                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
-                continue;
-            }
+            // if (resolve_result.is_external) {
+            //     if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+            //         import_record.path = resolve_result.path_pair.primary;
+            //     }
+            //     import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
+            //     continue;
+            // }
 
             const hash_key = path.hashKey();
 
@@ -3293,6 +3293,8 @@ const AstSourceIDMapping = struct {
 const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
 
+    /// TODO(@paperdave): remove this. i added it before realizing this is available
+    /// via LinkerContext.parse_graph. it may also be worth removing the other cloned data.
     bundler_graph: *const Graph,
 
     files: File.List = .{},
@@ -3803,7 +3805,7 @@ const LinkerGraph = struct {
     };
 };
 
-const LinkerContext = struct {
+pub const LinkerContext = struct {
     const debug = Output.scoped(.LinkerCtx, false);
 
     parse_graph: *Graph = undefined,
@@ -6059,26 +6061,28 @@ const LinkerContext = struct {
 
                     const used_refs = part.symbol_uses.keys();
 
-                    for (used_refs) |ref_| {
+                    // Record each symbol used in this part. This will later be matched up
+                    // with our map of which chunk a given symbol is declared in to
+                    // determine if the symbol needs to be imported from another chunk.
+                    for (used_refs) |ref| {
                         const ref_to_use = brk: {
-                            var ref = ref_;
-                            var symbol = deps.symbols.getConst(ref).?;
+                            var ref_to_use = ref;
+                            var symbol = deps.symbols.getConst(ref_to_use).?;
 
                             // Ignore unbound symbols
                             if (symbol.kind == .unbound)
                                 continue;
 
                             // Ignore symbols that are going to be replaced by undefined
-                            if (symbol.import_item_status == .missing) {
+                            if (symbol.import_item_status == .missing)
                                 continue;
-                            }
 
                             // If this is imported from another file, follow the import
                             // reference and reference the symbol in that file instead
-                            if (imports_to_bind.get(ref)) |import_data| {
-                                ref = import_data.data.import_ref;
-                                symbol = deps.symbols.getConst(ref).?;
-                            } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
+                            if (imports_to_bind.get(ref_to_use)) |import_data| {
+                                ref_to_use = import_data.data.import_ref;
+                                symbol = deps.symbols.getConst(ref_to_use).?;
+                            } else if (wrap == .cjs and ref_to_use.eql(wrapper_ref)) {
                                 // The only internal symbol that wrapped CommonJS files export
                                 // is the wrapper itself.
                                 continue;
@@ -6089,9 +6093,9 @@ const LinkerContext = struct {
                             // identifier. In that case we want to pull in the namespace symbol
                             // instead. The namespace symbol stores the result of "require()".
                             if (symbol.namespace_alias) |*namespace_alias| {
-                                ref = namespace_alias.namespace_ref;
+                                ref_to_use = namespace_alias.namespace_ref;
                             }
-                            break :brk ref;
+                            break :brk ref_to_use;
                         };
 
                         if (comptime Environment.allow_assert)
@@ -6714,6 +6718,15 @@ const LinkerContext = struct {
         defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
+
+        const prev_action = bun.crash_handler.current_action;
+        defer bun.crash_handler.current_action = prev_action;
+        bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+            .chunk = ctx.chunk,
+            .context = ctx.c,
+            .part_range = &part_range.part_range,
+        } };
+
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
 
@@ -7949,12 +7962,12 @@ const LinkerContext = struct {
     ///
     ///      prefix - outer
     ///      ...
-    ///      init_esm = () => {
+    ///      var init_foo = __esm(() => {
     ///          prefix - inner
     ///          ...
     ///          suffix - inenr
-    ///       };
-    ///       ...
+    ///      });
+    ///      ...
     ///      suffix - outer
     ///
     /// Keep in mind that we may need to wrap ES modules in some cases too
@@ -8228,7 +8241,6 @@ const LinkerContext = struct {
 
                     .s_export_from => |s| {
                         // "export {foo} from 'path'"
-
                         if (try c.shouldRemoveImportExportStmt(
                             stmts,
                             stmt.loc,
@@ -8276,7 +8288,6 @@ const LinkerContext = struct {
 
                         if (shouldStripExports) {
                             // Remove export statements entirely
-
                             continue;
                         }
 
@@ -8824,7 +8835,7 @@ const LinkerContext = struct {
                                         var value = Expr.empty;
                                         for (local.decls.slice()) |*decl| {
                                             if (decl.value) |initializer| {
-                                                const can_be_moved = initializer.canBeConstValue();
+                                                const can_be_moved = initializer.canBeMoved();
                                                 hoist.next_value = if (can_be_moved) initializer else null;
                                                 const binding = decl.binding.toExpr(&hoist);
                                                 if (!can_be_moved) {
@@ -8842,13 +8853,7 @@ const LinkerContext = struct {
                                             continue;
                                         }
 
-                                        break :stmt Stmt.alloc(
-                                            S.SExpr,
-                                            S.SExpr{
-                                                .value = value,
-                                            },
-                                            stmt.loc,
-                                        );
+                                        break :stmt Stmt.allocateExpr(temp_allocator, value);
                                     }
                                     break :stmt stmt;
                                 },
@@ -8862,14 +8867,28 @@ const LinkerContext = struct {
                                         continue;
                                     }
 
-                                    break :stmt stmt;
+                                    hoist.next_value = null;
+
+                                    break :stmt Stmt.allocateExpr(
+                                        temp_allocator,
+                                        Expr.assign(hoist.wrapIdentifier(
+                                            class.class.class_name.?.loc,
+                                            class.class.class_name.?.ref.?,
+                                        ), .{
+                                            .data = .{ .e_class = &class.class },
+                                            .loc = stmt.loc,
+                                        }),
+                                    );
                                 },
-                                .s_export_default => |export_default| stmt: {
-                                    if (export_default.canBeMoved()) {
-                                        stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
-                                    }
-                                    break :stmt stmt;
-                                },
+
+                                // TODO(@paperdave) DONT MERGE BRANCH WITHOUT VERIFYING
+                                // THIS CAN BE REMOVED OR FIX ITS BEHAVIOR
+                                // .s_export_default => |export_default| stmt: {
+                                //     if (export_default.canBeMoved()) {
+                                //         stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
+                                //     }
+                                //     break :stmt stmt;
+                                // },
                                 else => stmt,
                             };
 
@@ -8895,7 +8914,7 @@ const LinkerContext = struct {
                     if (inner_stmts.len > 0) {
                         // See the comment in needsWrapperRef for why the symbol
                         // is sometimes not generated.
-                        bun.assert(!ast.wrapper_ref.isEmpty()); // js_parser's needsWrapperRef lied
+                        bun.assert(!ast.wrapper_ref.isEmpty()); // js_parser's needsWrapperRef thought wrapper was not needed
 
                         // "__esm(() => { ... })"
                         var esm_args = temp_allocator.alloc(Expr, 1) catch bun.outOfMemory();
@@ -10096,40 +10115,43 @@ const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
-        if (comptime bun.Environment.allow_assert)
-            debugTreeShake(
-                "markFileLiveForTreeShaking({d}, {s}) = {s}",
-                .{
-                    source_index,
-                    c.parse_graph.input_files.get(source_index).source.path.text,
-                    if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
-                },
-            );
+        if (comptime bun.Environment.allow_assert) {
+            debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
+                source_index,
+                c.parse_graph.input_files.get(source_index).source.path.text,
+                if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
+            });
+        }
 
-        if (c.graph.files_live.isSet(source_index))
+        defer if (Environment.allow_assert) {
+            debugTreeShake("end()", .{});
+        };
+
+        if (c.graph.files_live.isSet(source_index)) {
+            if (Environment.allow_assert) {
+                debugTreeShake("already set", .{});
+            }
             return;
-
+        }
         c.graph.files_live.set(source_index);
 
-        // TODO: CSS source index
-
-        const id = source_index;
-        if (@as(usize, id) >= c.graph.ast.len)
+        if (source_index >= c.graph.ast.len) {
+            bun.assert(false);
             return;
-        const _parts = parts[id].slice();
-        for (_parts, 0..) |part, part_index| {
+        }
+
+        for (parts[source_index].slice(), 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             if (can_be_removed_if_unused and part.tag == .commonjs_named_export) {
-                if (c.graph.meta.items(.flags)[id].wrap == .cjs) {
+                if (c.graph.meta.items(.flags)[source_index].wrap == .cjs) {
                     can_be_removed_if_unused = false;
                 }
             }
 
             // Also include any statement-level imports
-            for (part.import_record_indices.slice()) |import_record_Index| {
-                var record: *ImportRecord = &import_records[source_index].slice()[import_record_Index];
-
+            for (part.import_record_indices.slice()) |import_index| {
+                const record = import_records[source_index].at(import_index);
                 if (record.kind != .stmt)
                     continue;
 
@@ -10138,7 +10160,11 @@ const LinkerContext = struct {
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    if (side_effects[other_source_index] != .has_side_effects and !c.options.ignore_dce_annotations) {
+                    const se = side_effects[other_source_index];
+
+                    if (se != .has_side_effects and
+                        !c.options.ignore_dce_annotations)
+                    {
                         continue;
                     }
 
@@ -10166,11 +10192,11 @@ const LinkerContext = struct {
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
                 !c.options.tree_shaking and
-                entry_point_kinds[id].isEntryPoint()))
+                entry_point_kinds[source_index].isEntryPoint()))
             {
-                _ = c.markPartLiveForTreeShaking(
-                    @as(u32, @intCast(part_index)),
-                    id,
+                c.markPartLiveForTreeShaking(
+                    @intCast(part_index),
+                    source_index,
                     side_effects,
                     parts,
                     import_records,
@@ -10183,31 +10209,40 @@ const LinkerContext = struct {
     pub fn markPartLiveForTreeShaking(
         c: *LinkerContext,
         part_index: Index.Int,
-        id: Index.Int,
+        source_index: Index.Int,
         side_effects: []_resolver.SideEffects,
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
-    ) bool {
-        var part: *js_ast.Part = &parts[id].slice()[part_index];
-        // only once
-        if (part.is_live) {
-            return false;
-        }
+    ) void {
+        const part: *js_ast.Part = &parts[source_index].slice()[part_index];
 
-        part.is_live = true;
-        if (comptime bun.Environment.allow_assert)
+        if (comptime bun.Environment.allow_assert) {
             debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
-                id,
-                c.parse_graph.input_files.get(id).source.path.text,
+                source_index,
+                c.parse_graph.input_files.get(source_index).source.path.text,
                 part_index,
                 if (part.stmts.len > 0) part.stmts[0].loc.start else Logger.Loc.Empty.start,
                 if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),
             });
+        }
+
+        defer if (Environment.allow_assert) {
+            debugTreeShake("end()", .{});
+        };
+
+        // Don't mark this part more than once
+        if (part.is_live) {
+            if (Environment.allow_assert) {
+                debugTreeShake("already set", .{});
+            }
+            return;
+        }
+        part.is_live = true;
 
         // Include the file containing this part
         c.markFileLiveForTreeShaking(
-            id,
+            source_index,
             side_effects,
             parts,
             import_records,
@@ -10215,7 +10250,7 @@ const LinkerContext = struct {
         );
 
         for (part.dependencies.slice()) |dependency| {
-            _ = c.markPartLiveForTreeShaking(
+            c.markPartLiveForTreeShaking(
                 dependency.part_index,
                 dependency.source_index.get(),
                 side_effects,
@@ -10224,8 +10259,6 @@ const LinkerContext = struct {
                 entry_point_kinds,
             );
         }
-
-        return true;
     }
 
     pub fn matchImportWithExport(

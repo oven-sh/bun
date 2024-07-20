@@ -4308,9 +4308,16 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
     const size_t total_frame_count = frames.size();
     const uint8_t frame_count = total_frame_count < trace->frames_len ? total_frame_count : trace->frames_len;
 
+    const auto hasLineAndColumnInfo = [&](const JSC::StackFrame& frame) -> bool {
+        if (!frame.hasLineAndColumnInfo()) {
+            return false;
+        }
+        return !frame.isWasmFrame();
+    };
+
     while (frame_i < frame_count && stack_frame_i < total_frame_count) {
         // Skip native frames
-        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->codeBlock() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
+        while (stack_frame_i < total_frame_count && !hasLineAndColumnInfo(frames.at(frame_i))) {
             stack_frame_i++;
         }
         if (stack_frame_i >= total_frame_count)

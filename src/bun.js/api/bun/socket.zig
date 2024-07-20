@@ -1300,7 +1300,6 @@ fn selectALPNCallback(
         return BoringSSL.SSL_TLSEXT_ERR_NOACK;
     }
 }
-
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
@@ -1320,11 +1319,21 @@ fn NewSocket(comptime ssl: bool) type {
         protos: ?[]const u8,
         server_name: ?[]const u8 = null,
 
+
         // TODO: switch to something that uses `visitAggregate` and have the
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
         pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
+        native_callbacks: NativeCallbacks = .{},
+
+        // We use this direct callbacks on HTTP2 when available
+        pub const NativeCallbacks = struct {
+            onData: ?*const fn (ctx: ?*anyopaque, data: []const u8) void = null,
+            onClose: ?*const fn (ctx: ?*anyopaque) void = null,
+            onWritable: ?*const fn (ctx: ?*anyopaque) void = null,
+            ctx: ?*anyopaque = null,
+        };
 
         const This = @This();
         const log = Output.scoped(.Socket, false);
@@ -1409,6 +1418,10 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onWritable", .{});
             if (this.socket.isDetached()) return;
+            if(this.native_callbacks.onWritable) |nativeCallback| {
+                nativeCallback(this.native_callbacks.ctx);
+                return;
+            }
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1774,6 +1787,10 @@ fn NewSocket(comptime ssl: bool) type {
             this.socket.detach();
             defer this.deref();
             defer this.markInactive();
+            
+            if(this.native_callbacks.onClose) |nativeCallback| {
+                nativeCallback(this.native_callbacks.ctx);
+            }
 
             if (this.flags.finalizing) {
                 return;
@@ -1818,6 +1835,14 @@ fn NewSocket(comptime ssl: bool) type {
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
+            
+            if(this.native_callbacks.onData) |nativeCallback| {
+                nativeCallback(this.native_callbacks.ctx, data);
+            }
+
+            const handlers = this.handlers;
+            const callback = handlers.onData;
+            if (callback == .zero) return;
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);

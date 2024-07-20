@@ -122,7 +122,7 @@ export async function getStaticProps() {
       bunVersion:
         process.env.NODE_ENV === "production"
           ? "[production needs a constant string]"
-          : process.versions.bun ?? "not in bun",
+          : (process.versions.bun ?? "not in bun"),
     },
   };
 }

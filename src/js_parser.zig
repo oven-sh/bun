@@ -3977,7 +3977,7 @@ pub const Parser = struct {
 
                                         part.import_record_indices.push(p.allocator, right.data.e_require_string.import_record_index) catch unreachable;
                                         p.symbols.items[p.module_ref.innerIndex()].use_count_estimate = 0;
-                                        p.symbols.items[namespace_ref.innerIndex()].use_count_estimate -|= 1;
+                                        p.symbols.items[namespace_ref.innerIndex()].use_count_estimate -= 1;
                                         _ = part.symbol_uses.swapRemove(namespace_ref);
 
                                         for (before.items, 0..) |before_part, i| {
@@ -5731,7 +5731,7 @@ fn NewParser_(
             var symbols = p.symbols.items;
 
             for (symbol_use_refs, symbol_use_values) |ref, prev| {
-                symbols[ref.innerIndex()].use_count_estimate -|= prev.count_estimate;
+                symbols[ref.innerIndex()].use_count_estimate -= prev.count_estimate;
             }
             const declared_refs = part.declared_symbols.refs();
             for (declared_refs) |declared| {
@@ -18952,7 +18952,7 @@ fn NewParser_(
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
                         const use = p.symbol_uses.getPtr(id.ref).?;
-                        use.count_estimate -|= 1;
+                        use.count_estimate -= 1;
                         // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead
@@ -19044,9 +19044,9 @@ fn NewParser_(
         pub fn ignoreUsage(p: *P, ref: Ref) void {
             if (!p.is_control_flow_dead and !p.is_revisit_for_substitution) {
                 if (comptime Environment.allow_assert) assert(@as(usize, ref.innerIndex()) < p.symbols.items.len);
-                p.symbols.items[ref.innerIndex()].use_count_estimate -|= 1;
+                p.symbols.items[ref.innerIndex()].use_count_estimate -= 1;
                 var use = p.symbol_uses.get(ref) orelse return;
-                use.count_estimate -|= 1;
+                use.count_estimate -= 1;
                 if (use.count_estimate == 0) {
                     _ = p.symbol_uses.swapRemove(ref);
                 } else {

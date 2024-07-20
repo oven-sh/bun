@@ -24,6 +24,13 @@ describe("napi", () => {
       checkSameOutput("test_issue_7685", args);
     });
   });
+
+  describe("v8 c++", () => {
+    it("Number.new", () => {
+      checkSameOutput("test_v8_number_new", []);
+    });
+  });
+
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);

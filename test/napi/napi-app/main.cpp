@@ -69,6 +69,25 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
   return result;
 }
 
+#include <v8.h>
+
+napi_value test_v8_number_new(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  auto integer = v8::Number::New(v8::Isolate::GetCurrent(), 123.0);
+  auto fraction = v8::Number::New(v8::Isolate::GetCurrent(), 6.125);
+
+  if (integer->Value() != 123.0) {
+    return fail(
+        env, "integer round-tripped through v8::Number was not expected value");
+  } else if (fraction->Value() != 6.125) {
+    return fail(env, "floating-point round-tripped through v8::Number was not "
+                     "expected value");
+  }
+
+  return ok(env);
+}
+
 napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -130,6 +149,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
+  exports.Set("test_v8_number_new",
+              Napi::Function::New(env, test_v8_number_new));
 
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",

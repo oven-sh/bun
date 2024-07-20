@@ -17,11 +17,37 @@ namespace v8 {
 
 using Context = JSC::JSGlobalObject;
 
+class Isolate;
+
 template<class T>
 class Local final {
 public:
     T* ptr;
+
+    T* operator*() const { return ptr; }
 };
+
+class Number {
+public:
+    BUN_EXPORT static Local<Number> New(Isolate* isolate, double value);
+
+    BUN_EXPORT double Value() const;
+};
+
+Local<Number> Number::New(Isolate* isolate, double value)
+{
+    Bun::JSValue jsv(value);
+    auto encoded = Bun::JSValue::encode(jsv);
+    auto ptr = reinterpret_cast<Number*>(encoded);
+    return Local<Number> { ptr };
+}
+
+double Number::Value() const
+{
+    auto encoded = reinterpret_cast<Bun::EncodedJSValue>(this);
+    auto jsv = Bun::JSValue::decode(encoded);
+    return jsv.asNumber();
+}
 
 // This currently is just a pointer to a Zig::GlobalObject*
 // We do that so that we can recover the context and the VM from the "Isolate"

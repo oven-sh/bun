@@ -154,4 +154,6 @@
     __ZN2v87Isolate17GetCurrentContextEv;
     __ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_;
     __ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_;
+    __ZN2v86Number3NewEPNS_7IsolateEd;
+    __ZNK2v86Number5ValueEv;
 };

@@ -4,9 +4,7 @@ import "harness";
 
 function new_test(name: string) {
   test(name, () => {
-    expect([
-      path.resolve(import.meta.dir, `../../../../`, `test/node.js/upstream/test/parallel/test-cluster-${name}`),
-    ]).toRun();
+    expect([path.join(import.meta.dir, `upstream`, `parallel`, `test-cluster-${name}`)]).toRun();
   });
 }
 

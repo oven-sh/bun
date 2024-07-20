@@ -170,7 +170,6 @@ var FakeSocket = class Socket extends Duplex {
   }
 
   _destroy(err, callback) {
-    console.log(process.pid, "FakeSocket#_destroy");
     this[kInternalSocketData][0][connectionsSymbol]--;
     this[kInternalSocketData][1].end();
     this[kInternalSocketData][0]._emitCloseIfDrained();

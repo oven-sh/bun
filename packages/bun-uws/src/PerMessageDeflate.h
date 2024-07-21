@@ -162,8 +162,8 @@ struct DeflationStream {
             written = libdeflate_deflate_compress(zlibContext->compressor, raw.data(), raw.length(), reset_buffer, 4096);
 
             if (written) {
-                memcpy(&buf[written], "\x00", 1);
-                return std::string_view((char *) buf, written + 1);
+                memcpy(&reset_buffer[written], "\x00", 1);
+                return std::string_view((char *) reset_buffer, written + 1);
             }
         }
 #endif

@@ -400,6 +400,6 @@ pub fn deinit(this: *RareData) void {
     }
 
     if (this.boring_ssl_engine) |engine| {
-        bun.BoringSSL.ENGINE_free(engine);
+        _ = bun.BoringSSL.ENGINE_free(engine);
     }
 }

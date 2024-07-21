@@ -3614,3 +3614,4 @@ pub fn memmove(output: []u8, input: []const u8) void {
 }
 
 pub const hmac = @import("./hmac.zig");
+pub const libdeflate = @import("./deps/libdeflate.zig");

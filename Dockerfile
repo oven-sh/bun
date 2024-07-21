@@ -263,6 +263,27 @@ RUN --mount=type=cache,target=${CCACHE_DIR} \
   && bash ./scripts/build-zlib.sh && rm -rf src/deps/zlib scripts
 
 
+FROM bun-base as libdeflate
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+ARG CCACHE_DIR=/ccache
+ENV CCACHE_DIR=${CCACHE_DIR}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY scripts ${BUN_DIR}/scripts
+COPY src/deps/libdeflate ${BUN_DIR}/src/deps/libdeflate
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=${CCACHE_DIR} \
+  cd $BUN_DIR \
+  && bash ./scripts/build-libdeflate.sh && rm -rf src/deps/libdeflate scripts
+
+
 FROM bun-base as libarchive
 
 ARG BUN_DIR
@@ -411,6 +432,9 @@ COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
+
+# for uWebSockets
+COPY src/deps/libdeflate ${BUN_DIR}/src/deps/libdeflate
 
 ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}

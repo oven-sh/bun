@@ -143,7 +143,7 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION)))));
@@ -176,6 +176,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_lolhtml)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_c_ares)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_libdeflate)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_usockets)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s),

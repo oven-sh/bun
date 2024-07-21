@@ -3,7 +3,7 @@ set -eo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 
 if [[ "$CI" ]]; then
-  $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
+    $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
 fi
 
 FORCE=
@@ -92,6 +92,7 @@ dep mimalloc mimalloc libmimalloc.a libmimalloc.o
 dep tinycc tinycc libtcc.a
 dep zlib zlib libz.a
 dep zstd zstd libzstd.a
+dep libdeflate libdeflate libdeflate.a
 dep ls-hpack lshpack liblshpack.a
 
 if [ "$BUILT_ANY" -eq 0 ]; then

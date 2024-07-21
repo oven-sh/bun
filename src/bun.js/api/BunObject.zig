@@ -4647,7 +4647,9 @@ pub const JSZlib = struct {
         reader.list.deinit(reader.allocator);
         reader.deinit();
     }
-
+    export fn global_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
+        bun.default_allocator.free(ctx.?);
+    }
     export fn compressor_deallocator(_: ?*anyopaque, ctx: ?*anyopaque) void {
         var compressor: *zlib.ZlibCompressorArrayList = bun.cast(*zlib.ZlibCompressorArrayList, ctx.?);
         compressor.list.deinit(compressor.allocator);
@@ -4670,6 +4672,13 @@ pub const JSZlib = struct {
         return gzipOrDeflateSync(globalThis, buffer, options_val_, false);
     }
 
+    const Library = enum {
+        libz,
+        libdeflate,
+
+        pub const map = bun.ComptimeEnumMap(Library);
+    };
+
     pub fn gzipOrDeflateSync(
         globalThis: *JSGlobalObject,
         buffer: JSC.Node.StringOrBuffer,
@@ -4677,10 +4686,12 @@ pub const JSZlib = struct {
         is_gzip: bool,
     ) JSValue {
         var opts = zlib.Options{ .gzip = is_gzip };
+        var library: Library = if (is_gzip) .libdeflate else .libz;
         if (options_val_) |options_val| {
             if (options_val.isObject()) {
                 if (options_val.get(globalThis, "windowBits")) |window| {
                     opts.windowBits = window.coerce(i32, globalThis);
+                    library = .libz;
                 }
 
                 if (options_val.get(globalThis, "level")) |level| {
@@ -4689,36 +4700,117 @@ pub const JSZlib = struct {
 
                 if (options_val.get(globalThis, "memLevel")) |memLevel| {
                     opts.memLevel = memLevel.coerce(i32, globalThis);
+                    library = .libz;
                 }
 
                 if (options_val.get(globalThis, "strategy")) |strategy| {
                     opts.strategy = strategy.coerce(i32, globalThis);
+                    library = .libz;
+                }
+
+                if (options_val.getTruthy(globalThis, "library")) |library_value| {
+                    if (!library_value.isString()) {
+                        globalThis.throwInvalidArguments("Expected library to be a string", .{});
+                        return .zero;
+                    }
+
+                    library = Library.map.fromJS(globalThis, library_value) orelse {
+                        globalThis.throwInvalidArguments("Expected library to be one of 'libz' or 'libdeflate'", .{});
+                        return .zero;
+                    };
                 }
             }
         }
 
         const compressed = buffer.slice();
         const allocator = JSC.VirtualMachine.get().allocator;
-        var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch unreachable;
-        var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
-            if (err == error.InvalidArgument) {
-                return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
+
+        var list = brk: {
+            if (is_gzip and compressed.len > 64) {
+                //   0   1   2   3   4   5   6   7
+                //  +---+---+---+---+---+---+---+---+
+                //  |     CRC32     |     ISIZE     |
+                //  +---+---+---+---+---+---+---+---+
+                const estimated_size: u32 = compressed[compressed.len - 4 ..][0..4];
+                // If it's > 256 MB, let's rely on dynamic allocation to minimize the risk of OOM.
+                if (estimated_size > 0 and estimated_size < 256 * 1024 * 1024) {
+                    break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, @max(estimated_size, 64)) catch {
+                        globalThis.throwOutOfMemory();
+                        return .zero;
+                    };
+                }
             }
 
-            return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
+            break :brk std.ArrayListUnmanaged(u8).initCapacity(allocator, if (compressed.len > 512) compressed.len else 32) catch {
+                globalThis.throwOutOfMemory();
+                return .zero;
+            };
         };
 
-        reader.readAll() catch {
-            defer reader.deinit();
-            globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
-            return .zero;
-        };
-        reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
-        reader.list.capacity = reader.list.items.len;
-        reader.list_ptr = &reader.list;
+        switch (library) {
+            .libz => {
+                var reader = zlib.ZlibCompressorArrayList.init(compressed, &list, allocator, opts) catch |err| {
+                    defer list.deinit(allocator);
+                    if (err == error.InvalidArgument) {
+                        return JSC.toInvalidArguments("Invalid buffer", .{}, globalThis);
+                    }
 
-        var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
-        return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+                    return JSC.toInvalidArguments("Unexpected", .{}, globalThis);
+                };
+
+                reader.readAll() catch {
+                    defer reader.deinit();
+                    globalThis.throwValue(ZigString.init(reader.errorMessage() orelse "Zlib returned an error").toErrorInstance(globalThis));
+                    return .zero;
+                };
+                reader.list = .{ .items = reader.list.toOwnedSlice(allocator) catch @panic("TODO") };
+                reader.list.capacity = reader.list.items.len;
+                reader.list_ptr = &reader.list;
+
+                var array_buffer = JSC.ArrayBuffer.fromBytes(reader.list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, reader, reader_deallocator, null);
+            },
+            .libdeflate => {
+                var decompressor: *bun.libdeflate.Decompressor = bun.libdeflate.Decompressor.alloc() orelse {
+                    list.deinit(allocator);
+                    globalThis.throwOutOfMemory();
+                    return .zero;
+                };
+                defer decompressor.deinit();
+                while (true) {
+                    const result = decompressor.decompress(compressed, list.allocatedSlice(), if (is_gzip) .gzip else .deflate);
+
+                    list.items.len = result.written;
+
+                    if (result.status == .insufficient_space) {
+                        if (list.items.capacity > 1024 * 1024 * 1024) {
+                            list.deinit(allocator);
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        }
+
+                        list.ensureTotalCapacity(allocator, list.items.capacity * 2) catch {
+                            list.deinit(allocator);
+                            globalThis.throwOutOfMemory();
+                            return .zero;
+                        };
+                        continue;
+                    }
+
+                    if (result.status == .success) {
+                        list.items.len = result.written;
+                        break;
+                    }
+
+                    list.deinit(allocator);
+                    globalThis.throw("libdeflate returned an error: {s}", .{@tagName(result.status)});
+                    return .zero;
+                }
+
+                var array_buffer = JSC.ArrayBuffer.fromBytes(list.items, .Uint8Array);
+                return array_buffer.toJSWithContext(globalThis, list.items.ptr, global_deallocator, null);
+            },
+        }
     }
 
     pub fn inflateSync(

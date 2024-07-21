@@ -760,12 +760,31 @@ pub const HTTPThread = struct {
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
 
+    lazy_libdeflater: ?*LibdeflateState = null,
+
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
     };
 
     const threadlog = Output.scoped(.HTTPThread, true);
+
+    pub const LibdeflateState = struct {
+        decompressor: *bun.libdeflate.Decompressor = undefined,
+        shared_buffer: [512 * 1024]u8 = undefined,
+
+        pub usingnamespace bun.New(@This());
+    };
+
+    pub fn deflater(this: *@This()) *LibdeflateState {
+        if (this.lazy_libdeflater == null) {
+            this.lazy_libdeflater = LibdeflateState.new(.{
+                .decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory(),
+            });
+        }
+
+        return this.lazy_libdeflater.?;
+    }
 
     fn initOnce() void {
         http_thread = .{
@@ -778,7 +797,7 @@ pub const HTTPThread = struct {
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
-
+        bun.libdeflate.load();
         const thread = std.Thread.spawn(
             .{
                 .stack_size = bun.default_thread_stack_size,
@@ -1408,6 +1427,7 @@ pub const InternalState = struct {
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
     is_redirect_pending: bool = false,
+    is_libdeflate_fast_path_disabled: bool = false,
     resend_request_body_on_redirect: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
@@ -1496,40 +1516,91 @@ pub const InternalState = struct {
         return this.received_last_chunk;
     }
 
-    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
-        log("Decompressing {d} bytes\n", .{buffer.len});
-
+    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool) !void {
         defer this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
         if (extremely_verbose)
             gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
 
-        try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
-        this.decompressor.readAll(this.isDone()) catch |err| {
-            if (this.isDone() or error.ShortRead != err) {
-                Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
-                Output.flush();
-                return err;
+        var still_needs_to_decompress = true;
+
+        // Fast-path: use libdeflate
+        if (is_final_chunk and !this.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
+            this.is_libdeflate_fast_path_disabled = true;
+
+            log("Decompressing {d} bytes with libdeflate\n", .{buffer.len});
+            var deflater = http_thread.deflater();
+
+            // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
+            // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
+            // If we know that the stream is going to be larger than our
+            // pre-allocated buffer, then let's dynamically allocate the exact
+            // size.
+            if (this.encoding == Encoding.gzip and buffer.len > 128 and buffer.len < 1024 * 1024 * 1024) {
+                const estimated_size: u32 = @bitCast(buffer[buffer.len - 4 ..][0..4].*);
+                // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
+                if (estimated_size > deflater.shared_buffer.len and estimated_size < 32 * 1024 * 1024) {
+                    try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, estimated_size);
+                    const result = deflater.decompressor.decompress(buffer, body_out_str.list.allocatedSlice(), .gzip);
+
+                    if (result.status == .success) {
+                        body_out_str.list.items.len = result.written;
+                        still_needs_to_decompress = false;
+                    }
+
+                    break :libdeflate;
+                }
             }
-        };
+
+            const result = deflater.decompressor.decompress(buffer, &deflater.shared_buffer, switch (this.encoding) {
+                .gzip => .gzip,
+                .deflate => .deflate,
+                else => unreachable,
+            });
+
+            if (result.status == .success) {
+                try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, result.written);
+                body_out_str.list.appendSliceAssumeCapacity(deflater.shared_buffer[0..result.written]);
+                still_needs_to_decompress = false;
+            }
+        }
+
+        // Slow path, or brotli: use the .decompressor
+        if (still_needs_to_decompress) {
+            log("Decompressing {d} bytes\n", .{buffer.len});
+            if (body_out_str.list.capacity == 0) {
+                const min = @min(@ceil(@as(f64, @floatFromInt(buffer.len)) * 1.5), @as(f64, 1024 * 1024 * 2));
+                try body_out_str.growBy(@max(@as(usize, @intFromFloat(min)), 32));
+            }
+
+            try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
+
+            this.decompressor.readAll(this.isDone()) catch |err| {
+                if (this.isDone() or error.ShortRead != err) {
+                    Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                    Output.flush();
+                    return err;
+                }
+            };
+        }
 
         if (extremely_verbose)
             this.gzip_elapsed = gzip_timer.read();
     }
 
-    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
-        try this.decompressBytes(buffer.list.items, body_out_str);
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString, is_final_chunk: bool) !void {
+        try this.decompressBytes(buffer.list.items, body_out_str, is_final_chunk);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !bool {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_chunk: bool) !bool {
         if (this.is_redirect_pending) return false;
 
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
             Encoding.brotli, Encoding.gzip, Encoding.deflate => {
-                try this.decompress(buffer, body_out_str);
+                try this.decompress(buffer, body_out_str, is_final_chunk);
             },
             else => {
                 if (!body_out_str.owns(buffer.list.items)) {
@@ -1672,6 +1743,13 @@ pub const Encoding = enum {
     deflate,
     brotli,
     chunked,
+
+    pub fn canUseLibDeflate(this: Encoding) bool {
+        return switch (this) {
+            .gzip, .deflate => true,
+            else => false,
+        };
+    }
 
     pub fn isCompressed(this: Encoding) bool {
         return switch (this) {
@@ -3307,14 +3385,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.is_redirect_pending) return;
 
     if (this.state.encoding.isCompressed()) {
-        var body_buffer = this.state.body_out_str.?;
-        if (body_buffer.list.capacity == 0) {
-            const min = @min(@ceil(@as(f64, @floatFromInt(incoming_data.len)) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@max(@as(usize, @intFromFloat(min)), 32));
-        }
-
-        // assert(!body_buffer.owns(b));
-        try this.state.decompressBytes(incoming_data, body_buffer);
+        try this.state.decompressBytes(incoming_data, this.state.body_out_str.?, true);
     } else {
         try this.state.getBodyBuffer().appendSliceExact(incoming_data);
     }
@@ -3362,7 +3433,12 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
-        const processed = try this.state.processBodyBuffer(buffer.*);
+        const is_final_chunk = is_done;
+        const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
+
+        // We can only use the libdeflate fast path when we are not streaming
+        // If we ever call processBodyBuffer again, it cannot go through the fast path.
+        this.state.is_libdeflate_fast_path_disabled = true;
 
         if (this.progress_node) |progress| {
             progress.activate();
@@ -3427,7 +3503,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             }
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                return try this.state.processBodyBuffer(buffer);
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.is_libdeflate_fast_path_disabled = true;
+                return try this.state.processBodyBuffer(buffer, false);
             }
 
             return false;
@@ -3437,6 +3515,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             this.state.received_last_chunk = true;
             _ = try this.state.processBodyBuffer(
                 buffer,
+                true,
             );
 
             if (this.progress_node) |progress| {
@@ -3505,7 +3584,10 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                return try this.state.processBodyBuffer(body_buffer.*);
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.is_libdeflate_fast_path_disabled = true;
+
+                return try this.state.processBodyBuffer(body_buffer.*, true);
             }
 
             return false;
@@ -3513,7 +3595,6 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         // Done
         else => {
             this.state.received_last_chunk = true;
-
             try this.handleResponseBodyFromSinglePacket(buffer);
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             if (this.progress_node) |progress| {

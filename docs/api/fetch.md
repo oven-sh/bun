@@ -135,6 +135,43 @@ const response = await fetch("http://example.com", {
 controller.abort();
 ```
 
+## Debugging
+
+To help with debugging, you can pass `verbose: true` to `fetch`:
+
+```ts
+const response = await fetch("http://example.com", {
+  verbose: true,
+});
+```
+
+This will print the request and response headers to your terminal:
+
+```sh
+[fetch] > HTTP/1.1 GET http://example.com/
+[fetch] > Connection: keep-alive
+[fetch] > User-Agent: Bun/1.1.21
+[fetch] > Accept: */*
+[fetch] > Host: example.com
+[fetch] > Accept-Encoding: gzip, deflate, br
+
+[fetch] < 200 OK
+[fetch] < Content-Encoding: gzip
+[fetch] < Age: 201555
+[fetch] < Cache-Control: max-age=604800
+[fetch] < Content-Type: text/html; charset=UTF-8
+[fetch] < Date: Sun, 21 Jul 2024 02:41:14 GMT
+[fetch] < Etag: "3147526947+gzip"
+[fetch] < Expires: Sun, 28 Jul 2024 02:41:14 GMT
+[fetch] < Last-Modified: Thu, 17 Oct 2019 07:18:26 GMT
+[fetch] < Server: ECAcc (sac/254F)
+[fetch] < Vary: Accept-Encoding
+[fetch] < X-Cache: HIT
+[fetch] < Content-Length: 648
+```
+
+Note: `verbose: boolean` is not part of the Web standard `fetch` API and is specific to Bun.
+
 ## Performance
 
 Before an HTTP request can be sent, the DNS lookup must be performed. This can take a significant amount of time, especially if the DNS server is slow or the network connection is poor.

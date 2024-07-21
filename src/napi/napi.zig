@@ -1343,7 +1343,9 @@ pub export fn napi_get_uv_event_loop(env: napi_env, loop_: ?*napi_event_loop) na
         return invalidArg();
     };
     if (bun.Environment.isWindows) {
-        loop.* = env.bunVM().uvLoop();
+        // alignment error is incorrect.
+        @setRuntimeSafety(false);
+        loop.* = JSC.VirtualMachine.get().uvLoop();
     } else {
         // there is no uv event loop on posix, we use our event loop handle.
         loop.* = env.bunVM().eventLoop();

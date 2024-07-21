@@ -220,7 +220,7 @@ Bun automatically reuses connections to the same host. This is known as connecti
 
 ### Response buffering
 
-Bun goes to great lengths to optimize the performance of reading the response body. The fastest way to read the response body is to use one of the resposne body methods:
+Bun goes to great lengths to optimize the performance of reading the response body. The fastest way to read the response body is to use one of these methods:
 
 - `response.text(): Promise<string>`
 - `response.json(): Promise<any>`
@@ -228,3 +228,11 @@ Bun goes to great lengths to optimize the performance of reading the response bo
 - `response.bytes(): Promise<Uint8Array>`
 - `response.arrayBuffer(): Promise<ArrayBuffer>`
 - `response.blob(): Promise<Blob>`
+
+You can also use `Bun.write` to write the response body to a file on disk:
+
+```ts
+import { write } from "bun";
+
+await write("output.txt", response);
+```

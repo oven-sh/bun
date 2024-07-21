@@ -1408,6 +1408,7 @@ pub const InternalState = struct {
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
     is_redirect_pending: bool = false,
+    resend_request_body_on_redirect: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -2273,11 +2274,21 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     };
 }
 
-pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn doRedirect(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    ctx: *NewHTTPContext(is_ssl),
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
+    const request_body = if (this.state.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
+        this.state.original_request_body.bytes
+    else
+        "";
 
     this.state.response_message_buffer.deinit();
+
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
     if (this.isKeepAlivePossible()) {
@@ -2315,7 +2326,8 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
     if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
-    return this.start(.{ .bytes = "" }, body_out_str);
+
+    return this.start(.{ .bytes = request_body }, body_out_str);
 }
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
@@ -2849,7 +2861,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 }
                 return;
             }
-
             const should_continue = this.handleResponseMetadata(
                 &response,
             ) catch |err| {
@@ -3847,6 +3858,9 @@ pub fn handleResponseMetadata(
                     }
 
                     this.state.is_redirect_pending = true;
+                    if (this.method.hasRequestBody()) {
+                        this.state.resend_request_body_on_redirect = true;
+                    }
                 },
                 else => {},
             }

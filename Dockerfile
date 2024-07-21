@@ -540,6 +540,7 @@ COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=libdeflate ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/

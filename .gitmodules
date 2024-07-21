@@ -83,6 +83,6 @@ depth = 1
 shallow = true
 fetchRecurseSubmodules = false
 [submodule "src/deps/libdeflate"]
-	path = src/deps/libdeflate
-	url = https://github.com/ebiggers/libdeflate
+path = src/deps/libdeflate
+url = https://github.com/ebiggers/libdeflate
 ignore = "dirty"

@@ -1,0 +1,193 @@
+Bun implements the WHATWG `fetch` standard, with some extensions to meet the needs of server-side JavaScript.
+
+Bun also implements `node:http`, but `fetch` is generally recommended instead.
+
+## Sending an HTTP request
+
+To send an HTTP request, use `fetch`
+
+```ts
+const response = await fetch("http://example.com");
+
+console.log(response.status); // => 200
+
+const text = await response.text(); // or response.json(), response.formData(), etc.
+```
+
+`fetch` also works with HTTPS URLs.
+
+```ts
+const response = await fetch("https://example.com");
+```
+
+You can also pass `fetch` a [`Request`](https://developer.mozilla.org/en-US/docs/Web/API/Request) object.
+
+```ts
+const request = new Request("http://example.com", {
+  method: "POST",
+  body: "Hello, world!",
+});
+
+const response = await fetch(request);
+```
+
+### Sending a POST request
+
+To send a POST request, pass an object with the `method` property set to `"POST"`.
+
+```ts
+const response = await fetch("http://example.com", {
+  method: "POST",
+  body: "Hello, world!",
+});
+```
+
+`body` can be a string, a `FormData` object, an `ArrayBuffer`, a `Blob`, and more. See the [MDN documentation](https://developer.mozilla.org/en-US/docs/Web/API/Body/body) for more information.
+
+### Proxying requests
+
+To proxy a request, pass an object with the `proxy` property set to a URL.
+
+```ts
+const response = await fetch("http://example.com", {
+  proxy: "http://proxy.com",
+});
+```
+
+### Custom headers
+
+To set custom headers, pass an object with the `headers` property set to an object.
+
+```ts
+const response = await fetch("http://example.com", {
+  headers: {
+    "X-Custom-Header": "value",
+  },
+});
+```
+
+You can also set headers using the [Headers](https://developer.mozilla.org/en-US/docs/Web/API/Headers) object.
+
+```ts
+const headers = new Headers();
+headers.append("X-Custom-Header", "value");
+
+const response = await fetch("http://example.com", {
+  headers,
+});
+```
+
+### Response bodies
+
+To read the response body, use one of the following methods:
+
+- `response.text(): Promise<string>`: Returns a promise that resolves with the response body as a string.
+- `response.json(): Promise<any>`: Returns a promise that resolves with the response body as a JSON object.
+- `response.formData(): Promise<FormData>`: Returns a promise that resolves with the response body as a `FormData` object.
+- `response.bytes(): Promise<Uint8Array>`: Returns a promise that resolves with the response body as a `Uint8Array`.
+- `response.arrayBuffer(): Promise<ArrayBuffer>`: Returns a promise that resolves with the response body as an `ArrayBuffer`.
+- `response.blob(): Promise<Blob>`: Returns a promise that resolves with the response body as a `Blob`.
+
+#### Streaming response bodies
+
+You can use async iterators to stream the response body.
+
+```ts
+const response = await fetch("http://example.com");
+
+for await (const chunk of response.body) {
+  console.log(chunk);
+}
+```
+
+You can also more directly access the `ReadableStream` object.
+
+```ts
+const response = await fetch("http://example.com");
+
+const stream = response.body;
+
+const reader = stream.getReader();
+const { value, done } = await reader.read();
+```
+
+### Fetching a URL with a timeout
+
+To fetch a URL with a timeout, use `AbortSignal.timeout`:
+
+```ts
+const response = await fetch("http://example.com", {
+  signal: AbortSignal.timeout(1000),
+});
+```
+
+#### Canceling a request
+
+To cancel a request, use an `AbortController`:
+
+```ts
+const controller = new AbortController();
+
+const response = await fetch("http://example.com", {
+  signal: controller.signal,
+});
+
+controller.abort();
+```
+
+## Performance
+
+Before an HTTP request can be sent, the DNS lookup must be performed. This can take a significant amount of time, especially if the DNS server is slow or the network connection is poor.
+
+After the DNS lookup, the TCP socket must be connected and the TLS handshake might need to be performed. This can also take a significant amount of time.
+
+After the request completes, consuming the response body can also take a significant amount of time and memory.
+
+At every step of the way, Bun provides APIs to help you optimize the performance of your application.
+
+### DNS prefetching
+
+To prefetch a DNS entry, you can use the `dns.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to avoid the initial DNS lookup.
+
+```ts
+import { dns } from "bun";
+
+dns.prefetch("bun.sh", 443);
+```
+
+### Preconnect to a host
+
+To preconnect to a host, you can use the `http.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to start the initial DNS lookup, TCP socket connection, and TLS handshake early.
+
+```ts
+import { fetch } from "bun";
+
+fetch.preconnect("https://bun.sh");
+```
+
+Note: calling `fetch` immediately after `fetch.preconnect` will not make your request faster. Preconnecting only helps if you know you'll need to connect to a host soon, but you're not ready to make the request yet.
+
+#### Preconnect at startup
+
+To preconnect to a host at startup, you can pass `--fetch-preconnect`:
+
+```sh
+$ bun --fetch-preconnect https://bun.sh ./my-script.ts
+```
+
+This is sort of like `<link rel="preconnect">` in HTML.
+
+### Connection pooling & HTTP keep-alive
+
+Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. You don't need to do anything to enable this; it's automatic.
+
+### Response buffering
+
+Bun goes to great lengths to optimize the performance of reading the response body. The fastest way to read the response body is to use one of the resposne body methods:
+
+- `response.text(): Promise<string>`
+- `response.json(): Promise<any>`
+- `response.formData(): Promise<FormData>`
+- `response.bytes(): Promise<Uint8Array>`
+- `response.arrayBuffer(): Promise<ArrayBuffer>`
+- `response.blob(): Promise<Blob>`

@@ -23,17 +23,31 @@ export CC=${CC:-$(which clang-16 || which clang || which cc)}
 export CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
 export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
+export RANLIB=${RANLIB:-$(which llvm-ranlib-16 || which llvm-ranlib || which ranlib)}
+
+# on Linux, force using lld as the linker
+if [[ $(uname -s) == 'Linux' ]]; then
+  export LD=${LD:-$(which ld.lld-16 || which ld.lld || which ld)}
+  export LDFLAGS="${LDFLAGS} -fuse-ld=lld "
+fi
 
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
 export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig -fno-c++-static-destructors '
+
+# Add flags for LTO
+if [ "$BUN_ENABLE_LTO" == "1" ]; then
+  export CFLAGS="$CFLAGS -flto=full "
+  export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
+  export LDFLAGS="$LDFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
+fi
 
 if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
   export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
-  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro "
+  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro"
 fi
 
 # libarchive needs position-independent executables to compile successfully
@@ -76,7 +90,7 @@ if [[ $(uname -s) == 'Linux' ]]; then
 fi
 
 if [[ $(uname -s) == 'Darwin' ]]; then
-  export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-12.0}
+  export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-13.0}
 
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
   export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "

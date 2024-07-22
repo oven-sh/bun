@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG dac47fbd5444cbd4e3568267099ae276c547e897)
+set(WEBKIT_TAG 2be773eeea48c03a4fa92c170934eb2220666809)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -72,7 +72,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -1080,7 +1080,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -1169,7 +1169,7 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" -Xclang -fno-c++-static-destructors)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
@@ -1178,6 +1178,9 @@ else()
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti

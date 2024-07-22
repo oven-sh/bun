@@ -118,8 +118,36 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        doPreconnect(ctx.runtime_options.preconnect);
+
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
+    }
+
+    fn doPreconnect(preconnect: []const string) void {
+        if (preconnect.len == 0) return;
+        bun.HTTPThread.init();
+
+        for (preconnect) |url_str| {
+            const url = bun.URL.parse(url_str);
+
+            if (!url.isHTTP() and !url.isHTTPS()) {
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            if (url.hostname.len == 0) {
+                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            if (!url.hasValidPort()) {
+                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            AsyncHTTP.preconnect(url, false);
+        }
     }
 
     fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
@@ -241,6 +269,8 @@ pub const Run = struct {
         }
 
         vm.bundler.env.loadTracy();
+
+        doPreconnect(ctx.runtime_options.preconnect);
 
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);

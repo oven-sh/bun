@@ -135,6 +135,51 @@ const response = await fetch("http://example.com", {
 controller.abort();
 ```
 
+### Unix domain sockets
+
+To fetch a URL using a Unix domain socket, use the `unix: string` option:
+
+```ts
+const response = await fetch("https://hostname/a/path", {
+  unix: "/var/run/path/to/unix.sock",
+  method: "POST",
+  body: JSON.stringify({ message: "Hello from Bun!" }),
+  headers: {
+    "Content-Type": "application/json",
+  },
+});
+```
+
+### TLS
+
+To use a client certificate, use the `tls` option:
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    key: Bun.file("/path/to/key.pem"),
+    cert: Bun.file("/path/to/cert.pem"),
+    // ca: [Bun.file("/path/to/ca.pem")],
+  },
+});
+```
+
+#### Custom TLS Validation
+
+To customize the TLS validation, use the `checkServerIdentity` option in `tls`
+
+```ts
+await fetch("https://example.com", {
+  tls: {
+    checkServerIdentity: (hostname, peerCertificate) => {
+      // Return an error if the certificate is invalid
+    },
+  },
+});
+```
+
+This is similar to how it works in Node's `net` module.
+
 ## Debugging
 
 To help with debugging, you can pass `verbose: true` to `fetch`:

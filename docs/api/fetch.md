@@ -227,9 +227,9 @@ By default, Bun limits the maximum number of simultaneous `fetch` requests to 25
 - It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets, usually in the low thousands. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
 - It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
 
-Browsers limit the number of simultaneous connections to a host to 6 usually. We don't limit by host, we just have a global limit.
+Browsers limit the number of simultaneous connections to a host to 6 usually. We don't limit by host, it's a global limit. When the limit is exceeded, the requests are queued and sent as soon as the next request ends.
 
-You can increase the maximum number of simultaneous connections via the BUN_CONFIG_MAX_HTTP_REQUESTS environment variable:
+You can increase the maximum number of simultaneous connections via the `BUN_CONFIG_MAX_HTTP_REQUESTS` environment variable:
 
 ```sh
 $ BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts

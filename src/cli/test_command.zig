@@ -598,7 +598,7 @@ const Scanner = struct {
         };
 
         // always ignore node_modules.
-        if (strings.contains(slice, "/" ++ "node_modules" ++ "/")) {
+        if (strings.contains(slice, "/node_modules/") or strings.contains(slice, "\\node_modules\\")) {
             return false;
         }
 

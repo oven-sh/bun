@@ -907,26 +907,42 @@ declare global {
     new (): ShadowRealm;
   };
 
-  /**
-   * Send a HTTP(s) request
-   *
-   * @param request Request object
-   * @param init A structured value that contains settings for the fetch() request.
-   *
-   * @returns A promise that resolves to {@link Response} object.
-   */
+  interface Fetch {
+    /**
+     * Send a HTTP(s) request
+     *
+     * @param request Request object
+     * @param init A structured value that contains settings for the fetch() request.
+     *
+     * @returns A promise that resolves to {@link Response} object.
+     */
+    (request: Request, init?: RequestInit): Promise<Response>;
 
-  // tslint:disable-next-line:unified-signatures
-  function fetch(request: Request, init?: RequestInit): Promise<Response>;
-  /**
-   * Send a HTTP(s) request
-   *
-   * @param url URL string
-   * @param init A structured value that contains settings for the fetch() request.
-   *
-   * @returns A promise that resolves to {@link Response} object.
-   */
-  function fetch(url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
+    /**
+     * Send a HTTP(s) request
+     *
+     * @param url URL string
+     * @param init A structured value that contains settings for the fetch() request.
+     *
+     * @returns A promise that resolves to {@link Response} object.
+     */
+    (url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
+
+    (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
+
+    /**
+     * Start the DNS resolution, TCP connection, and TLS handshake for a request
+     * before the request is actually sent.
+     *
+     * This can reduce the latency of a request when you know there's some
+     * long-running task that will delay the request starting.
+     *
+     * This is a bun-specific API and is not part of the Fetch API specification.
+     */
+    preconnect(url: string | URL): void;
+  }
+
+  var fetch: Fetch;
 
   function queueMicrotask(callback: (...args: any[]) => void): void;
   /**

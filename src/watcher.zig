@@ -16,7 +16,9 @@ const PackageJSON = @import("./resolver/package_json.zig").PackageJSON;
 
 const log = bun.Output.scoped(.watcher, false);
 
-const WATCHER_MAX_LIST = 8096;
+const WATCHER_MAX_LIST = if (!Environment.isOpenBSD) 8096 else 1024;
+
+const KeventWatcher = struct {};
 
 const INotify = struct {
     loaded_inotify: bool = false,
@@ -208,9 +210,8 @@ const INotify = struct {
 };
 
 const DarwinWatcher = struct {
-    pub const EventListIndex = u32;
-
     const KEvent = std.c.Kevent;
+    pub const EventListIndex = u32;
 
     // Internal
     changelist: [128]KEvent = undefined,
@@ -424,7 +425,7 @@ const WindowsWatcher = struct {
     }
 };
 
-const PlatformWatcher = if (Environment.isMac)
+const PlatformWatcher = if (Environment.isMac or Environment.isOpenBSD)
     DarwinWatcher
 else if (Environment.isLinux)
     INotify
@@ -681,7 +682,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
         }
 
         fn _watchLoop(this: *Watcher) bun.JSC.Maybe(void) {
-            if (Environment.isMac) {
+            if (Environment.isMac or Environment.isOpenBSD) {
                 bun.assert(this.platform.fd.isValid());
                 const KEvent = std.c.Kevent;
 
@@ -959,7 +960,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .kind = .file,
             };
 
-            if (comptime Environment.isMac) {
+            if (comptime (Environment.isMac or Environment.isOpenBSD)) {
                 const KEvent = std.c.Kevent;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html
@@ -1051,7 +1052,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 .package_json = null,
             };
 
-            if (Environment.isMac) {
+            if (Environment.isMac or Environment.isOpenBSD) {
                 const KEvent = std.c.Kevent;
 
                 // https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kqueue.2.html

@@ -1455,7 +1455,7 @@ declare module "bun" {
      * ```js
      * const {imports, exports} = transpiler.scan(`
      * import {foo} from "baz";
-     * const hello = "hi!";
+     * export const hello = "hi!";
      * `);
      *
      * console.log(imports); // ["baz"]

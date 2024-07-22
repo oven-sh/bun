@@ -36,16 +36,16 @@ public:
 
 Local<Number> Number::New(Isolate* isolate, double value)
 {
-    Bun::JSValue jsv(value);
-    auto encoded = Bun::JSValue::encode(jsv);
+    auto jsv = JSC::jsDoubleNumber(value);
+    auto encoded = JSC::JSValue::encode(jsv);
     auto ptr = reinterpret_cast<Number*>(encoded);
     return Local<Number> { ptr };
 }
 
 double Number::Value() const
 {
-    auto encoded = reinterpret_cast<Bun::EncodedJSValue>(this);
-    auto jsv = Bun::JSValue::decode(encoded);
+    auto encoded = reinterpret_cast<JSC::EncodedJSValue>(this);
+    auto jsv = JSC::JSValue::decode(encoded);
     return jsv.asNumber();
 }
 

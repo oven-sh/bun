@@ -220,6 +220,23 @@ This feature is not implemented on Windows yet. If you're interested in using th
 
 Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. You don't need to do anything to enable this; it's automatic.
 
+#### Simultaneous connection limit
+
+By default, Bun limits the maximum number of simultaneous `fetch` requests to 256. We do this for several reasons:
+
+- It improves overall system stability. Operating systems have an upper limit on the number of simultaneous open TCP sockets, usually in the low thousands. Nearing this limit causes your entire computer to behave strangely. Applications hang and crash.
+- It encourages HTTP Keep-Alive connection reuse. For short-lived HTTP requests, the slowest step is often the initial connection setup. Reusing connections can save a lot of time.
+
+Browsers limit the number of simultaneous connections to a host to 6 usually. We don't limit by host, we just have a global limit.
+
+You can increase the maximum number of simultaneous connections via the BUN_CONFIG_MAX_HTTP_REQUESTS environment variable:
+
+```sh
+$ BUN_CONFIG_MAX_HTTP_REQUESTS=512 bun ./my-script.ts
+```
+
+The max value for this limit is currently set to 65,336. The maximum port number is 65,535, so it's quite difficult for any one computer to exceed this limit.
+
 ### Response buffering
 
 Bun goes to great lengths to optimize the performance of reading the response body. The fastest way to read the response body is to use one of these methods:

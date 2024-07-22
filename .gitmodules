@@ -76,6 +76,14 @@ ignore = dirty
 depth = 1
 shallow = true
 fetchRecurseSubmodules = false
+[submodule "src/deps/libuv"]
+path = src/deps/libuv
+url = https://github.com/libuv/libuv.git
+ignore = dirty
+depth = 1
+shallow = true
+fetchRecurseSubmodules = false
+branch = v1.48.0
 [submodule "zig"]
 path = src/deps/zig
 url = https://github.com/oven-sh/zig

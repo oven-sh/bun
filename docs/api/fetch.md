@@ -214,6 +214,8 @@ $ bun --fetch-preconnect https://bun.sh ./my-script.ts
 
 This is sort of like `<link rel="preconnect">` in HTML.
 
+This feature is not implemented on Windows yet. If you're interested in using this feature on Windows, please file an issue and we can implement support for it on Windows.
+
 ### Connection pooling & HTTP keep-alive
 
 Bun automatically reuses connections to the same host. This is known as connection pooling. This can significantly reduce the time it takes to establish a connection. You don't need to do anything to enable this; it's automatic.

@@ -1858,6 +1858,14 @@ pub const AsyncHTTP = struct {
         url: URL,
         is_url_owned: bool,
     ) void {
+        if (!FeatureFlags.is_fetch_preconnect_supported) {
+            if (is_url_owned) {
+                bun.default_allocator.free(url.href);
+            }
+
+            return;
+        }
+
         var this = Preconnect.new(.{
             .async_http = undefined,
             .response_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
@@ -2443,9 +2451,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
         return;
     }
 
-    if (this.is_preconnect_only) {
-        this.onPreconnect(is_ssl, socket);
-        return;
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (this.is_preconnect_only) {
+            this.onPreconnect(is_ssl, socket);
+            return;
+        }
     }
 
     switch (this.state.request_stage) {

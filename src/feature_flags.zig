@@ -181,3 +181,6 @@ pub const breaking_changes_1_2 = false;
 pub const nonblocking_stdout_and_stderr_on_posix = false;
 
 pub const postgresql = env.is_canary or env.isDebug;
+
+// TODO: fix Windows-only test failures in fetch-preconnect.test.ts
+pub const is_fetch_preconnect_supported = env.isPosix;

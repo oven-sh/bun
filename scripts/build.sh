@@ -51,7 +51,7 @@ main() {
       --os) os="$2"; shift ;;
       --arch) arch="$2"; shift ;;
       --cpu) cpu="$2"; shift ;;
-      --baseline) baseline="1"; shift ;;
+      --baseline) baseline="1"; cpu="nehalem"; shift ;;
       --version) version="$2"; shift ;;
       --revision) revision="$2"; shift ;;
       --canary) canary="1"; shift ;;
@@ -87,6 +87,7 @@ main() {
     lol*html) build_lolhtml ;;
     ls*hpack) build_lshpack ;;
     mimalloc) build_mimalloc ;;
+    tinycc) build_tinycc ;;
     zlib) build_zlib ;;
     zstd) build_zstd ;;
     *)
@@ -327,8 +328,6 @@ default_cc_flags() {
     elif [ "$os" = "darwin" ]; then
       flags+=(-mcpu=apple-m1)
     fi
-  elif [ "$baseline" = "1" ]; then
-    flags+=(-march=nehalem)
   else
     flags+=(-march="$cpu")
   fi
@@ -637,6 +636,7 @@ list_deps() {
     lolhtml
     lshpack
     mimalloc
+    tinycc
     zlib
     zstd
     lshpack
@@ -854,6 +854,39 @@ build_mimalloc() {
   if [ "$os" != "windows" ]; then
     copy $(path "$dst" "CMakeFiles" "mimalloc-obj.dir" "src" "static.c.o") $(path "$build_deps_dir" "$artifact" | sed 's/\.a$/.o/')
   fi
+}
+
+src_tinycc() {
+  path "$src_deps_dir" "tinycc"
+}
+
+build_tinycc() {
+  local src=$(src_tinycc)
+  local dst=$(path "$build_dir" "tinycc")
+
+  clean $src $dst
+
+  local configure=$(path "$src" "configure")
+  local flags=(
+    --source-path="$src"
+    --enable-static
+    --cc="$cc"
+    --ar="$ar"
+    '--extra-cflags="$CFLAGS"'
+    --config-predefs=yes
+  )
+
+  if [ "$cpu" != "native" ]; then
+    flags+=(--cpu="$cpu")
+  fi
+
+  if [ "$type" = "debug" ]; then
+    flags+=(--debug)
+  fi
+
+  export CFLAGS="$(default_cc_flags)"
+  $(cd "$src" && run_command "$configure" "${flags[@]}")
+  $(cd "$src" && run_command make -j "$jobs" clean)
 }
 
 src_zlib() {

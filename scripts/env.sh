@@ -29,6 +29,11 @@ if [[ "$CI" != "1" && "$CI" != "true" ]]; then
     echo "Sourcing $SCRIPT_DIR/env.local"
     source $SCRIPT_DIR/env.local
   fi
+elif [[ $(uname -s) == 'Darwin' ]]; then
+  export CXX="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang++"
+  export CC="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang"
+  export AR="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ar"
+  export RANLIB="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ranlib"
 fi
 
 # this compiler detection could be better

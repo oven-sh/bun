@@ -192,6 +192,12 @@ import { dns } from "bun";
 dns.prefetch("bun.sh", 443);
 ```
 
+#### DNS caching
+
+By default, Bun caches and deduplicates DNS queries in-memory for up to 30 seconds. You can see the cache stats by calling `dns.getCacheStats()`:
+
+To learn more about DNS caching in Bun, see the [DNS caching](/docs/api/dns) documentation.
+
 ### Preconnect to a host
 
 To preconnect to a host, you can use the `fetch.preconnect` API. This API is useful when you know you'll need to connect to a host soon and want to start the initial DNS lookup, TCP socket connection, and TLS handshake early.

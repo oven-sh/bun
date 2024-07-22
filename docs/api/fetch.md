@@ -194,7 +194,7 @@ dns.prefetch("bun.sh", 443);
 
 ### Preconnect to a host
 
-To preconnect to a host, you can use the `http.prefetch` API. This API is useful when you know you'll need to connect to a host soon and want to start the initial DNS lookup, TCP socket connection, and TLS handshake early.
+To preconnect to a host, you can use the `fetch.preconnect` API. This API is useful when you know you'll need to connect to a host soon and want to start the initial DNS lookup, TCP socket connection, and TLS handshake early.
 
 ```ts
 import { fetch } from "bun";

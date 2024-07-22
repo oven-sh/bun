@@ -116,7 +116,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32)
+if(WIN32 OR APPLE)
     set(LLVM_VERSION 18)
 else()
     set(LLVM_VERSION 16)

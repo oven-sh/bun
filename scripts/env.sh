@@ -7,6 +7,12 @@ if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   fi
 fi
 
+if [[ $(uname -s) == 'Darwin' ]]; then
+  export LLVM_VERSION=18
+else
+  export LLVM_VERSION=16
+fi
+
 # this is the environment script for building bun's dependencies
 # it sets c compiler and flags
 export SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
@@ -18,16 +24,23 @@ export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/build/bun-deps}
 export LC_CTYPE="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 
+if [[ "$CI" != "1" && "$CI" != "true" ]]; then
+  if [ -f $SCRIPT_DIR/env.local ]; then
+    echo "Sourcing $SCRIPT_DIR/env.local"
+    source $SCRIPT_DIR/env.local
+  fi
+fi
+
 # this compiler detection could be better
-export CC=${CC:-$(which clang-16 || which clang || which cc)}
-export CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+export CC=${CC:-$(which clang-$LLVM_VERSION || which clang || which cc)}
+export CXX=${CXX:-$(which clang++-$LLVM_VERSION || which clang++ || which c++)}
 export AR=${AR:-$(which llvm-ar || which ar)}
 export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
-export RANLIB=${RANLIB:-$(which llvm-ranlib-16 || which llvm-ranlib || which ranlib)}
+export RANLIB=${RANLIB:-$(which llvm-ranlib-$LLVM_VERSION || which llvm-ranlib || which ranlib)}
 
 # on Linux, force using lld as the linker
 if [[ $(uname -s) == 'Linux' ]]; then
-  export LD=${LD:-$(which ld.lld-16 || which ld.lld || which ld)}
+  export LD=${LD:-$(which ld.lld-$LLVM_VERSION || which ld.lld || which ld)}
   export LDFLAGS="${LDFLAGS} -fuse-ld=lld "
 fi
 
@@ -48,6 +61,13 @@ if [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
   export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
   export LDFLAGS="${LDFLAGS} -Wl,-z,norelro"
+fi
+
+# Clang 18 on macOS needs to have -fno-define-target-os-macros to fix a zlib build issue
+# https://gitlab.kitware.com/cmake/cmake/-/issues/25755
+if [[ $(uname -s) == 'Darwin' && $LLVM_VERSION == '18' ]]; then
+  export CFLAGS="$CFLAGS -fno-define-target-os-macros "
+  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros "
 fi
 
 # libarchive needs position-independent executables to compile successfully

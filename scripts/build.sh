@@ -5,6 +5,7 @@
 main() {
   os=$(detect_os)
   arch=$(detect_arch)
+  target="$os-$arch"
 
   scripts_dir=$(path $(cd -- "$(dirname -- "$0")" && pwd -P))
   cwd=$(path $(dirname "$scripts_dir"))
@@ -36,6 +37,7 @@ main() {
   cxx_version=$(default_cxx_version)
   cxx=$(default_cxx)
   zig_version=$(default_zig_version)
+  zig_optimize=$(default_zig_optimize)
   zig=$(default_zig)
   bun_version=$(default_bun_version)
   bun=$(default_bun)
@@ -43,6 +45,9 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -h | --help) help; exit 0 ;;
+      --target) target="$2"; shift ;;
+      --os) target="$2"; shift ;;
+      --arch) target="$target-$2"; shift ;;
       --artifact) artifact="$2"; shift ;;
       --clean) clean="1"; shift ;;
       -j | --jobs) jobs="$2"; shift ;;
@@ -54,7 +59,7 @@ main() {
       --baseline) baseline="1"; cpu="nehalem"; shift ;;
       --version) version="$2"; shift ;;
       --revision) revision="$2"; shift ;;
-      --canary) canary="1"; shift ;;
+      --canary) canary="$(default_canary)"; shift ;;
       --debug) type="debug"; shift ;;
       --assertions) assertions="1"; shift ;;
       --lto) lto="1"; shift ;;
@@ -70,6 +75,7 @@ main() {
       --ld) ld="$2"; shift ;;
       --ccache) ccache="1"; shift ;;
       --zig-version) zig_version="$2"; shift ;;
+      --zig-optimize) zig_optimize="$2"; shift ;;
       --zig) zig="$2"; shift ;;
       --bun-version) bun_version="$2"; shift ;;
       --bun) bun="$2"; shift ;;
@@ -79,7 +85,11 @@ main() {
   done
 
   case "$artifact" in
-    deps) build_deps ;;
+    bun) build_bun ;;
+    bun*cpp | cpp) build_bun "cpp" ;;
+    bun*zig | zig) build_bun "zig" ;;
+    bun*link | link) build_bun "link" ;;
+    bun*deps | deps) build_deps ;;
     boring*ssl) build_boringssl ;;
     c*ares) build_cares ;;
     lib*archive) build_libarchive ;;
@@ -271,7 +281,7 @@ default_llvm_version() {
 }
 
 default_macos_version() {
-  print "12.0"
+  print "13.0"
 }
 
 default_cc_version() {
@@ -423,6 +433,13 @@ latest_zig_version() {
   curl -fsSL https://ziglang.org/download/index.json | jq -r .master.version
 }
 
+default_zig_optimize() {
+  case "$target" in
+    windows*) print "ReleaseSafe" ;;
+    *) print "ReleaseFast" ;;
+  esac
+}
+
 default_zig() {
   which zig
 }
@@ -467,11 +484,21 @@ default_revision() {
   fi
 }
 
+default_canary() {
+  local ahead_by=$(curl -sL "https://api.github.com/repos/oven-sh/bun/compare/bun-v$version...$revision" | jq -r ".ahead_by")
+  if [ "$ahead_by" == "null" ]; then
+    print "1"
+  else
+    print "$ahead_by"
+  fi
+}
+
 help() {
   pretty_ln "Script to build {pink}{bold}Bun {reset}from source.
 
 Options:
   {cyan}-h{reset}, {cyan}--help{reset}               Print this help message and exit{reset}
+  {cyan}--target{reset} {dim}[value]{reset}       Specify the target to build{reset}                        {dim}(default: {green}$target{reset}{dim}){reset}
   {cyan}--artifact{reset} {dim}[value]{reset}       Specify the artifact to build{reset}                        {dim}(default: {green}$artifact{reset}{dim}){reset}
   {cyan}--clean{reset}                  Specify if the build should be cleaned{reset}               {dim}(default: {yellow}$clean{reset}{dim}){reset}
   {cyan}-j{reset}, {cyan}--jobs{reset} {dim}[value]{reset}       Specify the number of jobs to run in parallel{reset}        {dim}(default: {yellow}$jobs{reset}{dim}){reset}
@@ -501,6 +528,7 @@ Options:
   {cyan}--ld{reset} {dim}[path]{reset}              Specify the linker to use{reset}                            {dim}(default: {green}$ld{reset}{dim}){reset}
 
   {cyan}--zig-version{reset} {dim}[semver]{reset}   Specify the zig version to use{reset}                       {dim}(default: {yellow}$zig_version{reset}{dim}){reset}
+  {cyan}--zig-optimize{reset} {dim}[value]{reset}   Specify the zig optimization level{reset}                    {dim}(default: {yellow}$zig_optimize{reset}{dim}){reset}
   {cyan}--zig{reset} {dim}[path]{reset}             Specify the zig executable to use{reset}                    {dim}(default: {green}$zig{reset}{dim}){reset}
 
   {cyan}--bun-version{reset} {dim}[semver]{reset}   Specify the bun version to use{reset}                       {dim}(default: {yellow}$bun_version{reset}{dim}){reset}
@@ -588,15 +616,15 @@ cmake_build() {
   run_command cmake ${flags[@]}
 }
 
-cargo_target() {
-  case "$os-$arch" in
+rust_target() {
+  case "$target" in
     windows-x64) print "x86_64-pc-windows-msvc" ;;
     windows-aarch64) print "aarch64-pc-windows-msvc" ;;
     linux-x64) print "x86_64-unknown-linux-gnu" ;;
     linux-aarch64) print "aarch64-unknown-linux-gnu" ;;
     darwin-x64) print "x86_64-apple-darwin" ;;
     darwin-aarch64) print "aarch64-apple-darwin" ;;
-    *) error "unsupported cargo target: $os-$arch" ;;
+    *) error "unsupported cargo target: $target" ;;
   esac
 }
 
@@ -604,7 +632,7 @@ cargo_build() {
   local flags=(
     --manifest-path="$1/Cargo.toml"
     --target-dir="$2"
-    --target="$(cargo_target)"
+    --target="$(rust_target)"
     --jobs="$jobs"
     ${@:3}
   )
@@ -618,6 +646,27 @@ cargo_build() {
   fi
 
   run_command cargo build ${flags[@]}
+}
+
+zig_target() {
+  case "$target" in
+    windows-x64) print "x86_64-windows-msv" ;;
+    windows-aarch64) print "aarch64-windows-msv" ;;
+    linux-x64) print "x86_64-linux-gnu" ;;
+    linux-aarch64) print "aarch64-linux-gnu" ;;
+    darwin-x64) print "x86_64-macos-none" ;;
+    darwin-aarch64) print "aarch64-macos-none" ;;
+    *) error "unsupported zig target: $target" ;;
+  esac
+}
+
+ninja_build() {
+  local flags=(
+    -v
+    -j "$jobs"
+  )
+
+  run_command ninja ${flags[@]} $@
 }
 
 if_windows() {
@@ -780,7 +829,7 @@ build_lolhtml() {
   clean $cwd $src $dst
   cargo_build $src $dst
 
-  local target=$(cargo_target)
+  local target=$(rust_target)
   local artifact=$(if_windows "lolhtml.lib" "liblolhtml.a")
   copy $(path "$dst" "$target" "$type" "$artifact") $(path "$build_deps_dir" "$artifact")
 }
@@ -861,19 +910,24 @@ src_tinycc() {
 }
 
 build_tinycc() {
+  local pwd=$(pwd)
   local src=$(src_tinycc)
   local dst=$(path "$build_dir" "tinycc")
 
+  cd $src
+
   clean $src $dst
+  if [ "$clean" = "1" ]; then
+    run_command make clean
+  fi
 
   local configure=$(path "$src" "configure")
   local flags=(
-    --source-path="$src"
     --enable-static
     --cc="$cc"
     --ar="$ar"
-    '--extra-cflags="$CFLAGS"'
     --config-predefs=yes
+    '--extra-cflags="$CFLAGS"'
   )
 
   if [ "$cpu" != "native" ]; then
@@ -885,8 +939,10 @@ build_tinycc() {
   fi
 
   export CFLAGS="$(default_cc_flags)"
-  $(cd "$src" && run_command "$configure" "${flags[@]}")
-  $(cd "$src" && run_command make -j "$jobs" clean)
+  run_command "$configure" "${flags[@]}"
+  run_command make -j "$jobs" libz.a
+
+  cd "$pwd"
 }
 
 src_zlib() {
@@ -897,7 +953,7 @@ patch_zlib() {
   if [ "$os" == "windows" ]; then
     # TODO: make a patch upstream to change the line: `#ifdef _MSC_VER`
     # to account for clang-cl, which implements `__builtin_ctzl` and `__builtin_expect`
-    run_command git apply "$cwd/patches/deflate.h.patch"
+    run_command git apply "$src_deps_dir/patches/zlib/deflate.h.patch"
   fi
 }
 
@@ -937,6 +993,76 @@ build_zstd() {
   local name=$(if_windows "zstd.lib" "libzstd.a")
 
   copy $(path "$dst" "lib" "$artifact") $(path "$build_deps_dir" "$name")
+}
+
+build_bun() {
+  local pwd=$(pwd)
+  local src="$cwd"
+
+  local dirname="bun-$artifact"
+  if [ "$artifact" = "bun" ] || [ "$artifact" = "link" ]; then
+    dirname="bun"
+  fi
+  local dst=$(path "$build_dir" "$dirname")
+
+  local flags=(
+    # -DBUN_ZIG_OBJ_DIR="$dst"
+    # -DBUN_CPP_ARCHIVE="$dst/bun-cpp-objects.a"
+    # -DBUN_DEPS_OUT_DIR="$dst/bun-deps"
+    -DNO_CONFIGURE_DEPENDS=1
+    -DCPU_TARGET="$cpu"
+    -DCANARY="$canary"
+    -DBun_VERSION="$version"
+    -DLLVM_VERSION="$llvm_version"
+    -DGIT_SHA="$revision"
+  )
+
+  if [ "$baseline" = "1" ]; then
+    flags+=(-USE_BASELINE_BUILD=ON)
+  fi
+
+  if [ "$lto" = "1" ]; then
+    flags+=(-DUSE_LTO=ON)
+  fi
+
+  if [ "$assertions" = "1" ]; then
+    flags+=(-DUSE_DEBUG_JSC=ON)
+  fi
+
+  if [ "$valgrind" = "1" ] && [ "$os" = "linux" ]; then
+    flags+=(-DUSE_VALGRIND=ON)
+  fi
+
+  local artifact="$1"
+  print "Building $artifact"
+
+  if [ "$artifact" = "cpp" ]; then
+    flags+=(-DBUN_CPP_ONLY=1)
+  elif [ "$artifact" = "zig" ]; then
+    flags+=(
+      -DWEBKIT_DIR="omit"
+      -DZIG_TARGET="$(zig_target)"
+      -DZIG_OPTIMIZE="$zig_optimize"
+    )
+  elif [ "$artifact" = "link" ]; then
+    flags+=(-DBUN_LINK_ONLY=1)
+  fi
+
+  clean $src $dst
+  cmake_configure $src $dst ${flags[@]}
+
+  cd "$dst"
+
+  if [ "$artifact" = "cpp" ]; then
+    run_command sh compile-cpp-only.sh -v -j "$jobs"
+  elif [ "$artifact" = "zig" ]; then
+    export ONLY_ZIG=1
+    ninja_build "$dst/bun-zig.o"
+  else
+    ninja_build
+  fi
+
+  cd "$pwd"
 }
 
 main "$@"

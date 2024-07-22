@@ -421,6 +421,7 @@ pub const WebWorker = struct {
         var arena = this.arena;
 
         WebWorker__dispatchExit(globalObject, cpp_worker, exit_code);
+        bun.uws.onThreadExit();
         this.deinit();
 
         if (vm_to_deinit) |vm| {

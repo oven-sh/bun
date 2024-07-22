@@ -2284,6 +2284,12 @@ pub const Expect = struct {
                 var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                 globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalThis, &fmt)});
                 return .zero;
+            } else if (value.isObject()) {
+                if (ExpectAny.fromJSDirect(value)) |_| {
+                    if (ExpectAny.constructorValueGetCached(value)) |innerConstructorValue| {
+                        break :brk innerConstructorValue;
+                    }
+                }
             }
             break :brk value;
         } else .zero;

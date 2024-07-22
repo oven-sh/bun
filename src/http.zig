@@ -1408,6 +1408,7 @@ pub const InternalState = struct {
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
     is_redirect_pending: bool = false,
+    resend_request_body_on_redirect: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -1591,8 +1592,8 @@ signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
-
 unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
+is_preconnect_only: bool = false,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -1832,6 +1833,51 @@ pub const AsyncHTTP = struct {
         reject_unauthorized: ?bool = null,
         tls_props: ?*SSLConfig = null,
     };
+
+    const Preconnect = struct {
+        async_http: AsyncHTTP,
+        response_buffer: MutableString,
+        url: bun.URL,
+        is_url_owned: bool,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn onResult(this: *Preconnect, _: *AsyncHTTP, _: HTTPClientResult) void {
+            this.response_buffer.deinit();
+            this.async_http.clearData();
+            this.async_http.client.deinit();
+            if (this.is_url_owned) {
+                bun.default_allocator.free(this.url.href);
+            }
+
+            this.destroy();
+        }
+    };
+
+    pub fn preconnect(
+        url: URL,
+        is_url_owned: bool,
+    ) void {
+        if (!FeatureFlags.is_fetch_preconnect_supported) {
+            if (is_url_owned) {
+                bun.default_allocator.free(url.href);
+            }
+
+            return;
+        }
+
+        var this = Preconnect.new(.{
+            .async_http = undefined,
+            .response_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
+            .url = url,
+            .is_url_owned = is_url_owned,
+        });
+
+        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", 0, HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http.client.is_preconnect_only = true;
+
+        http_thread.schedule(Batch.from(&this.async_http.task));
+    }
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -2236,11 +2282,21 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     };
 }
 
-pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn doRedirect(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    ctx: *NewHTTPContext(is_ssl),
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
+    const request_body = if (this.state.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
+        this.state.original_request_body.bytes
+    else
+        "";
 
     this.state.response_message_buffer.deinit();
+
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
     if (this.isKeepAlivePossible()) {
@@ -2278,7 +2334,8 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
     if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
-    return this.start(.{ .bytes = "" }, body_out_str);
+
+    return this.start(.{ .bytes = request_body }, body_out_str);
 }
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
@@ -2368,10 +2425,37 @@ fn printResponse(response: picohttp.Response) void {
     Output.flush();
 }
 
+pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onPreconnect({})", .{this.url});
+    _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
+    const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
+
+    ctx.releaseSocket(
+        socket,
+        this.did_have_handshaking_error and !this.reject_unauthorized,
+        this.url.hostname,
+        this.url.getPortAuto(),
+    );
+
+    this.state.reset(this.allocator);
+    this.state.response_stage = .done;
+    this.state.request_stage = .done;
+    this.state.stage = .done;
+    this.proxy_tunneling = false;
+    this.result_callback.run(@fieldParentPtr("client", this), HTTPClientResult{ .fail = null, .metadata = null, .has_more = false });
+}
+
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
+    }
+
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (this.is_preconnect_only) {
+            this.onPreconnect(is_ssl, socket);
+            return;
+        }
     }
 
     switch (this.state.request_stage) {
@@ -2787,7 +2871,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 }
                 return;
             }
-
             const should_continue = this.handleResponseMetadata(
                 &response,
             ) catch |err| {
@@ -3785,6 +3868,9 @@ pub fn handleResponseMetadata(
                     }
 
                     this.state.is_redirect_pending = true;
+                    if (this.method.hasRequestBody()) {
+                        this.state.resend_request_body_on_redirect = true;
+                    }
                 },
                 else => {},
             }

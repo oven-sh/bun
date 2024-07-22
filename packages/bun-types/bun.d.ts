@@ -1455,7 +1455,7 @@ declare module "bun" {
      * ```js
      * const {imports, exports} = transpiler.scan(`
      * import {foo} from "baz";
-     * const hello = "hi!";
+     * export const hello = "hi!";
      * `);
      *
      * console.log(imports); // ["baz"]
@@ -3099,6 +3099,10 @@ declare module "bun" {
    * @param path path to open
    */
   function openInEditor(path: string, options?: EditorOptions): void;
+
+  const fetch: typeof globalThis.fetch & {
+    preconnect(url: string): void;
+  };
 
   interface EditorOptions {
     editor?: "vscode" | "subl";

@@ -350,6 +350,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
             socket.close(.failure);
         }
 
+        fn closeSocket(socket: HTTPSocket) void {
+            markSocketAsDead(socket);
+            socket.close(.normal);
+        }
+
         fn getTagged(ptr: *anyopaque) ActiveSocket {
             return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
         }
@@ -472,8 +477,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            markSocketAsDead(socket);
-            socket.close(.normal);
+            closeSocket(socket);
         }
 
         pub const Handler = struct {
@@ -620,7 +624,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 const tagged = getTagged(ptr);
-
+                markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(
                         comptime ssl,
@@ -657,7 +661,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 // TCP fin gets closed immediately.
-                socket.close(.failure);
+                terminateSocket(socket);
             }
         };
 
@@ -1142,9 +1146,9 @@ pub fn onClose(
 pub fn onTimeout(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    socket: NewHTTPContext(is_ssl).HTTPSocket,
+    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
+
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {
@@ -2297,9 +2301,9 @@ pub fn doRedirect(
 
     this.state.response_message_buffer.deinit();
 
-    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
+    // we need to clean the client reference before closing/releasing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
+        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
             socket,
@@ -2308,8 +2312,7 @@ pub fn doRedirect(
             this.connected_url.getPortAuto(),
         );
     } else {
-        NewHTTPContext(is_ssl).markSocketAsDead(socket);
-        socket.close(.normal);
+        NewHTTPContext(is_ssl).closeSocket(socket);
     }
 
     this.connected_url = URL{};
@@ -2740,8 +2743,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     if (this.state.stage != .fail and this.state.stage != .done) {
         log("closeAndFail: {s}", .{@errorName(err)});
         if (!socket.isClosed()) {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
-            socket.close(.failure);
+            NewHTTPContext(is_ssl).terminateSocket(socket);
         }
         this.fail(err);
     }
@@ -3158,8 +3160,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
-                NewHTTPContext(is_ssl).markSocketAsDead(socket);
-                socket.close(.normal);
+                NewHTTPContext(is_ssl).closeSocket(socket);
             }
 
             this.state.reset(this.allocator);

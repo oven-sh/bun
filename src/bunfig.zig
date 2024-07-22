@@ -167,6 +167,32 @@ pub const Bunfig = struct {
             }
         }
 
+        fn loadCoveragePathIgnorePatterns(
+            this: *Parser,
+            allocator: std.mem.Allocator,
+            expr: js_ast.Expr,
+        ) !void {
+            if (expr.asArray()) |array_| {
+                var array = array_;
+                var ignore_patterns = try std.ArrayList(string).initCapacity(allocator, array.array.items.len);
+                errdefer ignore_patterns.deinit();
+                while (array.next()) |item| {
+                    try this.expectString(item);
+                    if (item.data.e_string.len() > 0)
+                        ignore_patterns.appendAssumeCapacity(try item.data.e_string.string(allocator));
+                }
+                this.ctx.test_options.coverage.ignore_patterns = ignore_patterns.items;
+            } else if (expr.data == .e_string) {
+                if (expr.data.e_string.len() > 0) {
+                    var ignore_patterns = try allocator.alloc(string, 1);
+                    ignore_patterns[0] = try expr.data.e_string.string(allocator);
+                    this.ctx.test_options.coverage.ignore_patterns = ignore_patterns;
+                }
+            } else if (expr.data != .e_null) {
+                try this.addError(expr.loc, "Expected coveragePathIgnorePatterns to be a string or array of strings");
+            }
+        }
+
         pub fn parse(this: *Parser, comptime cmd: Command.Tag) !void {
             bun.analytics.Features.bunfig += 1;
 
@@ -256,6 +282,10 @@ pub const Bunfig = struct {
                     if (test_.get("coverage")) |expr| {
                         try this.expect(expr, .e_boolean);
                         this.ctx.test_options.coverage.enabled = expr.data.e_boolean.value;
+                    }
+
+                    if (test_.get("coveragePathIgnorePatterns")) |expr| {
+                        try this.loadCoveragePathIgnorePatterns(allocator, expr);
                     }
 
                     if (test_.get("coverageReporter")) |expr| brk: {

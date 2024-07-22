@@ -254,7 +254,7 @@ declare module "bun:sqlite" {
      *
      * Under the hood, this calls `sqlite3_prepare_v3`.
      */
-    prepare<ReturnType, ParamsType extends SQLQueryBindings | SQLQueryBindings[]>(
+    prepare<ParamsType extends SQLQueryBindings | SQLQueryBindings[], ReturnType = unknown>(
       sqlQuery: string,
       params?: ParamsType,
     ): // eslint-disable-next-line @definitelytyped/no-single-element-tuple-type

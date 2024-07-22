@@ -1,4 +1,4 @@
-import {expect, describe, it} from "bun:test";
+import { expect, describe, it } from "bun:test";
 
 // Custom class for testing
 class CustomException extends Error {
@@ -8,16 +8,16 @@ class CustomException extends Error {
   }
 }
 
-describe('Test expect.toThrow(expect.any())', () => {
-  it('should throw an error', () => {
+describe("Test expect.toThrow(expect.any())", () => {
+  it("should throw an error", () => {
     expect(() => {
-      throw new CustomException("Custom error message")
-    }).toThrow(expect.any(Error))
-  })
+      throw new CustomException("Custom error message");
+    }).toThrow(expect.any(Error));
+  });
 
-  it('should throw a CustomException', () => {
+  it("should throw a CustomException", () => {
     expect(() => {
-      throw new CustomException("Custom error message")
-    }).toThrow(expect.any(CustomException))
-  })
-})
+      throw new CustomException("Custom error message");
+    }).toThrow(expect.any(CustomException));
+  });
+});

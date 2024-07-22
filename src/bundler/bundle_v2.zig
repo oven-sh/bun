@@ -1987,13 +1987,13 @@ pub const BundleV2 = struct {
                 continue;
             };
 
-            // if (resolve_result.is_external) {
-            //     if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
-            //         import_record.path = resolve_result.path_pair.primary;
-            //     }
-            //     import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
-            //     continue;
-            // }
+            if (resolve_result.is_external) {
+                if (resolve_result.is_external_and_rewrite_import_path and !strings.eqlLong(resolve_result.path_pair.primary.text, import_record.path.text, true)) {
+                    import_record.path = resolve_result.path_pair.primary;
+                }
+                import_record.is_external_without_side_effects = resolve_result.primary_side_effects_data != .has_side_effects;
+                continue;
+            }
 
             const hash_key = path.hashKey();
 
@@ -6719,9 +6719,11 @@ pub const LinkerContext = struct {
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
 
-        const prev_action = bun.crash_handler.current_action;
-        defer bun.crash_handler.current_action = prev_action;
-        bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        defer if (Environment.isDebug) {
+            bun.crash_handler.current_action = prev_action;
+        };
+        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
             .chunk = ctx.chunk,
             .context = ctx.c,
             .part_range = &part_range.part_range,
@@ -8880,15 +8882,6 @@ pub const LinkerContext = struct {
                                         }),
                                     );
                                 },
-
-                                // TODO(@paperdave) DONT MERGE BRANCH WITHOUT VERIFYING
-                                // THIS CAN BE REMOVED OR FIX ITS BEHAVIOR
-                                // .s_export_default => |export_default| stmt: {
-                                //     if (export_default.canBeMoved()) {
-                                //         stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
-                                //     }
-                                //     break :stmt stmt;
-                                // },
                                 else => stmt,
                             };
 
@@ -10649,7 +10642,6 @@ pub const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                // if (!wrapper_ref.isEmpty()) {
                 const esm_parts = if (wrapper_ref.isValid())
                     c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
                 else

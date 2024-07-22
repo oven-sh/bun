@@ -23927,7 +23927,7 @@ fn NewParser_(
         /// The logic in this function must be in sync with the hoisting
         /// logic in `LinkerContext.generateCodeForFileInChunkJS`
         fn needsWrapperRef(p: *const P, parts: []const js_ast.Part) bool {
-            assert(p.options.bundle);
+            bun.assert(p.options.bundle);
             for (parts) |part| {
                 for (part.stmts) |stmt| {
                     switch (stmt.data) {
@@ -23937,7 +23937,7 @@ fn NewParser_(
                             if (local.was_commonjs_export or p.commonjs_named_exports.count() == 0) {
                                 for (local.decls.slice()) |decl| {
                                     if (decl.value) |value|
-                                        if (value.data != .e_missing and !value.canBeConstValue())
+                                        if (value.data != .e_missing and !value.canBeMoved())
                                             return true;
                                 }
                                 continue;
@@ -23949,7 +23949,7 @@ fn NewParser_(
                                 return true;
                         },
                         .s_export_equals => |e| {
-                            if (!e.value.canBeConstValue())
+                            if (!e.value.canBeMoved())
                                 return true;
                         },
                         else => return true,

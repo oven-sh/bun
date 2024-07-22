@@ -776,7 +776,7 @@ pub const G = struct {
                                 switch (val.data) {
                                     .e_arrow, .e_function => {},
                                     else => {
-                                        if (!val.canBeConstValue()) {
+                                        if (!val.canBeMoved()) {
                                             return false;
                                         }
                                     },
@@ -5516,13 +5516,15 @@ pub const Expr = struct {
             };
         }
 
+        /// "const values" here refers to expressions that can participate in constant
+        /// inlining, as they have no side effects on instantiation, and there would be
+        /// no observable difference if duplicated. This is a subset of canBeMoved()
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
                 .e_number,
                 .e_boolean,
                 .e_null,
                 .e_undefined,
-                .e_reg_exp,
                 .e_inlined_enum,
                 => true,
                 .e_string => |str| str.next == null,
@@ -5532,6 +5534,9 @@ pub const Expr = struct {
             };
         }
 
+        /// Expressions that can be moved are those that do not have side
+        /// effects on their own. This is used to determine what can be moved
+        /// outside of a module wrapper (__esm/__commonJS).
         pub fn canBeMoved(data: Expr.Data) bool {
             return switch (data) {
                 .e_class => |class| class.canBeMoved(),

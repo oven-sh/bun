@@ -136,8 +136,9 @@ pub fn SSLWrapper(T: type) type {
                     // we received a shutdown
                     this.flags.received_ssl_shutdown = true;
                     this.triggerCloseCallback();
+                    return false;
                 }
-                return false;
+                return true;
             }
 
             const result = BoringSSL.SSL_do_handshake(this.ssl);
@@ -193,9 +194,7 @@ pub fn SSLWrapper(T: type) type {
 
         /// Handle reading data
         /// Returns true if we can call handleWriting
-        fn handleReading(this: *This) bool {
-            // handle reading
-            var buffer: [16384]u8 = undefined;
+        fn handleReading(this: *This, buffer: []u8) bool {
             var read: usize = 0;
             // read data from the input BIO
             while (BoringSSL.BIO_ctrl_pending(this.input) > 0) {
@@ -254,8 +253,7 @@ pub fn SSLWrapper(T: type) type {
             return true;
         }
 
-        fn handleWriting(this: *This) void {
-            var buffer: [16384]u8 = undefined;
+        fn handleWriting(this: *This, buffer: []u8) void {
             while (true) {
                 // read data from the output BIO
                 const pending = BoringSSL.BIO_ctrl_pending(this.output);
@@ -274,10 +272,16 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn handleTraffic(this: *This) void {
+            // always handle the handshake first
             if (this.updateHandshakeState()) {
-                if (this.handleReading()) {
-                    // we may have data to write
-                    this.handleWriting();
+                // shared stack buffer for reading and writing
+                const buffer: [16384]u8 = undefined;
+                // drain the input BIO first
+                this.handleWriting(buffer);
+                // drain the output BIO
+                if (this.handleReading(buffer)) {
+                    // read data can trigger writing so we need to handle it
+                    this.handleWriting(buffer);
                 }
             }
         }

@@ -491,7 +491,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                     return;
                 }
 
@@ -526,6 +526,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                             client.did_have_handshaking_error = true;
+
                             if (!socket.isClosed()) terminateSocket(socket);
                             return;
                         }
@@ -540,25 +541,29 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     }
                 }
 
-                if (!socket.isClosed() and authorized and active.is(PooledSocket)) {
-                    // HTTPS keep-alive socket is ready to be used.
+                if (socket.isClosed()) {
+                    markSocketAsDead(socket);
+                    if (active.get(PooledSocket)) |pooled| {
+                        addMemoryBackToPool(pooled);
+                    }
+
                     return;
                 }
 
-                // we can reach here if we are aborted
-                if (!socket.isClosed()) {
-                    if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
-                        return;
-                    }
-
-                    terminateSocket(socket);
-                } else {
-                    if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
+                if (authorized) {
+                    if (active.is(PooledSocket)) {
+                        // Allow pooled sockets to be reused if the handshake was successful.
+                        socket.setTimeout(0);
+                        socket.setTimeoutMinutes(5);
                         return;
                     }
                 }
+
+                if (active.get(PooledSocket)) |pooled| {
+                    addMemoryBackToPool(pooled);
+                }
+
+                terminateSocket(socket);
             }
             pub fn onClose(
                 ptr: *anyopaque,
@@ -574,11 +579,16 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
 
                 return;
             }
+
+            fn addMemoryBackToPool(pooled: *PooledSocket) void {
+                assert(context().pending_sockets.put(pooled));
+            }
+
             pub fn onData(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
@@ -631,9 +641,10 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(comptime ssl, socket);
-                } else if (tagged.is(PooledSocket)) {
-                    // If the socket timed out and it's a pooled socket, it doesn't matter.
-                    return;
+                } else if (tagged.get(PooledSocket)) |pooled| {
+                    // If a socket has been sitting around for 5 minutes
+                    // Let's close it and remove it from the pool.
+                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -648,7 +659,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 if (tagged.get(HTTPClient)) |client| {
                     client.onConnectError();
                 } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
                 // us_connecting_socket_close is always called internally by uSockets
             }

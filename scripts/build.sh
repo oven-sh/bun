@@ -5,17 +5,15 @@
 main() {
   os=$(detect_os)
   arch=$(detect_arch)
-  target="$os-$arch"
-  artifact="bun"
-
-  scripts_dir=$(path $(cd -- "$(dirname -- "$0")" && pwd -P))
+  scripts_dir=$(path $(cd -- $(dirname -- "$0") && pwd -P))
   cwd=$(path $(dirname "$scripts_dir"))
   cache_dir=$(path "$cwd" ".cache")
   src_dir=$(path "$cwd" "src")
   src_deps_dir=$(path "$src_dir" "deps")
   build_dir=$(path "$cwd" "build")
   build_deps_dir=$(path "$build_dir" "bun-deps")
-
+  target="$os-$arch"
+  artifact="bun"
   clean="0"
   jobs=$(detect_jobs)
   verbose="0"
@@ -27,7 +25,7 @@ main() {
   revision=$(default_revision)
   canary="0"
   assertions="0"
-  lto="1"
+  lto=$(default_lto)
   valgrind="0"
   llvm_version=$(default_llvm_version)
   macos_version=$(default_macos_version)
@@ -116,12 +114,9 @@ main() {
 }
 
 run_command() {
-  local cmd="$1"
-  shift
-
-  set -x
-  $cmd $@
-  { set +x; } 2>/dev/null
+  print "$ $@" 2>&1
+  "$@"
+  [ $? -eq 0 ] || error "error: $@"
 }
 
 path() {
@@ -283,12 +278,29 @@ default_cpu() {
   esac
 }
 
+default_lto() {
+  # FIXME: LTO is broken on macOS
+  if [ "$os" = "darwin" ]; then
+    print "0"
+  else
+    print "1"
+  fi
+}
+
 default_llvm_version() {
-  print "16"
+  if [ "$os" = "darwin" ]; then
+    print "18"
+  else
+    print "16"
+  fi
 }
 
 default_macos_version() {
-  print "13.0"
+  if [ "$ci" != "1" ] && exists xcrun; then
+    print $(sw_vers -productVersion)
+  else
+    print "13.0"
+  fi
 }
 
 default_cc_version() {
@@ -297,6 +309,14 @@ default_cc_version() {
 
 default_cc_flags() {
   local flags=()
+
+  for arg in "$@"; do
+    shift
+    case "$arg" in
+      --pic) local pic="1" ;;
+      *) set -- "$@" "$arg" ;;
+    esac
+  done
 
   if [ "$os" = "windows" ]; then
     flags+=(
@@ -317,7 +337,6 @@ default_cc_flags() {
       -fno-omit-frame-pointer
       -fno-asynchronous-unwind-tables
       -fno-unwind-tables
-      -faddrsig
       -std="c$cc_version"
     )
   fi
@@ -326,6 +345,7 @@ default_cc_flags() {
     flags+=(
       -ffunction-sections
       -fdata-sections
+      -faddrsig
     )
   elif [ "$os" = "darwin" ]; then
     flags+=(
@@ -358,11 +378,17 @@ default_cc_flags() {
   fi
 
   if [ "$os" != "windows" ]; then
-    if [ -n "$FORCE_PIC" ]; then
+    if [ "$pic" = "1" ]; then
       flags+=(-fpic)
     else
       flags+=(-fno-pie -fno-pic)
     fi
+  fi
+
+  # Clang 18 on macOS needs to have -fno-define-target-os-macros to fix a zlib build issue
+  # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
+  if [[ "$os" == "darwin" && "$llvm_version" == "18" ]]; then
+    flags+=(-fno-define-target-os-macros)
   fi
 
   print "${flags[@]}"
@@ -381,12 +407,20 @@ default_cxx_version() {
 }
 
 default_cxx_flags() {
-  local flags=$(default_cc_flags)
+  local flags=$(default_cc_flags "$@")
 
   flags+=(
     -fno-rtti
+    -fno-c++-static-destructors
     -std="c++$cxx_version"
   )
+
+  if [ "$lto" = "1" ]; then
+    flags+=(
+      -fwhole-program-vtables
+      -fforce-emit-vtables
+    )
+  fi
   
   print "${flags[@]}"
 }
@@ -403,17 +437,50 @@ default_ar() {
   which "llvm-ar-$llvm_version" || which "llvm-ar" || which "ar"
 }
 
+default_ranlib() {
+  which "llvm-ranlib-$llvm_version" || which "llvm-ranlib" || which "ranlib"
+}
+
 default_ld_flags() {
-  if [ "$os" = "linux" ]; then
-    print "-Wl,-z,norelro"
+  local flags=()
+
+  for arg in "$@"; do
+    shift
+    case "$arg" in
+      --no-ld) local no_ld="1" ;;
+      --no-version) local no_version="1" ;;
+      *) set -- "$@" "$arg" ;;
+    esac
+  done
+
+  if [ "$no_ld" != "1" ]; then
+    flags+=(-fuse-ld="$ld")
   fi
+
+  if [ "$os" = "linux" ]; then
+    flags+=("-Wl,-z,norelro")
+  elif [ "$os" = "darwin" ]; then
+    if [ "$no_version" != "1" ]; then
+      flags+=(-macos_version_min="$macos_version")
+    fi
+  fi
+
+  if [ "$lto" = "1" ]; then
+    flags+=(
+      -flto=full
+      -fwhole-program-vtables
+      -fforce-emit-vtables
+    )
+  fi
+
+  print "${flags[@]}"
 }
 
 default_ld() {
   if [ "$os" = "darwin" ]; then
     which "ld64.lld" || which "ld"
   elif [ "$os" = "linux" ]; then
-    which "ld.lld" || which "ld"
+    which "ld.ldd-$llvm_version" || which "ld.lld" || which "ld"
   elif [ "$os" = "windows" ]; then
     which "lld-link" || which "ld"
   fi
@@ -543,7 +610,7 @@ Options:
 
 clean() {
   if [ "$clean" = "1" ]; then
-    run_command git clean -fdx "$@"
+    run_command git clean -fdx "$@" --exclude .cache
   fi
 }
 
@@ -555,26 +622,36 @@ copy() {
     mkdir -p "$(dirname "$2")"
   fi
   cp "$1" "$2"
-  pretty_ln "{dim}-> {reset}{green}$2{reset}" 2>&1
+  pretty "{dim}-> {reset}{green}$2{reset}" 2>&1
 }
 
 cmake_configure() {
-  # case "$@" in
-  #   *--pic*) export FORCE_PIC="1"; shift ;;
-  #   *) shift ;;
-  # esac
+  local cflags="$(default_cc_flags "$@")"
+  local cxxflags="$(default_cxx_flags "$@")"
+  local ldflags="$(default_ld_flags "$@")"
+
+  for arg in "$@"; do
+    shift
+    case "$arg" in
+      --*) continue ;;
+      *) set -- "$@" "$arg" ;;
+    esac
+  done
 
   local flags=(
     -GNinja
-    -DCMAKE_BUILD_PARALLEL_LEVEL="$jobs"
-    -DCMAKE_C_STANDARD="$cc_version"
-    -DCMAKE_CXX_STANDARD="$cxx_version"
-    -DCMAKE_C_STANDARD_REQUIRED=ON
-    -DCMAKE_CXX_STANDARD_REQUIRED=ON
     -DCMAKE_C_COMPILER="$cc"
+    -DCMAKE_C_FLAGS="$cflags"
+    -DCMAKE_C_STANDARD="$cc_version"
+    -DCMAKE_C_STANDARD_REQUIRED=ON
     -DCMAKE_CXX_COMPILER="$cxx"
-    '-DCMAKE_C_FLAGS=$CFLAGS'
-    '-DCMAKE_CXX_FLAGS=$CXXFLAGS'
+    -DCMAKE_CXX_FLAGS="$cxxflags"
+    -DCMAKE_CXX_STANDARD="$cxx_version"
+    -DCMAKE_CXX_STANDARD_REQUIRED=ON
+    -DCMAKE_LD="$ld"
+    -DCMAKE_LD_FLAGS="$ldflags"
+    -DCMAKE_AR="$ar"
+    -DCMAKE_RANLIB="$ranlib"
   )
 
   if [ "$type" = "debug" ]; then
@@ -602,11 +679,18 @@ cmake_configure() {
     flags+=(-DCMAKE_VERBOSE_MAKEFILE=ON)
   fi
 
-  CFLAGS="$(default_cc_flags)" CXXFLAGS="$(default_cxx_flags)" LDFLAGS="$(default_ld_flags)" run_command cmake -S "$1" -B "$2" "${flags[@]}" ${@:3}
+  run_command cmake -S "$1" -B "$2" "${flags[@]}" "${@:3}"
 }
 
 cmake_build() {
-  local flags=(--build $@)
+  local flags=(
+    --build "$@"
+    --parallel "$jobs"
+  )
+
+  if [ "$clean" = "1" ]; then
+    flags+=(--clean-first)
+  fi
 
   if [ "$type" = "debug" ]; then
     flags+=(--config Debug)
@@ -614,7 +698,7 @@ cmake_build() {
     flags+=(--config Release)
   fi
 
-  CCACHE_DIR=$(path "$cache_dir" "ccache") run_command cmake ${flags[@]}
+  CCACHE_DIR=$(path "$cache_dir" "ccache") run_command cmake "${flags[@]}"
 }
 
 rust_target() {
@@ -767,6 +851,7 @@ build_cares() {
 
   clean $src $dst
   cmake_configure $src $dst \
+    --pic \
     -DCARES_STATIC=ON \
     -DCARES_STATIC_PIC=ON \
     -DCARES_SHARED=OFF
@@ -788,6 +873,7 @@ build_libarchive() {
 
   clean $src $dst
   cmake_configure $src $dst \
+    --pic \
     -DBUILD_SHARED_LIBS=0 \
     -DENABLE_BZIP2=0 \
     -DENABLE_CAT=0 \
@@ -942,12 +1028,15 @@ build_tinycc_posix() {
   local pwd=$(pwd)
   local src=$(src_tinycc)
 
+  local cflags="$(default_cc_flags)"
+  local ldflags="$(default_ld_flags --no-version)"
   local flags=(
     --enable-static
     --cc="$cc"
     --ar="$ar"
     --config-predefs=yes
-    '--extra-cflags="$CFLAGS"'
+    --extra-cflags="$cflags"
+    --extra-ldflags="$ldflags"
   )
 
   if [ "$cpu" != "native" ]; then
@@ -958,16 +1047,16 @@ build_tinycc_posix() {
     flags+=(--debug)
   fi
 
-  cd $src
+  cd "$src"
 
   if [ "$clean" = "1" ]; then
     run_command make clean
   fi
 
-  CFLAGS="$(default_cc_flags)" LDFLAGS=$(default_ld_flags) run_command ./configure "${flags[@]}"
+  CFLAGS="-DTCC_LIBTCC1=\\\"\0\\\"" run_command ./configure "${flags[@]}"
   run_command make -j "$jobs"
 
-  cd $pwd
+  cd "$pwd"
 
   copy $(path "$src" "libtcc.a") $(path "$build_deps_dir" "libtcc.a")
 }
@@ -1055,7 +1144,7 @@ build_zstd() {
 
 build_bun() {
   if [ $# -eq 0 ]; then
-    build_deps
+    build_bun_deps
     build_bun "cpp"
     build_bun "zig"
     build_bun "link"
@@ -1194,9 +1283,10 @@ build_bun_fallback_decoder() {
     return
   fi
 
-  cd $src_dir
+  cd $cwd
   clean $src $dst
 
+  bun_or_npm install
   esbuild \
     --bundle \
     --minify \
@@ -1217,9 +1307,10 @@ build_bun_runtime_js() {
     return
   fi
 
-  cd $src_dir
+  cd $cwd
   clean $src $dst
 
+  bun_or_npm install
   NODE_ENV=production esbuild \
     --bundle \
     --minify \
@@ -1236,8 +1327,11 @@ prepare_bun() {
   local bin="$1"
   local artifact="$2"
 
-  chmod +x $bin
-  copy $bin $(path "$build_dir" "$artifact")
+  chmod +x "$bin"
+  run_command "$bin" --revision
+
+  local dst=$(path "$build_dir" "$artifact")
+  copy "$bin" "$dst"
 }
 
 main "$@"

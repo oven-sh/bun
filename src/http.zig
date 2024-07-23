@@ -1549,44 +1549,46 @@ pub const InternalState = struct {
 
         var still_needs_to_decompress = true;
 
-        // Fast-path: use libdeflate
-        if (is_final_chunk and !this.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
-            this.is_libdeflate_fast_path_disabled = true;
+        if (FeatureFlags.isLibdeflateEnabled()) {
+            // Fast-path: use libdeflate
+            if (is_final_chunk and !this.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
+                this.is_libdeflate_fast_path_disabled = true;
 
-            log("Decompressing {d} bytes with libdeflate\n", .{buffer.len});
-            var deflater = http_thread.deflater();
+                log("Decompressing {d} bytes with libdeflate\n", .{buffer.len});
+                var deflater = http_thread.deflater();
 
-            // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
-            // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
-            // If we know that the stream is going to be larger than our
-            // pre-allocated buffer, then let's dynamically allocate the exact
-            // size.
-            if (this.encoding == Encoding.gzip and buffer.len > 128 and buffer.len < 1024 * 1024 * 1024) {
-                const estimated_size: u32 = @bitCast(buffer[buffer.len - 4 ..][0..4].*);
-                // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
-                if (estimated_size > deflater.shared_buffer.len and estimated_size < 32 * 1024 * 1024) {
-                    try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, estimated_size);
-                    const result = deflater.decompressor.decompress(buffer, body_out_str.list.allocatedSlice(), .gzip);
+                // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
+                // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
+                // If we know that the stream is going to be larger than our
+                // pre-allocated buffer, then let's dynamically allocate the exact
+                // size.
+                if (this.encoding == Encoding.gzip and buffer.len > 16 and buffer.len < 1024 * 1024 * 1024) {
+                    const estimated_size: u32 = @bitCast(buffer[buffer.len - 4 ..][0..4].*);
+                    // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
+                    if (estimated_size > deflater.shared_buffer.len and estimated_size < 32 * 1024 * 1024) {
+                        try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, estimated_size);
+                        const result = deflater.decompressor.decompress(buffer, body_out_str.list.allocatedSlice(), .gzip);
 
-                    if (result.status == .success) {
-                        body_out_str.list.items.len = result.written;
-                        still_needs_to_decompress = false;
+                        if (result.status == .success) {
+                            body_out_str.list.items.len = result.written;
+                            still_needs_to_decompress = false;
+                        }
+
+                        break :libdeflate;
                     }
-
-                    break :libdeflate;
                 }
-            }
 
-            const result = deflater.decompressor.decompress(buffer, &deflater.shared_buffer, switch (this.encoding) {
-                .gzip => .gzip,
-                .deflate => .deflate,
-                else => unreachable,
-            });
+                const result = deflater.decompressor.decompress(buffer, &deflater.shared_buffer, switch (this.encoding) {
+                    .gzip => .gzip,
+                    .deflate => .deflate,
+                    else => unreachable,
+                });
 
-            if (result.status == .success) {
-                try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, result.written);
-                body_out_str.list.appendSliceAssumeCapacity(deflater.shared_buffer[0..result.written]);
-                still_needs_to_decompress = false;
+                if (result.status == .success) {
+                    try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, result.written);
+                    body_out_str.list.appendSliceAssumeCapacity(deflater.shared_buffer[0..result.written]);
+                    still_needs_to_decompress = false;
+                }
             }
         }
 

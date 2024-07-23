@@ -4669,8 +4669,9 @@ pub const JSZlib = struct {
         const arguments = callframe.arguments(2).slice();
         const buffer_value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
         const options_val: ?JSValue =
-            if (arguments.len > 1 and arguments[1].isObject()) arguments[1] else if (arguments.len > 1 and !arguments[1].isUndefined())
-        {
+            if (arguments.len > 1 and arguments[1].isObject())
+            arguments[1]
+        else if (arguments.len > 1 and !arguments[1].isUndefined()) {
             globalThis.throwInvalidArguments("Expected options to be an object", .{});
             return null;
         } else null;
@@ -4730,39 +4731,37 @@ pub const JSZlib = struct {
             .windowBits = if (is_gzip) 31 else -15,
         };
 
-        var library: Library = if (is_gzip) .libdeflate else .zlib;
+        var library: Library = .zlib;
         if (options_val_) |options_val| {
-            if (options_val.isObject()) {
-                if (options_val.get(globalThis, "windowBits")) |window| {
-                    opts.windowBits = window.coerce(i32, globalThis);
-                    library = .zlib;
+            if (options_val.get(globalThis, "windowBits")) |window| {
+                opts.windowBits = window.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.get(globalThis, "level")) |level| {
+                opts.level = level.coerce(i32, globalThis);
+            }
+
+            if (options_val.get(globalThis, "memLevel")) |memLevel| {
+                opts.memLevel = memLevel.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.get(globalThis, "strategy")) |strategy| {
+                opts.strategy = strategy.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+                if (!library_value.isString()) {
+                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
+                    return .zero;
                 }
 
-                if (options_val.get(globalThis, "level")) |level| {
-                    opts.level = level.coerce(i32, globalThis);
-                }
-
-                if (options_val.get(globalThis, "memLevel")) |memLevel| {
-                    opts.memLevel = memLevel.coerce(i32, globalThis);
-                    library = .zlib;
-                }
-
-                if (options_val.get(globalThis, "strategy")) |strategy| {
-                    opts.strategy = strategy.coerce(i32, globalThis);
-                    library = .zlib;
-                }
-
-                if (options_val.getTruthy(globalThis, "library")) |library_value| {
-                    if (!library_value.isString()) {
-                        globalThis.throwInvalidArguments("Expected library to be a string", .{});
-                        return .zero;
-                    }
-
-                    library = Library.map.fromJS(globalThis, library_value) orelse {
-                        globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
-                        return .zero;
-                    };
-                }
+                library = Library.map.fromJS(globalThis, library_value) orelse {
+                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
+                    return .zero;
+                };
             }
         }
 
@@ -4871,39 +4870,37 @@ pub const JSZlib = struct {
         is_gzip: bool,
     ) JSValue {
         var level: ?i32 = null;
-        var library: Library = .libdeflate;
+        var library: Library = .zlib;
         var windowBits: i32 = 0;
 
         if (options_val_) |options_val| {
-            if (options_val.isObject()) {
-                if (options_val.get(globalThis, "windowBits")) |window| {
-                    windowBits = window.coerce(i32, globalThis);
-                    library = .zlib;
+            if (options_val.get(globalThis, "windowBits")) |window| {
+                windowBits = window.coerce(i32, globalThis);
+                library = .zlib;
+            }
+
+            if (options_val.getTruthy(globalThis, "library")) |library_value| {
+                if (!library_value.isString()) {
+                    globalThis.throwInvalidArguments("Expected library to be a string", .{});
+                    return .zero;
                 }
 
-                if (options_val.getTruthy(globalThis, "library")) |library_value| {
-                    if (!library_value.isString()) {
-                        globalThis.throwInvalidArguments("Expected library to be a string", .{});
-                        return .zero;
-                    }
+                library = Library.map.fromJS(globalThis, library_value) orelse {
+                    globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
+                    return .zero;
+                };
+            }
 
-                    library = Library.map.fromJS(globalThis, library_value) orelse {
-                        globalThis.throwInvalidArguments("Expected library to be one of 'zlib' or 'libdeflate'", .{});
-                        return .zero;
-                    };
-                }
-
-                if (options_val.get(globalThis, "level")) |level_value| {
-                    level = level_value.coerce(i32, globalThis);
-                    if (globalThis.hasException()) return .zero;
-                }
+            if (options_val.get(globalThis, "level")) |level_value| {
+                level = level_value.coerce(i32, globalThis);
+                if (globalThis.hasException()) return .zero;
             }
         }
 
         if (globalThis.hasException()) return .zero;
 
         const compressed = buffer.slice();
-        const allocator = JSC.VirtualMachine.get().allocator;
+        const allocator = bun.default_allocator;
 
         switch (library) {
             .zlib => {

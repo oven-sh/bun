@@ -645,8 +645,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 } else if (tagged.get(PooledSocket)) |pooled| {
                     assert(context().pending_sockets.put(pooled));
                 }
-
-                terminateSocket(socket);
+                // us_connecting_socket_close is always called internally by uSockets
             }
             pub fn onEnd(
                 _: *anyopaque,

@@ -10,8 +10,6 @@ main() {
   cache_dir=$(path "$cwd" ".cache")
   src_dir=$(path "$cwd" "src")
   src_deps_dir=$(path "$src_dir" "deps")
-  build_dir=$(path "$cwd" "build")
-  build_deps_dir=$(path "$build_dir" "bun-deps")
   target="$os-$arch"
   artifact="bun"
   clean="0"
@@ -29,18 +27,11 @@ main() {
   valgrind="0"
   llvm_version=$(default_llvm_version)
   macos_version=$(default_macos_version)
-  ar=$(default_ar)
-  ld=$(default_ld)
-  ccache=$(default_ccache)
   cc_version=$(default_cc_version)
-  cc=$(default_cc)
   cxx_version=$(default_cxx_version)
-  cxx=$(default_cxx)
   zig_version=$(default_zig_version)
   zig_optimize=$(default_zig_optimize)
-  zig=$(default_zig)
   bun_version=$(default_bun_version)
-  bun=$(default_bun)
 
   while [ $# -gt 0 ]; do
     case "$1" in
@@ -66,6 +57,7 @@ main() {
       --no-lto) lto="0"; shift ;;
       --valgrind) valgrind="1"; shift ;;
       --llvm-version) llvm_version="$2"; shift ;;
+      --llvm-path) llvm_path="$2"; shift ;;
       --macos-version) macos_version="$2"; shift ;;
       --cc-version) cc_version="$2"; shift ;;
       --cxx-version) cxx_version="$2"; shift ;;
@@ -83,6 +75,54 @@ main() {
       *) shift ;;
     esac
   done
+
+  if [ -z "$llvm_path" ] && exists brew; then
+    local llvm_dir=$(brew --prefix "llvm@$llvm_version")
+    if [ -d "$llvm_dir" ]; then
+      llvm_path=$(path "$llvm_dir" "bin")
+    fi
+  fi
+
+  if [ -n "$llvm_path" ]; then
+    [ -z "$cc" ]     && cc=$(path "$llvm_path" "clang")
+    [ -z "$cxx" ]    && cxx=$(path "$llvm_path" "clang++")
+    [ -z "$ar" ]     && ar=$(path "$llvm_path" "llvm-ar")
+    [ -z "$ld" ]     && ld=$(path "$llvm_path" "ld.lld")
+  else
+    [ -z "$cc" ]     && cc=$(default_cc)
+    [ -z "$cxx" ]    && cxx=$(default_cxx)
+    [ -z "$ar" ]     && ar=$(default_ar)
+    [ -z "$ld" ]     && ld=$(default_ld)
+  fi
+
+  [ -z "$ccache" ] && ccache=$(default_ccache)
+  [ -z "$zig" ]    && zig=$(default_zig)
+  [ -z "$bun" ]    && bun=$(default_bun)
+
+  if [ "$lto" = "1" ] && [ "$os" = "darwin" ]; then
+    lto="0"
+    warn "{dim}--lto{reset} is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)" 2>&1
+  fi
+
+  if [ "$valgrind" = "1" ]; then
+    type="debug"
+    if [ "$os" != "linux" ]; then
+      valgrind="0"
+      warn "{dim}--valgrind{reset} is only supported on Linux" 2>&1
+    fi
+  fi
+
+  if [ "$type" = "debug" ]; then
+    zig_optimize="Debug"
+  fi
+
+  build_name="bun-$target"
+  if [ "$baseline" = "1" ]; then
+    build_name="$build_name-baseline"
+  fi
+
+  build_dir=$(path "$cwd" "build" "$build_name")
+  build_deps_dir=$(path "$build_dir" "bun-deps")
 
   case "$artifact" in
     bun) build_bun ;;
@@ -279,7 +319,8 @@ default_cpu() {
 }
 
 default_lto() {
-  # FIXME: LTO is broken on macOS
+  # FIXME: We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld
+  # and lld causes many segfaults on macOS (likely related to stack size)
   if [ "$os" = "darwin" ]; then
     print "0"
   else
@@ -337,7 +378,6 @@ default_cc_flags() {
       -fno-omit-frame-pointer
       -fno-asynchronous-unwind-tables
       -fno-unwind-tables
-      -std="c$cc_version"
     )
   fi
 
@@ -371,6 +411,7 @@ default_cc_flags() {
     flags+=(-flto=full)
     if [ "$os" = "windows" ]; then
       flags+=(
+        -fuse-ld="$ld"
         -Xclang
         -emit-llvm-bc
       )
@@ -380,7 +421,7 @@ default_cc_flags() {
   if [ "$os" != "windows" ]; then
     if [ "$pic" = "1" ]; then
       flags+=(-fpic)
-    else
+    elif [ "$os" = "linux" ]; then
       flags+=(-fno-pie -fno-pic)
     fi
   fi
@@ -409,11 +450,12 @@ default_cxx_version() {
 default_cxx_flags() {
   local flags=$(default_cc_flags "$@")
 
-  flags+=(
-    -fno-rtti
-    -fno-c++-static-destructors
-    -std="c++$cxx_version"
-  )
+  if [ "$os" != "windows" ]; then
+    flags+=(
+      -fno-rtti
+      -fno-c++-static-destructors
+    )
+  fi
 
   if [ "$lto" = "1" ]; then
     flags+=(
@@ -434,7 +476,11 @@ default_cxx() {
 }
 
 default_ar() {
-  which "llvm-ar-$llvm_version" || which "llvm-ar" || which "ar"
+  if [ "$os" = "windows" ] && [ "$lto" = "1" ]; then
+    which "llvm-lib"
+  else
+    which "llvm-ar-$llvm_version" || which "llvm-ar" || which "ar"
+  fi
 }
 
 default_ranlib() {
@@ -453,20 +499,15 @@ default_ld_flags() {
     esac
   done
 
-  if [ "$no_ld" != "1" ]; then
-    flags+=(-fuse-ld="$ld")
-  fi
-
   if [ "$os" = "linux" ]; then
     flags+=("-Wl,-z,norelro")
-  elif [ "$os" = "darwin" ]; then
-    if [ "$no_version" != "1" ]; then
-      flags+=(-macos_version_min="$macos_version")
-    fi
+  elif [ "$os" = "darwin" ] && [ "$no_version" != "1" ]; then
+    flags+=(-macos_version_min="$macos_version")
   fi
 
   if [ "$lto" = "1" ]; then
     flags+=(
+      -fuse-ld="$ld"
       -flto=full
       -fwhole-program-vtables
       -fforce-emit-vtables
@@ -591,6 +632,7 @@ Options:
   {cyan}--valgrind{reset}             Specify if valgrind should be enabled (Linux only){reset}              {dim}(default: {yellow}$valgrind{reset}{dim}){reset}
 
   {cyan}--llvm-version{reset} {dim}[semver]{reset}  Specify the LLVM version to use{reset}                      {dim}(default: {yellow}$llvm_version{reset}{dim}){reset}
+  {cyan}--llvm-path{reset} {dim}[path]{reset}       Specify the path to the LLVM installation{reset}            {dim}(default: {yellow}$llvm_path{reset}{dim}){reset}
   {cyan}--macos-version{reset} {dim}[semver]{reset} Specify the minimum macOS version to target{reset}          {dim}(default: {yellow}$macos_version{reset}{dim}){reset}
   {cyan}--cc-version{reset} {dim}[number]{reset}    Specify the C standard to use{reset}                        {dim}(default: {yellow}$cc_version{reset}{dim}){reset}
   {cyan}--cxx-version{reset} {dim}[number]{reset}   Specify the C++ standard to use{reset}                      {dim}(default: {yellow}$cxx_version{reset}{dim}){reset}
@@ -626,14 +668,14 @@ copy() {
 }
 
 cmake_configure() {
-  local cflags="$(default_cc_flags "$@")"
-  local cxxflags="$(default_cxx_flags "$@")"
-  local ldflags="$(default_ld_flags "$@")"
+  local cc_flags=$(default_cc_flags "$@")
+  local cxx_flags=$(default_cxx_flags "$@")
+  local ld_flags=$(default_ld_flags "$@")
 
   for arg in "$@"; do
     shift
     case "$arg" in
-      --*) continue ;;
+      --*) ;;
       *) set -- "$@" "$arg" ;;
     esac
   done
@@ -641,15 +683,15 @@ cmake_configure() {
   local flags=(
     -GNinja
     -DCMAKE_C_COMPILER="$cc"
-    -DCMAKE_C_FLAGS="$cflags"
+    -DCMAKE_C_FLAGS="$cc_flags"
     -DCMAKE_C_STANDARD="$cc_version"
     -DCMAKE_C_STANDARD_REQUIRED=ON
     -DCMAKE_CXX_COMPILER="$cxx"
-    -DCMAKE_CXX_FLAGS="$cxxflags"
+    -DCMAKE_CXX_FLAGS="$cxx_flags"
     -DCMAKE_CXX_STANDARD="$cxx_version"
     -DCMAKE_CXX_STANDARD_REQUIRED=ON
     -DCMAKE_LD="$ld"
-    -DCMAKE_LD_FLAGS="$ldflags"
+    -DCMAKE_LD_FLAGS="$ld_flags"
     -DCMAKE_AR="$ar"
     -DCMAKE_RANLIB="$ranlib"
   )
@@ -665,18 +707,23 @@ cmake_configure() {
       -DCMAKE_C_COMPILER_LAUNCHER="$ccache"
       -DCMAKE_CXX_COMPILER_LAUNCHER="$ccache"
     )
+    if [ "$os" = "windows" ]; then
+      flags+=(
+        -DCMAKE_MSVC_DEBUG_INFORMATION_FORMAT=Embedded
+        -DCMAKE_POLICY_CMP0141=NEW
+      )
+      export SCCACHE_IGNORE_SERVER_IO_ERROR="1"
+    fi
   fi
 
+  # WebKit uses -std=gnu++20 on non-macOS and non-Windows.
+  # If not set, it will crash at startup on the first memory allocation.
   if [ "$os" = "linux" ]; then
     flags+=(-DCMAKE_CXX_EXTENSIONS=ON)
-  elif [ "$os" = "darwin" ]; then
-    flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_version")
-  elif [ "$os" = "windows" ]; then
-    flags+=(-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
   fi
 
-  if [ "$verbose" = "1" ]; then
-    flags+=(-DCMAKE_VERBOSE_MAKEFILE=ON)
+  if [ "$os" = "darwin" ]; then
+    flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_version")
   fi
 
   run_command cmake -S "$1" -B "$2" "${flags[@]}" "${@:3}"
@@ -953,9 +1000,11 @@ build_lshpack() {
   cmake_configure $src $dst \
     -DLSHPACK_XXH=ON \
     -DSHARED=0
-  cmake_build $dst
 
   local artifact=$(if_windows "ls-hpack.lib" "libls-hpack.a")
+  cmake_build $dst \
+    --target "$artifact"
+
   local name=$(if_windows "lshpack.lib" "liblshpack.a")
 
   copy $(path "$dst" "$artifact") $(path "$build_deps_dir" "$name")
@@ -986,7 +1035,7 @@ build_mimalloc() {
     flags+=(-DMI_DEBUG_FULL=1)
   fi
 
-  if [ "$valgrind" = "1" ] && [ "$os" = "linux" ]; then
+  if [ "$valgrind" = "1" ]; then
     flags+=(-DMI_TRACK_VALGRIND=ON)
   fi
 
@@ -1002,7 +1051,7 @@ build_mimalloc() {
     name=$(if_windows "mimalloc.lib" "libmimalloc-debug.a")
   fi
 
-  if [ "$valgrind" = "1" ] && [ "$os" = "linux" ]; then
+  if [ "$valgrind" = "1" ]; then
     artifact="libmimalloc-valgrind.a"
   fi
 
@@ -1028,13 +1077,13 @@ build_tinycc_posix() {
   local pwd=$(pwd)
   local src=$(src_tinycc)
 
-  local cflags="$(default_cc_flags)"
-  local ldflags="$(default_ld_flags --no-version)"
+  local cflags=$(default_cc_flags --pic)
+  local ldflags=$(default_ld_flags --no-version)
   local flags=(
     --enable-static
+    --config-predefs=yes
     --cc="$cc"
     --ar="$ar"
-    --config-predefs=yes
     --extra-cflags="$cflags"
     --extra-ldflags="$ldflags"
   )
@@ -1065,11 +1114,10 @@ build_tinycc_windows() {
   local pwd=$(pwd)
   local src=$(src_tinycc)
 
-  clean $src
-
   cd $src
   if [ "$clean" = "1" ]; then
     run_command cmd.exe /c win32\\build-tcc.bat -clean
+    git restore stab.def
   fi
 
   echo "#define TCC_VERSION \"$(cat VERSION)\"
@@ -1077,17 +1125,16 @@ build_tinycc_windows() {
 #define CONFIG_TCCDIR \"$(path $src)\"
 #define CONFIG_TCC_PREDEFS 1
 #ifdef TCC_TARGET_X86_64
-#define CONFIG_TCC_CROSSPREFIX "$PX%-"
+#define CONFIG_TCC_CROSSPREFIX \"$PX%-\"
 #endif
 " > config.h
   
-  run_command $cc -DTCC_TARGET_PE -DTCC_TARGET_X86_64 config.h -DC2STR -o c2str.exe conftest.c
+  run_command "$cc" -DTCC_TARGET_PE -DTCC_TARGET_X86_64 config.h -DC2STR -o c2str.exe conftest.c
   run_command $(path $src "c2str.exe") .\\include\\tccdefs.h tccdefs_.h
 
-  # $Baseline = $env:BUN_DEV_ENV_SET -eq "Baseline=True"
-
-  CFLAGS=$(default_cc_flags) run_command $cc libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c" "-MT"
-  run_command llvm-lib "tcc.obj" "-OUT:tcc.lib"
+  CFLAGS=$(default_cc_flags) run_command "$cc" libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c" "-MT"
+  run_command "$ar" "tcc.obj" "-OUT:tcc.lib"
+  copy "tcc.obj" $(path "$build_deps_dir" "tcc.lib")
 
   cd $pwd
 }
@@ -1097,10 +1144,10 @@ src_zlib() {
 }
 
 patch_zlib() {
-  if [ "$os" == "windows" ]; then
+  if [ "$os" == "windows" ] && cat "$src_deps_dir/zlib/deflate.h" | regex "__builtin_ctzl" >/dev/null 2>&1; then
     # TODO: make a patch upstream to change the line: `#ifdef _MSC_VER`
     # to account for clang-cl, which implements `__builtin_ctzl` and `__builtin_expect`
-    run_command git apply "$src_deps_dir/patches/zlib/deflate.h.patch"
+    run_command git apply --ignore-space-change --ignore-whitespace "$src_deps_dir/patches/zlib/deflate.h.patch"
   fi
 }
 
@@ -1109,10 +1156,7 @@ build_zlib() {
   local dst=$(path "$build_dir" "zlib")
 
   clean $src $dst
-  if [ "$clean" = "1" ]; then
-    patch_zlib
-  fi
-  
+  patch_zlib
 
   cmake_configure $src $dst
   cmake_build $dst
@@ -1179,7 +1223,7 @@ build_bun() {
     flags+=(-DUSE_DEBUG_JSC=ON)
   fi
 
-  if [ "$valgrind" = "1" ] && [ "$os" = "linux" ]; then
+  if [ "$valgrind" = "1" ]; then
     flags+=(-DUSE_VALGRIND=ON)
   fi
 
@@ -1217,7 +1261,7 @@ build_bun() {
   cd $dst
 
   if [ "$artifact" = "cpp" ]; then
-    run_command sh compile-cpp-only.sh -v -j "$jobs"
+    run_command bash compile-cpp-only.sh -v -j "$jobs"
     copy $(path "$dst" "bun-cpp-objects.a") $(path "$build_dir" "bun-cpp.a")
   elif [ "$artifact" = "zig" ]; then
     ONLY_ZIG=1 ZIG_LOCAL_CACHE_DIR=$(path "$cache_dir" "zig-cache") ninja_build "$dst/bun-zig.o"

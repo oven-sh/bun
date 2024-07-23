@@ -36,6 +36,7 @@ elif [[ $(uname -s) == 'Darwin' ]]; then
   export RANLIB="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ranlib"
   export LIBTOOL="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-libtool-darwin"
   ln -sf $LIBTOOL "$(brew --prefix llvm)@$LLVM_VERSION/bin/libtool" || true
+  export PATH="$(brew --prefix llvm)@$LLVM_VERSION/bin:$PATH"
 fi
 
 # this compiler detection could be better

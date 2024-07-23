@@ -1443,6 +1443,32 @@ describe("bundler", () => {
       "/entry.ts": [`"Y" has already been declared`],
     },
   });
+  // This specifically only happens with 'export { ... } from ...' syntax
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
   itBundled("edgecase/BuiltinWithTrailingSlash", {
     files: {
       "/entry.js": `

@@ -3358,7 +3358,7 @@ const LinkerGraph = struct {
     }
 
     pub fn generateNewSymbol(this: *LinkerGraph, source_index: u32, kind: Symbol.Kind, original_name: string) Ref {
-        var source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
+        const source_symbols = &this.symbols.symbols_for_source.slice()[source_index];
 
         var ref = Ref.init(
             @as(Ref.Int, @truncate(source_symbols.len)),
@@ -3813,7 +3813,6 @@ const LinkerContext = struct {
 
     resolver: *Resolver = undefined,
     cycle_detector: std.ArrayList(ImportTracker) = undefined,
-    swap_cycle_detector: std.ArrayList(ImportTracker) = undefined,
 
     /// We may need to refer to the "__esm" and/or "__commonJS" runtime symbols
     cjs_runtime_ref: Ref = Ref.None,
@@ -3979,7 +3978,6 @@ const LinkerContext = struct {
 
         this.resolver = &bundle.bundler.resolver;
         this.cycle_detector = std.ArrayList(ImportTracker).init(this.allocator);
-        this.swap_cycle_detector = std.ArrayList(ImportTracker).init(this.allocator);
 
         this.graph.reachable_files = reachable;
 
@@ -4911,22 +4909,21 @@ const LinkerContext = struct {
                 this.cycle_detector.clearRetainingCapacity();
                 const trace = tracer(@src(), "MatchImportsWithExports");
                 defer trace.end();
-                var wrapper_part_indices = this.graph.meta.items(.wrapper_part_index);
-                var imports_to_bind = this.graph.meta.items(.imports_to_bind);
+                const wrapper_part_indices = this.graph.meta.items(.wrapper_part_index);
+                const imports_to_bind = this.graph.meta.items(.imports_to_bind);
                 for (reachable) |source_index_| {
                     const source_index = source_index_.get();
-                    const id = source_index;
 
                     // not a JS ast or empty
-                    if (id >= named_imports.len) {
+                    if (source_index >= named_imports.len) {
                         continue;
                     }
 
-                    var named_imports_ = &named_imports[id];
+                    const named_imports_ = &named_imports[source_index];
                     if (named_imports_.count() > 0) {
                         this.matchImportsWithExportsForFile(
                             named_imports_,
-                            &imports_to_bind[id],
+                            &imports_to_bind[source_index],
                             source_index,
                         );
 
@@ -4934,8 +4931,8 @@ const LinkerContext = struct {
                             return error.ImportResolutionFailed;
                         }
                     }
-                    const export_kind = exports_kind[id];
-                    var flag = flags[id];
+                    const export_kind = exports_kind[source_index];
+                    var flag = flags[source_index];
                     // If we're exporting as CommonJS and this file was originally CommonJS,
                     // then we'll be using the actual CommonJS "exports" and/or "module"
                     // symbols. In that case make sure to mark them as such so they don't
@@ -4944,16 +4941,16 @@ const LinkerContext = struct {
                         entry_point_kinds[source_index].isEntryPoint() and
                         export_kind == .cjs and flag.wrap == .none)
                     {
-                        const exports_ref = symbols.follow(exports_refs[id]);
-                        const module_ref = symbols.follow(module_refs[id]);
+                        const exports_ref = symbols.follow(exports_refs[source_index]);
+                        const module_ref = symbols.follow(module_refs[source_index]);
                         symbols.get(exports_ref).?.kind = .unbound;
                         symbols.get(module_ref).?.kind = .unbound;
                     } else if (flag.force_include_exports_for_entry_point or export_kind != .cjs) {
                         flag.needs_exports_variable = true;
-                        flags[id] = flag;
+                        flags[source_index] = flag;
                     }
 
-                    const wrapped_ref = this.graph.ast.items(.wrapper_ref)[id];
+                    const wrapped_ref = this.graph.ast.items(.wrapper_ref)[source_index];
                     if (wrapped_ref.isNull() or wrapped_ref.isEmpty()) continue;
 
                     // Create the wrapper part for wrapped files. This is needed by a later step.
@@ -4961,7 +4958,7 @@ const LinkerContext = struct {
                         flag.wrap,
                         // if this one is null, the AST does not need to be wrapped.
                         wrapped_ref,
-                        &wrapper_part_indices[id],
+                        &wrapper_part_indices[source_index],
                         source_index,
                     );
                 }
@@ -5121,19 +5118,19 @@ const LinkerContext = struct {
                 var imports_to_bind_list: []RefImportData = this.graph.meta.items(.imports_to_bind);
                 var parts_list: []js_ast.Part.List = ast_fields.items(.parts);
 
-                var imports_to_bind = &imports_to_bind_list[id];
                 var parts: []js_ast.Part = parts_list[id].slice();
 
-                for (0..imports_to_bind.count()) |i| {
-                    const ref = imports_to_bind.keys()[i];
-                    const import = imports_to_bind.values()[i];
+                const imports_to_bind = &imports_to_bind_list[id];
+                for (imports_to_bind.keys(), imports_to_bind.values()) |ref_untyped, import_untyped| {
+                    const ref: Ref = ref_untyped; // ZLS
+                    const import: ImportData = import_untyped; // ZLS
 
                     const import_source_index = import.data.source_index.get();
 
                     if (named_imports[id].get(ref)) |named_import| {
                         for (named_import.local_parts_with_uses.slice()) |part_index| {
                             var part: *js_ast.Part = &parts[part_index];
-                            const parts_declaring_symbol: []const u32 = this.graph.topLevelSymbolToParts(import_source_index, ref);
+                            const parts_declaring_symbol: []const u32 = this.graph.topLevelSymbolToParts(import_source_index, import.data.import_ref);
 
                             const total_len = parts_declaring_symbol.len + @as(usize, import.re_exports.len) + @as(usize, part.dependencies.len);
                             if (part.dependencies.cap < total_len) {
@@ -10188,6 +10185,9 @@ const LinkerContext = struct {
         );
 
         for (part.dependencies.slice()) |dependency| {
+            std.debug.print("Dependency for tree-shake: {d}:{d} -> {d}:{d}\n", .{
+                id, part_index, dependency.source_index.get(), dependency.part_index,
+            });
             _ = c.markPartLiveForTreeShaking(
                 dependency.part_index,
                 dependency.source_index.get(),
@@ -10203,12 +10203,16 @@ const LinkerContext = struct {
 
     pub fn matchImportWithExport(
         c: *LinkerContext,
-        init_tracker: *ImportTracker,
+        init_tracker: ImportTracker,
         re_exports: *std.ArrayList(js_ast.Dependency),
     ) MatchImport {
+        const cycle_detector_top = c.cycle_detector.items.len;
+        defer c.cycle_detector.shrinkRetainingCapacity(cycle_detector_top);
+
         var tracker = init_tracker;
         var ambiguous_results = std.ArrayList(MatchImport).init(c.allocator);
         defer ambiguous_results.clearAndFree();
+
         var result: MatchImport = MatchImport{};
         const named_imports = c.graph.ast.items(.named_imports);
 
@@ -10222,14 +10226,12 @@ const LinkerContext = struct {
             //
             // This uses a O(n^2) array scan instead of a O(n) map because the vast
             // majority of cases have one or two elements
-            for (c.cycle_detector.items) |prev_tracker| {
-                if (std.meta.eql(tracker.*, prev_tracker)) {
+            for (c.cycle_detector.items[cycle_detector_top..]) |prev_tracker| {
+                if (std.meta.eql(tracker, prev_tracker)) {
                     result = .{ .kind = .cycle };
                     break :loop;
                 }
             }
-
-            const prev_import_ref = tracker.import_ref;
 
             if (tracker.source_index.isInvalid()) {
                 // External
@@ -10237,15 +10239,13 @@ const LinkerContext = struct {
             }
 
             const prev_source_index = tracker.source_index.get();
-            c.cycle_detector.append(tracker.*) catch unreachable;
+            c.cycle_detector.append(tracker) catch bun.outOfMemory();
 
             // Resolve the import by one step
-            var advanced = c.advanceImportTracker(tracker);
-            advanced.tracker.* = advanced.value;
-            const next_tracker = advanced.tracker.*;
+            const advanced = c.advanceImportTracker(&tracker);
+            const next_tracker = advanced.value;
             const status = advanced.status;
             const potentially_ambiguous_export_star_refs = advanced.import_data;
-            const other_id = advanced.value.source_index.get();
 
             switch (status) {
                 .cjs, .cjs_without_exports, .disabled, .external => {
@@ -10259,7 +10259,7 @@ const LinkerContext = struct {
                     // property access. Don't do this if the namespace reference is invalid
                     // though. This is the case for star imports, where the import is the
                     // namespace.
-                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(tracker.import_ref).?;
 
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (result.kind == .normal) {
@@ -10295,13 +10295,13 @@ const LinkerContext = struct {
                     // if the file was rewritten from CommonJS into ESM
                     // and the developer imported an export that doesn't exist
                     // We don't do a runtime error since that CJS would have returned undefined.
-                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(tracker.import_ref).?;
 
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
-                        const symbol = c.graph.symbols.get(prev_import_ref).?;
+                        const symbol = c.graph.symbols.get(tracker.import_ref).?;
                         symbol.import_item_status = .missing;
                         result.kind = .normal_and_namespace;
-                        result.namespace_ref = prev_import_ref;
+                        result.namespace_ref = tracker.import_ref;
                         result.alias = named_import.alias.?;
                         result.name_loc = named_import.alias_loc orelse Logger.Loc.Empty;
                     }
@@ -10309,7 +10309,7 @@ const LinkerContext = struct {
 
                 .dynamic_fallback => {
                     // If it's a file with dynamic export fallback, rewrite the import to a property access
-                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(tracker.import_ref).?;
                     if (named_import.namespace_ref != null and named_import.namespace_ref.?.isValid()) {
                         if (result.kind == .normal) {
                             result.kind = .normal_and_namespace;
@@ -10326,8 +10326,8 @@ const LinkerContext = struct {
                 },
                 .no_match => {
                     // Report mismatched imports and exports
-                    const symbol = c.graph.symbols.get(prev_import_ref).?;
-                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(prev_import_ref).?;
+                    const symbol = c.graph.symbols.get(tracker.import_ref).?;
+                    const named_import: js_ast.NamedImport = named_imports[prev_source_index].get(tracker.import_ref).?;
                     const source = c.source_(prev_source_index);
 
                     const next_source = c.source_(next_tracker.source_index.get());
@@ -10408,15 +10408,7 @@ const LinkerContext = struct {
                     for (potentially_ambiguous_export_star_refs) |*ambiguous_tracker| {
                         // If this is a re-export of another import, follow the import
                         if (named_imports[ambiguous_tracker.data.source_index.get()].contains(ambiguous_tracker.data.import_ref)) {
-                            c.cycle_detector.clearRetainingCapacity();
-                            c.swap_cycle_detector.clearRetainingCapacity();
-
-                            const old_cycle_detector = c.cycle_detector;
-                            c.cycle_detector = c.swap_cycle_detector;
-                            const ambig = c.matchImportWithExport(&ambiguous_tracker.data, re_exports);
-                            c.cycle_detector.clearRetainingCapacity();
-                            c.swap_cycle_detector = c.cycle_detector;
-                            c.cycle_detector = old_cycle_detector;
+                            const ambig = c.matchImportWithExport(ambiguous_tracker.data, re_exports);
                             ambiguous_results.append(ambig) catch unreachable;
                         } else {
                             ambiguous_results.append(.{
@@ -10443,7 +10435,7 @@ const LinkerContext = struct {
                     // Depend on the statement(s) that declared this import symbol in the
                     // original file
                     {
-                        const deps = c.topLevelSymbolsToParts(other_id, tracker.import_ref);
+                        const deps = c.topLevelSymbolsToParts(prev_source_index, tracker.import_ref);
                         re_exports.ensureUnusedCapacity(deps.len) catch unreachable;
                         for (deps) |dep| {
                             re_exports.appendAssumeCapacity(
@@ -10459,7 +10451,7 @@ const LinkerContext = struct {
                     // iteration of the loop to resolve that import as well
                     const next_id = next_tracker.source_index.get();
                     if (named_imports[next_id].contains(next_tracker.import_ref)) {
-                        tracker.* = next_tracker;
+                        tracker = next_tracker;
                         continue :loop;
                     }
                 },
@@ -10630,7 +10622,7 @@ const LinkerContext = struct {
         }
     }
 
-    pub fn advanceImportTracker(c: *LinkerContext, tracker: *ImportTracker) ImportTracker.Iterator {
+    pub fn advanceImportTracker(c: *LinkerContext, tracker: *const ImportTracker) ImportTracker.Iterator {
         const id = tracker.source_index.get();
         var named_imports: *JSAst.NamedImports = &c.graph.ast.items(.named_imports)[id];
         var import_records = c.graph.ast.items(.import_records)[id];
@@ -10643,7 +10635,6 @@ const LinkerContext = struct {
             return .{
             .value = .{},
             .status = .external,
-            .tracker = tracker,
         };
 
         // Is this an external file?
@@ -10652,7 +10643,6 @@ const LinkerContext = struct {
             return .{
                 .value = .{},
                 .status = .external,
-                .tracker = tracker,
             };
         }
 
@@ -10666,7 +10656,6 @@ const LinkerContext = struct {
                     .source_index = record.source_index,
                 },
                 .status = .disabled,
-                .tracker = tracker,
             };
         }
 
@@ -10688,7 +10677,6 @@ const LinkerContext = struct {
                     .import_ref = Ref.None,
                 },
                 .status = .cjs_without_exports,
-                .tracker = tracker,
             };
         }
         const other_kind = exports_kind[other_id];
@@ -10700,7 +10688,6 @@ const LinkerContext = struct {
                     .import_ref = Ref.None,
                 },
                 .status = .cjs,
-                .tracker = tracker,
             };
         }
 
@@ -10713,7 +10700,6 @@ const LinkerContext = struct {
                     .value = matching_export.data,
                     .status = .found,
                     .import_data = matching_export.potentially_ambiguous_export_star_refs.slice(),
-                    .tracker = tracker,
                 };
             }
         }
@@ -10729,7 +10715,6 @@ const LinkerContext = struct {
                 },
                 .status = .found,
                 .import_data = matching_export.potentially_ambiguous_export_star_refs.slice(),
-                .tracker = tracker,
             };
         }
 
@@ -10745,7 +10730,6 @@ const LinkerContext = struct {
                     .dynamic_fallback_interop_default
                 else
                     .dynamic_fallback,
-                .tracker = tracker,
             };
         }
 
@@ -10755,7 +10739,6 @@ const LinkerContext = struct {
             return .{
                 .value = .{},
                 .status = .probably_typescript_type,
-                .tracker = tracker,
             };
         }
 
@@ -10764,7 +10747,6 @@ const LinkerContext = struct {
                 .source_index = Index.source(other_source_index),
             },
             .status = .no_match,
-            .tracker = tracker,
         };
     }
 
@@ -10798,15 +10780,12 @@ const LinkerContext = struct {
 
             const import_ref = ref;
 
-            var import_tracker = ImportData{
-                .data = .{
+            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator);
+            const result = c.matchImportWithExport(
+                .{
                     .source_index = Index.source(source_index),
                     .import_ref = import_ref,
                 },
-            };
-            var re_exports = std.ArrayList(js_ast.Dependency).init(c.allocator);
-            const result = c.matchImportWithExport(
-                &import_tracker.data,
                 &re_exports,
             );
 
@@ -11236,7 +11215,6 @@ pub const ImportTracker = struct {
         status: Status = Status.no_match,
         value: ImportTracker = .{},
         import_data: []ImportData = &.{},
-        tracker: *ImportTracker,
     };
 };
 

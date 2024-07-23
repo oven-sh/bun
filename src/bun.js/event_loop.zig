@@ -841,12 +841,12 @@ pub const EventLoop = struct {
         }
     }
 
-    extern fn JSC__JSGlobalObject__drainMicrotasks(*JSC.JSGlobalObject) void;
     pub fn drainMicrotasksWithGlobal(this: *EventLoop, globalObject: *JSC.JSGlobalObject, jsc_vm: *JSC.VM) void {
         JSC.markBinding(@src());
 
+        const global: *JSC.ZigGlobalObject = @ptrCast(globalObject);
         jsc_vm.releaseWeakRefs();
-        JSC__JSGlobalObject__drainMicrotasks(globalObject);
+        global.drainMicrotasks();
         this.deferred_tasks.run();
 
         if (comptime bun.Environment.isDebug) {

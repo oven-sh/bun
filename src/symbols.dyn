@@ -162,4 +162,6 @@
     __ZNK2v86String6LengthEv;
     __ZN2v88External3NewEPNS_7IsolateEPv;
     __ZNK2v88External5ValueEv;
+    __ZN2v86Object3NewEPNS_7IsolateE;
+    __ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_;
 };

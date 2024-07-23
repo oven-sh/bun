@@ -35,6 +35,9 @@ describe("napi", () => {
     it("External", () => {
       checkSameOutput("test_v8_external", []);
     });
+    it("Object", () => {
+      checkSameOutput("test_v8_object", []);
+    });
   });
 
   describe("issue_11949", () => {

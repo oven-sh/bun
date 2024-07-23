@@ -874,11 +874,22 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
+    pub fn dispose(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        this.doStop(true);
+        return .undefined;
+    }
+
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const arguments = callframe.arguments(1);
         log("close", .{});
 
-        var listener = this.listener orelse return JSValue.jsUndefined();
+        this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
+
+        return .undefined;
+    }
+
+    fn doStop(this: *Listener, force_close: bool) void {
+        var listener = this.listener orelse return;
         this.listener = null;
 
         this.poll_ref.unref(this.handlers.vm);
@@ -891,8 +902,7 @@ pub const Listener = struct {
             this.strong_self.clear();
             this.strong_data.clear();
         } else {
-            const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
-            if (forceClose) {
+            if (force_close) {
                 // close all connections in this context and wait for them to close
                 this.socket_context.?.close(this.ssl);
             } else {
@@ -900,8 +910,6 @@ pub const Listener = struct {
                 listener.close(this.ssl);
             }
         }
-
-        return JSValue.jsUndefined();
     }
 
     pub fn finalize(this: *Listener) callconv(.C) void {

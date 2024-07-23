@@ -108,7 +108,6 @@ pub fn SSLWrapper(T: type) type {
             this.handleTraffic();
         }
 
-
         /// Shutdown the read direction of the SSL (fake it just for convenience)
         pub fn shutdownRead(this: *This) void {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
@@ -250,7 +249,7 @@ pub fn SSLWrapper(T: type) type {
             }
             return uws.us_ssl_socket_verify_error_from_ssl(this.ssl);
         }
-        
+
         /// Update the handshake state
         /// Returns true if we can call handleReading
         fn updateHandshakeState(this: *This) bool {

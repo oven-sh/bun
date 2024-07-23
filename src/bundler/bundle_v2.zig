@@ -8795,6 +8795,8 @@ pub const LinkerContext = struct {
                     // swallow any exceptions thrown during module initialization.
                     const is_async = flags.is_async_or_has_async_dependency;
 
+                    std.debug.print("aaa", .{});
+
                     const ExportHoist = struct {
                         decls: std.ArrayListUnmanaged(G.Decl),
                         allocator: std.mem.Allocator,
@@ -8833,31 +8835,28 @@ pub const LinkerContext = struct {
                             const transformed = switch (stmt.data) {
                                 .s_local => |local| stmt: {
                                     // Convert the declarations to assignments
-                                    if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
-                                        var value = Expr.empty;
-                                        for (local.decls.slice()) |*decl| {
-                                            if (decl.value) |initializer| {
-                                                const can_be_moved = initializer.canBeMoved();
-                                                hoist.next_value = if (can_be_moved) initializer else null;
-                                                const binding = decl.binding.toExpr(&hoist);
-                                                if (!can_be_moved) {
-                                                    value = value.joinWithComma(
-                                                        binding.assign(initializer),
-                                                        temp_allocator,
-                                                    );
-                                                }
-                                            } else {
-                                                _ = decl.binding.toExpr(&hoist);
+                                    var value = Expr.empty;
+                                    for (local.decls.slice()) |*decl| {
+                                        if (decl.value) |initializer| {
+                                            const can_be_moved = initializer.canBeMoved();
+                                            hoist.next_value = if (can_be_moved) initializer else null;
+                                            const binding = decl.binding.toExpr(&hoist);
+                                            if (!can_be_moved) {
+                                                value = value.joinWithComma(
+                                                    binding.assign(initializer),
+                                                    temp_allocator,
+                                                );
                                             }
+                                        } else {
+                                            _ = decl.binding.toExpr(&hoist);
                                         }
-
-                                        if (value.isEmpty()) {
-                                            continue;
-                                        }
-
-                                        break :stmt Stmt.allocateExpr(temp_allocator, value);
                                     }
-                                    break :stmt stmt;
+
+                                    if (value.isEmpty()) {
+                                        continue;
+                                    }
+
+                                    break :stmt Stmt.allocateExpr(temp_allocator, value);
                                 },
                                 .s_function => {
                                     stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();

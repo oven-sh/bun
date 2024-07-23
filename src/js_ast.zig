@@ -5548,7 +5548,7 @@ pub const Expr = struct {
                 .e_boolean,
                 .e_null,
                 .e_undefined,
-                .e_reg_exp,
+                // .e_reg_exp,
                 .e_big_int,
                 .e_string,
                 .e_inlined_enum,

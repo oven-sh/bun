@@ -5428,11 +5428,12 @@ fn NewParser_(
 
                     const handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
 
-                    if (
                     // For unwrapping CommonJS into ESM to fully work
                     // we must also unwrap requires into imports.
-                    (p.unwrap_all_requires or p.options.features.shouldUnwrapRequire(path.packageName() orelse "")) and
+                    const should_unwrap_require = p.unwrap_all_requires or
+                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false;
 
+                    if (should_unwrap_require and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.

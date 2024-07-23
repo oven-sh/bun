@@ -1457,6 +1457,53 @@ describe("bundler", () => {
       stdout: `{"default":{"hello":"world"}}`,
     },
   });
+  itBundled("edgecase/EsmWrapperClassHoisting", {
+    files: {
+      "/entry.ts": `
+        async function hi() {
+          const { default: MyInherited } = await import('./hello');
+          const myInstance = new MyInherited();
+          console.log(myInstance.greet())
+        }
+
+        hi();
+      `,
+      "/hello.ts": `
+        const MyReassignedSuper = class MySuper {
+          greet() {
+            return 'Hello, world!';
+          }
+        };
+
+        class MyInherited extends MyReassignedSuper {};
+
+        export default MyInherited;
+      `,
+    },
+    run: {
+      stdout: "Hello, world!",
+    },
+  });
+  itBundled("edgecase/EsmWrapperElimination1", {
+    files: {
+      "/entry.ts": `
+        async function load() {
+          return import('./hello');
+        }
+        load().then(({ default: def }) => console.log(def()));
+      `,
+      "/hello.ts": `
+        export var x = 123;
+        export var y = function() { return x; };
+        export function z() { return y(); }
+        function a() { return z(); }
+        export default function c() { return a(); }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

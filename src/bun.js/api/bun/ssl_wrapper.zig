@@ -120,7 +120,7 @@ pub fn SSLWrapper(T: type) type {
 
         /// Shutdown the write direction of the SSL and returns if we are completed closed or not
         /// We cannot assume that the read part will remain open after we sent a shutdown, the other side will probably complete the 2-step shutdown ASAP.
-        /// Caution: never reuse a socket if fast_shutdown = true, this will also fully close both read and write directions 
+        /// Caution: never reuse a socket if fast_shutdown = true, this will also fully close both read and write directions
         pub fn shutdown(this: *This, fast_shutdown: bool) bool {
             // we already sent the ssl shutdown
             if (this.flags.sent_ssl_shutdown) return this.received_ssl_shutdown;

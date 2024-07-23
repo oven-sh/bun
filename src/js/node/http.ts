@@ -504,6 +504,9 @@ Server.prototype.address = function () {
 Server.prototype.listen = function (port, host, backlog, onListen) {
   const server = this;
   let socketPath;
+  if (typeof port === "undefined") {
+    port = 0;
+  }
   if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
     socketPath = port;
   }

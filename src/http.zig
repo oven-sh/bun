@@ -1148,7 +1148,6 @@ pub fn onTimeout(
     comptime is_ssl: bool,
     _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {

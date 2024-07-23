@@ -6,9 +6,11 @@ main() {
   os=$(detect_os)
   arch=$(detect_arch)
   target="$os-$arch"
+  artifact="bun"
 
   scripts_dir=$(path $(cd -- "$(dirname -- "$0")" && pwd -P))
   cwd=$(path $(dirname "$scripts_dir"))
+  cache_dir=$(path "$cwd" ".cache")
   src_dir=$(path "$cwd" "src")
   src_deps_dir=$(path "$src_dir" "deps")
   build_dir=$(path "$cwd" "build")
@@ -86,10 +88,15 @@ main() {
 
   case "$artifact" in
     bun) build_bun ;;
+    bun*link | link) build_bun "link" ;;
     bun*cpp | cpp) build_bun "cpp" ;;
     bun*zig | zig) build_bun "zig" ;;
-    bun*link | link) build_bun "link" ;;
-    bun*deps | deps) build_deps ;;
+    bun*old*js | old*js) build_bun_old_js ;;
+    bun*node*fallbacks | node*fallbacks) build_bun_node_fallbacks ;;
+    bun*error | error) build_bun_error ;;
+    bun*fallback*decoder | fallback*decoder) build_bun_fallback_decoder ;;
+    bun*runtime*js | runtime*js) build_bun_runtime_js ;;
+    bun*deps | deps) build_bun_deps ;;
     boring*ssl) build_boringssl ;;
     c*ares) build_cares ;;
     lib*archive) build_libarchive ;;
@@ -289,9 +296,7 @@ default_cc_version() {
 }
 
 default_cc_flags() {
-  local flags=(
-    -fuse-ld="$ld"
-  )
+  local flags=()
 
   if [ "$os" = "windows" ]; then
     flags+=(
@@ -343,7 +348,7 @@ default_cc_flags() {
   fi
 
   if [ "$lto" = "1" ]; then
-    flags+=(-flto)
+    flags+=(-flto=full)
     if [ "$os" = "windows" ]; then
       flags+=(
         -Xclang
@@ -559,11 +564,7 @@ cmake_configure() {
   #   *) shift ;;
   # esac
 
-  export CFLAGS="$(default_cc_flags)"
-  export CXXFLAGS="$(default_cxx_flags)"
-  export LDFLAGS="$(default_ld_flags)"
-
-  export CMAKE_FLAGS=(
+  local flags=(
     -GNinja
     -DCMAKE_BUILD_PARALLEL_LEVEL="$jobs"
     -DCMAKE_C_STANDARD="$cc_version"
@@ -577,31 +578,31 @@ cmake_configure() {
   )
 
   if [ "$type" = "debug" ]; then
-    CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=Debug)
+    flags+=(-DCMAKE_BUILD_TYPE=Debug)
   else
-    CMAKE_FLAGS+=(-DCMAKE_BUILD_TYPE=Release)
+    flags+=(-DCMAKE_BUILD_TYPE=Release)
   fi
 
   if [ -n "$ccache" ]; then
-    CMAKE_FLAGS+=(
+    flags+=(
       -DCMAKE_C_COMPILER_LAUNCHER="$ccache"
       -DCMAKE_CXX_COMPILER_LAUNCHER="$ccache"
     )
   fi
 
   if [ "$os" = "linux" ]; then
-    CMAKE_FLAGS+=(-DCMAKE_CXX_EXTENSIONS=ON)
+    flags+=(-DCMAKE_CXX_EXTENSIONS=ON)
   elif [ "$os" = "darwin" ]; then
-    CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_version")
+    flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_version")
   elif [ "$os" = "windows" ]; then
-    CMAKE_FLAGS+=(-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
+    flags+=(-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded)
   fi
 
   if [ "$verbose" = "1" ]; then
-    CMAKE_FLAGS+=(-DCMAKE_VERBOSE_MAKEFILE=ON)
+    flags+=(-DCMAKE_VERBOSE_MAKEFILE=ON)
   fi
 
-  run_command cmake -S "$1" -B "$2" ${CMAKE_FLAGS[@]} ${@:3}
+  CFLAGS="$(default_cc_flags)" CXXFLAGS="$(default_cxx_flags)" LDFLAGS="$(default_ld_flags)" run_command cmake -S "$1" -B "$2" "${flags[@]}" ${@:3}
 }
 
 cmake_build() {
@@ -613,7 +614,7 @@ cmake_build() {
     flags+=(--config Release)
   fi
 
-  run_command cmake ${flags[@]}
+  CCACHE_DIR=$(path "$cache_dir" "ccache") run_command cmake ${flags[@]}
 }
 
 rust_target() {
@@ -669,6 +670,26 @@ ninja_build() {
   run_command ninja ${flags[@]} $@
 }
 
+bun_or_npm() {
+  if exists bun; then
+    run_command bun "$@"
+  else
+    run_command npm "$@"
+  fi
+}
+
+bunx_or_npmx() {
+  if exists bunx; then
+    run_command bunx "$@"
+  else
+    run_command npx "$@"
+  fi
+}
+
+esbuild() {
+  bunx_or_npmx esbuild "$@"
+}
+
 if_windows() {
   if [ "$os" = "windows" ]; then
     print "$1"
@@ -704,7 +725,7 @@ clean_deps() {
   done
 }
 
-build_deps() {
+build_bun_deps() {
   for dep in $(list_deps); do
     build_$dep
   done
@@ -910,18 +931,17 @@ src_tinycc() {
 }
 
 build_tinycc() {
+  if [ "$os" = "windows" ]; then
+    build_tinycc_windows
+  else
+    build_tinycc_posix
+  fi
+}
+
+build_tinycc_posix() {
   local pwd=$(pwd)
   local src=$(src_tinycc)
-  local dst=$(path "$build_dir" "tinycc")
 
-  cd $src
-
-  clean $src $dst
-  if [ "$clean" = "1" ]; then
-    run_command make clean
-  fi
-
-  local configure=$(path "$src" "configure")
   local flags=(
     --enable-static
     --cc="$cc"
@@ -938,11 +958,49 @@ build_tinycc() {
     flags+=(--debug)
   fi
 
-  export CFLAGS="$(default_cc_flags)"
-  run_command "$configure" "${flags[@]}"
-  run_command make -j "$jobs" libz.a
+  cd $src
 
-  cd "$pwd"
+  if [ "$clean" = "1" ]; then
+    run_command make clean
+  fi
+
+  CFLAGS="$(default_cc_flags)" LDFLAGS=$(default_ld_flags) run_command ./configure "${flags[@]}"
+  run_command make -j "$jobs"
+
+  cd $pwd
+
+  copy $(path "$src" "libtcc.a") $(path "$build_deps_dir" "libtcc.a")
+}
+
+build_tinycc_windows() {
+  local pwd=$(pwd)
+  local src=$(src_tinycc)
+
+  clean $src
+
+  cd $src
+  if [ "$clean" = "1" ]; then
+    run_command cmd.exe /c win32\\build-tcc.bat -clean
+  fi
+
+  echo "#define TCC_VERSION \"$(cat VERSION)\"
+#define TCC_GITHASH \"$(git rev-parse --short HEAD)\"
+#define CONFIG_TCCDIR \"$(path $src)\"
+#define CONFIG_TCC_PREDEFS 1
+#ifdef TCC_TARGET_X86_64
+#define CONFIG_TCC_CROSSPREFIX "$PX%-"
+#endif
+" > config.h
+  
+  run_command $cc -DTCC_TARGET_PE -DTCC_TARGET_X86_64 config.h -DC2STR -o c2str.exe conftest.c
+  run_command $(path $src "c2str.exe") .\\include\\tccdefs.h tccdefs_.h
+
+  # $Baseline = $env:BUN_DEV_ENV_SET -eq "Baseline=True"
+
+  CFLAGS=$(default_cc_flags) run_command $cc libtcc.c -o tcc.obj "-DTCC_TARGET_PE" "-DTCC_TARGET_X86_64" "-O2" "-W2" "-Zi" "-MD" "-GS-" "-c" "-MT"
+  run_command llvm-lib "tcc.obj" "-OUT:tcc.lib"
+
+  cd $pwd
 }
 
 src_zlib() {
@@ -996,19 +1054,20 @@ build_zstd() {
 }
 
 build_bun() {
-  local pwd=$(pwd)
-  local src="$cwd"
-
-  local dirname="bun-$artifact"
-  if [ "$artifact" = "bun" ] || [ "$artifact" = "link" ]; then
-    dirname="bun"
+  if [ $# -eq 0 ]; then
+    build_deps
+    build_bun "cpp"
+    build_bun "zig"
+    build_bun "link"
+    return
   fi
-  local dst=$(path "$build_dir" "$dirname")
+
+  local artifact="$1"
+  local pwd=$(pwd)
+  local dst=$(path "$build_dir" "bun-$artifact")
 
   local flags=(
-    # -DBUN_ZIG_OBJ_DIR="$dst"
-    # -DBUN_CPP_ARCHIVE="$dst/bun-cpp-objects.a"
-    # -DBUN_DEPS_OUT_DIR="$dst/bun-deps"
+    -DBUN_SRC="$cwd"
     -DNO_CONFIGURE_DEPENDS=1
     -DCPU_TARGET="$cpu"
     -DCANARY="$canary"
@@ -1023,6 +1082,8 @@ build_bun() {
 
   if [ "$lto" = "1" ]; then
     flags+=(-DUSE_LTO=ON)
+  else
+    flags+=(-DUSE_LTO=OFF)
   fi
 
   if [ "$assertions" = "1" ]; then
@@ -1034,7 +1095,6 @@ build_bun() {
   fi
 
   local artifact="$1"
-  print "Building $artifact"
 
   if [ "$artifact" = "cpp" ]; then
     flags+=(-DBUN_CPP_ONLY=1)
@@ -1043,26 +1103,141 @@ build_bun() {
       -DWEBKIT_DIR="omit"
       -DZIG_TARGET="$(zig_target)"
       -DZIG_OPTIMIZE="$zig_optimize"
+      -DBUN_ZIG_OBJ_DIR="$dst"
+      -DZIG_LIB_DIR=$(path "$src_deps_dir" "zig" "lib")
     )
   elif [ "$artifact" = "link" ]; then
     flags+=(-DBUN_LINK_ONLY=1)
   fi
 
-  clean $src $dst
-  cmake_configure $src $dst ${flags[@]}
+  if [ "$artifact" = "bun" ] || [ "$artifact" = "link" ]; then
+    flags+=(
+      -DBUN_ZIG_OBJ_DIR="$build_dir"
+      -DBUN_CPP_ARCHIVE=$(path "$build_dir" "bun-cpp.a")
+      -DBUN_DEPS_OUT_DIR=$(path "$build_dir" "bun-deps")
+    )
+  fi
 
-  cd "$dst"
+  clean $dst
+  cmake_configure $cwd $dst ${flags[@]}
+
+  if [ "$artifact" = "bun" ] || [ "$artifact" = "zig" ]; then
+    build_bun_old_js
+  fi
+
+  cd $dst
 
   if [ "$artifact" = "cpp" ]; then
     run_command sh compile-cpp-only.sh -v -j "$jobs"
+    copy $(path "$dst" "bun-cpp-objects.a") $(path "$build_dir" "bun-cpp.a")
   elif [ "$artifact" = "zig" ]; then
-    export ONLY_ZIG=1
-    ninja_build "$dst/bun-zig.o"
+    ONLY_ZIG=1 ZIG_LOCAL_CACHE_DIR=$(path "$cache_dir" "zig-cache") ninja_build "$dst/bun-zig.o"
+    copy $(path "$dst" "bun-zig.o") $(path "$build_dir" "bun-zig.o")
   else
     ninja_build
+    prepare_bun $(path "$dst" bun) "bun"
+    prepare_bun $(path "$dst" bun-profile) "bun-profile"
   fi
 
-  cd "$pwd"
+  cd $pwd
+}
+
+build_bun_old_js() {
+  build_bun_node_fallbacks
+  build_bun_error
+  build_bun_fallback_decoder
+  build_bun_runtime_js
+}
+
+build_bun_node_fallbacks() {
+  local pwd=$(pwd)
+  local src=$(path "$src_dir" "node-fallbacks")
+  local dst=$(path "$src" "out")
+
+  if [ "$clean" != "1" ] && [ -d "$dst" ]; then
+    return
+  fi
+
+  cd $src
+  clean $src
+
+  bun_or_npm install
+  bun_or_npm run build
+
+  cd $pwd
+}
+
+build_bun_error() {
+  local pwd=$(pwd)
+  local src=$(path "$cwd" "packages" "bun-error")
+  local dst=$(path "$src" "dist")
+
+  if [ "$clean" != "1" ] && [ -d "$dst" ]; then
+    return
+  fi
+
+  cd $src
+  clean $src
+
+  bun_or_npm install
+  bun_or_npm run build
+
+  cd $pwd
+}
+
+build_bun_fallback_decoder() {
+  local pwd=$(pwd)
+  local src=$(path "$src_dir" "fallback.ts")
+  local dst=$(path "$src_dir" "fallback.out.js")
+
+  if [ "$clean" != "1" ] && [ -f "$dst" ]; then
+    return
+  fi
+
+  cd $src_dir
+  clean $src $dst
+
+  esbuild \
+    --bundle \
+    --minify \
+    --target=esnext \
+    --format=iife \
+    --platform=browser \
+    $src > $dst
+
+  cd $pwd
+}
+
+build_bun_runtime_js() {
+  local pwd=$(pwd)
+  local src=$(path "$src_dir" "runtime.bun.js")
+  local dst=$(path "$src_dir" "runtime.out.js")
+
+  if [ "$clean" != "1" ] && [ -f "$dst" ]; then
+    return
+  fi
+
+  cd $src_dir
+  clean $src $dst
+
+  NODE_ENV=production esbuild \
+    --bundle \
+    --minify \
+    --target=esnext \
+    --format=esm \
+    --platform=node \
+    --external:/bun:* \
+    $src > $dst
+
+  cd $pwd
+}
+
+prepare_bun() {
+  local bin="$1"
+  local artifact="$2"
+
+  chmod +x $bin
+  copy $bin $(path "$build_dir" "$artifact")
 }
 
 main "$@"

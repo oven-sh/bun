@@ -28,8 +28,6 @@ pub fn SSLWrapper(T: type) type {
 
         handlers: Handlers,
         ssl: *BoringSSL.SSL,
-        input: *BoringSSL.BIO,
-        output: *BoringSSL.BIO,
         ctx: *BoringSSL.SSL_CTX,
 
         flags: Flags = .{},
@@ -52,15 +50,12 @@ pub fn SSLWrapper(T: type) type {
             onRead: fn (T, *This, []const u8) void,
             onClose: fn (T) void,
         };
-        pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
-            BoringSSL.load();
 
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
-            errdefer BoringSSL.SSL_CTX_free(ctx);
+        /// Initialize the SSLWrapper with a SSL_CTX* specific SSL_CTX remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
+        pub initWithCTX(ctx: *BoringSSL.SSL_CTX, is_client: bool, handlers: Handlers) !This {
             const ssl = BoringSSL.SSL_new(ctx) orelse return error.OutOfMemory;
             errdefer BoringSSL.SSL_free(ssl);
+            
             // OpenSSL enables TLS renegotiation by default and accepts renegotiation requests from the peer transparently. Renegotiation is an extremely problematic protocol feature, so BoringSSL rejects peer renegotiations by default.
             // We explicitly set the SSL_set_renegotiate_mode so if we switch to OpenSSL we keep the same behavior
             // See: https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
@@ -81,7 +76,7 @@ pub fn SSLWrapper(T: type) type {
             // Set the EOF return value to -1 so that we can detect when the BIO is empty using BIO_ctrl_pending
             BoringSSL.BIO_set_mem_eof_return(input, -1);
             BoringSSL.BIO_set_mem_eof_return(output, -1);
-
+            // Set the input and output BIOs
             BoringSSL.SSL_set_bio(ssl, input, output);
 
             return .{
@@ -89,9 +84,17 @@ pub fn SSLWrapper(T: type) type {
                 .flags = .{.is_client},
                 .ctx = ctx,
                 .ssl = ssl,
-                .input = input,
-                .output = output,
             };
+        }
+
+        pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) !This {
+            BoringSSL.load();
+
+            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            // Create SSL context using uSockets to match behavior of node.js
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return error.InvalidOptions; // invalid options
+            errdefer BoringSSL.SSL_CTX_free(ctx);
+            return try This.initWithCTX(ctx, is_client, handlers);
         }
 
         pub fn start(this: *This) void {
@@ -196,8 +199,9 @@ pub fn SSLWrapper(T: type) type {
         /// Returns true if we can call handleWriting
         fn handleReading(this: *This, buffer: []u8) bool {
             var read: usize = 0;
+            const input = BoringSSL.SSL_get_rbio(this.ssl) orelse return;
             // read data from the input BIO
-            while (BoringSSL.BIO_ctrl_pending(this.input) > 0) {
+            while (BoringSSL.BIO_ctrl_pending(input) > 0) {
                 const available = buffer[read..];
                 const just_read = BoringSSL.SSL_read(this.ssl, available.ptr, available.len);
 
@@ -254,9 +258,10 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn handleWriting(this: *This, buffer: []u8) void {
+            const output = BoringSSL.SSL_get_wbio(this.ssl) orelse return;
             while (true) {
                 // read data from the output BIO
-                const pending = BoringSSL.BIO_ctrl_pending(this.output);
+                const pending = BoringSSL.BIO_ctrl_pending(output);
                 if (pending <= 0) {
                     // no data to write
                     break;
@@ -264,7 +269,7 @@ pub fn SSLWrapper(T: type) type {
                 // limit the read to the buffer size
                 const len = @min(pending, buffer.len);
                 const pending_buffer = buffer[0..len];
-                const read = BoringSSL.BIO_read(this.output, pending_buffer.ptr, len);
+                const read = BoringSSL.BIO_read(output, pending_buffer.ptr, len);
                 if (read > 0) {
                     this.triggerWannaWriteCallback(buffer[0..read]);
                 }

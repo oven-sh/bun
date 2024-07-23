@@ -1138,7 +1138,7 @@ pub fn onTimeout(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    if(this.disable_timeout) return;
+    if (this.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
 
     defer NewHTTPContext(is_ssl).terminateSocket(socket);

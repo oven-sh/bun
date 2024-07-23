@@ -1146,12 +1146,12 @@ pub fn onClose(
 pub fn onTimeout(
     client: *HTTPClient,
     comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {
-        client.fail(error.Timeout);
+        client.closeAndFail(error.Timeout, is_ssl, socket);
     }
 }
 pub fn onConnectError(

@@ -39,7 +39,7 @@ pub fn SSLWrapper(T: type) type {
             is_client: bool = false,
             authorized: bool = false,
         };
-        pub const HandshakeState = enum(u8) {
+        pub const HandshakeState = enum(u2) {
             HANDSHAKE_PENDING = 0,
             HANDSHAKE_COMPLETED = 1,
             HANDSHAKE_RENEGOTIATION_PENDING = 2,

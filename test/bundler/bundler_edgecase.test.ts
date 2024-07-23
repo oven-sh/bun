@@ -1347,7 +1347,7 @@ describe("bundler", () => {
       `,
     },
   });
-  itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal", {
+  itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
     files: {
       "/src/entry.ts": /* ts */ `
         import { helloWorld } from "./second.ts";

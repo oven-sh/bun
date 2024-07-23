@@ -317,9 +317,9 @@ pub fn SSLWrapper(T: type) type {
 
         pub fn deinit(this: *This) void {
             // SSL_free will also free the input and output BIOs
-            _ = BoringSSL.SSL_free(this.ssl); 
+            _ = BoringSSL.SSL_free(this.ssl);
             // SSL_CTX_free will free the SSL context and all the certificates
-            _ = BoringSSL.SSL_CTX_free(this.ctx); 
+            _ = BoringSSL.SSL_CTX_free(this.ctx);
         }
     };
 }

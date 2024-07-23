@@ -1347,6 +1347,27 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { helloWorld } from "./second.ts";
+        console.log(helloWorld);
+      `,
+      "/src/second.ts": /* ts */ `
+        export const helloWorld = "Hello World";
+      `,
+    },
+    root: "/src",
+    entryPointsRaw: ["src/entry.ts"],
+    packages: "external",
+    target: "bun",
+    run: {
+      file: "/src/entry.ts",
+      stdout: `
+        Hello World
+      `,
+    },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `

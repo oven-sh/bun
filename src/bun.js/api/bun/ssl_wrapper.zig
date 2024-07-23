@@ -128,6 +128,7 @@ pub fn SSLWrapper(T: type) type {
             // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer.
             // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn.
             // The peer might continue sending data for some period of time before handling the local application's shutdown indication.
+            // This will start a full shutdown process, we can assume that the other side will complete the 2-step shutdown like we do.
             const ret = BoringSSL.SSL_shutdown(this.ssl);
             if (fast_shutdown and ret == 0) {
                 // This allows for a more rapid shutdown process if the application does not wish to wait for the peer.

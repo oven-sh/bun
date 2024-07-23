@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG 2be773eeea48c03a4fa92c170934eb2220666809)
+set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -154,11 +154,12 @@ macro(BUN_FIND_LLVM)
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
+
     find_program(
         STRIP
         NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+        DOC "Path to strip binary"
     )
     find_program(
         DSYMUTIL

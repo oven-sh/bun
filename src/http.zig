@@ -2431,7 +2431,7 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
     log("onPreconnect({})", .{this.url});
     _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
-
+    NewHTTPContext(is_ssl).markSocketAsDead(socket);
     ctx.releaseSocket(
         socket,
         this.did_have_handshaking_error and !this.reject_unauthorized,

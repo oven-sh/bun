@@ -36,6 +36,7 @@ main() {
   while [ $# -gt 0 ]; do
     case "$1" in
       -h | --help) help; exit 0 ;;
+      --dump) dump; exit 0 ;;
       --target) target="$2"; shift ;;
       --os) target="$2"; shift ;;
       --arch) target="$target-$2"; shift ;;
@@ -59,6 +60,7 @@ main() {
       --llvm-version) llvm_version="$2"; shift ;;
       --llvm-path) llvm_path="$2"; shift ;;
       --macos-version) macos_version="$2"; shift ;;
+      --no-macos-version) macos_version=""; shift ;;
       --cc-version) cc_version="$2"; shift ;;
       --cxx-version) cxx_version="$2"; shift ;;
       --cc) cc="$2"; shift ;;
@@ -88,11 +90,13 @@ main() {
     [ -z "$cxx" ]    && cxx=$(path "$llvm_path" "clang++")
     [ -z "$ar" ]     && ar=$(path "$llvm_path" "llvm-ar")
     [ -z "$ld" ]     && ld=$(path "$llvm_path" "ld.lld")
+    [ -z "$ranlib" ] && ranlib=$(path "$llvm_path" "llvm-ranlib")
   else
     [ -z "$cc" ]     && cc=$(default_cc)
     [ -z "$cxx" ]    && cxx=$(default_cxx)
     [ -z "$ar" ]     && ar=$(default_ar)
     [ -z "$ld" ]     && ld=$(default_ld)
+    [ -z "$ranlib" ] && ranlib=$(default_ranlib)
   fi
 
   [ -z "$ccache" ] && ccache=$(default_ccache)
@@ -123,6 +127,27 @@ main() {
 
   build_dir=$(path "$cwd" "build" "$build_name")
   build_deps_dir=$(path "$build_dir" "bun-deps")
+
+  if [ "$verbose" = "1" ]; then
+    pretty "{dim}=== Configuration ==={reset}
+C compiler: {green}$cc{reset}
+C compiler version: {yellow}$("$cc" --version | semver){reset}
+C flags: {yellow}$(default_cc_flags){reset}
+C standard: {yellow}$cc_version{reset}
+C++ compiler: {green}$cxx{reset}
+C++ compiler version: {yellow}$("$cxx" --version | semver){reset}
+C++ flags: {yellow}$(default_cxx_flags){reset}
+C++ standard: {yellow}$cxx_version{reset}
+Archiver: {green}$ar{reset}
+Archiver version: {yellow}$("$ar" --version | semver){reset}
+Linker: {green}$ld{reset}
+Linker version: {yellow}$("$ld" --version | semver){reset}
+Ranlib: {green}$ranlib{reset}
+Ranlib version: {yellow}$("$ranlib" --version | semver){reset}
+CCache: {green}$ccache{reset}
+CCache version: {yellow}$("$ccache" --version | semver){reset}
+"
+  fi
 
   case "$artifact" in
     bun) build_bun ;;
@@ -388,10 +413,10 @@ default_cc_flags() {
       -faddrsig
     )
   elif [ "$os" = "darwin" ]; then
-    flags+=(
-      -mmacosx-version-min="$macos_version"
-      -D__DARWIN_NON_CANCELABLE=1
-    )
+    flags+=(-D__DARWIN_NON_CANCELABLE=1)
+    if [ -n "$macos_version" ]; then
+      flags+=(-mmacosx-version-min="$macos_version")
+    fi
   fi
 
   if [ "$arch" = "aarch64" ]; then
@@ -501,7 +526,7 @@ default_ld_flags() {
 
   if [ "$os" = "linux" ]; then
     flags+=("-Wl,-z,norelro")
-  elif [ "$os" = "darwin" ] && [ "$no_version" != "1" ]; then
+  elif [ "$os" = "darwin" ] && [ "$no_version" != "1" ] && [ -n "$macos_version" ]; then
     flags+=(-macos_version_min="$macos_version")
   fi
 
@@ -722,7 +747,7 @@ cmake_configure() {
     flags+=(-DCMAKE_CXX_EXTENSIONS=ON)
   fi
 
-  if [ "$os" = "darwin" ]; then
+  if [ "$os" = "darwin" ] && [ -n "$macos_version" ]; then
     flags+=(-DCMAKE_OSX_DEPLOYMENT_TARGET="$macos_version")
   fi
 
@@ -782,8 +807,8 @@ cargo_build() {
 
 zig_target() {
   case "$target" in
-    windows-x64) print "x86_64-windows-msv" ;;
-    windows-aarch64) print "aarch64-windows-msv" ;;
+    windows-x64) print "x86_64-windows-msvc" ;;
+    windows-aarch64) print "aarch64-windows-msvc" ;;
     linux-x64) print "x86_64-linux-gnu" ;;
     linux-aarch64) print "aarch64-linux-gnu" ;;
     darwin-x64) print "x86_64-macos-none" ;;
@@ -1065,7 +1090,16 @@ src_tinycc() {
   path "$src_deps_dir" "tinycc"
 }
 
+patch_tinycc() {
+  if cat "$src_deps_dir/tinycc/configure" | regex "readlink" >/dev/null 2>&1; then
+    # TODO: Make a patch upstream that fixes $CC being hardcoded to clang
+    run_command git apply --ignore-space-change --ignore-whitespace "$src_deps_dir/patches/tinycc/configure.patch"
+  fi
+}
+
 build_tinycc() {
+  patch_tinycc
+
   if [ "$os" = "windows" ]; then
     build_tinycc_windows
   else

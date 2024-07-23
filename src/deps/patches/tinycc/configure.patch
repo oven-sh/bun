@@ -1,0 +1,13 @@
+diff --git a/src/deps/tinycc/configure b/src/deps/tinycc/configure
+index 799973b10..2bee5d660 100755
+--- a/src/deps/tinycc/configure
++++ b/src/deps/tinycc/configure
+@@ -323,8 +323,6 @@ case $targetos in
+     default_conf "codesign"
+     DLLSUF=".dylib"
+     if test -z "$build_cross"; then
+-      cc=`command -v cc`
+-      cc=`readlink $cc || echo clang`
+       tcc_usrinclude="`xcrun --show-sdk-path`/usr/include"
+       if test "${confvars%new_macho*}" = "${confvars}"; then
+           # if new_macho was not specified and (known) ver <= 10, use old (=no)

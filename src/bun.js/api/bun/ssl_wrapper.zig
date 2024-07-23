@@ -55,11 +55,11 @@ pub fn SSLWrapper(T: type) type {
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) ?This {
             BoringSSL.load();
 
-           const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-           // Create SSL context using uSockets to match behavior of node.js
-           const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return null; // invalid options
-           const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
-           if (is_client) {
+            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            // Create SSL context using uSockets to match behavior of node.js
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return null; // invalid options
+            const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
+            if (is_client) {
                 BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
                 BoringSSL.SSL_set_connect_state(ssl);
             } else {

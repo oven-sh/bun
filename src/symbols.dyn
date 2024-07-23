@@ -156,4 +156,8 @@
     __ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_;
     __ZN2v86Number3NewEPNS_7IsolateEd;
     __ZNK2v86Number5ValueEv;
+    __ZN2v86String11NewFromUtf8EPNS_7IsolateEPKcNS_13NewStringTypeEi;
+    __ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii;
+    __ZN2v812api_internal12ToLocalEmptyEv;
+    __ZNK2v86String6LengthEv;
 };

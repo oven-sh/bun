@@ -88,6 +88,85 @@ napi_value test_v8_number_new(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+
+  // simple
+  const char string1[] = "hello world";
+  // non-ascii characters
+  const char string2[] = u8"🏳️‍⚧️";
+  // mixed valid/invalid utf-8
+  const unsigned char string3[] = {'o', 'h',  ' ', 0xc0, 'n',
+                                   'o', 0xc2, '!', 0xf5, 0};
+
+  v8::MaybeLocal<v8::String> maybe_str =
+      v8::String::NewFromUtf8(isolate, string1, v8::NewStringType::kNormal, -1);
+  v8::Local<v8::String> str = maybe_str.ToLocalChecked();
+  char buf[64];
+  int retval;
+  int nchars;
+
+  // explicit length
+  // retval counts null terminator
+  if ((retval = str->WriteUtf8(isolate, buf, sizeof buf, &nchars)) !=
+      strlen(string1) + 1) {
+    return fail(env, "WriteUtf8 wrong return value");
+  }
+  if (nchars != strlen(string1)) {
+    return fail(env, "WriteUtf8 set nchars to wrong value");
+  }
+  // cmp including terminator
+  if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
+    return fail(env, "WriteUtf8 stored wrong data in buffer");
+  }
+
+  // assumed length
+  if ((retval = str->WriteUtf8(isolate, buf, -1, &nchars)) != 12) {
+    return fail(env, "WriteUtf8 wrong return value");
+  }
+  if (nchars != strlen(string1)) {
+    return fail(env, "WriteUtf8 set nchars to wrong value");
+  }
+  if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
+    return fail(env, "WriteUtf8 stored wrong data in buffer");
+  }
+
+  // too short length
+  memset(buf, 0xaa, sizeof buf);
+  if ((retval = str->WriteUtf8(isolate, buf, 5, &nchars)) != 5) {
+    return fail(env, "WriteUtf8 wrong return value");
+  }
+  if (nchars != 5) {
+    return fail(env, "WriteUtf8 set nchars to wrong value");
+  }
+  // check it did not write a terminator
+  if (memcmp(buf, "hello\xaa", 6) != 0) {
+    return fail(env, "WriteUtf8 stored wrong data in buffer");
+  }
+
+  // nullptr for nchars_ref, just testing it doesn't crash
+  (void)str->WriteUtf8(isolate, buf, sizeof buf, nullptr);
+
+  maybe_str =
+      v8::String::NewFromUtf8(isolate, string2, v8::NewStringType::kNormal, -1);
+  str = maybe_str.ToLocalChecked();
+  if (str->Length() != 6) {
+    return fail(env, "wrong length");
+  }
+
+  maybe_str = maybe_str =
+      v8::String::NewFromUtf8(isolate, reinterpret_cast<const char *>(string3),
+                              v8::NewStringType::kNormal, -1);
+  str = maybe_str.ToLocalChecked();
+  if (str->Length() != 9) {
+    return fail(env, "wrong length");
+  }
+
+  return ok(env);
+}
+
 napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -151,6 +230,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
   exports.Set("test_v8_number_new",
               Napi::Function::New(env, test_v8_number_new));
+  exports.Set("test_v8_string_new_from_utf8",
+              Napi::Function::New(env, test_v8_string_new_from_utf8));
 
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",

@@ -19,15 +19,69 @@ using Context = JSC::JSGlobalObject;
 
 class Isolate;
 
+namespace api_internal {
+BUN_EXPORT void ToLocalEmpty()
+{
+    // TODO(@190n) proper error handling
+    assert("ToLocalEmpty" && 0);
+}
+}
+
 template<class T>
 class Local final {
 public:
-    T* ptr;
+    Local()
+        : ptr(nullptr)
+    {
+    }
+
+    Local(T* ptr_)
+        : ptr(ptr_)
+    {
+    }
+
+    Local(JSC::JSValue jsv)
+        : ptr(reinterpret_cast<T*>(JSC::JSValue::encode(jsv)))
+    {
+    }
+
+    bool IsEmpty() const { return ptr == nullptr; }
 
     T* operator*() const { return ptr; }
+
+private:
+    T* ptr;
 };
 
-class Number {
+template<class T>
+class MaybeLocal {
+public:
+    MaybeLocal()
+        : local_({}) {};
+
+    template<class S> MaybeLocal(Local<S> that)
+        : local_(that)
+    {
+    }
+
+    bool IsEmpty() const { return local_.IsEmpty(); }
+
+private:
+    Local<T> local_;
+};
+
+class Value {
+protected:
+    JSC::JSValue toJSValue() const
+    {
+        return JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(this));
+    }
+};
+
+class Primitive : public Value {
+};
+
+class Number : public Primitive {
 public:
     BUN_EXPORT static Local<Number> New(Isolate* isolate, double value);
 
@@ -36,18 +90,33 @@ public:
 
 Local<Number> Number::New(Isolate* isolate, double value)
 {
-    auto jsv = JSC::jsDoubleNumber(value);
-    auto encoded = JSC::JSValue::encode(jsv);
-    auto ptr = reinterpret_cast<Number*>(encoded);
-    return Local<Number> { ptr };
+    return JSC::jsDoubleNumber(value);
 }
 
 double Number::Value() const
 {
-    auto encoded = reinterpret_cast<JSC::EncodedJSValue>(this);
-    auto jsv = JSC::JSValue::decode(encoded);
-    return jsv.asNumber();
+    return toJSValue().asNumber();
 }
+
+enum class NewStringType {
+    kNormal,
+    kInternalized,
+};
+
+class String : Primitive {
+public:
+    enum WriteOptions {
+        NO_OPTIONS = 0,
+        HINT_MANY_WRITES_EXPECTED = 1,
+        NO_NULL_TERMINATION = 2,
+        PRESERVE_ONE_BYTE_NULL = 4,
+        REPLACE_INVALID_UTF8 = 8,
+    };
+
+    BUN_EXPORT static MaybeLocal<String> NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int length = -1);
+    BUN_EXPORT int WriteUtf8(Isolate* isolate, char* buffer, int length = -1, int* nchars_ref = nullptr, int options = NO_OPTIONS) const;
+    BUN_EXPORT int Length() const;
+};
 
 // This currently is just a pointer to a Zig::GlobalObject*
 // We do that so that we can recover the context and the VM from the "Isolate"
@@ -86,6 +155,78 @@ Isolate* Isolate::GetCurrent()
 Local<Context> Isolate::GetCurrentContext()
 {
     return Local<Context> { reinterpret_cast<Context*>(this) };
+}
+
+MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int signed_length)
+{
+    (void)type;
+    size_t length = 0;
+    if (signed_length < 0) {
+        length = strlen(data);
+    } else {
+        length = static_cast<int>(signed_length);
+    }
+
+    if (length > JSC::JSString::MaxLength) {
+        // empty
+        return MaybeLocal<String>();
+    }
+
+    std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
+    // ReplacingInvalidSequences matches how v8 behaves here
+    auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
+    assert(!string.isNull());
+    auto jsString = JSC::jsString(isolate->vm(), string);
+    JSC::JSValue jsValue(jsString);
+    Local<String> local(jsValue);
+    return MaybeLocal<String>(local);
+}
+
+int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
+{
+    assert(options == 0);
+    auto jsValue = toJSValue();
+    WTF::String string = jsValue.getString(isolate->globalObject());
+
+    if (!string.is8Bit()) {
+        auto span = string.span16();
+        for (auto c : span) {
+            printf("%04x ", c);
+        }
+        printf("\n");
+        abort();
+    }
+
+    assert(string.is8Bit());
+    auto span = string.span8();
+    int to_copy = length;
+    bool terminate = true;
+    if (to_copy < 0) {
+        to_copy = span.size();
+    } else if (to_copy > span.size()) {
+        to_copy = span.size();
+    } else if (length < span.size()) {
+        to_copy = length;
+        terminate = false;
+    }
+    // TODO(@190n) span.data() is latin1 not utf8, but this is okay as long as the only way to make
+    // a v8 string is NewFromUtf8. that's because NewFromUtf8 will use either all ASCII or all UTF-16.
+    memcpy(buffer, span.data(), to_copy);
+    if (terminate) {
+        buffer[to_copy] = 0;
+    }
+    if (nchars_ref) {
+        *nchars_ref = to_copy;
+    }
+    return terminate ? to_copy + 1 : to_copy;
+}
+
+int String::Length() const
+{
+    auto jsValue = toJSValue();
+    WTF::String s;
+    assert(jsValue.getString(Isolate::GetCurrent()->globalObject(), s));
+    return s.length();
 }
 
 }

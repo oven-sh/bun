@@ -29,6 +29,9 @@ describe("napi", () => {
     it("Number.new", () => {
       checkSameOutput("test_v8_number_new", []);
     });
+    it("String.NewFromUtf8", () => {
+      checkSameOutput("test_v8_string_new_from_utf8", []);
+    });
   });
 
   describe("issue_11949", () => {

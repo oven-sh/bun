@@ -1561,7 +1561,6 @@ remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
-timeout: usize = 0,
 progress_node: ?*Progress.Node = null,
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
@@ -1739,8 +1738,6 @@ pub const AsyncHTTP = struct {
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     result_callback: HTTPClientResult.Callback = undefined,
 
-    /// Timeout in nanoseconds
-    timeout: usize = 0,
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
@@ -1867,7 +1864,7 @@ pub const AsyncHTTP = struct {
             .is_url_owned = is_url_owned,
         });
 
-        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", 0, HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
         this.async_http.client.is_preconnect_only = true;
 
         http_thread.schedule(Batch.from(&this.async_http.task));
@@ -1881,7 +1878,6 @@ pub const AsyncHTTP = struct {
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
-        timeout: usize,
         callback: HTTPClientResult.Callback,
         redirect_type: FetchRedirect,
         options: Options,
@@ -1898,7 +1894,6 @@ pub const AsyncHTTP = struct {
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
             .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
-            .timeout = timeout,
         };
 
         this.client = .{
@@ -1910,7 +1905,6 @@ pub const AsyncHTTP = struct {
             .hostname = options.hostname,
             .signals = options.signals orelse this.signals,
             .async_http_id = this.async_http_id,
-            .timeout = timeout,
             .http_proxy = this.http_proxy,
             .redirect_type = redirect_type,
         };
@@ -1996,20 +1990,17 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, redirect_type, .{
+    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, undefined, redirect_type, .{
             .http_proxy = http_proxy,
             .hostname = hostname,
         });
     }
 
     fn reset(this: *AsyncHTTP) !void {
-        const timeout = this.timeout;
         const aborted = this.client.aborted;
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
-        this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
-        this.timeout = timeout;
 
         if (this.http_proxy) |proxy| {
             //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS

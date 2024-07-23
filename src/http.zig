@@ -2385,6 +2385,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
+        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         assert(this.state.fail != null);
         return;

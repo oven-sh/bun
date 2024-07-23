@@ -146,6 +146,11 @@ pub fn SSLWrapper(T: type) type {
                 return true;
             }
 
+            if (this.flags.handshake_state == HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING) {
+                // we are in the middle of a renegotiation need to call read/write
+                return true;
+            }
+
             const result = BoringSSL.SSL_do_handshake(this.ssl);
 
             if (BoringSSL.SSL_get_shutdown(this.ssl) & BoringSSL.SSL_RECEIVED_SHUTDOWN) {
@@ -190,7 +195,7 @@ pub fn SSLWrapper(T: type) type {
         /// Handle the end of a renegotiation if it was pending
         /// This function is called when we receive a SSL_ERROR_ZERO_RETURN or successfully read data
         fn handleEndOfRenegociation(this: *This) void {
-            if (this.flags.handshake_state == HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING) {
+            if (this.flags.handshake_state == HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING and BoringSSL.SSL_is_init_finished(this.ssl)) {
                 // renegotiation ended successfully call on_handshake
                 this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
                 this.triggerHandshakeCallback(true, this.getVerifyError());

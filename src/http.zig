@@ -2288,7 +2288,7 @@ pub fn doRedirect(
 
     this.state.response_message_buffer.deinit();
 
-    // we need to clean the client reference before closing/releasing the socket because we are going to reuse the same ref in a another request
+    // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(

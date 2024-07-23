@@ -295,7 +295,6 @@ pub fn SSLWrapper(T: type) type {
                     if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
                         if (err == BoringSSL.SSL_ERROR_WANT_RENEGOTIATE) {
                             this.flags.handshake_state = HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING;
-                            this.flags.handshake_state = HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING;
                             if (!BoringSSL.SSL_renegotiate(this.ssl)) {
                                 this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
                                 // we failed to renegotiate

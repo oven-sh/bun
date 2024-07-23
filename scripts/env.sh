@@ -82,7 +82,7 @@ fi
 if [ -n "$FORCE_PIC" ]; then
   export CFLAGS="$CFLAGS -fPIC "
   export CXXFLAGS="$CXXFLAGS -fPIC "
-else
+elif [[ $(uname -s) == 'Linux' ]]; then
   export CFLAGS="$CFLAGS -fno-pie -fno-pic "
   export CXXFLAGS="$CXXFLAGS -fno-pie -fno-pic "
 fi

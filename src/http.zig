@@ -624,9 +624,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 const tagged = getTagged(ptr);
-                markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
-                    client.onTimeout();
+                    return client.onTimeout(comptime ssl, socket);
                 } else if (tagged.get(PooledSocket)) |pooled| {
                     assert(context().pending_sockets.put(pooled));
                 }
@@ -1136,8 +1135,13 @@ pub fn onClose(
 }
 pub fn onTimeout(
     client: *HTTPClient,
+    comptime is_ssl: bool,
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if(this.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
+
+    defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
     if (client.state.stage != .done and client.state.stage != .fail) {
         client.fail(error.Timeout);

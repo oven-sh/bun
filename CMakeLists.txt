@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG 2be773eeea48c03a4fa92c170934eb2220666809)
+set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -116,7 +116,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32)
+if(WIN32 OR APPLE)
     set(LLVM_VERSION 18)
 else()
     set(LLVM_VERSION 16)
@@ -154,11 +154,12 @@ macro(BUN_FIND_LLVM)
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
+
     find_program(
         STRIP
         NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+        DOC "Path to strip binary"
     )
     find_program(
         DSYMUTIL
@@ -329,6 +330,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(APPLE AND USE_LTO)
+    set(USE_LTO OFF)
+    message(WARNING "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
+endif()
 
 if(WIN32 AND USE_LTO)
     set(CMAKE_LINKER_TYPE LLD)

@@ -52,14 +52,14 @@ pub fn SSLWrapper(T: type) type {
             onRead: fn (T, *This, []const u8) void,
             onClose: fn (T) void,
         };
-        pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) This {
+        pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) ?This {
             BoringSSL.load();
 
-            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-            // Create SSL context using uSockets to match behavior of node.js
-            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse bun.outOfMemory();
-            const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
-            if (is_client) {
+           const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+           // Create SSL context using uSockets to match behavior of node.js
+           const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return null; // invalid options
+           const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
+           if (is_client) {
                 BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
                 BoringSSL.SSL_set_connect_state(ssl);
             } else {
@@ -67,7 +67,7 @@ pub fn SSLWrapper(T: type) type {
             }
             const input = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse bun.outOfMemory();
             const output = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse bun.outOfMemory();
-
+            // Set the EOF return value to -1 so that we can detect when the BIO is empty using BIO_ctrl_pending
             BoringSSL.BIO_set_mem_eof_return(input, -1);
             BoringSSL.BIO_set_mem_eof_return(output, -1);
 

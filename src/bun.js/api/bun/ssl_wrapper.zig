@@ -55,15 +55,15 @@ pub fn SSLWrapper(T: type) type {
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) ?This {
             BoringSSL.load();
 
-           const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-           // Create SSL context using uSockets to match behavior of node.js
-           const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return null; // invalid options
-           const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
+            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            // Create SSL context using uSockets to match behavior of node.js
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse return null; // invalid options
+            const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
 
-           // OpenSSL enables TLS renegotiation by default and accepts renegotiation requests from the peer transparently. Renegotiation is an extremely problematic protocol feature, so BoringSSL rejects peer renegotiations by default.
-           // We explicitly set the SSL_set_renegotiate_mode so if we switch to OpenSSL we keep the same behavior
-           // See: https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
-           if (is_client) {
+            // OpenSSL enables TLS renegotiation by default and accepts renegotiation requests from the peer transparently. Renegotiation is an extremely problematic protocol feature, so BoringSSL rejects peer renegotiations by default.
+            // We explicitly set the SSL_set_renegotiate_mode so if we switch to OpenSSL we keep the same behavior
+            // See: https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
+            if (is_client) {
                 // Set the renegotiation mode to explicit so that we can renegotiate on the client side if needed (better performance than ssl_renegotiate_freely)
                 // BoringSSL: Renegotiation is only supported as a client in TLS and the HelloRequest must be received at a quiet point in the application protocol. This is sufficient to support the common use of requesting a new client certificate between an HTTP request and response in (unpipelined) HTTP/1.1.
                 BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_explicit);

@@ -51,7 +51,7 @@ pub fn SSLWrapper(T: type) type {
             onClose: fn (T) void,
         };
 
-        /// Initialize the SSLWrapper with a SSL_CTX* specific SSL_CTX remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
+        /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
         pub initWithCTX(ctx: *BoringSSL.SSL_CTX, is_client: bool, handlers: Handlers) !This {
             BoringSSL.load();
 

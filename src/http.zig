@@ -526,18 +526,23 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                             client.did_have_handshaking_error = true;
-
+                            if (!socket.isClosed()) terminateSocket(socket);
                             return;
                         }
 
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        markSocketAsDead(socket);
+                        terminateSocket(socket);
                         if (client.state.stage != .done and client.state.stage != .fail)
                             client.fail(error.ConnectionRefused);
                         return;
                     }
+                }
+
+                if (!socket.isClosed() and authorized and active.is(PooledSocket)) {
+                    // HTTPS keep-alive socket is ready to be used.
+                    return;
                 }
 
                 // we can reach here if we are aborted
@@ -626,8 +631,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 if (tagged.get(HTTPClient)) |client| {
                     return client.onTimeout(comptime ssl, socket);
-                } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                } else if (tagged.is(PooledSocket)) {
+                    // If the socket timed out and it's a pooled socket, it doesn't matter.
+                    return;
                 }
 
                 terminateSocket(socket);
@@ -650,8 +656,14 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 _: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                // TCP fin gets closed immediately.
-                terminateSocket(socket);
+                // TCP fin must be closed, but we must keep the original tagged
+                // pointer so that their onClose callback is called.
+                //
+                // Three possible states:
+                // 1. HTTP Keep-Alive socket: it must be removed from the pool
+                // 2. HTTP Client socket: it might need to be retried
+                // 3. Dead socket: it is already marked as dead
+                socket.close(.failure);
             }
         };
 
@@ -1089,6 +1101,13 @@ pub fn firstCall(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (client.is_preconnect_only) {
+            client.onPreconnect(is_ssl, socket);
+            return;
+        }
+    }
+
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }

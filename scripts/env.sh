@@ -36,7 +36,6 @@ elif [[ $(uname -s) == 'Darwin' ]]; then
   export RANLIB="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ranlib"
   export LIBTOOL="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-libtool-darwin"
   ln -sf $LIBTOOL "$(brew --prefix llvm)@$LLVM_VERSION/bin/libtool" || true
-  export PATH="$(brew --prefix llvm)@$LLVM_VERSION/bin:$PATH"
 fi
 
 # this compiler detection could be better
@@ -55,10 +54,11 @@ fi
 export CMAKE_CXX_COMPILER=${CXX}
 export CMAKE_C_COMPILER=${CC}
 
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig  '
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -faddrsig -fno-c++-static-destructors '
+export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables  '
+export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-c++-static-destructors '
 
 # Add flags for LTO
+# We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)
 if [ "$BUN_ENABLE_LTO" == "1" ]; then
   export CFLAGS="$CFLAGS -flto=full "
   export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
@@ -66,8 +66,8 @@ if [ "$BUN_ENABLE_LTO" == "1" ]; then
 fi
 
 if [[ $(uname -s) == 'Linux' ]]; then
-  export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections"
-  export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections"
+  export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections -faddrsig "
+  export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections -faddrsig "
   export LDFLAGS="${LDFLAGS} -Wl,-z,norelro"
 fi
 

@@ -31,7 +31,8 @@ env:
   BUN_VERSION: 1.1.8
   LC_CTYPE: "en_US.UTF-8"
   LC_ALL: "en_US.UTF-8"
-  BUN_ENABLE_LTO: "1"
+  # LTO is disabled because we cannot use lld on macOS currently
+  BUN_ENABLE_LTO: "0"
 
 jobs:
   build-submodules:

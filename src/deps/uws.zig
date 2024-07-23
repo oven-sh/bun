@@ -1409,12 +1409,15 @@ pub const us_bun_socket_context_options_t = extern struct {
     client_renegotiation_limit: u32 = 3,
     client_renegotiation_window: u32 = 600,
 };
+pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
+
 
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,
     reason: [*c]const u8 = null,
 };
+pub extern fn us_ssl_socket_verify_error_from_ssl(ssl: *BoringSSL.SSL) us_bun_verify_error_t;
 
 pub const us_socket_events_t = extern struct {
     on_open: ?*const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket = null,

@@ -26,11 +26,14 @@ describe("napi", () => {
   });
 
   describe("v8 c++", () => {
-    it("Number.new", () => {
+    it("Number::New", () => {
       checkSameOutput("test_v8_number_new", []);
     });
-    it("String.NewFromUtf8", () => {
+    it("String::NewFromUtf8", () => {
       checkSameOutput("test_v8_string_new_from_utf8", []);
+    });
+    it("External", () => {
+      checkSameOutput("test_v8_external", []);
     });
   });
 

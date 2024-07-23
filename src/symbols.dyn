@@ -160,4 +160,6 @@
     __ZNK2v86String9WriteUtf8EPNS_7IsolateEPciPii;
     __ZN2v812api_internal12ToLocalEmptyEv;
     __ZNK2v86String6LengthEv;
+    __ZN2v88External3NewEPNS_7IsolateEPv;
+    __ZNK2v88External5ValueEv;
 };

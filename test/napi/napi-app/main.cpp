@@ -90,7 +90,6 @@ napi_value test_v8_number_new(const Napi::CallbackInfo &info) {
 
 napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
-
   v8::Isolate *isolate = v8::Isolate::GetCurrent();
 
   // simple
@@ -167,6 +166,19 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_v8_external(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+
+  int x = 5;
+  v8::MaybeLocal<v8::External> maybe_external = v8::External::New(isolate, &x);
+  v8::Local<v8::External> external = maybe_external.ToLocalChecked();
+  if (external->Value() != &x) {
+    return fail(env, "External::Value() returned wrong pointer");
+  }
+  return ok(env);
+}
+
 napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -232,6 +244,7 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_v8_number_new));
   exports.Set("test_v8_string_new_from_utf8",
               Napi::Function::New(env, test_v8_string_new_from_utf8));
+  exports.Set("test_v8_external", Napi::Function::New(env, test_v8_external));
 
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",

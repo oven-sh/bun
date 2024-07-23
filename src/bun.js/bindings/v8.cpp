@@ -2,8 +2,10 @@
 //
 // If you have issues linking this file, you probably have to update
 // the code in `napi.zig` at `const V8API`
+#include "headers.h"
 #include "root.h"
 #include "ZigGlobalObject.h"
+#include "napi_external.h"
 
 #if defined(WIN32) || defined(_WIN32)
 #define BUN_EXPORT __declspec(dllexport)
@@ -118,6 +120,12 @@ public:
     BUN_EXPORT int Length() const;
 };
 
+class External : public Value {
+public:
+    BUN_EXPORT static MaybeLocal<External> New(Isolate* isolate, void* value);
+    BUN_EXPORT void* Value() const;
+};
+
 // This currently is just a pointer to a Zig::GlobalObject*
 // We do that so that we can recover the context and the VM from the "Isolate"
 class Isolate final {
@@ -227,6 +235,25 @@ int String::Length() const
     WTF::String s;
     assert(jsValue.getString(Isolate::GetCurrent()->globalObject(), s));
     return s.length();
+}
+
+MaybeLocal<External> External::New(Isolate* isolate, void* value)
+{
+    auto globalObject = isolate->globalObject();
+    auto& vm = globalObject->vm();
+    auto structure = globalObject->NapiExternalStructure();
+    JSC::JSValue val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr);
+    return MaybeLocal<External>(Local<External>(val));
+}
+
+void* External::Value() const
+{
+    JSC::JSValue val = toJSValue();
+    auto* external = JSC::jsDynamicCast<Bun::NapiExternal*>(val);
+    if (!external) {
+        return nullptr;
+    }
+    return external->value();
 }
 
 }

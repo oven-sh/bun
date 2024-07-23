@@ -713,6 +713,7 @@ pub const Fetch = struct {
     comptime {
         if (!JSC.is_bindgen) {
             _ = Bun__fetch;
+            _ = Bun__fetchPreconnect;
         }
     }
 
@@ -1834,6 +1835,57 @@ pub const Fetch = struct {
         );
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+    }
+
+    pub export fn Bun__fetchPreconnect(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
+            return .zero;
+        }
+
+        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        defer url_str.deref();
+
+        if (globalObject.hasException()) {
+            return .zero;
+        }
+
+        if (url_str.tag == .Dead) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "Invalid URL", .{}, globalObject));
+            return .zero;
+        }
+
+        if (url_str.isEmpty()) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            return .zero;
+        }
+
+        const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
+        if (!url.isHTTP() and !url.isHTTPS()) {
+            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (url.hostname.len == 0) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (!url.hasValidPort()) {
+            globalObject.throwInvalidArguments("Invalid port", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        bun.http.AsyncHTTP.preconnect(url, true);
+        return .undefined;
     }
 
     pub export fn Bun__fetch(

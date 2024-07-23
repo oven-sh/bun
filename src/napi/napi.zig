@@ -1336,13 +1336,16 @@ pub export fn napi_get_node_version(_: napi_env, version_: ?**const napi_node_ve
     version.* = &napi_node_version.global;
     return .ok;
 }
-pub export fn napi_get_uv_event_loop(env: napi_env, loop_: ?**JSC.EventLoop) napi_status {
+const napi_event_loop = if (bun.Environment.isWindows) *bun.windows.libuv.Loop else *JSC.EventLoop;
+pub export fn napi_get_uv_event_loop(env: napi_env, loop_: ?*napi_event_loop) napi_status {
     log("napi_get_uv_event_loop", .{});
     const loop = loop_ orelse {
         return invalidArg();
     };
     if (bun.Environment.isWindows) {
-        loop.* = @ptrCast(@alignCast(env.bunVM().uvLoop()));
+        // alignment error is incorrect.
+        @setRuntimeSafety(false);
+        loop.* = JSC.VirtualMachine.get().uvLoop();
     } else {
         // there is no uv event loop on posix, we use our event loop handle.
         loop.* = env.bunVM().eventLoop();

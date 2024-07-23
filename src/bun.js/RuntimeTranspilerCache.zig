@@ -201,7 +201,7 @@ pub const RuntimeTranspilerCache = struct {
 
                     try metadata.encode(metadata_stream.writer());
 
-                    if (comptime bun.Environment.allow_assert) {
+                    if (comptime bun.Environment.isDebug) {
                         var metadata_stream2 = std.io.fixedBufferStream(metadata_buf[0..Metadata.size]);
                         var metadata2 = Metadata{};
                         metadata2.decode(metadata_stream2.reader()) catch |err| bun.Output.panic("Metadata did not roundtrip encode -> decode  successfully: {s}", .{@errorName(err)});

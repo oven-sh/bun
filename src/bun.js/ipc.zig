@@ -403,6 +403,7 @@ const NamedPipeIPCData = struct {
 
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     connected: bool = false,
+    disconnected: bool = false,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
@@ -423,16 +424,17 @@ const NamedPipeIPCData = struct {
     }
 
     fn onClientClose(this: *NamedPipeIPCData) void {
-        log("onClisentClose", .{});
+        log("onClientClose", .{});
         this.connected = false;
         if (this.server) |server| {
             // we must close the server too
             server.close(onServerClose);
         } else {
             if (this.onClose) |handler| {
+                this.onClose = null;
+                handler.callback(handler.context);
                 // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
                 this.deinit();
-                handler.callback(handler.context);
             }
         }
     }
@@ -447,9 +449,10 @@ const NamedPipeIPCData = struct {
             return;
         }
         if (this.onClose) |handler| {
+            this.onClose = null;
+            handler.callback(handler.context);
             // deinit dont free the instance of IPCData we should call it before the onClose callback actually frees it
             this.deinit();
-            handler.callback(handler.context);
         }
     }
 
@@ -475,6 +478,9 @@ const NamedPipeIPCData = struct {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 1);
         }
+        if (this.disconnected) {
+            return false;
+        }
 
         const start_offset = this.writer.outgoing.list.items.len;
 
@@ -497,6 +503,9 @@ const NamedPipeIPCData = struct {
         if (Environment.allow_assert) {
             bun.assert(this.has_written_version == 1);
         }
+        if (this.disconnected) {
+            return false;
+        }
 
         const start_offset = this.writer.outgoing.list.items.len;
 
@@ -516,10 +525,20 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn close(this: *NamedPipeIPCData) void {
+        log("NamedPipeIPCData#close", .{});
         if (this.server) |server| {
             server.close(onServerClose);
         } else {
+            this.disconnected = true;
+            JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));
+        }
+    }
+
+    pub fn closeTask(this: *NamedPipeIPCData) void {
+        log("NamedPipeIPCData#closeTask", .{});
+        if (this.disconnected) {
             this.writer.close();
+            this.onClientClose();
         }
     }
 
@@ -749,19 +768,20 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 ipc.incoming.ensureUnusedCapacity(bun.default_allocator, suggested_size) catch bun.outOfMemory();
                 available = ipc.incoming.available();
             }
-            log("onReadAlloc {d}", .{suggested_size});
+            log("NewNamedPipeIPCHandler#onReadAlloc {d}", .{suggested_size});
             return available.ptr[0..suggested_size];
         }
 
         fn onReadError(this: *Context, err: bun.C.E) void {
-            log("onReadError {}", .{err});
+            log("NewNamedPipeIPCHandler#onReadError {}", .{err});
             this.ipc().close();
+            onClose(this);
         }
 
         fn onRead(this: *Context, buffer: []const u8) void {
             const ipc = this.ipc();
 
-            log("onRead {d}", .{buffer.len});
+            log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
             var slice = ipc.incoming.slice();
 
@@ -809,7 +829,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 
         pub fn onNewClientConnect(this: *Context, status: uv.ReturnCode) void {
             const ipc = this.ipc();
-            log("onNewClientConnect {d}", .{status.int()});
+            log("NewNamedPipeIPCHandler#onNewClientConnect {d}", .{status.int()});
             if (status.errEnum()) |_| {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
@@ -856,7 +876,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
         fn onConnect(this: *Context, status: uv.ReturnCode) void {
             const ipc = this.ipc();
 
-            log("onConnect {d}", .{status.int()});
+            log("NewNamedPipeIPCHandler#onConnect {d}", .{status.int()});
             ipc.connected = true;
 
             if (status.errEnum()) |_| {

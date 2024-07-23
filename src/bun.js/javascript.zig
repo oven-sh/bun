@@ -1028,10 +1028,11 @@ pub const VirtualMachine = struct {
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
-            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
             if (Environment.isWindows) {
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
                 this.initIPCInstance(fd_s, mode);
             } else {
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
                 if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
                     this.initIPCInstance(bun.toFD(fd), mode);
                 } else |_| {
@@ -3697,8 +3698,9 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        context: if (Environment.isPosix) *uws.SocketContext else u0,
+        context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
+        has_disconnect_called: bool = false,
 
         pub usingnamespace bun.New(@This());
 
@@ -3708,11 +3710,11 @@ pub const VirtualMachine = struct {
             return &this.data;
         }
 
-        pub fn handleIPCMessage(
-            this: *IPCInstance,
-            message: IPC.DecodedIPCMessage,
-        ) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
+            const globalThis = this.globalThis orelse return;
+            const event_loop = JSC.VirtualMachine.get().eventLoop();
+
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
                 // or disable future optimizations if the subprocess is old.
@@ -3721,27 +3723,28 @@ pub const VirtualMachine = struct {
                 },
                 .data => |data| {
                     IPC.log("Received IPC message from parent", .{});
-                    if (this.globalThis) |global| {
-                        Process__emitMessageEvent(global, data);
-                    }
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    Process__emitMessageEvent(globalThis, data);
                 },
                 .internal => |data| {
                     IPC.log("Received IPC internal message from parent", .{});
-                    if (this.globalThis) |global| {
-                        node_cluster_binding.handleInternalMessageChild(global, data);
-                    }
+                    event_loop.enter();
+                    defer event_loop.exit();
+                    node_cluster_binding.handleInternalMessageChild(globalThis, data);
                 },
             }
         }
 
         pub fn handleIPCClose(this: *IPCInstance) void {
-            IPC.log("IPCInstance#handleIPCClose\n", .{});
-            if (this.globalThis) |global| {
-                var vm = global.bunVM();
-                vm.ipc = null;
-                node_cluster_binding.InternalMsgHolder.deinit();
-                Process__emitDisconnectEvent(global);
-            }
+            IPC.log("IPCInstance#handleIPCClose", .{});
+            var vm = VirtualMachine.get();
+            vm.ipc = null;
+            const event_loop = vm.eventLoop();
+            node_cluster_binding.InternalMsgHolder.deinit();
+            event_loop.enter();
+            Process__emitDisconnectEvent(vm.global);
+            event_loop.exit();
             if (Environment.isPosix) {
                 uws.us_socket_context_free(0, this.context);
             }
@@ -3751,8 +3754,12 @@ pub const VirtualMachine = struct {
         extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
 
         export fn Bun__closeChildIPC(global: *JSGlobalObject) void {
-            global.bunVM().ipc.?.initialized.handleIPCClose();
-            (std.fs.File{ .handle = bun.toFD(3).cast() }).close(); // hardcoded ipc fd
+            const ipc_data = &global.bunVM().ipc.?.initialized.data;
+            JSC.VirtualMachine.get().enqueueImmediateTask(JSC.ManagedTask.New(IPC.IPCData, closeReal).init(ipc_data));
+        }
+
+        fn closeReal(ipc_data: *IPC.IPCData) void {
+            ipc_data.close();
         }
 
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
@@ -3761,9 +3768,7 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        this.ipc = .{
-            .waiting = .{ .info = info, .mode = mode },
-        };
+        this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3801,7 +3806,7 @@ pub const VirtualMachine = struct {
             .windows => instance: {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
-                    .context = 0,
+                    .context = {},
                     .data = .{ .mode = opts.mode },
                 });
 

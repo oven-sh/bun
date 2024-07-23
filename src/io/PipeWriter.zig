@@ -782,6 +782,7 @@ fn BaseWindowsPipeWriter(
         }
 
         pub fn close(this: *WindowsPipeWriter) void {
+            if (this.is_done) return;
             this.is_done = true;
             if (this.source) |source| {
                 switch (source) {
@@ -802,6 +803,7 @@ fn BaseWindowsPipeWriter(
                     },
                 }
                 this.source = null;
+                //
                 this.onCloseSource();
             }
         }
@@ -1150,7 +1152,8 @@ pub fn WindowsStreamingWriter(
 
         fn onCloseSource(this: *WindowsWriter) void {
             this.source = null;
-            if (!this.closed_without_reporting) {
+            if (this.closed_without_reporting) {
+                this.closed_without_reporting = false;
                 onClose(this.parent);
             }
         }
@@ -1301,7 +1304,7 @@ pub fn WindowsStreamingWriter(
             // clean both buffers if needed
             this.outgoing.deinit();
             this.current_payload.deinit();
-            this.close();
+            this.closeWithoutReporting();
         }
 
         fn writeInternal(this: *WindowsWriter, buffer: anytype, comptime writeFn: anytype) WriteResult {
@@ -1379,11 +1382,8 @@ pub fn WindowsStreamingWriter(
             }
 
             this.is_done = true;
-            this.closed_without_reporting = false;
             // if we are done we can call close if not we wait all the data to be flushed
-            if (this.isDone()) {
-                this.close();
-            }
+            this.close();
         }
     };
 }

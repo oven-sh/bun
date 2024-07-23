@@ -626,10 +626,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onTimeout(
-                        comptime ssl,
-                        socket,
-                    );
+                    client.onTimeout();
                 } else if (tagged.get(PooledSocket)) |pooled| {
                     assert(context().pending_sockets.put(pooled));
                 }
@@ -644,17 +641,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onConnectError(
-                        comptime ssl,
-                        socket,
-                    );
+                    client.onConnectError();
                 } else if (tagged.get(PooledSocket)) |pooled| {
                     assert(context().pending_sockets.put(pooled));
                 }
 
-                if (comptime Environment.isDebug)
-                    // caller should already have closed it.
-                    bun.debugAssert(socket.isClosed());
+                terminateSocket(socket);
             }
             pub fn onEnd(
                 _: *anyopaque,
@@ -1145,19 +1137,15 @@ pub fn onClose(
 }
 pub fn onTimeout(
     client: *HTTPClient,
-    comptime is_ssl: bool,
-    socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("Timeout  {s}\n", .{client.url.href});
 
     if (client.state.stage != .done and client.state.stage != .fail) {
-        client.closeAndFail(error.Timeout, is_ssl, socket);
+        client.fail(error.Timeout);
     }
 }
 pub fn onConnectError(
     client: *HTTPClient,
-    comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
     if (client.state.stage != .done and client.state.stage != .fail)
@@ -2302,7 +2290,6 @@ pub fn doRedirect(
 
     // we need to clean the client reference before closing/releasing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
-        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
             socket,
@@ -2432,7 +2419,6 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
     log("onPreconnect({})", .{this.url});
     _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
-    NewHTTPContext(is_ssl).markSocketAsDead(socket);
     ctx.releaseSocket(
         socket,
         this.did_have_handshaking_error and !this.reject_unauthorized,

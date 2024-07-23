@@ -17,7 +17,7 @@ pub const InternalMsgHolder = struct {
     var cb = JSC.Strong{};
 
     pub fn deinit() void {
-        for (callbacks.values()) |*strong| strong.clear();
+        for (callbacks.values()) |*strong| strong.deinit();
         callbacks.deinit(bun.default_allocator);
         worker.clear();
         cb.clear();
@@ -99,7 +99,7 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
             const ack = p.toInt32();
             if (InternalMsgHolder.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
-                defer cbstrong.clear();
+                defer cbstrong.deinit();
                 _ = InternalMsgHolder.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
                 _ = cb.call(globalThis, InternalMsgHolder.worker.get().?, &.{

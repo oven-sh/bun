@@ -350,6 +350,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
             socket.close(.failure);
         }
 
+        fn closeSocket(socket: HTTPSocket) void {
+            markSocketAsDead(socket);
+            socket.close(.normal);
+        }
+
         fn getTagged(ptr: *anyopaque) ActiveSocket {
             return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
         }
@@ -472,8 +477,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            markSocketAsDead(socket);
-            socket.close(.normal);
+            closeSocket(socket);
         }
 
         pub const Handler = struct {
@@ -487,7 +491,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                     return;
                 }
 
@@ -523,33 +527,43 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                             client.did_have_handshaking_error = true;
 
+                            if (!socket.isClosed()) terminateSocket(socket);
                             return;
                         }
 
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        markSocketAsDead(socket);
+                        terminateSocket(socket);
                         if (client.state.stage != .done and client.state.stage != .fail)
                             client.fail(error.ConnectionRefused);
                         return;
                     }
                 }
 
-                // we can reach here if we are aborted
-                if (!socket.isClosed()) {
+                if (socket.isClosed()) {
+                    markSocketAsDead(socket);
                     if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
-                        return;
+                        addMemoryBackToPool(pooled);
                     }
 
-                    terminateSocket(socket);
-                } else {
-                    if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
+                    return;
+                }
+
+                if (authorized) {
+                    if (active.is(PooledSocket)) {
+                        // Allow pooled sockets to be reused if the handshake was successful.
+                        socket.setTimeout(0);
+                        socket.setTimeoutMinutes(5);
                         return;
                     }
                 }
+
+                if (active.get(PooledSocket)) |pooled| {
+                    addMemoryBackToPool(pooled);
+                }
+
+                terminateSocket(socket);
             }
             pub fn onClose(
                 ptr: *anyopaque,
@@ -565,11 +579,16 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
 
                 return;
             }
+
+            fn addMemoryBackToPool(pooled: *PooledSocket) void {
+                assert(context().pending_sockets.put(pooled));
+            }
+
             pub fn onData(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
@@ -620,14 +639,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 const tagged = getTagged(ptr);
-
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onTimeout(
-                        comptime ssl,
-                        socket,
-                    );
+                    return client.onTimeout(comptime ssl, socket);
                 } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    // If a socket has been sitting around for 5 minutes
+                    // Let's close it and remove it from the pool.
+                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -640,23 +657,23 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onConnectError(
-                        comptime ssl,
-                        socket,
-                    );
+                    client.onConnectError();
                 } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
-
-                if (comptime Environment.isDebug)
-                    // caller should already have closed it.
-                    bun.debugAssert(socket.isClosed());
+                // us_connecting_socket_close is always called internally by uSockets
             }
             pub fn onEnd(
                 _: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                // TCP fin gets closed immediately.
+                // TCP fin must be closed, but we must keep the original tagged
+                // pointer so that their onClose callback is called.
+                //
+                // Three possible states:
+                // 1. HTTP Keep-Alive socket: it must be removed from the pool
+                // 2. HTTP Client socket: it might need to be retried
+                // 3. Dead socket: it is already marked as dead
                 socket.close(.failure);
             }
         };
@@ -1095,6 +1112,13 @@ pub fn firstCall(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (client.is_preconnect_only) {
+            client.onPreconnect(is_ssl, socket);
+            return;
+        }
+    }
+
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -1144,8 +1168,10 @@ pub fn onTimeout(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
+    if (client.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
+
+    defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
     if (client.state.stage != .done and client.state.stage != .fail) {
         client.fail(error.Timeout);
@@ -1153,8 +1179,6 @@ pub fn onTimeout(
 }
 pub fn onConnectError(
     client: *HTTPClient,
-    comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
     if (client.state.stage != .done and client.state.stage != .fail)
@@ -1567,7 +1591,6 @@ remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
-timeout: usize = 0,
 progress_node: ?*Progress.Node = null,
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
@@ -1745,8 +1768,6 @@ pub const AsyncHTTP = struct {
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     result_callback: HTTPClientResult.Callback = undefined,
 
-    /// Timeout in nanoseconds
-    timeout: usize = 0,
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
@@ -1873,7 +1894,7 @@ pub const AsyncHTTP = struct {
             .is_url_owned = is_url_owned,
         });
 
-        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", 0, HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
         this.async_http.client.is_preconnect_only = true;
 
         http_thread.schedule(Batch.from(&this.async_http.task));
@@ -1887,7 +1908,6 @@ pub const AsyncHTTP = struct {
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
-        timeout: usize,
         callback: HTTPClientResult.Callback,
         redirect_type: FetchRedirect,
         options: Options,
@@ -1904,7 +1924,6 @@ pub const AsyncHTTP = struct {
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
             .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
-            .timeout = timeout,
         };
 
         this.client = .{
@@ -1916,7 +1935,6 @@ pub const AsyncHTTP = struct {
             .hostname = options.hostname,
             .signals = options.signals orelse this.signals,
             .async_http_id = this.async_http_id,
-            .timeout = timeout,
             .http_proxy = this.http_proxy,
             .redirect_type = redirect_type,
         };
@@ -2002,20 +2020,17 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, redirect_type, .{
+    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, undefined, redirect_type, .{
             .http_proxy = http_proxy,
             .hostname = hostname,
         });
     }
 
     fn reset(this: *AsyncHTTP) !void {
-        const timeout = this.timeout;
         const aborted = this.client.aborted;
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
-        this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
-        this.timeout = timeout;
 
         if (this.http_proxy) |proxy| {
             //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
@@ -2298,7 +2313,6 @@ pub fn doRedirect(
     this.state.response_message_buffer.deinit();
 
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
     if (this.isKeepAlivePossible()) {
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
@@ -2308,8 +2322,7 @@ pub fn doRedirect(
             this.connected_url.getPortAuto(),
         );
     } else {
-        NewHTTPContext(is_ssl).markSocketAsDead(socket);
-        socket.close(.normal);
+        NewHTTPContext(is_ssl).closeSocket(socket);
     }
 
     this.connected_url = URL{};
@@ -2383,6 +2396,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
+        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         assert(this.state.fail != null);
         return;
@@ -2429,7 +2443,6 @@ pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPCon
     log("onPreconnect({})", .{this.url});
     _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
-
     ctx.releaseSocket(
         socket,
         this.did_have_handshaking_error and !this.reject_unauthorized,
@@ -2740,8 +2753,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     if (this.state.stage != .fail and this.state.stage != .done) {
         log("closeAndFail: {s}", .{@errorName(err)});
         if (!socket.isClosed()) {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
-            socket.close(.failure);
+            NewHTTPContext(is_ssl).terminateSocket(socket);
         }
         this.fail(err);
     }
@@ -3158,8 +3170,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
-                NewHTTPContext(is_ssl).markSocketAsDead(socket);
-                socket.close(.normal);
+                NewHTTPContext(is_ssl).closeSocket(socket);
             }
 
             this.state.reset(this.allocator);

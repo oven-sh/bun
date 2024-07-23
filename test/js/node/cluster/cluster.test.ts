@@ -10,7 +10,7 @@ function new_test(name: string, skip: boolean = false) {
 }
 
 new_test("advanced-serialization.js");
-new_test("bind-privileged-port.js");
+new_test("bind-privileged-port.js", isLinux);
 new_test("call-and-destroy.js", isWindows);
 new_test("child-index-dgram.js");
 new_test("child-index-net.js", isWindows);

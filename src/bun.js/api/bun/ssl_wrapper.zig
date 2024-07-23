@@ -310,7 +310,6 @@ pub fn SSLWrapper(T: type) type {
                         } else if (err == BoringSSL.SSL_ERROR_ZERO_RETURN) {
                             // Remotely-Initiated Shutdown
                             // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-                            // zero return can be EOF/FIN, if we have data just signal on_data and close
                             this.flags.received_ssl_shutdown = true;
                             // 2-step shutdown
                             _ = this.shutdown(false);

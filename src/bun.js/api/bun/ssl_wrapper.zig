@@ -224,7 +224,7 @@ pub fn SSLWrapper(T: type) type {
         /// Caution: never reuse a socket if fast_shutdown = true
         fn shutdown(this: *This, fast_shutdown: bool) bool {
             // we already sent the ssl shutdown
-            if(this.flags.sent_ssl_shutdown) return this.received_ssl_shutdown;
+            if (this.flags.sent_ssl_shutdown) return this.received_ssl_shutdown;
 
             // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer.
             // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn.
@@ -276,7 +276,6 @@ pub fn SSLWrapper(T: type) type {
         /// Handle reading data
         /// Returns true if we can call handleWriting
         fn handleReading(this: *This, buffer: []u8) bool {
-            
             var read: usize = 0;
             const input = BoringSSL.SSL_get_rbio(this.ssl) orelse return;
             // read data from the input BIO

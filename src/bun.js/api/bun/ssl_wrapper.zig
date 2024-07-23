@@ -210,17 +210,21 @@ pub fn SSLWrapper(T: type) type {
             }
         }
 
+        /// Shutdown the read direction of the SSL (fake it just for convenience)
         fn shutdownRead(this: *This) void {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
-            // So we just ignore the onRead data
+            // So we just ignore the onRead data, we still wanna to wait until we received the shutdown
             const DummyReadHandler = struct {
                 fn onRead(_: T, _: *This, _: []const u8) void {}
             };
             this.handlers.onRead = DummyReadHandler.onRead;
         }
 
+        /// Shutdown the write direction of the SSL and returns if we are completed closed or not
+        /// Caution: never reuse a socket if fast_shutdown = true
         fn shutdown(this: *This, fast_shutdown: bool) bool {
-            if (this.flags.sent_ssl_shutdown) return true;
+            // we already sent the ssl shutdown
+            if(this.flags.sent_ssl_shutdown) return this.received_ssl_shutdown;
 
             // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer.
             // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn.
@@ -272,6 +276,7 @@ pub fn SSLWrapper(T: type) type {
         /// Handle reading data
         /// Returns true if we can call handleWriting
         fn handleReading(this: *This, buffer: []u8) bool {
+            
             var read: usize = 0;
             const input = BoringSSL.SSL_get_rbio(this.ssl) orelse return;
             // read data from the input BIO

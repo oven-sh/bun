@@ -238,6 +238,13 @@ pub fn SSLWrapper(T: type) type {
                 // The fast shutdown approach can only be used if there is no intention to reuse the underlying connection (e.g. a TCP connection) for further communication; in this case, the full shutdown process must be performed to ensure synchronisation.
                 _ = BoringSSL.SSL_shutdown(this.ssl);
                 this.received_ssl_shutdown = true;
+                // Reset pending handshake because we are closed for sure now
+                if (this.flags.handshake_state != HandshakeState.HANDSHAKE_COMPLETED) {
+                    this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
+                    this.triggerHandshakeCallback(false, this.getVerifyError());
+                }
+                // we need to trigger close because we are not receiving a SSL_shutdown
+                this.triggerCloseCallback();
             }
 
             // we sent the shutdown

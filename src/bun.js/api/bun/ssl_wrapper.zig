@@ -55,11 +55,11 @@ pub fn SSLWrapper(T: type) type {
         pub fn init(ssl_options: JSC.API.ServerConfig.SSLConfig, is_client: bool, handlers: Handlers) This {
             BoringSSL.load();
 
-           const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
-           // Create SSL context using uSockets to match behavior of node.js
-           const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse bun.outOfMemory();
-           const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
-           if (is_client) {
+            const ctx_opts: uws.us_bun_socket_context_options_t = JSC.API.ServerConfig.SSLConfig.asUSockets(ssl_options);
+            // Create SSL context using uSockets to match behavior of node.js
+            const ctx = uws.create_ssl_context_from_bun_options(ctx_opts) orelse bun.outOfMemory();
+            const ssl = BoringSSL.SSL_new(ctx) orelse bun.outOfMemory();
+            if (is_client) {
                 BoringSSL.SSL_set_renegotiate_mode(ssl, BoringSSL.ssl_renegotiate_freely);
                 BoringSSL.SSL_set_connect_state(ssl);
             } else {
@@ -67,21 +67,21 @@ pub fn SSLWrapper(T: type) type {
             }
             const input = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse bun.outOfMemory();
             const output = BoringSSL.BIO_new(BoringSSL.BIO_s_mem()) orelse bun.outOfMemory();
-            
+
             BoringSSL.BIO_set_mem_eof_return(input, -1);
             BoringSSL.BIO_set_mem_eof_return(output, -1);
 
             BoringSSL.SSL_set_bio(ssl, input, output);
 
-           return .{
+            return .{
                 .handlers = handlers,
-                .flags = . { .is_client },
+                .flags = .{.is_client},
                 .ctx = ctx,
                 .ssl = ssl,
                 .input = input,
                 .output = output,
-           };
-        }   
+            };
+        }
 
         pub fn start(this: *This) void {
             // trigger the onOpen callback so the user can configure the SSL connection before first handshake
@@ -89,7 +89,7 @@ pub fn SSLWrapper(T: type) type {
             // start the handshake
             this.handleTraffic();
         }
-        
+
         fn triggerHandshakeCallback(this: *This, success: bool, result: uws.us_bun_verify_error_t) void {
             // trigger the handshake callback
             this.handlers.onHandshake(this.handlers.ctx, this, success, result);
@@ -111,7 +111,7 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn getVerifyError(this: *This) uws.us_bun_verify_error_t {
-            if(this.flags.received_ssl_shutdown == true) {
+            if (this.flags.received_ssl_shutdown == true) {
                 return .{};
             }
             return uws.us_bun_verify_error_t(this.ssl);
@@ -119,7 +119,7 @@ pub fn SSLWrapper(T: type) type {
         /// Update the handshake state
         /// Returns true if we can call handleReading
         fn updateHandshakeState(this: *This) bool {
-            if(BoringSSL.SSL_is_init_finished(this.ssl)) {
+            if (BoringSSL.SSL_is_init_finished(this.ssl)) {
                 // handshake already completed nothing to do here
                 if (BoringSSL.SSL_get_shutdown(this.ssl) & BoringSSL.SSL_RECEIVED_SHUTDOWN) {
                     // we received a shutdown
@@ -140,7 +140,6 @@ pub fn SSLWrapper(T: type) type {
             }
 
             if (result <= 0) {
-
                 const err = BoringSSL.SSL_get_error(this.ssl, result);
                 // as far as I know these are the only errors we want to handle
                 if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
@@ -173,9 +172,9 @@ pub fn SSLWrapper(T: type) type {
 
         fn handleEndOfRenegociation(this: *This) void {
             if (this.flags.handshake_state == HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING) {
-              // renegotiation ended successfully call on_handshake
-              this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
-              this.triggerHandshakeCallback(true, this.getVerifyError());
+                // renegotiation ended successfully call on_handshake
+                this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
+                this.triggerHandshakeCallback(true, this.getVerifyError());
             }
         }
         /// Handle reading data
@@ -185,14 +184,14 @@ pub fn SSLWrapper(T: type) type {
             var buffer: [16384]u8 = undefined;
             var read: usize = 0;
             // read data from the input BIO
-            while(BoringSSL.BIO_ctrl_pending(this.input) > 0) {
+            while (BoringSSL.BIO_ctrl_pending(this.input) > 0) {
                 const available = buffer[read..];
                 const just_read = BoringSSL.SSL_read(this.ssl, available.ptr, available.len);
 
-                if(just_read <= 0) {
+                if (just_read <= 0) {
                     const err = BoringSSL.SSL_get_error(this.ssl, just_read);
                     if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
-                        if(err == BoringSSL.SSL_ERROR_WANT_RENEGOTIATE) {
+                        if (err == BoringSSL.SSL_ERROR_WANT_RENEGOTIATE) {
                             this.flags.handshake_state = HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING;
                             this.flags.handshake_state = HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING;
                             if (!BoringSSL.SSL_renegotiate(this.ssl)) {
@@ -228,7 +227,7 @@ pub fn SSLWrapper(T: type) type {
                 this.handleEndOfRenegociation();
 
                 read += just_read;
-                if(read == buffer.len) {
+                if (read == buffer.len) {
                     // we filled the buffer
                     this.triggerReadCallback(buffer[0..read]);
                     read = 0;
@@ -243,7 +242,7 @@ pub fn SSLWrapper(T: type) type {
 
         fn handleWriting(this: *This) void {
             var buffer: [16384]u8 = undefined;
-            while(true) {
+            while (true) {
                 // read data from the output BIO
                 const pending = BoringSSL.BIO_ctrl_pending(this.output);
                 if (pending <= 0) {
@@ -261,8 +260,8 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn handleTraffic(this: *This) void {
-            if(this.updateHandshakeState()) {
-                if(this.handleReading()) {
+            if (this.updateHandshakeState()) {
+                if (this.handleReading()) {
                     // we may have data to write
                     this.handleWriting();
                 }
@@ -277,22 +276,22 @@ pub fn SSLWrapper(T: type) type {
             }
         }
 
-        // Send data to the network (unencrypted data)    
+        // Send data to the network (unencrypted data)
         pub fn writeData(this: *This, data: []const u8) usize {
-            if(data.len == 0) {
+            if (data.len == 0) {
                 // just cycle through internal openssl's state
                 _ = BoringSSL.SSL_write(this.ssl, data.ptr, @as(c_int, @intCast(data.len)));
                 this.handleTraffic();
                 return 0;
             }
             const written = BoringSSL.SSL_write(this.ssl, data.ptr, @as(c_int, @intCast(data.len)));
-            if(written <= 0) {
+            if (written <= 0) {
                 const err = BoringSSL.SSL_get_error(this.ssl, written);
                 if (err == BoringSSL.SSL_ERROR_WANT_READ or err == BoringSSL.SSL_ERROR_WANT_WRITE) {
                     // we wanna read/write
                     this.handleTraffic();
                     return 0;
-                } 
+                }
                 // some bad error happened here we must close
                 BoringSSL.ERR_clear_error();
                 this.triggerCloseCallback();
@@ -310,5 +309,4 @@ pub fn SSLWrapper(T: type) type {
             _ = BoringSSL.SSL_CTX_free(this.ctx);
         }
     };
-    
 }

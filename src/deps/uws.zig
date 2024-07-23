@@ -1411,7 +1411,6 @@ pub const us_bun_socket_context_options_t = extern struct {
 };
 pub extern fn create_ssl_context_from_bun_options(options: us_bun_socket_context_options_t) ?*BoringSSL.SSL_CTX;
 
-
 pub const us_bun_verify_error_t = extern struct {
     error_no: i32 = 0,
     code: [*c]const u8 = null,

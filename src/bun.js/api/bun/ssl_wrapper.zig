@@ -59,7 +59,7 @@ pub fn SSLWrapper(T: type) type {
 
             const ssl = BoringSSL.SSL_new(ctx) orelse return error.OutOfMemory;
             errdefer BoringSSL.SSL_free(ssl);
-            
+
             // OpenSSL enables TLS renegotiation by default and accepts renegotiation requests from the peer transparently. Renegotiation is an extremely problematic protocol feature, so BoringSSL rejects peer renegotiations by default.
             // We explicitly set the SSL_set_renegotiate_mode so if we switch to OpenSSL we keep the same behavior
             // See: https://boringssl.googlesource.com/boringssl/+/HEAD/PORTING.md#TLS-renegotiation
@@ -144,9 +144,9 @@ pub fn SSLWrapper(T: type) type {
                     // we received a shutdown
                     this.flags.received_ssl_shutdown = true;
                     // 2-step shutdown
-                    _ = this.shutdown(false); 
+                    _ = this.shutdown(false);
                     this.triggerCloseCallback();
-                    
+
                     return false;
                 }
                 return true;
@@ -162,7 +162,7 @@ pub fn SSLWrapper(T: type) type {
             if (BoringSSL.SSL_get_shutdown(this.ssl) & BoringSSL.SSL_RECEIVED_SHUTDOWN) {
                 this.flags.received_ssl_shutdown = true;
                 this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
-                 // 2-step shutdown
+                // 2-step shutdown
                 _ = this.shutdown(false);
                 this.triggerHandshakeCallback(false, this.getVerifyError());
                 this.triggerCloseCallback();
@@ -210,26 +210,25 @@ pub fn SSLWrapper(T: type) type {
             }
         }
 
-
         fn shutdownRead(this: *This) void {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
             // So we just ignore the onRead data
             const DummyReadHandler = struct {
-                fn onRead(_: T, _ :*This, _: []const u8) void {}
+                fn onRead(_: T, _: *This, _: []const u8) void {}
             };
             this.handlers.onRead = DummyReadHandler.onRead;
         }
 
         fn shutdown(this: *This, fast_shutdown: bool) bool {
-            if(this.flags.sent_ssl_shutdown) return true;
+            if (this.flags.sent_ssl_shutdown) return true;
 
-            // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer. 
-            // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn. 
+            // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer.
+            // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn.
             // The peer might continue sending data for some period of time before handling the local application's shutdown indication.
             const ret = BoringSSL.SSL_shutdown(this.ssl);
-            if(fast_shutdown and ret == 0) {
+            if (fast_shutdown and ret == 0) {
                 // This allows for a more rapid shutdown process if the application does not wish to wait for the peer.
-                // This alternative "fast shutdown" approach should only be done if it is known that the peer will not send more data, otherwise there is a risk of an application exposing itself to a truncation attack. 
+                // This alternative "fast shutdown" approach should only be done if it is known that the peer will not send more data, otherwise there is a risk of an application exposing itself to a truncation attack.
                 // The full SSL_shutdown() process, in which both parties send close_notify alerts and SSL_shutdown() returns 1, provides a cryptographically authenticated indication of the end of a connection.
 
                 // The fast shutdown approach can only be used if there is no intention to reuse the underlying connection (e.g. a TCP connection) for further communication; in this case, the full shutdown process must be performed to ensure synchronisation.
@@ -238,8 +237,8 @@ pub fn SSLWrapper(T: type) type {
             }
 
             // we sent the shutdown
-            this.flags.sent_ssl_shutdown = ret >= 0; 
-            defer if(ret < 0) BoringSSL.ERR_clear_error();
+            this.flags.sent_ssl_shutdown = ret >= 0;
+            defer if (ret < 0) BoringSSL.ERR_clear_error();
             return ret == 1; // truly closed
         }
 
@@ -247,7 +246,7 @@ pub fn SSLWrapper(T: type) type {
         fn flush(this: *This) usize {
             this.handleTraffic();
             const pending = BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(this.ssl));
-            if(pending > 0) return @intCast(pending);
+            if (pending > 0) return @intCast(pending);
             return 0;
         }
 
@@ -260,10 +259,10 @@ pub fn SSLWrapper(T: type) type {
         pub fn isClosed(this: *This) bool {
             return this.flags.received_ssl_shutdown and this.flags.sent_ssl_shutdown;
         }
-        
+
         pub fn isAuthorized(this: *This) bool {
             // handshake ended we know if we are authorized or not
-            if(this.flags.handshake_state == HandshakeState.HANDSHAKE_COMPLETED) {
+            if (this.flags.handshake_state == HandshakeState.HANDSHAKE_COMPLETED) {
                 return this.flags.authorized;
             }
             // hanshake still in progress
@@ -381,7 +380,7 @@ pub fn SSLWrapper(T: type) type {
         // Send data to the network (unencrypted data)
         pub fn writeData(this: *This, data: []const u8) usize {
             // shutdown is sent we cannot write anymore
-            if(this.flags.sent_ssl_shutdown) return 0;
+            if (this.flags.sent_ssl_shutdown) return 0;
 
             if (data.len == 0) {
                 // just cycle through internal openssl's state

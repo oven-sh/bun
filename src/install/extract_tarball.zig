@@ -217,7 +217,11 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
                 if (last_4_bytes > 16 and last_4_bytes < 64 * 1024 * 1024) {
                     // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
                     esimated_output_size = last_4_bytes;
-                    zlib_pool.data.ensureUnusedCapacity(last_4_bytes) catch {};
+                    if (zlib_pool.data.list.capacity == 0) {
+                        zlib_pool.data.list.ensureTotalCapacityPrecise(zlib_pool.data.allocator, last_4_bytes) catch {};
+                    } else {
+                        zlib_pool.data.ensureUnusedCapacity(last_4_bytes) catch {};
+                    }
                 }
             }
         }

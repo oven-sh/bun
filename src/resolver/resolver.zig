@@ -481,13 +481,6 @@ pub fn ResolveWatcher(comptime Context: type, comptime onWatch: anytype) type {
     };
 }
 
-fn isExternalModuleLike(import_path: string) bool {
-    if (strings.startsWith(import_path, ".") or strings.startsWith(import_path, "/") or strings.startsWith(import_path, "..")) {
-        return false;
-    }
-    return true;
-}
-
 pub const Resolver = struct {
     const ThisResolver = @This();
     opts: options.BundleOptions,
@@ -632,7 +625,7 @@ pub const Resolver = struct {
     }
 
     pub fn isExternalPattern(r: *ThisResolver, import_path: string) bool {
-        if (r.opts.packages == .external and isExternalModuleLike(import_path)) {
+        if (r.opts.packages == .external and isPackagePath(import_path)) {
             return true;
         }
         for (r.opts.external.patterns) |pattern| {
@@ -873,8 +866,10 @@ pub const Resolver = struct {
             }
         }
 
-        // Certain types of URLs default to being external for convenience
-        if (r.isExternalPattern(import_path) or
+        // Certain types of URLs default to being external for convenience,
+        // while these rules should not be applied to the entrypoint as it is never external (#12734)
+        if (kind != .entry_point and
+            (r.isExternalPattern(import_path) or
             // "fill: url(#filter);"
             (kind.isFromCSS() and strings.startsWith(import_path, "#")) or
 
@@ -885,7 +880,7 @@ pub const Resolver = struct {
             strings.startsWith(import_path, "https://") or
 
             // "background: url(//example.com/images/image.png);"
-            strings.startsWith(import_path, "//"))
+            strings.startsWith(import_path, "//")))
         {
             if (r.debug_logs) |*debug| {
                 debug.addNote("Marking this path as implicitly external");

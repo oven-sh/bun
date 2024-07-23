@@ -133,7 +133,7 @@ pub fn SSLWrapper(T: type) type {
             if (this.isShutdown()) {
                 return .{};
             }
-            return uws.us_bun_verify_error_t(this.ssl);
+            return uws.us_ssl_socket_verify_error_from_ssl(this.ssl);
         }
         /// Update the handshake state
         /// Returns true if we can call handleReading

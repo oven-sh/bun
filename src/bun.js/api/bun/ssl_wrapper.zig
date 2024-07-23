@@ -37,6 +37,7 @@ pub fn SSLWrapper(T: type) type {
             received_ssl_shutdown: bool = false,
             sent_ssl_shutdown: bool = false,
             is_client: bool = false,
+            authorized: bool = false,
         };
         pub const HandshakeState = enum(u8) {
             HANDSHAKE_PENDING = 0,
@@ -53,7 +54,7 @@ pub fn SSLWrapper(T: type) type {
         };
 
         /// Initialize the SSLWrapper with a specific SSL_CTX*, remember to call SSL_CTX_up_ref if you want to keep the SSL_CTX alive after the SSLWrapper is deinitialized
-        pub initWithCTX(ctx: *BoringSSL.SSL_CTX, is_client: bool, handlers: Handlers) !This {
+        pub fn initWithCTX(ctx: *BoringSSL.SSL_CTX, is_client: bool, handlers: Handlers) !This {
             BoringSSL.load();
 
             const ssl = BoringSSL.SSL_new(ctx) orelse return error.OutOfMemory;
@@ -108,6 +109,7 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn triggerHandshakeCallback(this: *This, success: bool, result: uws.us_bun_verify_error_t) void {
+            this.flags.authorized = success;
             // trigger the handshake callback
             this.handlers.onHandshake(this.handlers.ctx, this, success, result);
         }
@@ -128,7 +130,7 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn getVerifyError(this: *This) uws.us_bun_verify_error_t {
-            if (this.flags.received_ssl_shutdown == true) {
+            if (this.isShutdown()) {
                 return .{};
             }
             return uws.us_bun_verify_error_t(this.ssl);
@@ -214,7 +216,7 @@ pub fn SSLWrapper(T: type) type {
             // So we just ignore the onRead data
             const DummyReadHandler = struct {
                 fn onRead(_: T, _ :*This, _: []const u8) void {}
-            }
+            };
             this.handlers.onRead = DummyReadHandler.onRead;
         }
 
@@ -232,9 +234,11 @@ pub fn SSLWrapper(T: type) type {
 
                 // The fast shutdown approach can only be used if there is no intention to reuse the underlying connection (e.g. a TCP connection) for further communication; in this case, the full shutdown process must be performed to ensure synchronisation.
                 _ = BoringSSL.SSL_shutdown(this.ssl);
+                this.received_ssl_shutdown = true;
             }
 
-            this.flags.sent_ssl_shutdown = ret >= 0; // we sent the shutdown
+            // we sent the shutdown
+            this.flags.sent_ssl_shutdown = ret >= 0; 
             defer if(ret < 0) BoringSSL.ERR_clear_error();
             return ret == 1; // truly closed
         }
@@ -245,6 +249,25 @@ pub fn SSLWrapper(T: type) type {
             const pending = BoringSSL.BIO_ctrl_pending(BoringSSL.SSL_get_wbio(this.ssl));
             if(pending > 0) return @intCast(pending);
             return 0;
+        }
+
+        // We sent or received a shutdown (closing or closed)
+        pub fn isShutdown(this: *This) bool {
+            return this.received_ssl_shutdown or this.sent_ssl_shutdown;
+        }
+
+        // We sent and received the shutdown (fully closed)
+        pub fn isClosed(this: *This) bool {
+            return this.flags.received_ssl_shutdown and this.flags.sent_ssl_shutdown;
+        }
+        
+        pub fn isAuthorized(this: *This) bool {
+            // handshake ended we know if we are authorized or not
+            if(this.flags.handshake_state == HandshakeState.HANDSHAKE_COMPLETED) {
+                return this.flags.authorized;
+            }
+            // hanshake still in progress
+            return false;
         }
 
         /// Handle reading data

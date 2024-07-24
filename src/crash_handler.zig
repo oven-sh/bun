@@ -107,6 +107,17 @@ pub const Action = union(enum) {
     visit: []const u8,
     print: []const u8,
 
+    /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
+    bundle_generate_chunk: if (bun.Environment.isDebug) struct {
+        context: *const anyopaque, // unfortunate dependency loop workaround
+        chunk: *const bun.bundle_v2.Chunk,
+        part_range: *const bun.bundle_v2.PartRange,
+
+        pub fn linkerContext(data: *const @This()) *const bun.bundle_v2.LinkerContext {
+            return @ptrCast(@alignCast(data.context));
+        }
+    } else void,
+
     resolver: if (bun.Environment.isDebug) struct {
         source_dir: []const u8,
         import_path: []const u8,
@@ -118,6 +129,25 @@ pub const Action = union(enum) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
             .print => |path| try writer.print("printing {s}", .{path}),
+            .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
+                try writer.print(
+                    \\generating bundler chunk
+                    \\  chunk entry point: {s}
+                    \\  source: {s}
+                    \\  part range: {d}..{d}
+                ,
+                    .{
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.chunk.entry_point.source_index]
+                            .path.text,
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.part_range.source_index.get()]
+                            .path.text,
+                        data.part_range.part_index_begin,
+                        data.part_range.part_index_end,
+                    },
+                );
+            },
             .resolver => |res| if (bun.Environment.isDebug) {
                 try writer.print("resolving {s} from {s} ({s})", .{
                     res.import_path,
@@ -193,11 +223,10 @@ pub fn crashHandler(
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
-                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
                     }
-                    writer.writeAll("multiple threads are crashing") catch std.posix.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -252,6 +281,8 @@ pub fn crashHandler(
                 };
 
                 if (debug_trace) {
+                    has_printed_message = true;
+
                     dumpStackTrace(trace.*);
 
                     trace_str_buf.writer().print("{}", .{TraceString{

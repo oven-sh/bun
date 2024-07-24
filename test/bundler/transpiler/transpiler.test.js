@@ -617,7 +617,7 @@ describe("Bun.Transpiler", () => {
       exp("class Foo<const T extends X> {}", "class Foo {\n}");
       exp("Foo = class <const T> {}", "Foo = class {\n}");
       exp("Foo = class Bar<const T> {}", "Foo = class Bar {\n}");
-      exp("function foo<const T>() {}", "let foo = function() {\n}");
+      exp("function foo<const T>() {}", "function foo() {\n}");
       exp("foo = function <const T>() {}", "foo = function() {\n}");
       exp("foo = function bar<const T>() {}", "foo = function bar() {\n}");
       exp("class Foo { bar<const T>() {} }", "class Foo {\n  bar() {\n  }\n}");

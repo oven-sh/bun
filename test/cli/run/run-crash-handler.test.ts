@@ -20,16 +20,19 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
     fetch(request, server) {
       sent = true;
       onresolve.resolve();
-      return new Response('OK');
+      return new Response("OK");
     },
-  })
+  });
 
   const proc = Bun.spawn({
     cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), "raiseIgnoringPanicHandler"],
-    env: mergeWindowEnvs([bunEnv, {
-      BUN_CRASH_REPORT_URL: server.url.toString(),
-      BUN_ENABLE_CRASH_REPORTING: "1",
-    }]),
+    env: mergeWindowEnvs([
+      bunEnv,
+      {
+        BUN_CRASH_REPORT_URL: server.url.toString(),
+        BUN_ENABLE_CRASH_REPORTING: "1",
+      },
+    ]),
   });
   await proc.exited;
 
@@ -49,22 +52,25 @@ describe("automatic crash reporter", () => {
       using server = Bun.serve({
         port: 0,
         fetch(request, server) {
-          expect(request.url).toEndWith('/ack');
+          expect(request.url).toEndWith("/ack");
           sent = true;
           onresolve.resolve();
-          return new Response('OK');
+          return new Response("OK");
         },
-      })
+      });
 
       const proc = Bun.spawn({
         cmd: [bunExe(), path.join(import.meta.dir, "fixture-crash.js"), approach],
-        env: mergeWindowEnvs([bunEnv, {
-          BUN_CRASH_REPORT_URL: server.url.toString(),
-          BUN_ENABLE_CRASH_REPORTING: "1",
-          GITHUB_ACTIONS: undefined,
-          CI: undefined,
-        }]),
-        stdio: ['ignore', 'pipe', 'pipe']
+        env: mergeWindowEnvs([
+          bunEnv,
+          {
+            BUN_CRASH_REPORT_URL: server.url.toString(),
+            BUN_ENABLE_CRASH_REPORTING: "1",
+            GITHUB_ACTIONS: undefined,
+            CI: undefined,
+          },
+        ]),
+        stdio: ["ignore", "pipe", "pipe"],
       });
       await proc.exited;
 
@@ -75,12 +81,12 @@ describe("automatic crash reporter", () => {
       console.log(stderr);
 
       expect(proc.exitCode).not.toBe(0);
-      expect(stderr).toContain(server.url.toString())
-      if (approach !== 'outOfMemory') {
-        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code")
+      expect(stderr).toContain(server.url.toString());
+      if (approach !== "outOfMemory") {
+        expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");
       } else {
-        expect(stderr.toLowerCase()).toContain("out of memory")
-        expect(stderr.toLowerCase()).not.toContain("panic")
+        expect(stderr.toLowerCase()).toContain("out of memory");
+        expect(stderr.toLowerCase()).not.toContain("panic");
       }
       expect(sent).toBe(true);
     });

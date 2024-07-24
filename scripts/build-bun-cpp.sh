@@ -35,12 +35,12 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
+# libdeflate.h is needed otherwise the build fails
+git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
+
 mkdir -p build
 cd build
 mkdir -p tmp_modules tmp_functions js codegen
-
-# libdeflate.h is needed otherwise the build fails
-git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
 
 cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \

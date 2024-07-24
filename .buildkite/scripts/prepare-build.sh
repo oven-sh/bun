@@ -103,4 +103,5 @@ assert_buildkite_agent
 assert_buildkite_secret "GITHUB_TOKEN"
 assert_jq
 assert_curl
+calculate_canary_revision
 upload_buildkite_pipeline ".buildkite/ci.yml"

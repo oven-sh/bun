@@ -38,6 +38,10 @@ done
 mkdir -p build
 cd build
 mkdir -p tmp_modules tmp_functions js codegen
+
+# libdeflate.h is needed otherwise the build fails
+git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
+
 cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \

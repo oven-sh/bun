@@ -13,8 +13,11 @@ $CANARY = if ($env:CANARY) { "$env:CANARY" } else { "1" }
 .\scripts\env.ps1 $Tag
 .\scripts\update-submodules.ps1
 .\scripts\build-libuv.ps1 -CloneOnly $True
-cd build
 
+# libdeflate.h is needed otherwise the build fails
+git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
+
+cd build
 cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=0 `
   -DNO_CONFIGURE_DEPENDS=1 `

@@ -11,7 +11,7 @@ steps:
 
   - label: ":pipeline:"
     agents:
-      queue: "build-linux"
+      queue: "build-darwin"
     command:
       - ".buildkite/scripts/prepare-build.sh"
 

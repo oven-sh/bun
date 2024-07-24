@@ -657,14 +657,13 @@ pub const BundleV2 = struct {
         var result = resolve;
         var path = result.path() orelse return null;
 
-        const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
-
         const entry = try this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, hash orelse path.hashKey());
         if (entry.found_existing) {
             return null;
         }
         _ = @atomicRmw(usize, &this.graph.parse_pending, .Add, 1, .monotonic);
         const source_index = Index.source(this.graph.input_files.len);
+        const loader = this.bundler.options.loaders.get(path.name.ext) orelse .file;
 
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
@@ -4767,7 +4766,7 @@ const LinkerContext = struct {
                 }
             }
 
-            if (comptime Environment.allow_assert) {
+            if (comptime Environment.enable_logs) {
                 var cjs_count: usize = 0;
                 var esm_count: usize = 0;
                 var wrap_cjs_count: usize = 0;
@@ -9577,9 +9576,14 @@ const LinkerContext = struct {
                         from_chunk_dir = "";
 
                     const additional_files: []AdditionalFile = c.graph.bundler_graph.input_files.items(.additional_files)[piece.index.index].slice();
-                    bun.assert(additional_files.len == 1);
-                    const path = c.graph.bundler_graph.additional_output_files.items[additional_files[0].output_file].dest_path;
-                    hash.write(bun.path.relativePlatform(from_chunk_dir, path, .posix, false));
+                    bun.assert(additional_files.len > 0);
+                    switch (additional_files[0]) {
+                        .output_file => |output_file_id| {
+                            const path = c.graph.bundler_graph.additional_output_files.items[output_file_id].dest_path;
+                            hash.write(bun.path.relativePlatform(from_chunk_dir, path, .posix, false));
+                        },
+                        .source_index => {},
+                    }
                 }
             },
             else => {},

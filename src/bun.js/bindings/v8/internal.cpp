@@ -1,12 +1,11 @@
-#include "v8.h"
+#include "v8/internal.h"
 
 namespace v8 {
-namespace api_internal {
+namespace internal {
 
-BUN_EXPORT void ToLocalEmpty()
+Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj)
 {
-    // TODO(@190n) proper error handling
-    assert("ToLocalEmpty" && 0);
+    assert("IsolateFromNeverReadOnlySpaceObject" && 0);
 }
 
 }

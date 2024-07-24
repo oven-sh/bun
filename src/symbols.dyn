@@ -166,8 +166,16 @@
     __ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_;
     __ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE;
     __ZN2v86Object20SlowGetInternalFieldEi;
-    __ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm
-    __ZN2v811HandleScopeC1EPNS_7IsolateE
-    __ZN2v811HandleScopeD1Ev
-    __ZN2v811HandleScopeD2Ev
+    __ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm;
+    __ZN2v811HandleScopeC1EPNS_7IsolateE;
+    __ZN2v811HandleScopeD1Ev;
+    __ZN2v811HandleScopeD2Ev;
+    __ZN2v816FunctionTemplate11GetFunctionENS_5LocalINS_7ContextEEE;
+    __ZN2v816FunctionTemplate3NewEPNS_7IsolateEPFvRKNS_20FunctionCallbackInfoINS_5ValueEEEENS_5LocalIS4_EENSA_INS_9SignatureEEEiNS_19ConstructorBehaviorENS_14SideEffectTypeEPKNS_9CFunctionEttt;
+    __ZN2v814ObjectTemplate11NewInstanceENS_5LocalINS_7ContextEEE;
+    __ZN2v814ObjectTemplate21SetInternalFieldCountEi;
+    __ZN2v814ObjectTemplate3NewEPNS_7IsolateENS_5LocalINS_16FunctionTemplateEEE;
+    __ZN2v824EscapableHandleScopeBase10EscapeSlotEPm;
+    __ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE;
+    __ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm;
 };

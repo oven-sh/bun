@@ -39,6 +39,8 @@ public:
 
     ~Process();
 
+    bool m_exited;
+
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);

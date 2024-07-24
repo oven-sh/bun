@@ -112,7 +112,7 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
 static bool processIsExiting = false;
 
-extern "C" JSC::EncodedJSValue Bun__getExitCode(void*);
+extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
@@ -473,6 +473,8 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     }
 
     auto* process = jsCast<Process*>(globalObject->processObject());
+    if (exitCode > 0)
+        process->m_exited = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
@@ -508,6 +510,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     if (UNLIKELY(!zigGlobal)) {
         zigGlobal = Bun__getDefaultGlobal();
     }
+    auto process = jsCast<Process*>(zigGlobal->processObject());
+    process->m_exited = true;
 
     Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
@@ -1112,8 +1116,11 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     if (!process) {
         return JSValue::encode(jsUndefined());
     }
+    if (!process->m_exited) {
+        return JSValue::encode(jsUndefined());
+    }
 
-    return Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM());
+    return JSValue::encode(jsNumber(Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM())));
 }
 JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, JSC::EncodedJSValue value, JSC::PropertyName))
 {
@@ -1132,6 +1139,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
     RETURN_IF_EXCEPTION(throwScope, false);
 
+    process->m_exited = true;
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
     Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
 

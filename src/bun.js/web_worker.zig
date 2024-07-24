@@ -414,7 +414,7 @@ pub const WebWorker = struct {
             this.vm = null;
             vm.is_shutting_down = true;
             vm.onExit();
-            exit_code = vm.exit_handler.exit_code orelse 0;
+            exit_code = vm.exit_handler.exit_code;
             globalObject = vm.global;
             vm_to_deinit = vm;
         }

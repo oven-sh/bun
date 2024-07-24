@@ -64,7 +64,7 @@ cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_CPP_ARCHIVE="$(pwd)/build/bun-cpp-objects.a" \
   -DBUN_DEPS_OUT_DIR="$(pwd)/build/bun-deps" \
   -DNO_CONFIGURE_DEPENDS=1
-ninja -v
+ninja -v -j "$CPUS"
 
 if [[ "${USE_LTO}" == "OFF" ]]; then
   TAG="${TAG}-nolto"

@@ -36,7 +36,7 @@ cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   "$Flags"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
-ninja -v
+ninja -v -j $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
 if ($Fast) {

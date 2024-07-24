@@ -27,5 +27,5 @@ cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DBUN_CPP_ONLY=1 $Flags
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
-.\compile-cpp-only.ps1 -v
+.\compile-cpp-only.ps1 -v -j $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "C++ compilation failed" }

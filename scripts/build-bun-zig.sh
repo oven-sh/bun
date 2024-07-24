@@ -92,4 +92,4 @@ cmake .. "${CMAKE_FLAGS[@]}" \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
   -DCANARY="${CANARY}" \
   -DZIG_LIB_DIR=src/deps/zig/lib
-ONLY_ZIG=1 ninja "$cwd/build/bun-zig.o" -v
+ONLY_ZIG=1 ninja "$cwd/build/bun-zig.o" -v -j "$CPUS"

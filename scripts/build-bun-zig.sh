@@ -21,7 +21,7 @@ else
 fi
 
 ZIG_OPTIMIZE="${ZIG_OPTIMIZE:-ReleaseFast}"
-CANARY="${CANARY:-0}"
+CANARY="${CANARY:-1}"
 GIT_SHA="${GIT_SHA:-$(git rev-parse HEAD)}"
 
 BUILD_MACHINE_ARCH="${BUILD_MACHINE_ARCH:-$(uname -m)}"
@@ -75,7 +75,7 @@ bun run src/codegen/bundle-modules.ts --debug=OFF build
 
 echo "--- Building zig"
 cd build
-cmake .. \
+cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
   -DUSE_LTO=ON \
@@ -90,6 +90,6 @@ cmake .. \
   -DNO_CONFIGURE_DEPENDS=1 \
   -DNO_CODEGEN=1 \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
-  -DCANARY="$CANARY" \
+  -DCANARY="${CANARY}" \
   -DZIG_LIB_DIR=src/deps/zig/lib
 ONLY_ZIG=1 ninja "$cwd/build/bun-zig.o" -v

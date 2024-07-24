@@ -21,12 +21,12 @@ mv -Force -ErrorAction SilentlyContinue build\build\bun-deps\* build\bun-deps
 mv -Force -ErrorAction SilentlyContinue build\build\* build
 
 Set-Location build
-$CANARY_REVISION = 0
-cmake .. -G Ninja -DCMAKE_BUILD_TYPE=Release `
+$CANARY = if ($env:CANARY) { "$env:CANARY" } else { "1" }
+cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=1 `
   -DNO_CONFIGURE_DEPENDS=1 `
   "-DCPU_TARGET=${CPU_TARGET}" `
-  "-DCANARY=${CANARY_REVISION}" `
+  "-DCANARY=${CANARY}" `
   -DBUN_LINK_ONLY=1 `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `
@@ -39,7 +39,6 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 ninja -v
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
-ls
 if ($Fast) {
   $Tag = "$Tag-nolto"
 }

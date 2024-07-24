@@ -6,16 +6,162 @@ import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdir
 import { basename, dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
-const projectPath = dirname(import.meta.dirname);
-const vendorPath = process.env.BUN_VENDOR_PATH || join(projectPath, "vendor");
-
 const isWindows = process.platform === "win32";
 const isMacOS = process.platform === "darwin";
 const isLinux = process.platform === "linux";
 
+const cwd = dirname(import.meta.dirname);
 const spawnSyncTimeout = 1000 * 60;
 const spawnTimeout = 1000 * 60 * 3;
 
+/**
+ * @typedef {Object} S3UploadOptions
+ * @property {string} [bucket]
+ * @property {string} filename
+ * @property {string} content
+ * @property {Record<string, string>} [headers]
+ */
+
+/**
+ * @param {S3UploadOptions} options
+ */
+async function uploadFileToS3(options) {
+  const { AwsV4Signer } = await import("aws4fetch");
+
+  const { bucket, filename, content, ...extra } = options;
+  const baseUrl = getEnv(["S3_ENDPOINT", "S3_BASE_URL", "AWS_ENDPOINT"], "https://s3.amazonaws.com");
+  const bucketUrl = new URL(bucket || getEnv(["S3_BUCKET", "AWS_BUCKET"]), baseUrl);
+
+  const signer = new AwsV4Signer({
+    accessKeyId: getSecret(["S3_ACCESS_KEY_ID", "AWS_ACCESS_KEY_ID"]),
+    secretAccessKey: getSecret(["S3_SECRET_ACCESS_KEY", "AWS_SECRET_ACCESS_KEY"]),
+    url: new URL(filename, bucketUrl),
+    method: "PUT",
+    body: content,
+    ...extra,
+  });
+
+  const { url, method, headers, body } = signer.sign();
+  await fetchSafe(url, {
+    method,
+    headers,
+    body,
+  });
+
+  console.log("Uploaded file to S3:", {
+    url: `${bucketUrl}`,
+    filename,
+  });
+}
+
+/**
+ * @typedef {Object} SentryRelease
+ * @property {string} organizationId
+ * @property {string} projectId
+ * @property {string} version
+ * @property {string} [url]
+ * @property {string} [ref]
+ * @property {string} [dateReleased]
+ */
+
+/**
+ * @param {SentryRelease} options
+ * @returns {Promise<void>}
+ */
+async function createSentryRelease(options) {
+  const { organizationId, projectId, ...body } = options;
+
+  const baseUrl = getEnv("SENTRY_BASE_URL", "https://sentry.io");
+  const url = new URL(`api/0/organizations/${organizationId}/releases`, baseUrl);
+  const accessToken = getSecret(["SENTRY_AUTH_TOKEN", "SENTRY_TOKEN"]);
+
+  const release = await fetchSafe(url, {
+    method: "POST",
+    headers: {
+      "Authorization": `Bearer ${accessToken}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify(body),
+    format: "json",
+  });
+
+  console.log("Created Sentry release:", release);
+}
+
+/**
+ * @return {string}
+ */
+function getGithubToken() {
+  const token = getEnv("GITHUB_TOKEN", null);
+  if (token) {
+    return token;
+  }
+
+  const gh = which("gh");
+  if (gh) {
+    const { exitCode, stdout } = spawnSyncSafe(gh, ["auth", "token"]);
+    if (exitCode === 0) {
+      return stdout.trim();
+    }
+  }
+
+  throw new Error("Failed to get GitHub token (set GITHUB_TOKEN or run `gh auth login`)");
+}
+
+/**
+ * @param {string | string[]} name
+ * @return {string}
+ */
+function getSecret(name) {
+  return getEnv(name);
+}
+
+/**
+ * @param {string | string[]} name
+ * @param {string | null} [defaultValue]
+ * @returns {string | undefined}
+ */
+function getEnv(name, defaultValue) {
+  let result = defaultValue;
+
+  for (const key of typeof name === "string" ? [name] : name) {
+    const value = process.env[key];
+    if (value) {
+      result = value;
+      break;
+    }
+  }
+
+  if (result || result === null) {
+    return result;
+  }
+
+  throw new Error(`Environment variable is required: ${name}`);
+}
+
+/**
+ * @typedef {Object} SpawnOptions
+ * @property {boolean} [throwOnError]
+ * @property {string} [cwd]
+ * @property {string} [env]
+ * @property {string} [encoding]
+ * @property {number} [timeout]
+ */
+
+/**
+ * @typedef {Object} SpawnResult
+ * @property {number | null} exitCode
+ * @property {number | null} signalCode
+ * @property {string} stdout
+ * @property {string} stderr
+ */
+
+/**
+ * @param {string} command
+ * @param {string[]} [args]
+ * @param {SpawnOptions} [options]
+ * @returns {Promise<SpawnResult>}
+ */
 async function spawnSafe(command, args, options = {}) {
   const result = new Promise((resolve, reject) => {
     let stdout = "";
@@ -60,6 +206,12 @@ async function spawnSafe(command, args, options = {}) {
   }
 }
 
+/**
+ * @param {string} command
+ * @param {string[]} [args]
+ * @param {SpawnOptions} [options]
+ * @returns {SpawnResult}
+ */
 function spawnSyncSafe(command, args, options = {}) {
   try {
     const { error, status, signal, stdout, stderr } = spawnSync(command, args, {
@@ -86,6 +238,20 @@ function spawnSyncSafe(command, args, options = {}) {
   }
 }
 
+/**
+ * @typedef {Object} FetchOptions
+ * @property {string} [method]
+ * @property {Record<string, string>} [headers]
+ * @property {string | Uint8Array} [body]
+ * @property {"json" | "text" | "bytes"} [format]
+ * @property {boolean} [throwOnError]
+ */
+
+/**
+ * @param {string | URL} url
+ * @param {FetchOptions} [options]
+ * @returns {Promise<Response | string | Uint8Array>}
+ */
 async function fetchSafe(url, options = {}) {
   let response;
   try {
@@ -138,47 +304,6 @@ function which(command, path) {
   return result.trimEnd();
 }
 
-function getZigTarget(os = process.platform, arch = process.arch) {
-  if (arch === "x64") {
-    if (os === "linux") return "linux-x86_64";
-    if (os === "darwin") return "macos-x86_64";
-    if (os === "win32") return "windows-x86_64";
-  }
-  if (arch === "arm64") {
-    if (os === "linux") return "linux-aarch64";
-    if (os === "darwin") return "macos-aarch64";
-  }
-  throw new Error(`Unsupported zig target: os=${os}, arch=${arch}`);
-}
-
-function getRecommendedZigVersion() {
-  const scriptPath = join(projectPath, "build.zig");
-  try {
-    const scriptContent = readFileSync(scriptPath, "utf-8");
-    const match = scriptContent.match(/recommended_zig_version = "([^"]+)"/);
-    if (!match) {
-      throw new Error("File does not contain string: 'recommended_zig_version'");
-    }
-    return match[1];
-  } catch (cause) {
-    throw new Error("Failed to find recommended Zig version", { cause });
-  }
-}
-
-/**
- * @returns {Promise<string>}
- */
-async function getLatestZigVersion() {
-  try {
-    const response = await fetchSafe("https://ziglang.org/download/index.json", { format: "json" });
-    const { master } = response;
-    const { version } = master;
-    return version;
-  } catch (cause) {
-    throw new Error("Failed to get latest Zig version", { cause });
-  }
-}
-
 /**
  * @param {string} execPath
  * @returns {string | undefined}
@@ -191,110 +316,3 @@ function getVersion(execPath) {
   }
   return result.trim();
 }
-
-/**
- * @returns {string}
- */
-function getTmpdir() {
-  if (isMacOS && existsSync("/tmp")) {
-    return "/tmp";
-  }
-  return tmpdir();
-}
-
-/**
- * @returns {string}
- */
-function mkTmpdir() {
-  return mkdtempSync(join(getTmpdir(), "bun-"));
-}
-
-/**
- * @param {string} url
- * @param {string} [path]
- * @returns {Promise<string>}
- */
-async function downloadFile(url, path) {
-  const outPath = path || join(mkTmpdir(), basename(url));
-  const bytes = await fetchSafe(url, { format: "bytes" });
-  mkdirSync(dirname(outPath), { recursive: true });
-  writeFileSync(outPath, bytes);
-  return outPath;
-}
-
-/**
- * @param {string} tarPath
- * @param {string} [path]
- * @returns {Promise<string>}
- */
-async function extractFile(tarPath, path) {
-  const outPath = path || join(mkTmpdir(), basename(tarPath));
-  mkdirSync(outPath, { recursive: true });
-  await spawnSafe("tar", ["-xf", tarPath, "-C", outPath, "--strip-components=1"]);
-  return outPath;
-}
-
-const dependencies = [
-  {
-    name: "zig",
-    version: getRecommendedZigVersion(),
-    download: downloadZig,
-  },
-];
-
-async function getDependencyPath(name) {
-  let dependency;
-  for (const entry of dependencies) {
-    if (name === entry.name) {
-      dependency = entry;
-      break;
-    }
-  }
-  if (!dependency) {
-    throw new Error(`Unknown dependency: ${name}`);
-  }
-  const { version, download } = dependency;
-  mkdirSync(vendorPath, { recursive: true });
-  for (const path of readdirSync(vendorPath)) {
-    if (!path.startsWith(name)) {
-      continue;
-    }
-    const dependencyPath = join(vendorPath, path);
-    const dependencyVersion = getVersion(dependencyPath);
-    if (dependencyVersion === version) {
-      return dependencyPath;
-    }
-  }
-  if (!download) {
-    throw new Error(`Dependency not found: ${name}`);
-  }
-  return await download(version);
-}
-
-/**
- * @param {string} [version]
- */
-async function downloadZig(version) {
-  const target = getZigTarget();
-  const expectedVersion = version || getRecommendedZigVersion();
-  const url = `https://ziglang.org/builds/zig-${target}-${expectedVersion}.tar.xz`;
-  const tarPath = await downloadFile(url);
-  const extractedPath = await extractFile(tarPath);
-  const zigPath = join(extractedPath, exePath("zig"));
-  const actualVersion = getVersion(zigPath);
-  const outPath = join(vendorPath, exePath(`zig-${actualVersion}`));
-  mkdirSync(dirname(outPath), { recursive: true });
-  copyFileSync(zigPath, outPath);
-  return outPath;
-}
-
-/**
- * @param {string} path
- * @returns {string}
- */
-function exePath(path) {
-  return isWindows ? `${path}.exe` : path;
-}
-
-const execPath = await getDependencyPath("zig");
-console.log(execPath);

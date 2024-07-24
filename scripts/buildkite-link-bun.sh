@@ -2,6 +2,7 @@
 set -exo pipefail
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
+export CANARY="${CANARY:-1}"
 export USE_LTO="${USE_LTO:-ON}"
 case "$(uname -m)" in
   aarch64|arm64)
@@ -52,11 +53,12 @@ buildkite-agent artifact download '**' release --step $TAG-build-zig
 buildkite-agent artifact download '**' release --step $TAG-build-cpp
 
 cd release
-cmake .. \
+cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DCMAKE_BUILD_TYPE=Release \
-  -DCPU_TARGET=${CPU_TARGET} \
-  -DUSE_LTO=${USE_LTO} \
+  -DCPU_TARGET="${CPU_TARGET}" \
+  -DUSE_LTO="${USE_LTO}" \
+  -DCANARY="${CANARY}" \
   -DBUN_LINK_ONLY=1 \
   -DBUN_ZIG_OBJ_DIR="$(pwd)/build" \
   -DBUN_CPP_ARCHIVE="$(pwd)/build/bun-cpp-objects.a" \

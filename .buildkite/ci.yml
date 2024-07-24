@@ -14,6 +14,9 @@
 # - CentOS / RHEL / Fedora / other Linux distros
 # - Docker containers
 # - Rasberry Pi?
+env:
+  CANARY: 1
+
 steps:
   # macOS aarch64
   - key: "darwin-aarch64"

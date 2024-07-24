@@ -226,11 +226,6 @@ export default [
         getter: "getData",
         setter: "setData",
       },
-
-      getsockname: {
-        fn: "getsockname",
-        length: 1,
-      },
     },
     finalize: true,
     construct: true,

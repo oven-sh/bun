@@ -1010,7 +1010,8 @@ class Server extends EventEmitter {
   }
 
   getsockname(out) {
-    return this[bunSocketInternal]?.getsockname(out);
+    out.port = this.address().port;
+    return out;
   }
 }
 

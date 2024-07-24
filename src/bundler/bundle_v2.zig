@@ -5253,10 +5253,7 @@ pub const LinkerContext = struct {
                         // Don't follow external imports (this includes import() expressions)
                         if (!record.source_index.isValid() or this.isExternalDynamicImport(record, source_index)) {
                             // This is an external import. Check if it will be a "require()" call.
-                            if (kind == .require or
-                                !output_format.keepES6ImportExportSyntax()
-                            // todo: kind == .import and c.options.UnsupportedJSFeatures.Has(compat.DynamicImport)
-                            ) {
+                            if (kind == .require or !output_format.keepES6ImportExportSyntax() or kind == .dynamic) {
                                 if (record.source_index.isValid() and kind == .dynamic and ast_flags[other_id].force_cjs_to_esm) {
                                     // If the CommonJS module was converted to ESM
                                     // and the developer `import("cjs_module")`, then
@@ -5273,7 +5270,7 @@ pub const LinkerContext = struct {
                                     // We should use "__require" instead of "require" if we're not
                                     // generating a CommonJS output file, since it won't exist otherwise.
                                     // Disabled for target bun because `import.meta.require` will be inlined.
-                                    if (shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
+                                    if (kind != .dynamic or shouldCallRuntimeRequire(output_format) and !this.resolver.opts.target.isBun()) {
                                         record.calls_runtime_require = true;
                                         runtime_require_uses += 1;
                                     }

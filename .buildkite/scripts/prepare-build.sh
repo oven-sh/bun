@@ -62,14 +62,20 @@ function assert_command() {
 }
 
 function calculate_canary_revision() {
+  echo "Calculating canary revision..." 2>&1
+  echo "Repository: $BUILDKITE_REPO" 2>&1
+  echo "Commit: $BUILDKITE_COMMIT" 2>&1
   local tag_name="$(curl -sL "https://api.github.com/repos/$BUILDKITE_REPO/releases/latest" | jq -r ".tag_name")"
   if [ "$tag_name" == "null" ]; then
+    echo "No tag found, using revision 1" 2>&1
     echo "1"
   else
     local ahead_by=$(curl -sL "https://api.github.com/repos/$BUILDKITE_REPO/compare/$tag_name...$BUILDKITE_COMMIT" | jq -r ".ahead_by")
     if [ "$ahead_by" == "null" ]; then
+      echo "No ahead_by found, using revision 1" 2>&1
       echo "1"
     else
+      echo "Ahead by $ahead_by, using revision $ahead_by" 2>&1
       echo "$ahead_by"
     fi
   fi

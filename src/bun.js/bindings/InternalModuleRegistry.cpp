@@ -1,5 +1,4 @@
 #include "InternalModuleRegistry.h"
-
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/JSFunction.h>

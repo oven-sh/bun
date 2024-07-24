@@ -228,7 +228,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that rejects<r>\nReceived promise that resolved: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return null;
                             },
@@ -240,7 +240,7 @@ pub const Expect = struct {
                                 if (!silent) {
                                     var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                                     const message = "Expected promise that resolves<r>\nReceived promise that rejected: <red>{any}<r>\n";
-                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                                    throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                                 }
                                 return null;
                             },
@@ -255,7 +255,7 @@ pub const Expect = struct {
                     if (!silent) {
                         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
                         const message = "Expected promise<r>\nReceived: <red>{any}<r>\n";
-                        throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(globalThis, &formatter)});
+                        throwPrettyMatcherError(globalThis, custom_label, matcher_name, matcher_params, flags, message, .{value.toFmt(&formatter)});
                     }
                     return null;
                 }
@@ -534,7 +534,7 @@ pub const Expect = struct {
             inline else => |has_custom_label| {
                 if (not) {
                     const signature = comptime getSignature("toBe", "<green>expected<r>", true);
-                    this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(globalThis, &formatter)});
+                    this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{right.toFmt(&formatter)});
                     return .zero;
                 }
 
@@ -544,7 +544,7 @@ pub const Expect = struct {
                         (if (!has_custom_label) "\n\n<d>If this test should pass, replace \"toBe\" with \"toEqual\" or \"toStrictEqual\"<r>" else "") ++
                         "\n\nExpected: <green>{any}<r>\n" ++
                         "Received: serializes to the same string\n";
-                    this.throw(globalThis, signature, fmt, .{right.toFmt(globalThis, &formatter)});
+                    this.throw(globalThis, signature, fmt, .{right.toFmt(&formatter)});
                     return .zero;
                 }
 
@@ -560,8 +560,8 @@ pub const Expect = struct {
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
-                    right.toFmt(globalThis, &formatter),
-                    left.toFmt(globalThis, &formatter),
+                    right.toFmt(&formatter),
+                    left.toFmt(&formatter),
                 });
                 return .zero;
             },
@@ -590,20 +590,20 @@ pub const Expect = struct {
 
         if (!value.isObject() and !value.isString()) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(globalThis, &fmt)});
+            globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(&fmt)});
             return .zero;
         }
 
         if (!expected.isNumber()) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalThis, &fmt)});
+            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
         }
 
         const expected_length: f64 = expected.asNumber();
         if (@round(expected_length) != expected_length or std.math.isInf(expected_length) or std.math.isNan(expected_length) or expected_length < 0) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalThis, &fmt)});
+            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
         }
 
@@ -614,7 +614,7 @@ pub const Expect = struct {
 
         if (actual_length == std.math.inf(f64)) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(globalThis, &fmt)});
+            globalThis.throw("Received value does not have a length property: {any}", .{value.toFmt(&fmt)});
             return .zero;
         } else if (std.math.isNan(actual_length)) {
             globalThis.throw("Received value has non-number length property: {}", .{actual_length});
@@ -712,10 +712,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = list_value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = list_value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = list_value.toFmt(globalThis, &formatter);
+            const received_fmt = list_value.toFmt(&formatter);
             const expected_line = "Expected to not be one of: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeOneOf", "<green>expected<r>", true);
             this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ received_fmt, expected_fmt });
@@ -810,10 +810,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalThis, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContain", "<green>expected<r>", true);
             this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
@@ -851,10 +851,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (!value.isObject()) {
-            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(
-                globalThis,
-                &formatter,
-            )});
+            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
             globalThis.throwValue(err);
             return .zero;
         }
@@ -870,10 +867,10 @@ pub const Expect = struct {
 
         // handle failure
 
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalThis, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainKey", "<green>expected<r>", true);
             this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
@@ -943,10 +940,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalThis, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainKeys", "<green>expected<r>", true);
             this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
@@ -1011,10 +1008,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = keys.toFmt(globalObject, &formatter);
-        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        const value_fmt = keys.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = keys.toFmt(globalObject, &formatter);
+            const received_fmt = keys.toFmt(&formatter);
             const expected_line = "Expected to not contain all keys: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
             this.throw(globalObject, comptime getSignature("toContainAllKeys", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
@@ -1079,10 +1076,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalThis, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const signature = comptime getSignature("toContainAnyKeys", "<green>expected<r>", true);
             this.throw(globalThis, signature, "\n\n" ++ expected_line, .{ expected_fmt, received_fmt });
@@ -1136,10 +1133,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.toFmt(globalObject, &formatter);
-        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalObject, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
             this.throw(globalObject, comptime getSignature("toContainValue", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
@@ -1203,10 +1200,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.toFmt(globalObject, &formatter);
-        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalObject, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
             this.throw(globalObject, comptime getSignature("toContainValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
@@ -1276,10 +1273,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.toFmt(globalObject, &formatter);
-        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalObject, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain all values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
             this.throw(globalObject, comptime getSignature("toContainAllValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
@@ -1343,10 +1340,10 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalObject, .quote_strings = true };
-        const value_fmt = value.toFmt(globalObject, &formatter);
-        const expected_fmt = expected.toFmt(globalObject, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
-            const received_fmt = value.toFmt(globalObject, &formatter);
+            const received_fmt = value.toFmt(&formatter);
             const expected_line = "Expected to not contain any of the following values: <green>{any}<r>\nReceived: <red>{any}<r>\n";
             const fmt = "\n\n" ++ expected_line;
             this.throw(globalObject, comptime getSignature("toContainAnyValues", "<green>expected<r>", true), fmt, .{ expected_fmt, received_fmt });
@@ -1450,8 +1447,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected to not contain: <green>{any}<r>\n";
             const signature = comptime getSignature("toContainEqual", "<green>expected<r>", true);
@@ -1484,7 +1481,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeTruthy", "", true);
@@ -1514,7 +1511,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeUndefined", "", true);
@@ -1548,7 +1545,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeNaN", "", true);
@@ -1577,7 +1574,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeNull", "", true);
@@ -1606,7 +1603,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeDefined", "", true);
@@ -1640,7 +1637,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeFalsy", "", true);
@@ -1785,8 +1782,8 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toHaveProperty", "<green>path<r><d>, <r><green>value<r>", true);
                 if (!received_property.isEmpty()) {
                     this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nExpected value: not <green>{any}<r>\n", .{
-                        expected_property_path.toFmt(globalThis, &formatter),
-                        expected_property.?.toFmt(globalThis, &formatter),
+                        expected_property_path.toFmt(&formatter),
+                        expected_property.?.toFmt(&formatter),
                     });
                     return .zero;
                 }
@@ -1794,8 +1791,8 @@ pub const Expect = struct {
 
             const signature = comptime getSignature("toHaveProperty", "<green>path<r>", true);
             this.throw(globalThis, signature, "\n\nExpected path: not <green>{any}<r>\n\nReceived value: <red>{any}<r>\n", .{
-                expected_property_path.toFmt(globalThis, &formatter),
-                received_property.toFmt(globalThis, &formatter),
+                expected_property_path.toFmt(&formatter),
+                received_property.toFmt(&formatter),
             });
             return .zero;
         }
@@ -1817,14 +1814,14 @@ pub const Expect = struct {
             const fmt = "\n\nExpected path: <green>{any}<r>\n\nExpected value: <green>{any}<r>\n\n" ++
                 "Unable to find property\n";
             this.throw(globalThis, signature, fmt, .{
-                expected_property_path.toFmt(globalThis, &formatter),
-                expected_property.?.toFmt(globalThis, &formatter),
+                expected_property_path.toFmt(&formatter),
+                expected_property.?.toFmt(&formatter),
             });
             return .zero;
         }
 
         const signature = comptime getSignature("toHaveProperty", "<green>path<r>", false);
-        this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(globalThis, &formatter)});
+        this.throw(globalThis, signature, "\n\nExpected path: <green>{any}<r>\n\nUnable to find property\n", .{expected_property_path.toFmt(&formatter)});
         return .zero;
     }
 
@@ -1868,7 +1865,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeEven", "", true);
@@ -1928,8 +1925,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = other_value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = other_value.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected: not \\> <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
@@ -1991,8 +1988,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = other_value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = other_value.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected: not \\>= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
@@ -2054,8 +2051,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = other_value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = other_value.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected: not \\< <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
@@ -2117,8 +2114,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = other_value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = other_value.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected: not \\<= <green>{any}<r>\n";
             const received_line = "Received: <red>{any}<r>\n";
@@ -2195,8 +2192,8 @@ pub const Expect = struct {
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
-        const expected_fmt = expected_.toFmt(globalThis, &formatter);
-        const received_fmt = received_.toFmt(globalThis, &formatter);
+        const expected_fmt = expected_.toFmt(&formatter);
+        const received_fmt = received_.toFmt(&formatter);
 
         const expected_line = "Expected: <green>{any}<r>\n";
         const received_line = "Received: <red>{any}<r>\n";
@@ -2255,7 +2252,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const received_line = "Received: <red>{any}<r>\n";
             const signature = comptime getSignature("toBeOdd", "", true);
@@ -2282,7 +2279,7 @@ pub const Expect = struct {
             const value = arguments[0];
             if (value.isEmptyOrUndefinedOrNull() or !value.isObject() and !value.isString()) {
                 var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-                globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(globalThis, &fmt)});
+                globalThis.throw("Expected value must be string or Error: {any}", .{value.toFmt(&fmt)});
                 return .zero;
             }
             break :brk value;
@@ -2369,15 +2366,15 @@ pub const Expect = struct {
                     const message = err.getTruthyComptime(globalThis, "message") orelse JSValue.undefined;
                     const fmt = signature_no_args ++ "\n\nError name: <red>{any}<r>\nError message: <red>{any}<r>\n";
                     globalThis.throwPretty(fmt, .{
-                        name.toFmt(globalThis, &formatter),
-                        message.toFmt(globalThis, &formatter),
+                        name.toFmt(&formatter),
+                        message.toFmt(&formatter),
                     });
                     return .zero;
                 }
 
                 // non error thrown
                 const fmt = signature_no_args ++ "\n\nThrown value: <red>{any}<r>\n";
-                globalThis.throwPretty(fmt, .{result.toFmt(globalThis, &formatter)});
+                globalThis.throwPretty(fmt, .{result.toFmt(&formatter)});
                 return .zero;
             }
 
@@ -2395,8 +2392,8 @@ pub const Expect = struct {
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected substring: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
-                    expected_value.toFmt(globalThis, &formatter),
-                    received_message.toFmt(globalThis, &formatter),
+                    expected_value.toFmt(&formatter),
+                    received_message.toFmt(&formatter),
                 });
                 return .zero;
             }
@@ -2411,8 +2408,8 @@ pub const Expect = struct {
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
-                    expected_value.toFmt(globalThis, &formatter),
-                    received_message.toFmt(globalThis, &formatter),
+                    expected_value.toFmt(&formatter),
+                    received_message.toFmt(&formatter),
                 });
                 return .zero;
             }
@@ -2422,7 +2419,7 @@ pub const Expect = struct {
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 
-                this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(globalThis, &formatter)});
+                this.throw(globalThis, signature, "\n\nExpected message: not <green>{any}<r>\n", .{expected_message.toFmt(&formatter)});
                 return .zero;
             }
 
@@ -2431,7 +2428,7 @@ pub const Expect = struct {
             var expected_class = ZigString.Empty;
             expected_value.getClassName(globalThis, &expected_class);
             const received_message = result.fastGet(globalThis, .message) orelse .undefined;
-            this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(globalThis, &formatter) });
+            this.throw(globalThis, signature, "\n\nExpected constructor: not <green>{s}<r>\n\nReceived message: <red>{any}<r>\n", .{ expected_class, received_message.toFmt(&formatter) });
             return .zero;
         }
 
@@ -2467,14 +2464,14 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                 if (_received_message) |received_message| {
-                    const expected_value_fmt = expected_value.toFmt(globalThis, &formatter);
-                    const received_message_fmt = received_message.toFmt(globalThis, &formatter);
+                    const expected_value_fmt = expected_value.toFmt(&formatter);
+                    const received_message_fmt = received_message.toFmt(&formatter);
                     this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
                     return .zero;
                 }
 
-                const expected_fmt = expected_value.toFmt(globalThis, &formatter);
-                const received_fmt = result.toFmt(globalThis, &formatter);
+                const expected_fmt = expected_value.toFmt(&formatter);
+                const received_fmt = result.toFmt(&formatter);
                 this.throw(globalThis, signature, "\n\n" ++ "Expected substring: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
 
                 return .zero;
@@ -2493,8 +2490,8 @@ pub const Expect = struct {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
                 if (_received_message) |received_message| {
-                    const expected_value_fmt = expected_value.toFmt(globalThis, &formatter);
-                    const received_message_fmt = received_message.toFmt(globalThis, &formatter);
+                    const expected_value_fmt = expected_value.toFmt(&formatter);
+                    const received_message_fmt = received_message.toFmt(&formatter);
                     const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
 
                     this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_value_fmt, received_message_fmt });
@@ -2502,8 +2499,8 @@ pub const Expect = struct {
                     return .zero;
                 }
 
-                const expected_fmt = expected_value.toFmt(globalThis, &formatter);
-                const received_fmt = result.toFmt(globalThis, &formatter);
+                const expected_fmt = expected_value.toFmt(&formatter);
+                const received_fmt = result.toFmt(&formatter);
                 const signature = comptime getSignature("toThrow", "<green>expected<r>", false);
                 this.throw(globalThis, signature, "\n\n" ++ "Expected pattern: <green>{any}<r>\nReceived value: <red>{any}<r>", .{ expected_fmt, received_fmt });
                 return .zero;
@@ -2523,14 +2520,14 @@ pub const Expect = struct {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
 
                 if (_received_message) |received_message| {
-                    const expected_fmt = expected_message.toFmt(globalThis, &formatter);
-                    const received_fmt = received_message.toFmt(globalThis, &formatter);
+                    const expected_fmt = expected_message.toFmt(&formatter);
+                    const received_fmt = received_message.toFmt(&formatter);
                     this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                     return .zero;
                 }
 
-                const expected_fmt = expected_message.toFmt(globalThis, &formatter);
-                const received_fmt = result.toFmt(globalThis, &formatter);
+                const expected_fmt = expected_message.toFmt(&formatter);
+                const received_fmt = result.toFmt(&formatter);
                 this.throw(globalThis, signature, "\n\nExpected message: <green>{any}<r>\nReceived value: <red>{any}<r>\n", .{ expected_fmt, received_fmt });
                 return .zero;
             }
@@ -2548,7 +2545,7 @@ pub const Expect = struct {
 
             if (_received_message) |received_message| {
                 const message_fmt = fmt ++ "Received message: <red>{any}<r>\n";
-                const received_message_fmt = received_message.toFmt(globalThis, &formatter);
+                const received_message_fmt = received_message.toFmt(&formatter);
 
                 globalThis.throwPretty(message_fmt, .{
                     expected_class,
@@ -2558,7 +2555,7 @@ pub const Expect = struct {
                 return .zero;
             }
 
-            const received_fmt = result.toFmt(globalThis, &formatter);
+            const received_fmt = result.toFmt(&formatter);
             const value_fmt = fmt ++ "Received value: <red>{any}<r>\n";
 
             globalThis.throwPretty(value_fmt, .{
@@ -2583,19 +2580,19 @@ pub const Expect = struct {
 
         if (expected_value.isString()) {
             const expected_fmt = "\n\nExpected substring: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(globalThis, &formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
             return .zero;
         }
 
         if (expected_value.isRegExp()) {
             const expected_fmt = "\n\nExpected pattern: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(globalThis, &formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{expected_value.toFmt(&formatter)});
             return .zero;
         }
 
         if (expected_value.fastGet(globalThis, .message)) |expected_message| {
             const expected_fmt = "\n\nExpected message: <green>{any}<r>\n\n" ++ received_line;
-            this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(globalThis, &formatter)});
+            this.throw(globalThis, signature, expected_fmt, .{expected_message.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2673,7 +2670,7 @@ pub const Expect = struct {
                     "\n\nReceived: {any}\n";
 
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
                 return .zero;
             }
         }
@@ -2686,7 +2683,7 @@ pub const Expect = struct {
                 error.FailedToMakeSnapshotDirectory => globalThis.throw("Failed to make snapshot directory for test file: {s}", .{test_file_path}),
                 error.FailedToWriteSnapshotFile => globalThis.throw("Failed write to snapshot file: {s}", .{test_file_path}),
                 error.ParseError => globalThis.throw("Failed to parse snapshot file for: {s}", .{test_file_path}),
-                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(globalThis, &formatter)}),
+                else => globalThis.throw("Failed to snapshot value: {any}", .{value.toFmt(&formatter)}),
             }
             return .zero;
         };
@@ -2695,7 +2692,7 @@ pub const Expect = struct {
             var pretty_value: MutableString = MutableString.init(default_allocator, 0) catch unreachable;
             value.jestSnapshotPrettyFormat(&pretty_value, globalThis) catch {
                 var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
-                globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(globalThis, &formatter)});
+                globalThis.throw("Failed to pretty format value: {s}", .{value.toFmt(&formatter)});
                 return .zero;
             };
             defer pretty_value.deinit();
@@ -2763,7 +2760,7 @@ pub const Expect = struct {
                 const signature = comptime getSignature("toBeEmpty", "", false);
                 const fmt = signature ++ "\n\nExpected value to be a string, object, or iterable" ++
                     "\n\nReceived: <red>{any}<r>\n";
-                globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+                globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
                 return .zero;
             }
         } else if (std.math.isNan(actual_length)) {
@@ -2777,7 +2774,7 @@ pub const Expect = struct {
             const signature = comptime getSignature("toBeEmpty", "", true);
             const fmt = signature ++ "\n\nExpected value <b>not<r> to be a string, object, or iterable" ++
                 "\n\nReceived: <red>{any}<r>\n";
-            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+            globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
             return .zero;
         }
 
@@ -2788,14 +2785,14 @@ pub const Expect = struct {
             const signature = comptime getSignature("toBeEmpty", "", true);
             const fmt = signature ++ "\n\nExpected value <b>not<r> to be empty" ++
                 "\n\nReceived: <red>{any}<r>\n";
-            globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+            globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
             return .zero;
         }
 
         const signature = comptime getSignature("toBeEmpty", "", false);
         const fmt = signature ++ "\n\nExpected value to be empty" ++
             "\n\nReceived: <red>{any}<r>\n";
-        globalThis.throwPretty(fmt, .{value.toFmt(globalThis, &formatter)});
+        globalThis.throwPretty(fmt, .{value.toFmt(&formatter)});
         return .zero;
     }
 
@@ -2814,7 +2811,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeEmptyObject", "", true);
@@ -2841,7 +2838,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeNil", "", true);
@@ -2868,7 +2865,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeArray", "", true);
@@ -2912,7 +2909,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeArrayOfSize", "", true);
@@ -2939,7 +2936,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeBoolean", "", true);
@@ -3015,8 +3012,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
-        const expected_str = expected.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
+        const expected_str = expected.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeTypeOf", "", true);
@@ -3043,7 +3040,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeTrue", "", true);
@@ -3070,7 +3067,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeFalse", "", true);
@@ -3097,7 +3094,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeNumber", "", true);
@@ -3124,7 +3121,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeInteger", "", true);
@@ -3151,7 +3148,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeObject", "", true);
@@ -3184,7 +3181,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeFinite", "", true);
@@ -3217,7 +3214,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBePositive", "", true);
@@ -3250,7 +3247,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeNegative", "", true);
@@ -3307,9 +3304,9 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const start_fmt = startValue.toFmt(globalThis, &formatter);
-        const end_fmt = endValue.toFmt(globalThis, &formatter);
-        const received_fmt = value.toFmt(globalThis, &formatter);
+        const start_fmt = startValue.toFmt(&formatter);
+        const end_fmt = endValue.toFmt(&formatter);
+        const received_fmt = value.toFmt(&formatter);
 
         if (not) {
             const expected_line = "Expected: not between <green>{any}<r> <d>(inclusive)<r> and <green>{any}<r> <d>(exclusive)<r>\n";
@@ -3394,8 +3391,8 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected.toFmt(&formatter);
+        const value_fmt = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toEqualIgnoringWhitespace", "<green>expected<r>", true);
@@ -3422,7 +3419,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeSymbol", "", true);
@@ -3449,7 +3446,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeFunction", "", true);
@@ -3476,7 +3473,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeDate", "", true);
@@ -3504,7 +3501,7 @@ pub const Expect = struct {
         if (pass) return thisValue;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeValidDate", "", true);
@@ -3531,7 +3528,7 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received = value.toFmt(globalThis, &formatter);
+        const received = value.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toBeString", "", true);
@@ -3583,8 +3580,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
 
         if (not) {
             const expected_line = "Expected to not include: <green>{any}<r>\n";
@@ -3671,9 +3668,9 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const expect_string_fmt = expect_string.toFmt(globalThis, &formatter);
-        const substring_fmt = substring.toFmt(globalThis, &formatter);
-        const times_fmt = count.toFmt(globalThis, &formatter);
+        const expect_string_fmt = expect_string.toFmt(&formatter);
+        const substring_fmt = substring.toFmt(&formatter);
+        const times_fmt = count.toFmt(&formatter);
 
         const received_line = "Received: <red>{any}<r>\n";
 
@@ -3762,15 +3759,15 @@ pub const Expect = struct {
 
         if (not) {
             const signature = comptime getSignature("toSatisfy", "<green>expected<r>", true);
-            this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(globalThis, &formatter)});
+            this.throw(globalThis, signature, "\n\nExpected: not <green>{any}<r>\n", .{predicate.toFmt(&formatter)});
             return .zero;
         }
 
         const signature = comptime getSignature("toSatisfy", "<green>expected<r>", false);
 
         this.throw(globalThis, signature, "\n\nExpected: <green>{any}<r>\nReceived: <red>{any}<r>\n", .{
-            predicate.toFmt(globalThis, &formatter),
-            value.toFmt(globalThis, &formatter),
+            predicate.toFmt(&formatter),
+            value.toFmt(&formatter),
         });
 
         return .zero;
@@ -3815,8 +3812,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
 
         if (not) {
             const expected_line = "Expected to not start with: <green>{any}<r>\n";
@@ -3872,8 +3869,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const value_fmt = value.toFmt(globalThis, &formatter);
-        const expected_fmt = expected.toFmt(globalThis, &formatter);
+        const value_fmt = value.toFmt(&formatter);
+        const expected_fmt = expected.toFmt(&formatter);
 
         if (not) {
             const expected_line = "Expected to not end with: <green>{any}<r>\n";
@@ -3907,7 +3904,7 @@ pub const Expect = struct {
 
         const expected_value = arguments[0];
         if (!expected_value.isConstructor()) {
-            globalThis.throw("Expected value must be a function: {any}", .{expected_value.toFmt(globalThis, &formatter)});
+            globalThis.throw("Expected value must be a function: {any}", .{expected_value.toFmt(&formatter)});
             return .zero;
         }
         expected_value.ensureStillAlive();
@@ -3920,8 +3917,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         // handle failure
-        const expected_fmt = expected_value.toFmt(globalThis, &formatter);
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected_value.toFmt(&formatter);
+        const value_fmt = value.toFmt(&formatter);
         if (not) {
             const expected_line = "Expected constructor: not <green>{any}<r>\n";
             const received_line = "Received value: <red>{any}<r>\n";
@@ -3957,7 +3954,7 @@ pub const Expect = struct {
 
         const expected_value = arguments[0];
         if (!expected_value.isString() and !expected_value.isRegExp()) {
-            globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toFmt(globalThis, &formatter)});
+            globalThis.throw("Expected value must be a string or regular expression: {any}", .{expected_value.toFmt(&formatter)});
             return .zero;
         }
         expected_value.ensureStillAlive();
@@ -3965,7 +3962,7 @@ pub const Expect = struct {
         const value: JSValue = this.getValue(globalThis, thisValue, "toMatch", "<green>expected<r>") orelse return .zero;
 
         if (!value.isString()) {
-            globalThis.throw("Received value must be a string: {any}", .{value.toFmt(globalThis, &formatter)});
+            globalThis.throw("Received value must be a string: {any}", .{value.toFmt(&formatter)});
             return .zero;
         }
 
@@ -3983,8 +3980,8 @@ pub const Expect = struct {
         if (pass) return .undefined;
 
         // handle failure
-        const expected_fmt = expected_value.toFmt(globalThis, &formatter);
-        const value_fmt = value.toFmt(globalThis, &formatter);
+        const expected_fmt = expected_value.toFmt(&formatter);
+        const value_fmt = value.toFmt(&formatter);
 
         if (not) {
             const expected_line = "Expected substring or pattern: not <green>{any}<r>\n";
@@ -4253,7 +4250,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received_fmt = lastCallValue.toFmt(globalThis, &formatter);
+        const received_fmt = lastCallValue.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenLastCalledWith", "<green>expected<r>", true);
@@ -4321,7 +4318,7 @@ pub const Expect = struct {
 
         // handle failure
         var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-        const received_fmt = nthCallValue.toFmt(globalThis, &formatter);
+        const received_fmt = nthCallValue.toFmt(&formatter);
 
         if (not) {
             const signature = comptime getSignature("toHaveBeenNthCalledWith", "<green>expected<r>", true);
@@ -4416,7 +4413,7 @@ pub const Expect = struct {
                 .globalThis = globalThis,
                 .quote_strings = true,
             };
-            globalThis.throwPretty(fmt, .{times_value.get(globalThis, "value").?.toFmt(globalThis, &formatter)});
+            globalThis.throwPretty(fmt, .{times_value.get(globalThis, "value").?.toFmt(&formatter)});
             return .zero;
         }
 
@@ -4592,7 +4589,7 @@ pub const Expect = struct {
             "  {{message?: string | function, pass: boolean}}\n" ++
             "'{any}' was returned";
         const err = switch (Output.enable_ansi_colors) {
-            inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(globalThis, &formatter) }),
+            inline else => |colors| globalThis.createErrorInstance(Output.prettyFmt(fmt, colors), .{ matcher_name, result.toFmt(&formatter) }),
         };
         err.put(globalThis, ZigString.static("name"), ZigString.init("InvalidMatcherError").toJS(globalThis));
         globalThis.throwValue(err);
@@ -4699,7 +4696,7 @@ pub const Expect = struct {
                 };
                 globalThis.throw(
                     "Expected custom matcher message to return a string, but got: {}",
-                    .{message_result.toFmt(globalThis, &formatter)},
+                    .{message_result.toFmt(&formatter)},
                 );
                 return false;
             }
@@ -4802,14 +4799,14 @@ pub const Expect = struct {
 
         if (!expected.isNumber()) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalThis, &fmt)});
+            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
         }
 
         const expected_assertions: f64 = expected.asNumber();
         if (@round(expected_assertions) != expected_assertions or std.math.isInf(expected_assertions) or std.math.isNan(expected_assertions) or expected_assertions < 0) {
             var fmt = JSC.ConsoleObject.Formatter{ .globalThis = globalThis, .quote_strings = true };
-            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(globalThis, &fmt)});
+            globalThis.throw("Expected value must be a non-negative integer: {any}", .{expected.toFmt(&fmt)});
             return .zero;
         }
 
@@ -5480,7 +5477,7 @@ pub const ExpectMatcherUtils = struct {
             .globalThis = globalThis,
             .quote_strings = true,
         };
-        try writer.print("{}", .{value.toFmt(globalThis, &formatter)});
+        try writer.print("{}", .{value.toFmt(&formatter)});
 
         if (comptime color_or_null) |_| {
             if (Output.enable_ansi_colors) {

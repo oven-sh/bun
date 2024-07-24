@@ -5308,7 +5308,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn toFmt(
         this: JSValue,
-        global: *JSGlobalObject,
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
@@ -5320,7 +5319,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
-            .global = global,
         };
     }
 

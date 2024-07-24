@@ -869,7 +869,6 @@ pub const Formatter = struct {
 
     pub const ZigFormatter = struct {
         formatter: *ConsoleObject.Formatter,
-        global: *JSGlobalObject,
         value: JSValue,
 
         pub const WriteError = error{UhOh};
@@ -878,9 +877,8 @@ pub const Formatter = struct {
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
-            self.formatter.globalThis = self.global;
             self.formatter.format(
-                Tag.get(self.value, self.global),
+                Tag.get(self.value, self.formatter.globalThis),
                 @TypeOf(writer),
                 writer,
                 self.value,

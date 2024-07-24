@@ -1505,7 +1505,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     .globalThis = globalThis,
                     .quote_strings = true,
                 };
-                Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(formatter.globalThis, &formatter)});
+                Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
             } else {
                 Output.errGeneric("Expected a Response object", .{});
             }

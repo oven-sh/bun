@@ -1829,7 +1829,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
-                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
+                    const value_fmt = current_arg.toFmt(&formatter);
                     const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
                     defer allocator.free(test_index_str);
                     try list.appendSlice(allocator, test_index_str);

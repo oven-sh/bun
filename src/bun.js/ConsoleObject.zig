@@ -1283,6 +1283,7 @@ pub const Formatter = struct {
                             writer.writeAll(end);
                             // then skip the second % so we dont hit it again
                             slice = slice[@min(slice.len, i + 1)..];
+                            len = @truncate(slice.len);
                             i = 0;
                             continue;
                         },
@@ -1295,7 +1296,7 @@ pub const Formatter = struct {
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
                     hit_percent = true;
-                    len = @as(u32, @truncate(slice.len));
+                    len = @truncate(slice.len);
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];
 

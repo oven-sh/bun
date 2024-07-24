@@ -154,4 +154,5 @@
     __ZN2v87Isolate17GetCurrentContextEv;
     __ZN4node25AddEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_;
     __ZN4node28RemoveEnvironmentCleanupHookEPN2v87IsolateEPFvPvES3_;
+    __ZN3JSC9CallFrame13describeFrameEv;
 };

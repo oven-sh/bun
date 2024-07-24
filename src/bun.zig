@@ -1859,8 +1859,9 @@ pub const StringMap = struct {
 };
 
 pub const DotEnv = @import("./env_loader.zig");
-pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
-pub const ParseTask = @import("./bundler/bundle_v2.zig").ParseTask;
+pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const BundleV2 = bundle_v2.BundleV2;
+pub const ParseTask = bundle_v2.ParseTask;
 
 pub const Lock = @import("./lock.zig").Lock;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
@@ -3614,3 +3615,4 @@ pub fn memmove(output: []u8, input: []const u8) void {
 }
 
 pub const hmac = @import("./hmac.zig");
+pub const libdeflate = @import("./deps/libdeflate.zig");

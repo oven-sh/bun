@@ -82,8 +82,8 @@ function upload_buildkite_pipeline() {
     exit 1
   fi
   local pipeline="$(cat "$path")"
-  local canary="$(buildkite-agent meta-data get canary)"
-  if [ "$canary" == "0" ] || [ "$canary" == "false" ]; then
+  local canary="$(buildkite-agent meta-data get canary 2>/dev/null || echo "1")"
+  if [ "$canary" != "1" ] && [ "$canary" != "true" ]; then
     pipeline="$(echo "$pipeline" | sed "s/CANARY: \"0\"/CANARY: 0/g")"
   else
     local revision="$(calculate_canary_revision)"

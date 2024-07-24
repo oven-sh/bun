@@ -1261,6 +1261,7 @@ steps:
           CPU_TARGET: "haswell"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
@@ -1276,6 +1277,7 @@ steps:
           CPU_TARGET: "haswell"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - "./scripts/build-bun-zig.sh windows x64"
 
@@ -1311,6 +1313,7 @@ steps:
           CPU_TARGET: "haswell"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
 
@@ -1332,6 +1335,7 @@ steps:
           CPU_TARGET: "haswell"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1"
 
@@ -1401,6 +1405,7 @@ steps:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
@@ -1416,6 +1421,7 @@ steps:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - "./scripts/build-bun-zig.sh windows x64"
 
@@ -1433,6 +1439,7 @@ steps:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True"
 
@@ -1455,6 +1462,7 @@ steps:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
 
@@ -1476,6 +1484,7 @@ steps:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
 

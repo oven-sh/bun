@@ -982,7 +982,7 @@ pub export fn napi_reject_deferred(env: napi_env, deferred: napi_deferred, rejec
     prom.reject(env, rejection);
     deferred.deinit();
     bun.default_allocator.destroy(deferred);
-    return .pending_exception;
+    return .ok;
 }
 pub export fn napi_is_promise(_: napi_env, value: napi_value, is_promise_: ?*bool) napi_status {
     log("napi_is_promise", .{});

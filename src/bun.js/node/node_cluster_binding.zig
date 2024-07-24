@@ -120,10 +120,10 @@ pub const InternalMsgHolder = struct {
     cb: JSC.Strong = .{},
 
     pub fn deinit(iimh: *InternalMsgHolder) void {
-        for (iimh.callbacks.values()) |*strong| strong.clear();
+        for (iimh.callbacks.values()) |*strong| strong.deinit();
         iimh.callbacks.deinit(bun.default_allocator);
-        iimh.worker.clear();
-        iimh.cb.clear();
+        iimh.worker.deinit();
+        iimh.cb.deinit();
     }
 };
 

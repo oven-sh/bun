@@ -32,6 +32,17 @@ var IPv4Reg;
 const v6Seg = "(?:[0-9a-fA-F]{1,4})";
 var IPv6Reg;
 
+function convertTimeout(timeout) {
+  // uSockets timeouts are in seconds...
+  // Node.js timeouts are in milliseconds...
+  if (typeof timeout === "number") {
+    // Math.ceil() because if you set a timeout to 1 you don't want to disable it.
+    return Math.ceil(timeout / 1000);
+  }
+
+  return 0;
+}
+
 function isIPv4(s) {
   return (IPv4Reg ??= new RegExp(`^${v4Str}$`)).test(s);
 }
@@ -124,8 +135,8 @@ const Socket = (function (InternalSocket) {
       open(socket) {
         const self = socket.data;
         if (!self) return;
-
-        socket.timeout(self.timeout);
+        const timeout = self.timeout;
+        socket.timeout(convertTimeout(timeout));
         if (self.#unrefOnConnected) socket.unref();
         self[bunSocketInternal] = socket;
         self.connecting = false;
@@ -182,7 +193,7 @@ const Socket = (function (InternalSocket) {
         const self = socket.data;
         if (!self) return;
 
-        self.emit("timeout", self);
+        self._onTimeout();
       },
       binaryType: "buffer",
     };
@@ -399,10 +410,23 @@ const Socket = (function (InternalSocket) {
       return this.writableLength;
     }
 
+    // Node implements `_onTimeout()`:
+    // https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L577-L593
+    _onTimeout() {
+      if (
+        this.timeout &&
+        // node suppresses the timeout if there is an active write in progress
+        !this.#writeCallback
+      ) {
+        this.emit("timeout");
+      }
+    }
+
     #attach(port, socket) {
       this.remotePort = port;
       socket.data = this;
-      socket.timeout(this.timeout);
+      const timeout = this.timeout;
+      socket.timeout(convertTimeout(timeout));
       if (this.#unrefOnConnected) socket.unref();
       this[bunSocketInternal] = socket;
       this.connecting = false;
@@ -517,8 +541,8 @@ const Socket = (function (InternalSocket) {
         this._secureEstablished = false;
         this._securePending = true;
 
-        if (connectListener) this.on("secureConnect", connectListener);
-      } else if (connectListener) this.on("connect", connectListener);
+        if (connectListener) this.once("secureConnect", connectListener);
+      } else if (connectListener) this.once("connect", connectListener);
 
       // start using existing connection
       try {
@@ -537,7 +561,7 @@ const Socket = (function (InternalSocket) {
               const [raw, tls] = result;
               // replace socket
               connection[bunSocketInternal] = raw;
-              raw.timeout(raw.timeout);
+              raw.timeout(convertTimeout(this.timeout));
               this.once("end", this.#closeRawConnection);
               raw.connecting = false;
               this[bunSocketInternal] = tls;
@@ -563,7 +587,7 @@ const Socket = (function (InternalSocket) {
                 const [raw, tls] = result;
                 // replace socket
                 connection[bunSocketInternal] = raw;
-                raw.timeout(raw.timeout);
+                raw.timeout(convertTimeout(this.timeout));
                 this.once("end", this.#closeRawConnection);
                 raw.connecting = false;
                 this[bunSocketInternal] = tls;
@@ -683,9 +707,14 @@ const Socket = (function (InternalSocket) {
     }
 
     setTimeout(timeout, callback) {
-      this[bunSocketInternal]?.timeout(timeout);
+      if (this.destroyed) return this;
+
+      const handle = this[bunSocketInternal];
+      if (handle) {
+        handle.timeout(convertTimeout(timeout));
+      }
       this.timeout = timeout;
-      if (callback) this.once("timeout", callback);
+      if (callback && $isCallable(callback)) this.once("timeout", callback);
       return this;
     }
 

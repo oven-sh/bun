@@ -1189,7 +1189,6 @@ fn NewSocket(comptime ssl: bool) type {
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
         is_active: bool = false,
-        last_4: [4]u8 = .{ 0, 0, 0, 0 },
         authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
@@ -1750,12 +1749,15 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
             const t = args.ptr[0].coerce(i32, globalObject);
+            if (globalObject.hasException())
+                return .zero;
+
             if (t < 0) {
                 globalObject.throw("Timeout must be a positive integer", .{});
                 return .zero;
             }
 
-            this.socket.setTimeout(@as(c_uint, @intCast(t)));
+            this.socket.setTimeout(@intCast(t));
 
             return JSValue.jsUndefined();
         }

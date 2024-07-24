@@ -490,3 +490,52 @@ it("socket should keep process alive if unref is not called", async () => {
   });
   expect(await process.exited).toBe(1);
 });
+
+it("onTimeout shouldn't happen if there is a write in progress", async () => {
+  let otherSocket;
+  using listener = Bun.listen({
+    port: 0,
+    hostname: "localhost",
+    socket: {
+      open(socket) {
+        console.log("Open");
+        otherSocket = socket;
+        socket.write("HTTP/1.1 200 OK\r\nContent-Length: 0\r\n\r\n");
+      },
+      data() {},
+      close() {},
+    },
+  });
+
+  const socket = createConnection(listener.port, "localhost");
+  // 1. Verify the timeout happens.
+  let { promise, resolve } = Promise.withResolvers();
+  socket.setTimeout(1, () => {
+    resolve();
+  });
+  socket.write("abc");
+  await promise;
+
+  {
+    let hasTimeout = false;
+    ({ promise, resolve } = Promise.withResolvers());
+    // Verify the timeout doesn't happen when disabled.
+    socket.setTimeout(0, () => {
+      hasTimeout = true;
+    });
+    await Bun.sleep(2000);
+    expect(hasTimeout).toBe(false);
+  }
+
+  {
+    // Verify the timeout doesn't happen after end().
+    let hasTimeout = false;
+    ({ promise, resolve } = Promise.withResolvers());
+    socket.setTimeout(1, () => {
+      hasTimeout = true;
+    });
+    otherSocket.end();
+    await Bun.sleep(2000);
+    expect(hasTimeout).toBe(false);
+  }
+}, 30_000);

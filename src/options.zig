@@ -1545,7 +1545,6 @@ pub const BundleOptions = struct {
         "react-client",
         "react-server",
         "react-refresh",
-        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {

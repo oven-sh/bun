@@ -392,3 +392,14 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
         return rare.node_fs_stat_watcher_scheduler.?;
     };
 }
+
+pub fn deinit(this: *RareData) void {
+    if (this.temp_pipe_read_buffer) |pipe| {
+        this.temp_pipe_read_buffer = null;
+        bun.default_allocator.destroy(pipe);
+    }
+
+    if (this.boring_ssl_engine) |engine| {
+        _ = bun.BoringSSL.ENGINE_free(engine);
+    }
+}

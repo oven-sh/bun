@@ -111,8 +111,6 @@ declare module "bun" {
   var FFI: any;
   /** This version of fetch is untamperable */
   var fetch: typeof globalThis.fetch;
-  // Ref the event loop when in IPC mode. actual users should use process.channel.ref() and process.channel.unref() instead of this
-  function setRef(enabled: boolean): void;
 }
 
 declare var Loader: {

@@ -212,3 +212,28 @@ pub fn handleInternalMessagePrimary(globalThis: *JSC.JSGlobalObject, subprocess:
     });
     return;
 }
+
+//
+//
+//
+
+extern fn Bun__setChannelRef(*JSC.JSGlobalObject, bool) void;
+
+pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
+    const arguments = callframe.arguments(1).ptr;
+
+    if (arguments.len == 0) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(ZigString.static("enabled").toJS(globalObject)));
+    }
+    if (!arguments[0].isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
+            ZigString.static("enabled").toJS(globalObject),
+            ZigString.static("boolean").toJS(globalObject),
+            arguments[0],
+        ));
+    }
+
+    const enabled = arguments[0].toBoolean();
+    Bun__setChannelRef(globalObject, enabled);
+    return .undefined;
+}

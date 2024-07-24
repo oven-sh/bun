@@ -406,17 +406,18 @@ export function windowsEnv(internalEnv: InternalEnvMap, envMapList: Array<string
 
 export function getChannel() {
   const EventEmitter = require("node:events");
+  const setRef = $newZigFunction("node_cluster_binding.zig", "setRef", 1);
   return new (class Control extends EventEmitter {
     constructor() {
       super();
     }
 
     ref() {
-      Bun.setRef(true);
+      setRef(true);
     }
 
     unref() {
-      Bun.setRef(false);
+      setRef(false);
     }
   })();
 }

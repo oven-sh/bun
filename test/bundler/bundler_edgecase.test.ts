@@ -843,6 +843,7 @@ describe("bundler", () => {
     external: ["something"],
     onAfterBundle(api) {
       api.expectFile("/out.js").not.toContain("__require");
+      // throw Error('Dynamic require of "' + x + '" is not supported')
       api.expectFile("/out.js").not.toContain("Dynamic require");
     },
   });

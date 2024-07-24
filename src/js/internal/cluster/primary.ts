@@ -38,9 +38,11 @@ let schedulingPolicy = 0;
 if (schedulingPolicyEnv === "rr") schedulingPolicy = SCHED_RR;
 else if (schedulingPolicyEnv === "none") schedulingPolicy = SCHED_NONE;
 else if (process.platform === "win32") {
-  // Round-robin doesn't perform well on
-  // Windows due to the way IOCP is wired up.
-  schedulingPolicy = SCHED_NONE;
+  // // Round-robin doesn't perform well on
+  // // Windows due to the way IOCP is wired up.
+  // schedulingPolicy = SCHED_NONE;
+  // TODO
+  schedulingPolicy = SCHED_RR;
 } else schedulingPolicy = SCHED_RR;
 cluster.schedulingPolicy = schedulingPolicy;
 

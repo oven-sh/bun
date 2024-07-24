@@ -524,6 +524,7 @@ const NamedPipeIPCData = struct {
         log("NamedPipeIPCData#close", .{});
         if (this.server) |server| {
             server.close(onServerClose);
+            this.writer.close();
         } else {
             this.disconnected = true;
             JSC.VirtualMachine.get().enqueueTask(JSC.ManagedTask.New(NamedPipeIPCData, closeTask).init(this));

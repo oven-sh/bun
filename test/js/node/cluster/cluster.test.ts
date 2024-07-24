@@ -48,7 +48,7 @@ new_test("worker-disconnect-on-error.js");
 new_test("worker-disconnect.js");
 new_test("worker-events.js");
 new_test("worker-exit.js");
-new_test("worker-forced-exit.js", isWindows);
+new_test("worker-forced-exit.js");
 new_test("worker-init.js");
 new_test("worker-isdead.js");
 new_test("worker-kill-signal.js");

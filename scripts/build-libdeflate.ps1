@@ -10,7 +10,7 @@ try {
   Run cmake --build build --clean-first --config Release
 
   # In https://github.com/ebiggers/libdeflate/releases/tag/v1.20, it's outputting libdeflate.a even on Windows
-  Copy-Item build/libdeflate.a $BUN_DEPS_OUT_DIR/deflate.lib
+  Copy-Item build/deflatestatic.lib $BUN_DEPS_OUT_DIR/deflate.lib
   Write-Host "-> deflate.lib"
 } finally { Pop-Location }
 

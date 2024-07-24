@@ -668,6 +668,29 @@ describe("bundler", () => {
       "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
     },
   });
+  itBundled("edgecase/AssetEntryPoint", {
+    files: {
+      "/entry.zig": `
+        const std = @import("std");
+
+        pub fn main() void {
+          std.debug.print("Hello, world!\\n", .{});
+        }
+      `,
+    },
+    outdir: "/out",
+    entryPointsRaw: ["./entry.zig"],
+    runtimeFiles: {
+      "/exec.js": `
+        import assert from 'node:assert';
+        import the_path from './out/entry.js';
+        assert.strictEqual(the_path, './entry-6dhkdck1.zig');
+      `,
+    },
+    run: {
+      file: "./exec.js",
+    },
+  });
   itBundled("edgecase/ExportDefaultUndefined", {
     files: {
       "/entry.ts": /* ts */ `

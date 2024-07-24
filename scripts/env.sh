@@ -24,12 +24,7 @@ export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/build/bun-deps}
 export LC_CTYPE="en_US.UTF-8"
 export LC_ALL="en_US.UTF-8"
 
-if [[ "$CI" != "1" && "$CI" != "true" ]]; then
-  if [ -f $SCRIPT_DIR/env.local ]; then
-    echo "Sourcing $SCRIPT_DIR/env.local"
-    source $SCRIPT_DIR/env.local
-  fi
-elif [[ $(uname -s) == 'Darwin' ]]; then
+if [[ $(uname -s) == 'Darwin' ]]; then
   export CXX="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang++"
   export CC="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang"
   export AR="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ar"
@@ -37,6 +32,11 @@ elif [[ $(uname -s) == 'Darwin' ]]; then
   export LIBTOOL="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-libtool-darwin"
   export PATH="$(brew --prefix llvm)@$LLVM_VERSION/bin:$PATH"
   ln -sf $LIBTOOL "$(brew --prefix llvm)@$LLVM_VERSION/bin/libtool" || true
+elif [[ "$CI" != "1" && "$CI" != "true" ]]; then
+  if [[ -f $SCRIPT_DIR/env.local ]]; then
+    echo "Sourcing $SCRIPT_DIR/env.local"
+    source $SCRIPT_DIR/env.local
+  fi
 fi
 
 # this compiler detection could be better

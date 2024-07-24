@@ -21,6 +21,10 @@ mv -Force -ErrorAction SilentlyContinue build\build\bun-deps\* build\bun-deps
 mv -Force -ErrorAction SilentlyContinue build\build\* build
 
 Set-Location build
+
+# HACK: See scripts/build-bun-cpp.ps1
+Join-File -Path "bun-cpp-objects.a" -Verbose -DeletePartFiles
+
 $CANARY = if ($env:CANARY) { "$env:CANARY" } else { "1" }
 cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=1 `

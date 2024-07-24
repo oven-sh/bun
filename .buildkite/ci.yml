@@ -1286,7 +1286,9 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "build\\bun-cpp-objects.a"
+          # HACK: See scripts/build-bun-cpp.ps1
+          # - "build\\bun-cpp-objects.a"
+          - "build\\bun-cpp-objects.a.*"
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
 
@@ -1424,7 +1426,9 @@ steps:
           os: "windows"
           arch: "x64"
         artifact_paths:
-          - "build\\bun-cpp-objects.a"
+          # HACK: See scripts/build-bun-cpp.ps1
+          # - "build\\bun-cpp-objects.a"
+          - "build\\bun-cpp-objects.a.*"
         env:
           CPU_TARGET: "nehalem"
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"

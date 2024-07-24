@@ -126,6 +126,8 @@ const debugTreeShake = Output.scoped(.TreeShake, true);
 const BitSet = bun.bit_set.DynamicBitSetUnmanaged;
 const Async = bun.Async;
 
+const logPartDependencyTree = Output.scoped(.part_dep_tree, false);
+
 fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8) bun.tracy.Ctx {
     return bun.tracy.traceNamed(src, "Bundler." ++ name);
 }
@@ -5160,40 +5162,38 @@ const LinkerContext = struct {
                 if (is_entry_point) {
                     const force_include_exports = flag.force_include_exports_for_entry_point;
                     const add_wrapper = wrap != .none;
-                    var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(
-                        this.allocator,
-                        @as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper)),
-                    ) catch unreachable;
+
+                    const extra_count = @as(usize, @intFromBool(force_include_exports)) +
+                        @as(usize, @intFromBool(add_wrapper));
+
+                    var dependencies = std.ArrayList(js_ast.Dependency).initCapacity(this.allocator, extra_count) catch bun.outOfMemory();
+
                     var resolved_exports_list: *ResolvedExports = &this.graph.meta.items(.resolved_exports)[id];
                     for (aliases) |alias| {
-                        var export_ = resolved_exports_list.get(alias).?;
-                        var target_source_index = export_.data.source_index.get();
-                        var target_id = target_source_index;
-                        var target_ref = export_.data.import_ref;
+                        const exp = resolved_exports_list.get(alias).?;
+                        var target_source_index = exp.data.source_index;
+                        var target_ref = exp.data.import_ref;
 
                         // If this is an import, then target what the import points to
-
-                        if (imports_to_bind.get(target_ref)) |import_data| {
-                            target_source_index = import_data.data.source_index.get();
-                            target_id = target_source_index;
+                        if (imports_to_bind_list[target_source_index.get()].get(target_ref)) |import_data| {
+                            target_source_index = import_data.data.source_index;
                             target_ref = import_data.data.import_ref;
-                            dependencies.appendSlice(import_data.re_exports.slice()) catch unreachable;
+
+                            dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
                         }
 
-                        const top_to_parts = this.topLevelSymbolsToParts(target_id, target_ref);
-                        dependencies.ensureUnusedCapacity(top_to_parts.len) catch unreachable;
                         // Pull in all declarations of this symbol
+                        const top_to_parts = this.topLevelSymbolsToParts(target_source_index.get(), target_ref);
+                        dependencies.ensureUnusedCapacity(top_to_parts.len) catch bun.outOfMemory();
                         for (top_to_parts) |part_index| {
-                            dependencies.appendAssumeCapacity(
-                                .{
-                                    .source_index = Index.source(target_source_index),
-                                    .part_index = part_index,
-                                },
-                            );
+                            dependencies.appendAssumeCapacity(.{
+                                .source_index = target_source_index,
+                                .part_index = part_index,
+                            });
                         }
                     }
 
-                    dependencies.ensureUnusedCapacity(@as(usize, @intFromBool(force_include_exports)) + @as(usize, @intFromBool(add_wrapper))) catch unreachable;
+                    dependencies.ensureUnusedCapacity(extra_count) catch bun.outOfMemory();
 
                     // Ensure "exports" is included if the current output format needs it
                     if (force_include_exports) {
@@ -5202,6 +5202,7 @@ const LinkerContext = struct {
                         );
                     }
 
+                    // Include the wrapper if present
                     if (add_wrapper) {
                         dependencies.appendAssumeCapacity(
                             .{
@@ -5218,7 +5219,8 @@ const LinkerContext = struct {
                             .dependencies = js_ast.Dependency.List.fromList(dependencies),
                             .can_be_removed_if_unused = false,
                         },
-                    ) catch unreachable;
+                    ) catch bun.outOfMemory();
+
                     parts = parts_list[id].slice();
                     this.graph.meta.items(.entry_point_part_index)[id] = Index.part(entry_point_part_index);
 
@@ -5456,7 +5458,7 @@ const LinkerContext = struct {
 
     pub fn createExportsForFile(
         c: *LinkerContext,
-        allocator_: std.mem.Allocator,
+        allocator: std.mem.Allocator,
         id: u32,
         resolved_exports: *ResolvedExports,
         imports_to_bind: []RefImportData,
@@ -5475,10 +5477,10 @@ const LinkerContext = struct {
 
         // 1 property per export
         var properties = std.ArrayList(js_ast.G.Property)
-            .initCapacity(allocator_, export_aliases.len) catch unreachable;
+            .initCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
         var ns_export_symbol_uses = js_ast.Part.SymbolUseMap{};
-        ns_export_symbol_uses.ensureTotalCapacity(allocator_, export_aliases.len) catch unreachable;
+        ns_export_symbol_uses.ensureTotalCapacity(allocator, export_aliases.len) catch bun.outOfMemory();
 
         const needs_exports_variable = c.graph.meta.items(.flags)[id].needs_exports_variable;
 
@@ -5490,11 +5492,11 @@ const LinkerContext = struct {
             // + 1 if we need to inject the exports variable
             @as(usize, @intFromBool(needs_exports_variable));
 
-        var stmts = js_ast.Stmt.Batcher.init(allocator_, stmts_count) catch unreachable;
+        var stmts = js_ast.Stmt.Batcher.init(allocator, stmts_count) catch bun.outOfMemory();
         defer stmts.done();
         const loc = Logger.Loc.Empty;
         // todo: investigate if preallocating this array is faster
-        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator_, re_exports_count) catch unreachable;
+        var ns_export_dependencies = std.ArrayList(js_ast.Dependency).initCapacity(allocator, re_exports_count) catch bun.outOfMemory();
         for (export_aliases) |alias| {
             var exp = resolved_exports.getPtr(alias).?.*;
 
@@ -5505,7 +5507,7 @@ const LinkerContext = struct {
             if (imports_to_bind[exp.data.source_index.get()].get(exp.data.import_ref)) |import_data| {
                 exp.data.import_ref = import_data.data.import_ref;
                 exp.data.source_index = import_data.data.source_index;
-                ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch unreachable;
+                ns_export_dependencies.appendSlice(import_data.re_exports.slice()) catch bun.outOfMemory();
             }
 
             // Exports of imports need EImportIdentifier in case they need to be re-
@@ -5536,7 +5538,7 @@ const LinkerContext = struct {
             const fn_body = js_ast.G.FnBody{
                 .stmts = stmts.eat1(
                     js_ast.Stmt.allocate(
-                        allocator_,
+                        allocator,
                         js_ast.S.Return,
                         .{ .value = value },
                         loc,
@@ -5544,26 +5546,24 @@ const LinkerContext = struct {
                 ),
                 .loc = loc,
             };
-            properties.appendAssumeCapacity(
-                .{
-                    .key = js_ast.Expr.allocate(
-                        allocator_,
-                        js_ast.E.String,
-                        .{
-                            // TODO: test emoji work as expected
-                            // relevant for WASM exports
-                            .data = alias,
-                        },
-                        loc,
-                    ),
-                    .value = js_ast.Expr.allocate(
-                        allocator_,
-                        js_ast.E.Arrow,
-                        .{ .prefer_expr = true, .body = fn_body },
-                        loc,
-                    ),
-                },
-            );
+            properties.appendAssumeCapacity(.{
+                .key = js_ast.Expr.allocate(
+                    allocator,
+                    js_ast.E.String,
+                    .{
+                        // TODO: test emoji work as expected
+                        // relevant for WASM exports
+                        .data = alias,
+                    },
+                    loc,
+                ),
+                .value = js_ast.Expr.allocate(
+                    allocator,
+                    js_ast.E.Arrow,
+                    .{ .prefer_expr = true, .body = fn_body },
+                    loc,
+                ),
+            });
             ns_export_symbol_uses.putAssumeCapacity(exp.data.import_ref, .{ .count_estimate = 1 });
 
             // Make sure the part that declares the export is included
@@ -5573,7 +5573,6 @@ const LinkerContext = struct {
             for (parts) |part_id| {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
-                std.debug.print("im creating the exports -- {d} --> {d}:{d}\n", .{ id, exp.data.source_index.get(), part_id });
                 ns_export_dependencies.appendAssumeCapacity(.{
                     .source_index = exp.data.source_index,
                     .part_index = part_id,
@@ -5590,19 +5589,19 @@ const LinkerContext = struct {
 
         // Prefix this part with "var exports = {}" if this isn't a CommonJS entry point
         if (needs_exports_variable) {
-            var decls = allocator_.alloc(js_ast.G.Decl, 1) catch unreachable;
+            var decls = allocator.alloc(js_ast.G.Decl, 1) catch unreachable;
             decls[0] = .{
                 .binding = js_ast.Binding.alloc(
-                    allocator_,
+                    allocator,
                     js_ast.B.Identifier{
                         .ref = exports_ref,
                     },
                     loc,
                 ),
-                .value = js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{}, loc),
+                .value = js_ast.Expr.allocate(allocator, js_ast.E.Object, .{}, loc),
             };
             remaining_stmts[0] = js_ast.Stmt.allocate(
-                allocator_,
+                allocator,
                 js_ast.S.Local,
                 .{
                     .decls = G.Decl.List.init(decls),
@@ -5610,24 +5609,24 @@ const LinkerContext = struct {
                 loc,
             );
             remaining_stmts = remaining_stmts[1..];
-            declared_symbols.append(allocator_, .{ .ref = exports_ref, .is_top_level = true }) catch unreachable;
+            declared_symbols.append(allocator, .{ .ref = exports_ref, .is_top_level = true }) catch unreachable;
         }
 
         // "__export(exports, { foo: () => foo })"
         var export_ref = Ref.None;
         if (properties.items.len > 0) {
             export_ref = c.graph.ast.items(.module_scope)[Index.runtime.get()].members.get("__export").?.ref;
-            var args = allocator_.alloc(js_ast.Expr, 2) catch unreachable;
+            var args = allocator.alloc(js_ast.Expr, 2) catch unreachable;
             args[0..2].* = [_]js_ast.Expr{
                 js_ast.Expr.initIdentifier(exports_ref, loc),
-                js_ast.Expr.allocate(allocator_, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
+                js_ast.Expr.allocate(allocator, js_ast.E.Object, .{ .properties = js_ast.G.Property.List.fromList(properties) }, loc),
             };
             remaining_stmts[0] = js_ast.Stmt.allocate(
-                allocator_,
+                allocator,
                 js_ast.S.SExpr,
                 .{
                     .value = js_ast.Expr.allocate(
-                        allocator_,
+                        allocator,
                         js_ast.E.Call,
                         .{
                             .target = js_ast.Expr.initIdentifier(export_ref, loc),
@@ -10154,14 +10153,15 @@ const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
     ) bool {
-        var part: *js_ast.Part = &parts[id].slice()[part_index];
+        const part: *js_ast.Part = &parts[id].slice()[part_index];
+
         // only once
         if (part.is_live) {
             return false;
         }
-
         part.is_live = true;
-        if (comptime bun.Environment.allow_assert)
+
+        if (comptime bun.Environment.isDebug)
             debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
                 id,
                 c.parse_graph.input_files.get(id).source.path.text,
@@ -10179,10 +10179,19 @@ const LinkerContext = struct {
             entry_point_kinds,
         );
 
-        for (part.dependencies.slice()) |dependency| {
-            std.debug.print("Dependency for tree-shake: {d}:{d} -> {d}:{d}\n", .{
-                id, part_index, dependency.source_index.get(), dependency.part_index,
+        if (Environment.isDebug and part.dependencies.slice().len == 0) {
+            logPartDependencyTree("markPartLiveForTreeShaking {d}:{d} | EMPTY", .{
+                id, part_index,
             });
+        }
+
+        for (part.dependencies.slice()) |dependency| {
+            if (id != 0 and dependency.source_index.get() != 0) {
+                logPartDependencyTree("markPartLiveForTreeShaking: {d}:{d} --> {d}:{d}\n", .{
+                    id, part_index, dependency.source_index.get(), dependency.part_index,
+                });
+            }
+
             _ = c.markPartLiveForTreeShaking(
                 dependency.part_index,
                 dependency.source_index.get(),

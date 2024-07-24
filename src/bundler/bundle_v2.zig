@@ -5569,15 +5569,15 @@ const LinkerContext = struct {
             // Make sure the part that declares the export is included
             const parts = c.topLevelSymbolsToParts(exp.data.source_index.get(), exp.data.import_ref);
             ns_export_dependencies.ensureUnusedCapacity(parts.len) catch unreachable;
-
-            for (parts) |part_id| {
+            for (parts, ns_export_dependencies.unusedCapacitySlice()[0..parts.len]) |part_id, *dest| {
                 // Use a non-local dependency since this is likely from a different
                 // file if it came in through an export star
-                ns_export_dependencies.appendAssumeCapacity(.{
+                dest.* = .{
                     .source_index = exp.data.source_index,
                     .part_index = part_id,
-                });
+                };
             }
+            ns_export_dependencies.items.len += parts.len;
         }
 
         var declared_symbols = js_ast.DeclaredSymbol.List{};
@@ -10179,14 +10179,14 @@ const LinkerContext = struct {
             entry_point_kinds,
         );
 
-        if (Environment.isDebug and part.dependencies.slice().len == 0) {
+        if (Environment.enable_logs and part.dependencies.slice().len == 0) {
             logPartDependencyTree("markPartLiveForTreeShaking {d}:{d} | EMPTY", .{
                 id, part_index,
             });
         }
 
         for (part.dependencies.slice()) |dependency| {
-            if (id != 0 and dependency.source_index.get() != 0) {
+            if (Environment.enable_logs and id != 0 and dependency.source_index.get() != 0) {
                 logPartDependencyTree("markPartLiveForTreeShaking: {d}:{d} --> {d}:{d}\n", .{
                     id, part_index, dependency.source_index.get(), dependency.part_index,
                 });

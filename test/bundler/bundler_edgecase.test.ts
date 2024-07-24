@@ -1469,6 +1469,97 @@ describe("bundler", () => {
       stdout: "side effect",
     },
   });
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFromCodeSplitting", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+        console.log('file1');
+      `,
+      "/file1b.js": `
+        import("./file2.js");
+        console.log('file2');
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "out",
+    entryPoints: ["./file1.js", "./file1b.js"],
+    run: [
+      {
+        file: "/out/file1.js",
+        stdout: "file1\nside effect",
+      },
+      {
+        file: "/out/file1b.js",
+        stdout: "file2\nside effect",
+      },
+    ],
+  });
+  itBundled("edgecase/RequireSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        require("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
+  itBundled("edgecase/SideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        import * as foo from './file3.js';
+        export default foo;
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
   itBundled("edgecase/BuiltinWithTrailingSlash", {
     files: {
       "/entry.js": `

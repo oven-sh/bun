@@ -39,7 +39,7 @@ new_test("setup-primary-cumulative.js");
 new_test("setup-primary-emit.js");
 new_test("setup-primary-multiple.js");
 new_test("setup-primary.js");
-new_test("shared-handle-bind-privileged-port.js");
+new_test("shared-handle-bind-privileged-port.js", isLinux);
 new_test("uncaught-exception.js");
 new_test("worker-constructor.js");
 new_test("worker-death.js");

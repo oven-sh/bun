@@ -44,4 +44,14 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
     return Just(true);
 }
 
+void Object::SetInternalField(int index, Local<Data> data)
+{
+    assert("Object::SetInternalField" && 0);
+}
+
+Local<Data> Object::SlowGetInternalField(int index)
+{
+    assert("Object::SlowGetInternalField" && 0);
+}
+
 }

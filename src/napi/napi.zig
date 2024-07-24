@@ -1721,6 +1721,12 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v88External5ValueEv() *anyopaque;
     pub extern fn _ZN2v86Object3NewEPNS_7IsolateE() *anyopaque;
     pub extern fn _ZN2v86Object3SetENS_5LocalINS_7ContextEEENS1_INS_5ValueEEES5_() *anyopaque;
+    pub extern fn _ZN2v86Object16SetInternalFieldEiNS_5LocalINS_4DataEEE() *anyopaque;
+    pub extern fn _ZN2v86Object20SlowGetInternalFieldEi() *anyopaque;
+    pub extern fn _ZN2v811HandleScope12CreateHandleEPNS_8internal7IsolateEm() *anyopaque;
+    pub extern fn _ZN2v811HandleScopeC1EPNS_7IsolateE() *anyopaque;
+    pub extern fn _ZN2v811HandleScopeD1Ev() *anyopaque;
+    pub extern fn _ZN2v811HandleScopeD2Ev() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.

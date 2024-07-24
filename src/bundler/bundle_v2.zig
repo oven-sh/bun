@@ -8795,8 +8795,6 @@ pub const LinkerContext = struct {
                     // swallow any exceptions thrown during module initialization.
                     const is_async = flags.is_async_or_has_async_dependency;
 
-                    std.debug.print("aaa", .{});
-
                     const ExportHoist = struct {
                         decls: std.ArrayListUnmanaged(G.Decl),
                         allocator: std.mem.Allocator,

@@ -22069,9 +22069,6 @@ fn NewParser_(
                             },
                             .s_function => |data| {
                                 if (
-                                // Hoist module-level functions when
-                                // ((FeatureFlags.unwrap_commonjs_to_esm and p.current_scope == p.module_scope and !data.func.flags.contains(.is_export)) or
-
                                 // Manually hoist block-level function declarations to preserve semantics.
                                 // This is only done for function declarations that are not generators
                                 // or async functions, since this is a backwards-compatibility hack from

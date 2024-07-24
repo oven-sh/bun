@@ -49,7 +49,7 @@ function assert_command() {
   if ! command -v "$command" &> /dev/null; then
     echo "warning: $command is not installed, installing..."
     if command -v brew &> /dev/null; then
-      HOMEBREW_NO_AUTO_UPDATE=1 run_command brew install "$package"
+      HOMEBREW_NO_AUTO_UPDATE=1 brew install "$package"
     else
       echo "error: Cannot install $command, please install it"
       if [ -n "$help_url" ]; then

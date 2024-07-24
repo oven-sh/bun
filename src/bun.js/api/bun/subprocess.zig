@@ -716,7 +716,7 @@ pub const Subprocess = struct {
         }
     }
 
-    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn doSend(this: *Subprocess, global: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
         IPClog("Subprocess#doSend", .{});
         const ipc_data = &(this.ipc_data orelse {
             if (this.hasExited()) {
@@ -740,7 +740,7 @@ pub const Subprocess = struct {
         return JSC.JSValue.jsUndefined();
     }
 
-    pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn disconnect(this: *Subprocess, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         _ = globalThis;
         _ = callframe;
         const ipc_data = this.ipc_maybe() orelse return .undefined;
@@ -749,7 +749,7 @@ pub const Subprocess = struct {
         return .undefined;
     }
 
-    pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) callconv(.C) JSValue {
+    pub fn getConnected(this: *Subprocess, globalThis: *JSGlobalObject) JSValue {
         _ = globalThis;
         return JSValue.jsBoolean(this.ipc_maybe() != null);
     }

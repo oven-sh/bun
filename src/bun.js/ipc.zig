@@ -343,8 +343,7 @@ const SocketIPCData = struct {
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
         const start_offset = ipc_data.outgoing.list.items.len;
 
-        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch
-            return false;
+        const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch return false;
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
@@ -369,8 +368,7 @@ const SocketIPCData = struct {
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
         const start_offset = ipc_data.outgoing.list.items.len;
 
-        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch
-            return false;
+        const payload_length = serializeInternal(ipc_data, &ipc_data.outgoing, global, value) catch return false;
 
         bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
@@ -484,8 +482,7 @@ const NamedPipeIPCData = struct {
 
         const start_offset = this.writer.outgoing.list.items.len;
 
-        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch
-            return false;
+        const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch return false;
 
         bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
@@ -509,8 +506,7 @@ const NamedPipeIPCData = struct {
 
         const start_offset = this.writer.outgoing.list.items.len;
 
-        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch
-            return false;
+        const payload_length: usize = serializeInternal(this, &this.writer.outgoing, global, value) catch return false;
 
         bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
@@ -572,6 +568,7 @@ const NamedPipeIPCData = struct {
 
     pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, named_pipe: []const u8) !void {
         log("configureClient", .{});
+        const vm = JSC.VirtualMachine.get();
         const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
@@ -587,6 +584,12 @@ const NamedPipeIPCData = struct {
             .context = @ptrCast(instance),
         };
         try ipc_pipe.connect(&this.connect_req, named_pipe, instance, NewNamedPipeIPCHandler(Context).onConnect).unwrap();
+
+        ipc_pipe.ref();
+        const event_loop = vm.eventLoop();
+        while (!this.connected) {
+            event_loop.autoTick();
+        }
     }
 
     fn deinit(this: *NamedPipeIPCData) void {
@@ -877,7 +880,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             const ipc = this.ipc();
 
             log("NewNamedPipeIPCHandler#onConnect {d}", .{status.int()});
-            ipc.connected = true;
 
             if (status.errEnum()) |_| {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
@@ -888,7 +890,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             };
-
+            ipc.connected = true;
             stream.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                 ipc.close();
                 Output.printErrorln("Failed to connect IPC pipe", .{});

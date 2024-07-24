@@ -25,7 +25,7 @@ new_test("fork-env.js");
 new_test("fork-windowsHide.js", isWindows);
 new_test("invalid-message.js");
 new_test("kill-disconnect.js");
-new_test("kill-infinite-loop.js", isWindows);
+new_test("kill-infinite-loop.js");
 new_test("listening-port.js", isWindows);
 new_test("primary-error.js");
 new_test("primary-kill.js");

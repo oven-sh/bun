@@ -195,8 +195,18 @@ const json = struct {
         globalThis: *JSC.JSGlobalObject,
     ) IPCDecodeError!DecodeIPCMessageResult {
         if (bun.strings.indexOfChar(data, '\n')) |idx| {
-            const kind = data[0];
-            const json_data = data[1..idx];
+            var kind = data[0];
+            var json_data = data[1..idx];
+
+            switch (kind) {
+                1, 2 => {},
+                else => {
+                    // if the message being recieved is from a node process then it wont have the leading marker byte
+                    // assume full message will be json
+                    kind = 1;
+                    json_data = data[0..idx];
+                },
+            }
 
             const is_ascii = bun.strings.isAllASCII(json_data);
             var was_ascii_string_freed = false;

@@ -140,8 +140,8 @@ pub const Ref = packed struct(u64) {
             writer,
             "Ref[inner={d}, src={d}, .{s}]",
             .{
-                ref.sourceIndex(),
                 ref.innerIndex(),
+                ref.sourceIndex(),
                 @tagName(ref.tag),
             },
         );

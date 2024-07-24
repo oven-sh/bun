@@ -39,7 +39,7 @@ public:
 
     ~Process();
 
-    bool m_exited;
+    bool m_isExitCodeObservable = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 

@@ -2279,7 +2279,7 @@ pub const Subprocess = struct {
         this: *Subprocess,
         message: IPC.DecodedIPCMessage,
     ) void {
-        IPClog("Subprocess#handleIPCMessage\n", .{});
+        IPClog("Subprocess#handleIPCMessage", .{});
         switch (message) {
             // In future versions we can read this in order to detect version mismatches,
             // or disable future optimizations if the subprocess is old.
@@ -2305,7 +2305,7 @@ pub const Subprocess = struct {
     }
 
     pub fn handleIPCClose(this: *Subprocess) void {
-        IPClog("Subprocess#handleIPCClose\n", .{});
+        IPClog("Subprocess#handleIPCClose", .{});
         this.updateHasPendingActivity();
         const ok = this.ipc_data != null;
         if (ok) this.ipc().iimh.deinit();

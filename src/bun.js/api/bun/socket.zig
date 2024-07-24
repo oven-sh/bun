@@ -179,7 +179,8 @@ const Handlers = struct {
         socket_context: ?*uws.SocketContext,
 
         pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
-            this.handlers.vm.eventLoop().exit();
+            var vm = this.handlers.vm;
+            defer vm.eventLoop().exit();
             this.handlers.markInactive(ssl, this.socket_context, wrapped);
         }
     };

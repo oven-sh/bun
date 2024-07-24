@@ -79,6 +79,10 @@ typedef int mode_t;
 #include <unistd.h> // setuid, getuid
 #endif
 
+namespace Zig {
+JSC::JSValue GlobalObject__ERR_IPC_DISCONNECTED(JSGlobalObject* globalObject);
+};
+
 namespace Bun {
 
 using namespace JSC;
@@ -1931,7 +1935,7 @@ JSC_DEFINE_HOST_FUNCTION(Bun__Process__disconnect, (JSGlobalObject * globalObjec
     auto global = jsCast<GlobalObject*>(globalObject);
 
     if (!Bun__GlobalObject__hasIPC(globalObject)) {
-        Process__emitErrorEvent(global, JSC::JSValue::encode(global->ERR_IPC_DISCONNECTED()));
+        Process__emitErrorEvent(global, JSC::JSValue::encode(Zig::GlobalObject__ERR_IPC_DISCONNECTED(globalObject)));
         return JSC::JSValue::encode(jsUndefined());
     }
 

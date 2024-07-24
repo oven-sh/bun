@@ -178,6 +178,9 @@ pub fn crashHandler(
                             break :check_flag false;
                         }
                     }
+                    // Act like release build when explicitly enabling reporting
+                    if (isReportingEnabled()) break :check_flag false;
+
                     break :check_flag true;
                 };
 
@@ -1529,6 +1532,7 @@ pub const js_bindings = struct {
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
             .{ "outOfMemory", jsOutOfMemory },
+            .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
             const name = JSC.ZigString.static(tuple[0]);
             obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
@@ -1564,6 +1568,10 @@ pub const js_bindings = struct {
 
     pub fn jsOutOfMemory(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         bun.outOfMemory();
+    }
+
+    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
     }
 
     pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {

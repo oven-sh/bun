@@ -317,7 +317,7 @@ const SocketIPCData = struct {
     incoming: bun.ByteList = .{}, // Maybe we should use StreamBuffer here as well
     outgoing: bun.io.StreamBuffer = .{},
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
-    iimh: node_cluster_binding.IInternalMsgHolder = .{},
+    iimh: node_cluster_binding.InternalMsgHolder = .{},
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
@@ -406,7 +406,7 @@ const NamedPipeIPCData = struct {
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
     has_written_version: if (Environment.allow_assert) u1 else u0 = 0,
-    iimh: node_cluster_binding.IInternalMsgHolder = .{},
+    iimh: node_cluster_binding.InternalMsgHolder = .{},
 
     const CloseHandler = struct {
         callback: *const fn (*anyopaque) void,

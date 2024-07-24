@@ -3741,7 +3741,7 @@ pub const VirtualMachine = struct {
             var vm = VirtualMachine.get();
             vm.ipc = null;
             const event_loop = vm.eventLoop();
-            node_cluster_binding.InternalMsgHolder.deinit();
+            node_cluster_binding.child_singleton.deinit();
             event_loop.enter();
             Process__emitDisconnectEvent(vm.global);
             event_loop.exit();

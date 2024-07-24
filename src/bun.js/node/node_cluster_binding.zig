@@ -10,20 +10,7 @@ const log = Output.scoped(.IPC, false);
 extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
 extern fn Process__emitErrorEvent(global: *JSC.JSGlobalObject, value: JSC.JSValue) void;
 
-pub const InternalMsgHolder = struct {
-    var seq: i32 = 0;
-    var callbacks = std.AutoArrayHashMapUnmanaged(i32, JSC.Strong){};
-
-    var worker = JSC.Strong{};
-    var cb = JSC.Strong{};
-
-    pub fn deinit() void {
-        for (callbacks.values()) |*strong| strong.deinit();
-        callbacks.deinit(bun.default_allocator);
-        worker.clear();
-        cb.clear();
-    }
-};
+pub var child_singleton: InternalMsgHolder = .{};
 
 pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     log("sendHelperChild", .{});
@@ -53,11 +40,11 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         ));
     }
     if (callback.isFunction()) {
-        InternalMsgHolder.callbacks.put(bun.default_allocator, InternalMsgHolder.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
+        child_singleton.callbacks.put(bun.default_allocator, child_singleton.seq, JSC.Strong.create(callback, globalThis)) catch bun.outOfMemory();
     }
 
-    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(InternalMsgHolder.seq));
-    InternalMsgHolder.seq +%= 1;
+    message.put(globalThis, ZigString.static("seq"), JSC.JSValue.jsNumber(child_singleton.seq));
+    child_singleton.seq +%= 1;
 
     // similar code as Bun__Process__send
 
@@ -91,8 +78,8 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(2).ptr;
-    InternalMsgHolder.worker = JSC.Strong.create(arguments[0], globalThis);
-    InternalMsgHolder.cb = JSC.Strong.create(arguments[1], globalThis);
+    child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
+    child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
     return .undefined;
 }
 
@@ -100,12 +87,12 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
     if (message.get(globalThis, "ack")) |p| {
         if (!p.isUndefined()) {
             const ack = p.toInt32();
-            if (InternalMsgHolder.callbacks.getEntry(ack)) |entry| {
+            if (child_singleton.callbacks.getEntry(ack)) |entry| {
                 var cbstrong = entry.value_ptr.*;
                 defer cbstrong.deinit();
-                _ = InternalMsgHolder.callbacks.swapRemove(ack);
+                _ = child_singleton.callbacks.swapRemove(ack);
                 const cb = cbstrong.get().?;
-                _ = cb.call(globalThis, InternalMsgHolder.worker.get().?, &.{
+                _ = cb.call(globalThis, child_singleton.worker.get().?, &.{
                     message,
                     .null, // handle
                 });
@@ -113,8 +100,8 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
             }
         }
     }
-    const cb = InternalMsgHolder.cb.get().?;
-    _ = cb.call(globalThis, InternalMsgHolder.worker.get().?, &.{
+    const cb = child_singleton.cb.get().?;
+    _ = cb.call(globalThis, child_singleton.worker.get().?, &.{
         message,
         .null, // handle
     });
@@ -125,14 +112,14 @@ pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.
 //
 //
 
-pub const IInternalMsgHolder = struct {
+pub const InternalMsgHolder = struct {
     seq: i32 = 0,
     callbacks: std.AutoArrayHashMapUnmanaged(i32, JSC.Strong) = .{},
 
     worker: JSC.Strong = .{},
     cb: JSC.Strong = .{},
 
-    pub fn deinit(iimh: *IInternalMsgHolder) void {
+    pub fn deinit(iimh: *InternalMsgHolder) void {
         for (iimh.callbacks.values()) |*strong| strong.clear();
         iimh.callbacks.deinit(bun.default_allocator);
         iimh.worker.clear();

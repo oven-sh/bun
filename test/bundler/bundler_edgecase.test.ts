@@ -834,6 +834,18 @@ describe("bundler", () => {
       stdout: `0.6.0`,
     },
   });
+  itBundled("edgecase/ExternalDynamicImportDoesNotIncludeRuntime", {
+    files: {
+      "/entry.js": /* js */ `
+        import('something');
+      `,
+    },
+    external: ["something"],
+    onAfterBundle(api) {
+      api.expectFile("/out.js").not.toContain("__require");
+      api.expectFile("/out.js").not.toContain("Dynamic require");
+    },
+  });
   itBundled("edgecase/OverwriteInputWithOutdir", {
     todo: true,
     files: {

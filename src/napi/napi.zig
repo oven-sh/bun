@@ -750,7 +750,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
         return .function_expected;
     }
 
-    const res = func.callWithThis(
+    const res = func.call(
         env,
         if (recv != .zero)
             recv
@@ -1513,7 +1513,7 @@ pub const ThreadSafeFunction = struct {
                 if (js_function.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
-                const err = js_function.call(globalObject, &.{});
+                const err = js_function.call(globalObject, .undefined, &.{});
                 if (err.isAnyError()) {
                     _ = vm.uncaughtException(globalObject, err, false);
                 }
@@ -1544,6 +1544,8 @@ pub const ThreadSafeFunction = struct {
 
     pub fn finalize(opaq: *anyopaque) void {
         var this = bun.cast(*ThreadSafeFunction, opaq);
+        this.unref();
+
         if (this.finalizer.fun) |fun| {
             fun(this.event_loop.global, this.finalizer.data, this.ctx);
         }

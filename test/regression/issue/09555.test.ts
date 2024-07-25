@@ -145,4 +145,19 @@ describe("#09555", () => {
     expect(out).toEqual(sha);
     expect(total).toBe(1024 * 3);
   });
+
+  test("Readable.fromWeb consumes the ReadableStream", async () => {
+    const bytes = new Blob([crypto.getRandomValues(new Uint8Array(1024 * 3)), new ArrayBuffer(1024 * 1024 * 10)]);
+    const response = new Response(bytes);
+
+    const web = response.body;
+    expect(response.bodyUsed).toBe(false);
+    const stream = Readable.fromWeb(web);
+    expect(response.bodyUsed).toBe(true);
+    expect(() => response.body?.getReader()).toThrow();
+    const methods = ["arrayBuffer", "blob", "formData", "json", "text"];
+    for (const method of methods) {
+      expect(() => response[method]()).toThrow();
+    }
+  });
 });

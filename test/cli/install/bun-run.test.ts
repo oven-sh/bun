@@ -438,7 +438,7 @@ it("should show the correct working directory when run with --cwd", async () => 
   expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
 });
 
-it("runtime code always ignores DCE annotations", () => {
+it("DCE annotations are respected", () => {
   const dir = tempDirWithFiles("test", {
     "index.ts": `
       /* @__PURE__ */ console.log("Hello, world!");
@@ -447,6 +447,25 @@ it("runtime code always ignores DCE annotations", () => {
 
   const { stdout, stderr, exitCode } = spawnSync({
     cmd: [bunExe(), "run", "index.ts"],
+    cwd: dir,
+    env: bunEnv,
+  });
+
+  expect(exitCode).toBe(0);
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("");
+});
+
+it("--ignore-annotations ignores DCE annotations", () => {
+  const dir = tempDirWithFiles("test", {
+    "index.ts": `
+      /* @__PURE__ */ console.log("Hello, world!");
+    `,
+  });
+
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "--ignore-annotations", "run", "index.ts"],
     cwd: dir,
     env: bunEnv,
   });

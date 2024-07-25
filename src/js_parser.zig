@@ -1934,13 +1934,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2070,23 +2071,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -3119,6 +3103,10 @@ pub const Parser = struct {
                 hasher.update("TS");
             } else {
                 hasher.update("NO_TS");
+            }
+
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
             }
 
             this.features.hashForRuntimeTranspiler(hasher);

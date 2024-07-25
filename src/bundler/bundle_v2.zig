@@ -1630,6 +1630,7 @@ pub const BundleV2 = struct {
                 .extension_order = &.{},
                 .env_files = &.{},
                 .conditions = config.conditions.map.keys(),
+                .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
             },
             completion.env,
         );

@@ -2949,11 +2949,31 @@ describe("bundler", () => {
       stdout: "foo\nbar",
     },
   });
+  itBundled("dce/CallWithNoArg", {
+    files: {
+      "/entry.js": /* js */ `
+        /* @__PURE__ */ noSideEffects();
+      `,
+    },
+    run: {
+      stdout: "",
+    },
+  });
+  itBundled("dce/ConstructWithNoArg", {
+    files: {
+      "/entry.js": /* js */ `
+        /* @__PURE__ */ new NoSideEffects();
+      `,
+    },
+    run: {
+      stdout: "",
+    },
+  });
   itBundled("dce/IgnoreAnnotations", {
     files: {
       "/entry.js": /* js */ `
         function noSideEffects() { console.log("PASS"); }
-        /* @__PURE__ */ noSideEffects();
+        /* @__PURE__ */ noSideEffects(1);
       `,
     },
     ignoreDCEAnnotations: true,

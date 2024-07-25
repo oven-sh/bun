@@ -3152,6 +3152,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;

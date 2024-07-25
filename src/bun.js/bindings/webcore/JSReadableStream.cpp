@@ -39,6 +39,7 @@
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include "ZigGeneratedClasses.h"
+#include "JavaScriptCore/BuiltinNames.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -132,6 +133,12 @@ static JSC_DEFINE_CUSTOM_SETTER(JSReadableStreamPrototype__nativePtrSetterWrap, 
 static JSC_DEFINE_CUSTOM_GETTER(JSReadableStreamPrototype__nativePtrGetterWrap, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue encodedThisValue, JSC::PropertyName))
 {
     JSReadableStream* thisObject = jsCast<JSReadableStream*>(JSValue::decode(encodedThisValue));
+
+    // Force it to be locked, even though the value is still really there.
+    if (thisObject->isNativeTypeTransferred()) {
+        return JSValue::encode(jsNumber(-1));
+    }
+
     return JSValue::encode(thisObject->nativePtr());
 }
 
@@ -172,7 +179,7 @@ void JSReadableStreamPrototype::finishCreation(VM& vm)
 
     reifyStaticProperties(vm, JSReadableStream::info(), JSReadableStreamPrototypeTableValues, *this);
     this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->asyncIteratorSymbol, readableStreamLazyAsyncIteratorCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
-    this->putDirectBuiltinFunction(vm, globalObject(), JSC::Identifier::fromString(vm, "values"_s), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
+    this->putDirectBuiltinFunction(vm, globalObject(), vm.propertyNames->builtinNames().valuesPublicName(), readableStreamValuesCodeGenerator(vm), JSC::PropertyAttribute::DontDelete | 0);
     JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 }
 
@@ -191,7 +198,6 @@ void JSReadableStream::finishCreation(VM& vm)
 
 void JSReadableStream::setNativePtr(JSC::VM& vm, JSC::JSValue value)
 {
-
     this->m_nativePtr.set(vm, this, value);
 }
 

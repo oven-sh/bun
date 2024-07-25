@@ -49,6 +49,7 @@ BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__lookupService);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__prefetch);
 BUN_DECLARE_HOST_FUNCTION(Bun__DNSResolver__getCacheStats);
 BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
+BUN_DECLARE_HOST_FUNCTION(Bun__fetchPreconnect);
 
 namespace Bun {
 
@@ -265,6 +266,17 @@ extern "C" JSC::EncodedJSValue JSPasswordObject__create(JSGlobalObject*);
 static JSValue constructPasswordObject(VM& vm, JSObject* bunObject)
 {
     return JSValue::decode(JSPasswordObject__create(bunObject->globalObject()));
+}
+
+JSValue constructBunFetchObject(VM& vm, JSObject* bunObject)
+{
+    JSFunction* fetchFn = JSFunction::create(vm, bunObject->globalObject(), 1, "fetch"_s, Bun__fetch, ImplementationVisibility::Public, NoIntrinsic);
+
+    auto* globalObject = jsCast<Zig::GlobalObject*>(bunObject->globalObject());
+    fetchFn->putDirectNativeFunction(vm, globalObject, JSC::Identifier::fromString(vm, "preconnect"_s), 1, Bun__fetchPreconnect, ImplementationVisibility::Public, NoIntrinsic,
+        JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontDelete | 0);
+
+    return fetchFn;
 }
 
 static JSValue constructBunShell(VM& vm, JSObject* bunObject)
@@ -549,14 +561,14 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     cwd                                            BunObject_getter_wrap_cwd                                           DontEnum|DontDelete|PropertyCallback
     deepEquals                                     functionBunDeepEquals                                               DontDelete|Function 2
     deepMatch                                      functionBunDeepMatch                                                DontDelete|Function 2
-    deflateSync                                    BunObject_callback_deflateSync                                      DontDelete|Function 1
+    deflateSync                                    BunObject_callback_deflateSync                                        DontDelete|Function 1
     dns                                            constructDNSObject                                                  ReadOnly|DontDelete|PropertyCallback
     enableANSIColors                               BunObject_getter_wrap_enableANSIColors                              DontDelete|PropertyCallback
     env                                            constructEnvObject                                                  ReadOnly|DontDelete|PropertyCallback
     escapeHTML                                     functionBunEscapeHTML                                               DontDelete|Function 2
-    fetch                                          Bun__fetch                                                          ReadOnly|DontDelete|Function 1
-    file                                           BunObject_callback_file                                             DontDelete|Function 1
-    fileURLToPath                                  functionFileURLToPath                                               DontDelete|Function 1
+    fetch                                         constructBunFetchObject                                              ReadOnly|DontDelete|PropertyCallback
+    file                                           BunObject_callback_file                                               DontDelete|Function 1
+    fileURLToPath                                  functionFileURLToPath                                                DontDelete|Function 1
     gc                                             BunObject_callback_gc                                               DontDelete|Function 1
     generateHeapSnapshot                           BunObject_callback_generateHeapSnapshot                             DontDelete|Function 1
     gunzipSync                                     BunObject_callback_gunzipSync                                       DontDelete|Function 1

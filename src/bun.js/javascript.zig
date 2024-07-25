@@ -2398,6 +2398,9 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        if (this.rare_data) |rare_data| {
+            rare_data.deinit();
+        }
         this.has_terminated = true;
     }
 
@@ -2931,7 +2934,7 @@ pub const VirtualMachine = struct {
 
                 const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
-                if (has_name) {
+                if (has_name and !frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
@@ -2949,10 +2952,37 @@ pub const VirtualMachine = struct {
                             ),
                         },
                     );
-                } else {
+                } else if (!frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -3122,6 +3152,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;

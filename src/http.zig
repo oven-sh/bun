@@ -350,6 +350,11 @@ fn NewHTTPContext(comptime ssl: bool) type {
             socket.close(.failure);
         }
 
+        fn closeSocket(socket: HTTPSocket) void {
+            markSocketAsDead(socket);
+            socket.close(.normal);
+        }
+
         fn getTagged(ptr: *anyopaque) ActiveSocket {
             return ActiveSocket.from(bun.cast(**anyopaque, ptr).*);
         }
@@ -472,8 +477,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
             }
 
-            markSocketAsDead(socket);
-            socket.close(.normal);
+            closeSocket(socket);
         }
 
         pub const Handler = struct {
@@ -487,7 +491,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (active.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                     return;
                 }
 
@@ -523,33 +527,43 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                             client.did_have_handshaking_error = true;
 
+                            if (!socket.isClosed()) terminateSocket(socket);
                             return;
                         }
 
                         return client.firstCall(comptime ssl, socket);
                     } else {
                         // if authorized it self is false, this means that the connection was rejected
-                        markSocketAsDead(socket);
+                        terminateSocket(socket);
                         if (client.state.stage != .done and client.state.stage != .fail)
                             client.fail(error.ConnectionRefused);
                         return;
                     }
                 }
 
-                // we can reach here if we are aborted
-                if (!socket.isClosed()) {
+                if (socket.isClosed()) {
+                    markSocketAsDead(socket);
                     if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
-                        return;
+                        addMemoryBackToPool(pooled);
                     }
 
-                    terminateSocket(socket);
-                } else {
-                    if (active.get(PooledSocket)) |pooled| {
-                        assert(context().pending_sockets.put(pooled));
+                    return;
+                }
+
+                if (authorized) {
+                    if (active.is(PooledSocket)) {
+                        // Allow pooled sockets to be reused if the handshake was successful.
+                        socket.setTimeout(0);
+                        socket.setTimeoutMinutes(5);
                         return;
                     }
                 }
+
+                if (active.get(PooledSocket)) |pooled| {
+                    addMemoryBackToPool(pooled);
+                }
+
+                terminateSocket(socket);
             }
             pub fn onClose(
                 ptr: *anyopaque,
@@ -565,11 +579,16 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 }
 
                 if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
 
                 return;
             }
+
+            fn addMemoryBackToPool(pooled: *PooledSocket) void {
+                assert(context().pending_sockets.put(pooled));
+            }
+
             pub fn onData(
                 ptr: *anyopaque,
                 socket: HTTPSocket,
@@ -620,14 +639,12 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 socket: HTTPSocket,
             ) void {
                 const tagged = getTagged(ptr);
-
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onTimeout(
-                        comptime ssl,
-                        socket,
-                    );
+                    return client.onTimeout(comptime ssl, socket);
                 } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    // If a socket has been sitting around for 5 minutes
+                    // Let's close it and remove it from the pool.
+                    addMemoryBackToPool(pooled);
                 }
 
                 terminateSocket(socket);
@@ -640,23 +657,23 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 const tagged = getTagged(ptr);
                 markSocketAsDead(socket);
                 if (tagged.get(HTTPClient)) |client| {
-                    return client.onConnectError(
-                        comptime ssl,
-                        socket,
-                    );
+                    client.onConnectError();
                 } else if (tagged.get(PooledSocket)) |pooled| {
-                    assert(context().pending_sockets.put(pooled));
+                    addMemoryBackToPool(pooled);
                 }
-
-                if (comptime Environment.isDebug)
-                    // caller should already have closed it.
-                    bun.debugAssert(socket.isClosed());
+                // us_connecting_socket_close is always called internally by uSockets
             }
             pub fn onEnd(
                 _: *anyopaque,
                 socket: HTTPSocket,
             ) void {
-                // TCP fin gets closed immediately.
+                // TCP fin must be closed, but we must keep the original tagged
+                // pointer so that their onClose callback is called.
+                //
+                // Three possible states:
+                // 1. HTTP Keep-Alive socket: it must be removed from the pool
+                // 2. HTTP Client socket: it might need to be retried
+                // 3. Dead socket: it is already marked as dead
                 socket.close(.failure);
             }
         };
@@ -760,12 +777,31 @@ pub const HTTPThread = struct {
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
 
+    lazy_libdeflater: ?*LibdeflateState = null,
+
     const ShutdownMessage = struct {
         async_http_id: u32,
         is_tls: bool,
     };
 
     const threadlog = Output.scoped(.HTTPThread, true);
+
+    pub const LibdeflateState = struct {
+        decompressor: *bun.libdeflate.Decompressor = undefined,
+        shared_buffer: [512 * 1024]u8 = undefined,
+
+        pub usingnamespace bun.New(@This());
+    };
+
+    pub fn deflater(this: *@This()) *LibdeflateState {
+        if (this.lazy_libdeflater == null) {
+            this.lazy_libdeflater = LibdeflateState.new(.{
+                .decompressor = bun.libdeflate.Decompressor.alloc() orelse bun.outOfMemory(),
+            });
+        }
+
+        return this.lazy_libdeflater.?;
+    }
 
     fn initOnce() void {
         http_thread = .{
@@ -778,7 +814,7 @@ pub const HTTPThread = struct {
             },
             .timer = std.time.Timer.start() catch unreachable,
         };
-
+        bun.libdeflate.load();
         const thread = std.Thread.spawn(
             .{
                 .stack_size = bun.default_thread_stack_size,
@@ -1095,6 +1131,13 @@ pub fn firstCall(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (client.is_preconnect_only) {
+            client.onPreconnect(is_ssl, socket);
+            return;
+        }
+    }
+
     if (client.state.request_stage == .pending) {
         client.onWritable(true, comptime is_ssl, socket);
     }
@@ -1144,8 +1187,10 @@ pub fn onTimeout(
     comptime is_ssl: bool,
     socket: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
-    _ = socket;
+    if (client.disable_timeout) return;
     log("Timeout  {s}\n", .{client.url.href});
+
+    defer NewHTTPContext(is_ssl).terminateSocket(socket);
 
     if (client.state.stage != .done and client.state.stage != .fail) {
         client.fail(error.Timeout);
@@ -1153,8 +1198,6 @@ pub fn onTimeout(
 }
 pub fn onConnectError(
     client: *HTTPClient,
-    comptime is_ssl: bool,
-    _: NewHTTPContext(is_ssl).HTTPSocket,
 ) void {
     log("onConnectError  {s}\n", .{client.url.href});
     if (client.state.stage != .done and client.state.stage != .fail)
@@ -1408,6 +1451,8 @@ pub const InternalState = struct {
     received_last_chunk: bool = false,
     did_set_content_encoding: bool = false,
     is_redirect_pending: bool = false,
+    is_libdeflate_fast_path_disabled: bool = false,
+    resend_request_body_on_redirect: bool = false,
     transfer_encoding: Encoding = Encoding.identity,
     encoding: Encoding = Encoding.identity,
     content_encoding_i: u8 = std.math.maxInt(u8),
@@ -1495,40 +1540,93 @@ pub const InternalState = struct {
         return this.received_last_chunk;
     }
 
-    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString) !void {
-        log("Decompressing {d} bytes\n", .{buffer.len});
-
+    fn decompressBytes(this: *InternalState, buffer: []const u8, body_out_str: *MutableString, is_final_chunk: bool) !void {
         defer this.compressed_body.reset();
         var gzip_timer: std.time.Timer = undefined;
 
         if (extremely_verbose)
             gzip_timer = std.time.Timer.start() catch @panic("Timer failure");
 
-        try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
-        this.decompressor.readAll(this.isDone()) catch |err| {
-            if (this.isDone() or error.ShortRead != err) {
-                Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
-                Output.flush();
-                return err;
+        var still_needs_to_decompress = true;
+
+        if (FeatureFlags.isLibdeflateEnabled()) {
+            // Fast-path: use libdeflate
+            if (is_final_chunk and !this.is_libdeflate_fast_path_disabled and this.encoding.canUseLibDeflate() and this.isDone()) libdeflate: {
+                this.is_libdeflate_fast_path_disabled = true;
+
+                log("Decompressing {d} bytes with libdeflate\n", .{buffer.len});
+                var deflater = http_thread.deflater();
+
+                // gzip stores the size of the uncompressed data in the last 4 bytes of the stream
+                // But it's only valid if the stream is less than 4.7 GB, since it's 4 bytes.
+                // If we know that the stream is going to be larger than our
+                // pre-allocated buffer, then let's dynamically allocate the exact
+                // size.
+                if (this.encoding == Encoding.gzip and buffer.len > 16 and buffer.len < 1024 * 1024 * 1024) {
+                    const estimated_size: u32 = @bitCast(buffer[buffer.len - 4 ..][0..4].*);
+                    // Since this is arbtirary input from the internet, let's set an upper bound of 32 MB for the allocation size.
+                    if (estimated_size > deflater.shared_buffer.len and estimated_size < 32 * 1024 * 1024) {
+                        try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, estimated_size);
+                        const result = deflater.decompressor.decompress(buffer, body_out_str.list.allocatedSlice(), .gzip);
+
+                        if (result.status == .success) {
+                            body_out_str.list.items.len = result.written;
+                            still_needs_to_decompress = false;
+                        }
+
+                        break :libdeflate;
+                    }
+                }
+
+                const result = deflater.decompressor.decompress(buffer, &deflater.shared_buffer, switch (this.encoding) {
+                    .gzip => .gzip,
+                    .deflate => .deflate,
+                    else => unreachable,
+                });
+
+                if (result.status == .success) {
+                    try body_out_str.list.ensureTotalCapacityPrecise(body_out_str.allocator, result.written);
+                    body_out_str.list.appendSliceAssumeCapacity(deflater.shared_buffer[0..result.written]);
+                    still_needs_to_decompress = false;
+                }
             }
-        };
+        }
+
+        // Slow path, or brotli: use the .decompressor
+        if (still_needs_to_decompress) {
+            log("Decompressing {d} bytes\n", .{buffer.len});
+            if (body_out_str.list.capacity == 0) {
+                const min = @min(@ceil(@as(f64, @floatFromInt(buffer.len)) * 1.5), @as(f64, 1024 * 1024 * 2));
+                try body_out_str.growBy(@max(@as(usize, @intFromFloat(min)), 32));
+            }
+
+            try this.decompressor.updateBuffers(this.encoding, buffer, body_out_str);
+
+            this.decompressor.readAll(this.isDone()) catch |err| {
+                if (this.isDone() or error.ShortRead != err) {
+                    Output.prettyErrorln("<r><red>Decompression error: {s}<r>", .{bun.asByteSlice(@errorName(err))});
+                    Output.flush();
+                    return err;
+                }
+            };
+        }
 
         if (extremely_verbose)
             this.gzip_elapsed = gzip_timer.read();
     }
 
-    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString) !void {
-        try this.decompressBytes(buffer.list.items, body_out_str);
+    fn decompress(this: *InternalState, buffer: MutableString, body_out_str: *MutableString, is_final_chunk: bool) !void {
+        try this.decompressBytes(buffer.list.items, body_out_str, is_final_chunk);
     }
 
-    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString) !bool {
+    pub fn processBodyBuffer(this: *InternalState, buffer: MutableString, is_final_chunk: bool) !bool {
         if (this.is_redirect_pending) return false;
 
         var body_out_str = this.body_out_str.?;
 
         switch (this.encoding) {
             Encoding.brotli, Encoding.gzip, Encoding.deflate => {
-                try this.decompress(buffer, body_out_str);
+                try this.decompress(buffer, body_out_str, is_final_chunk);
             },
             else => {
                 if (!body_out_str.owns(buffer.list.items)) {
@@ -1566,7 +1664,6 @@ remaining_redirect_count: i8 = default_redirect_count,
 allow_retry: bool = false,
 redirect_type: FetchRedirect = FetchRedirect.follow,
 redirect: []u8 = &.{},
-timeout: usize = 0,
 progress_node: ?*Progress.Node = null,
 disable_timeout: bool = false,
 disable_keepalive: bool = false,
@@ -1591,8 +1688,8 @@ signals: Signals = .{},
 async_http_id: u32 = 0,
 hostname: ?[]u8 = null,
 reject_unauthorized: bool = true,
-
 unix_socket_path: JSC.ZigString.Slice = JSC.ZigString.Slice.empty,
+is_preconnect_only: bool = false,
 
 pub fn deinit(this: *HTTPClient) void {
     if (this.redirect.len > 0) {
@@ -1672,6 +1769,13 @@ pub const Encoding = enum {
     brotli,
     chunked,
 
+    pub fn canUseLibDeflate(this: Encoding) bool {
+        return switch (this) {
+            .gzip, .deflate => true,
+            else => false,
+        };
+    }
+
     pub fn isCompressed(this: Encoding) bool {
         return switch (this) {
             .brotli, .gzip, .deflate => true,
@@ -1744,8 +1848,6 @@ pub const AsyncHTTP = struct {
     task: ThreadPool.Task = ThreadPool.Task{ .callback = &startAsyncHTTP },
     result_callback: HTTPClientResult.Callback = undefined,
 
-    /// Timeout in nanoseconds
-    timeout: usize = 0,
     redirected: bool = false,
 
     response_encoding: Encoding = Encoding.identity,
@@ -1833,6 +1935,51 @@ pub const AsyncHTTP = struct {
         tls_props: ?*SSLConfig = null,
     };
 
+    const Preconnect = struct {
+        async_http: AsyncHTTP,
+        response_buffer: MutableString,
+        url: bun.URL,
+        is_url_owned: bool,
+
+        pub usingnamespace bun.New(@This());
+
+        pub fn onResult(this: *Preconnect, _: *AsyncHTTP, _: HTTPClientResult) void {
+            this.response_buffer.deinit();
+            this.async_http.clearData();
+            this.async_http.client.deinit();
+            if (this.is_url_owned) {
+                bun.default_allocator.free(this.url.href);
+            }
+
+            this.destroy();
+        }
+    };
+
+    pub fn preconnect(
+        url: URL,
+        is_url_owned: bool,
+    ) void {
+        if (!FeatureFlags.is_fetch_preconnect_supported) {
+            if (is_url_owned) {
+                bun.default_allocator.free(url.href);
+            }
+
+            return;
+        }
+
+        var this = Preconnect.new(.{
+            .async_http = undefined,
+            .response_buffer = MutableString{ .allocator = default_allocator, .list = .{} },
+            .url = url,
+            .is_url_owned = is_url_owned,
+        });
+
+        this.async_http = AsyncHTTP.init(bun.default_allocator, .GET, url, .{}, "", &this.response_buffer, "", HTTPClientResult.Callback.New(*Preconnect, Preconnect.onResult).init(this), .manual, .{});
+        this.async_http.client.is_preconnect_only = true;
+
+        http_thread.schedule(Batch.from(&this.async_http.task));
+    }
+
     pub fn init(
         allocator: std.mem.Allocator,
         method: Method,
@@ -1841,7 +1988,6 @@ pub const AsyncHTTP = struct {
         headers_buf: string,
         response_buffer: *MutableString,
         request_body: []const u8,
-        timeout: usize,
         callback: HTTPClientResult.Callback,
         redirect_type: FetchRedirect,
         options: Options,
@@ -1858,7 +2004,6 @@ pub const AsyncHTTP = struct {
             .http_proxy = options.http_proxy,
             .signals = options.signals orelse .{},
             .async_http_id = if (options.signals != null and options.signals.?.aborted != null) async_http_id.fetchAdd(1, .monotonic) else 0,
-            .timeout = timeout,
         };
 
         this.client = .{
@@ -1870,7 +2015,6 @@ pub const AsyncHTTP = struct {
             .hostname = options.hostname,
             .signals = options.signals orelse this.signals,
             .async_http_id = this.async_http_id,
-            .timeout = timeout,
             .http_proxy = this.http_proxy,
             .redirect_type = redirect_type,
         };
@@ -1956,20 +2100,17 @@ pub const AsyncHTTP = struct {
         return this;
     }
 
-    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, timeout: usize, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
-        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, timeout, undefined, redirect_type, .{
+    pub fn initSync(allocator: std.mem.Allocator, method: Method, url: URL, headers: Headers.Entries, headers_buf: string, response_buffer: *MutableString, request_body: []const u8, http_proxy: ?URL, hostname: ?[]u8, redirect_type: FetchRedirect) AsyncHTTP {
+        return @This().init(allocator, method, url, headers, headers_buf, response_buffer, request_body, undefined, redirect_type, .{
             .http_proxy = http_proxy,
             .hostname = hostname,
         });
     }
 
     fn reset(this: *AsyncHTTP) !void {
-        const timeout = this.timeout;
         const aborted = this.client.aborted;
         this.client = try HTTPClient.init(this.allocator, this.method, this.client.url, this.client.header_entries, this.client.header_buf, aborted);
-        this.client.timeout = timeout;
         this.client.http_proxy = this.http_proxy;
-        this.timeout = timeout;
 
         if (this.http_proxy) |proxy| {
             //TODO: need to understand how is possible to reuse Proxy with TSL, so disable keepalive if url is HTTPS
@@ -2236,13 +2377,22 @@ pub fn buildRequest(this: *HTTPClient, body_len: usize) picohttp.Request {
     };
 }
 
-pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+pub fn doRedirect(
+    this: *HTTPClient,
+    comptime is_ssl: bool,
+    ctx: *NewHTTPContext(is_ssl),
+    socket: NewHTTPContext(is_ssl).HTTPSocket,
+) void {
     this.unix_socket_path.deinit();
     this.unix_socket_path = JSC.ZigString.Slice.empty;
+    const request_body = if (this.state.resend_request_body_on_redirect and this.state.original_request_body == .bytes)
+        this.state.original_request_body.bytes
+    else
+        "";
 
     this.state.response_message_buffer.deinit();
+
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
-    socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
     if (this.isKeepAlivePossible()) {
         assert(this.connected_url.hostname.len > 0);
         ctx.releaseSocket(
@@ -2252,8 +2402,7 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
             this.connected_url.getPortAuto(),
         );
     } else {
-        NewHTTPContext(is_ssl).markSocketAsDead(socket);
-        socket.close(.normal);
+        NewHTTPContext(is_ssl).closeSocket(socket);
     }
 
     this.connected_url = URL{};
@@ -2278,7 +2427,8 @@ pub fn doRedirect(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext
     if (this.signals.aborted != null) {
         _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
     }
-    return this.start(.{ .bytes = "" }, body_out_str);
+
+    return this.start(.{ .bytes = request_body }, body_out_str);
 }
 pub fn isHTTPS(this: *HTTPClient) bool {
     if (this.http_proxy) |proxy| {
@@ -2326,6 +2476,7 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     };
 
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
+        NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
         assert(this.state.fail != null);
         return;
@@ -2368,10 +2519,36 @@ fn printResponse(response: picohttp.Response) void {
     Output.flush();
 }
 
+pub fn onPreconnect(this: *HTTPClient, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    log("onPreconnect({})", .{this.url});
+    _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
+    const ctx = if (comptime is_ssl) &http_thread.https_context else &http_thread.http_context;
+    ctx.releaseSocket(
+        socket,
+        this.did_have_handshaking_error and !this.reject_unauthorized,
+        this.url.hostname,
+        this.url.getPortAuto(),
+    );
+
+    this.state.reset(this.allocator);
+    this.state.response_stage = .done;
+    this.state.request_stage = .done;
+    this.state.stage = .done;
+    this.proxy_tunneling = false;
+    this.result_callback.run(@fieldParentPtr("client", this), HTTPClientResult{ .fail = null, .metadata = null, .has_more = false });
+}
+
 pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.signals.get(.aborted)) {
         this.closeAndAbort(is_ssl, socket);
         return;
+    }
+
+    if (comptime FeatureFlags.is_fetch_preconnect_supported) {
+        if (this.is_preconnect_only) {
+            this.onPreconnect(is_ssl, socket);
+            return;
+        }
     }
 
     switch (this.state.request_stage) {
@@ -2656,8 +2833,7 @@ pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, soc
     if (this.state.stage != .fail and this.state.stage != .done) {
         log("closeAndFail: {s}", .{@errorName(err)});
         if (!socket.isClosed()) {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, NewHTTPContext(is_ssl).ActiveSocket.init(&dead_socket).ptr());
-            socket.close(.failure);
+            NewHTTPContext(is_ssl).terminateSocket(socket);
         }
         this.fail(err);
     }
@@ -2787,7 +2963,6 @@ pub fn onData(this: *HTTPClient, comptime is_ssl: bool, incoming_data: []const u
                 }
                 return;
             }
-
             const should_continue = this.handleResponseMetadata(
                 &response,
             ) catch |err| {
@@ -3075,8 +3250,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
                     this.connected_url.getPortAuto(),
                 );
             } else if (!socket.isClosed()) {
-                NewHTTPContext(is_ssl).markSocketAsDead(socket);
-                socket.close(.normal);
+                NewHTTPContext(is_ssl).closeSocket(socket);
             }
 
             this.state.reset(this.allocator);
@@ -3234,14 +3408,7 @@ fn handleResponseBodyFromSinglePacket(this: *HTTPClient, incoming_data: []const 
     if (this.state.is_redirect_pending) return;
 
     if (this.state.encoding.isCompressed()) {
-        var body_buffer = this.state.body_out_str.?;
-        if (body_buffer.list.capacity == 0) {
-            const min = @min(@ceil(@as(f64, @floatFromInt(incoming_data.len)) * 1.5), @as(f64, 1024 * 1024 * 2));
-            try body_buffer.growBy(@max(@as(usize, @intFromFloat(min)), 32));
-        }
-
-        // assert(!body_buffer.owns(b));
-        try this.state.decompressBytes(incoming_data, body_buffer);
+        try this.state.decompressBytes(incoming_data, this.state.body_out_str.?, true);
     } else {
         try this.state.getBodyBuffer().appendSliceExact(incoming_data);
     }
@@ -3289,7 +3456,12 @@ fn handleResponseBodyFromMultiplePackets(this: *HTTPClient, incoming_data: []con
     // done or streaming
     const is_done = content_length != null and this.state.total_body_received >= content_length.?;
     if (is_done or this.signals.get(.body_streaming) or content_length == null) {
-        const processed = try this.state.processBodyBuffer(buffer.*);
+        const is_final_chunk = is_done;
+        const processed = try this.state.processBodyBuffer(buffer.*, is_final_chunk);
+
+        // We can only use the libdeflate fast path when we are not streaming
+        // If we ever call processBodyBuffer again, it cannot go through the fast path.
+        this.state.is_libdeflate_fast_path_disabled = true;
 
         if (this.progress_node) |progress| {
             progress.activate();
@@ -3354,7 +3526,9 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             }
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                return try this.state.processBodyBuffer(buffer);
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.is_libdeflate_fast_path_disabled = true;
+                return try this.state.processBodyBuffer(buffer, false);
             }
 
             return false;
@@ -3364,6 +3538,7 @@ fn handleResponseBodyChunkedEncodingFromMultiplePackets(
             this.state.received_last_chunk = true;
             _ = try this.state.processBodyBuffer(
                 buffer,
+                true,
             );
 
             if (this.progress_node) |progress| {
@@ -3432,7 +3607,10 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
 
             // streaming chunks
             if (this.signals.get(.body_streaming)) {
-                return try this.state.processBodyBuffer(body_buffer.*);
+                // If we're streaming, we cannot use the libdeflate fast path
+                this.state.is_libdeflate_fast_path_disabled = true;
+
+                return try this.state.processBodyBuffer(body_buffer.*, true);
             }
 
             return false;
@@ -3440,7 +3618,6 @@ fn handleResponseBodyChunkedEncodingFromSinglePacket(
         // Done
         else => {
             this.state.received_last_chunk = true;
-
             try this.handleResponseBodyFromSinglePacket(buffer);
             assert(this.state.body_out_str.?.list.items.ptr != buffer.ptr);
             if (this.progress_node) |progress| {
@@ -3785,6 +3962,9 @@ pub fn handleResponseMetadata(
                     }
 
                     this.state.is_redirect_pending = true;
+                    if (this.method.hasRequestBody()) {
+                        this.state.resend_request_body_on_redirect = true;
+                    }
                 },
                 else => {},
             }

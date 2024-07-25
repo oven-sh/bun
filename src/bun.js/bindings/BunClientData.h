@@ -76,7 +76,7 @@ class JSVMClientData : public JSC::VM::ClientData {
     WTF_MAKE_FAST_ALLOCATED;
 
 public:
-    explicit JSVMClientData(JSC::VM&);
+    explicit JSVMClientData(JSC::VM&, RefPtr<JSC::SourceProvider>);
 
     virtual ~JSVMClientData();
 

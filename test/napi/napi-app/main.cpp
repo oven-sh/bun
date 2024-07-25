@@ -194,6 +194,33 @@ napi_value test_v8_object(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+static void callback_1(napi_env env, napi_value js_callback, void *context,
+                       void *data) {}
+
+napi_value test_napi_threadsafe_function_does_not_hang_after_finalize(
+    const Napi::CallbackInfo &info) {
+
+  Napi::Env env = info.Env();
+  napi_status status;
+
+  napi_value resource_name;
+  status = napi_create_string_utf8(env, "simple", 6, &resource_name);
+  assert(status == napi_ok);
+
+  napi_threadsafe_function cb;
+  status = napi_create_threadsafe_function(env, nullptr, nullptr, resource_name,
+                                           0, 1, nullptr, nullptr, nullptr,
+                                           &callback_1, &cb);
+  assert(status == napi_ok);
+
+  status = napi_release_threadsafe_function(cb, napi_tsfn_release);
+  assert(status == napi_ok);
+
+  printf("success!");
+
+  return ok(env);
+}
+
 napi_value
 test_napi_get_value_string_utf8_with_buffer(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
@@ -264,6 +291,12 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));
+
+  exports.Set(
+      "test_napi_threadsafe_function_does_not_hang_after_finalize",
+      Napi::Function::New(
+          env, test_napi_threadsafe_function_does_not_hang_after_finalize));
+
   return exports;
 }
 

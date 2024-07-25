@@ -143,7 +143,7 @@ static JSValue constructPlatform(VM& vm, JSObject* processObject)
 static JSValue constructVersions(VM& vm, JSObject* processObject)
 {
     auto* globalObject = processObject->globalObject();
-    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 23);
+    JSC::JSObject* object = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 24);
 
     object->putDirect(vm, JSC::Identifier::fromString(vm, "node"_s),
         JSC::JSValue(JSC::jsOwnedString(vm, makeAtomString(ASCIILiteral::fromLiteralUnsafe(REPORTED_NODEJS_VERSION)))));
@@ -176,6 +176,8 @@ static JSValue constructVersions(VM& vm, JSObject* processObject)
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_lolhtml)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "ares"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_c_ares)))), 0);
+    object->putDirect(vm, JSC::Identifier::fromString(vm, "libdeflate"_s),
+        JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_libdeflate)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "usockets"_s),
         JSC::JSValue(JSC::jsString(vm, makeString(ASCIILiteral::fromLiteralUnsafe(Bun__versions_usockets)))), 0);
     object->putDirect(vm, JSC::Identifier::fromString(vm, "lshpack"_s),
@@ -466,6 +468,8 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     }
 
     auto* process = jsCast<Process*>(globalObject->processObject());
+    if (exitCode > 0)
+        process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
@@ -489,6 +493,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
         exitCode = static_cast<uint8_t>(extiCode32);
+        Bun__setExitCode(Bun__getVM(), exitCode);
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -500,6 +505,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     if (UNLIKELY(!zigGlobal)) {
         zigGlobal = Bun__getDefaultGlobal();
     }
+    auto process = jsCast<Process*>(zigGlobal->processObject());
+    process->m_isExitCodeObservable = true;
 
     Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
@@ -1093,6 +1100,9 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     if (!process) {
         return JSValue::encode(jsUndefined());
     }
+    if (!process->m_isExitCodeObservable) {
+        return JSValue::encode(jsUndefined());
+    }
 
     return JSValue::encode(jsNumber(Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM())));
 }
@@ -1113,6 +1123,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
     RETURN_IF_EXCEPTION(throwScope, false);
 
+    process->m_isExitCodeObservable = true;
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
     Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
 

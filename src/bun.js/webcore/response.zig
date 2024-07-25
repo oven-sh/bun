@@ -713,6 +713,7 @@ pub const Fetch = struct {
     comptime {
         if (!JSC.is_bindgen) {
             _ = Bun__fetch;
+            _ = Bun__fetchPreconnect;
         }
     }
 
@@ -1219,7 +1220,7 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        const check_result = check_server_identity.call(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
@@ -1622,7 +1623,6 @@ pub const Fetch = struct {
                 fetch_options.headers.buf.items,
                 &fetch_tasklet.response_buffer,
                 fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
@@ -1680,7 +1680,6 @@ pub const Fetch = struct {
             method: Method,
             headers: Headers,
             body: HTTPRequestBody,
-            timeout: usize,
             disable_timeout: bool,
             disable_keepalive: bool,
             disable_decompression: bool,
@@ -1834,6 +1833,57 @@ pub const Fetch = struct {
         );
 
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
+    }
+
+    pub export fn Bun__fetchPreconnect(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
+            return .zero;
+        }
+
+        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        defer url_str.deref();
+
+        if (globalObject.hasException()) {
+            return .zero;
+        }
+
+        if (url_str.tag == .Dead) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "Invalid URL", .{}, globalObject));
+            return .zero;
+        }
+
+        if (url_str.isEmpty()) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            return .zero;
+        }
+
+        const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
+        if (!url.isHTTP() and !url.isHTTPS()) {
+            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (url.hostname.len == 0) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (!url.hasValidPort()) {
+            globalObject.throwInvalidArguments("Invalid port", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        bun.http.AsyncHTTP.preconnect(url, true);
+        return .undefined;
     }
 
     pub export fn Bun__fetch(
@@ -2747,7 +2797,6 @@ pub const Fetch = struct {
                     .allocator = allocator,
                 },
                 .body = http_body,
-                .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
                 .disable_decompression = disable_decompression,

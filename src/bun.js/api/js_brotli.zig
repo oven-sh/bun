@@ -16,8 +16,7 @@ pub const BrotliEncoder = struct {
 
     globalThis: *JSC.JSGlobalObject,
 
-    // input: Queue = Queue.init(bun.default_allocator),
-    input: std.ArrayListUnmanaged(JSC.Node.BlobOrStringOrBuffer) = .{},
+    input: Queue = Queue.init(bun.default_allocator),
     input_lock: bun.Lock = bun.Lock.init(),
 
     has_called_end: bool = false,
@@ -88,16 +87,17 @@ pub const BrotliEncoder = struct {
         this.callback_value.deinit();
         this.drainFreelist();
         this.stream.deinit();
-        this.input.deinit(bun.default_allocator);
+        this.input.deinit();
         this.destroy();
     }
 
     fn drainFreelist(this: *BrotliEncoder) void {
         this.freelist_write_lock.lock();
         defer this.freelist_write_lock.unlock();
-        const to_free = this.freelist.readableSlice(0);
+        // TODO: Report Zig issue. This constCast should not be necessary.
+        const to_free = @constCast(this.freelist.readableSlice(0));
         for (to_free) |*input| {
-            input.deinit();
+            input.deinitAndUnprotect();
         }
         this.freelist.discard(to_free.len);
     }
@@ -159,8 +159,9 @@ pub const BrotliEncoder = struct {
                 while (true) {
                     this.encoder.input_lock.lock();
                     defer this.encoder.input_lock.unlock();
-                    const pending = this.encoder.input.items;
-                    defer this.encoder.input.clearRetainingCapacity();
+                    const readable = this.encoder.input.readableSlice(0);
+                    defer this.encoder.input.discard(readable.len);
+                    const pending = readable;
 
                     const Writer = struct {
                         encoder: *BrotliEncoder,
@@ -186,7 +187,6 @@ pub const BrotliEncoder = struct {
                             this.encoder.write_failed = true;
                             return;
                         };
-                        input.deinitAndUnprotect();
                     }
 
                     any = any or pending.len > 0;
@@ -255,9 +255,7 @@ pub const BrotliEncoder = struct {
         {
             this.input_lock.lock();
             defer this.input_lock.unlock();
-
-            input_to_queue.protect();
-            this.input.append(bun.default_allocator, input_to_queue) catch bun.outOfMemory();
+            this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         JSC.WorkPool.schedule(&task.task);
 
@@ -300,7 +298,7 @@ pub const BrotliEncoder = struct {
             defer this.input_lock.unlock();
 
             input_to_queue.protect();
-            this.input.append(bun.default_allocator, input_to_queue) catch bun.outOfMemory();
+            this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();
         return if (!is_last and this.output.items.len == 0) .undefined else this.collectOutputValue();
@@ -338,8 +336,7 @@ pub const BrotliDecoder = struct {
     has_called_end: bool = false,
     pending_decode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
-    // input: Queue = Queue.init(bun.default_allocator),
-    input: std.ArrayListUnmanaged(JSC.Node.BlobOrStringOrBuffer) = .{},
+    input: Queue = Queue.init(bun.default_allocator),
     input_lock: bun.Lock = bun.Lock.init(),
 
     output: std.ArrayListUnmanaged(u8) = .{},
@@ -357,7 +354,7 @@ pub const BrotliDecoder = struct {
         this.drainFreelist();
         this.output.deinit(bun.default_allocator);
         this.stream.brotli.destroyInstance();
-        this.input.deinit(bun.default_allocator);
+        this.input.deinit();
         this.destroy();
     }
 
@@ -441,9 +438,10 @@ pub const BrotliDecoder = struct {
     fn drainFreelist(this: *BrotliDecoder) void {
         this.freelist_write_lock.lock();
         defer this.freelist_write_lock.unlock();
-        const to_free = this.freelist.readableSlice(0);
+        // TODO: Report Zig issue. This constCast should not be necessary.
+        const to_free = @constCast(this.freelist.readableSlice(0));
         for (to_free) |*input| {
-            input.deinit();
+            input.deinitAndUnprotect();
         }
         this.freelist.discard(to_free.len);
     }
@@ -483,8 +481,7 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
-            input_to_queue.protect();
-            this.input.append(bun.default_allocator, input_to_queue) catch bun.outOfMemory();
+            this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         JSC.WorkPool.schedule(&task.task);
 
@@ -527,7 +524,7 @@ pub const BrotliDecoder = struct {
             defer this.input_lock.unlock();
 
             input_to_queue.protect();
-            this.input.append(bun.default_allocator, input_to_queue) catch bun.outOfMemory();
+            this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();
         return if (!is_last) .undefined else this.collectOutputValue();
@@ -563,7 +560,7 @@ pub const BrotliDecoder = struct {
                     this.decoder.input_lock.lock();
                     defer this.decoder.input_lock.unlock();
                     if (!is_last) break;
-                    const pending = this.decoder.input.items;
+                    const pending = this.decoder.input.readableSlice(0);
 
                     defer {
                         this.decoder.freelist_write_lock.lock();
@@ -583,11 +580,8 @@ pub const BrotliDecoder = struct {
                         input_list.ensureTotalCapacityPrecise(bun.default_allocator, count) catch bun.outOfMemory();
 
                         for (pending) |*input| {
-                            input.deinitAndUnprotect();
                             input_list.appendSliceAssumeCapacity(input.slice());
                         }
-                    } else {
-                        pending[0].deinitAndUnprotect();
                     }
 
                     {

@@ -186,6 +186,7 @@ pub const BrotliEncoder = struct {
                             this.encoder.write_failed = true;
                             return;
                         };
+                        input.deinitAndUnprotect();
                     }
 
                     any = any or pending.len > 0;
@@ -255,6 +256,7 @@ pub const BrotliEncoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         JSC.WorkPool.schedule(&task.task);
@@ -297,6 +299,7 @@ pub const BrotliEncoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
@@ -479,6 +482,7 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         JSC.WorkPool.schedule(&task.task);
@@ -521,6 +525,7 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch unreachable;
         }
         task.run();
@@ -568,10 +573,21 @@ pub const BrotliDecoder = struct {
 
                     var input_list = std.ArrayListUnmanaged(u8){};
                     defer input_list.deinit(bun.default_allocator);
+
                     if (pending.len > 1) {
+                        var count: usize = 0;
                         for (pending) |input| {
-                            input_list.appendSlice(bun.default_allocator, input.slice()) catch bun.outOfMemory();
+                            count += input.slice().len;
                         }
+
+                        input_list.ensureTotalCapacityPrecise(bun.default_allocator, count) catch bun.outOfMemory();
+
+                        for (pending) |input| {
+                            input.deinitAndUnprotect();
+                            input_list.appendSliceAssumeCapacity(input.slice());
+                        }
+                    } else {
+                        pending[0].deinitAndUnprotect();
                     }
 
                     {

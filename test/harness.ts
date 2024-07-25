@@ -142,9 +142,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;

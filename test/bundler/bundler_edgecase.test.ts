@@ -1703,6 +1703,45 @@ describe("bundler", () => {
       `,
     },
   });
+  // this test checks that visit order doesnt matter (inline then use, above is use then inline)
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass2", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
   itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
     files: {
       "/entry.ts": `

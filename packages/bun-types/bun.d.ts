@@ -3847,7 +3847,7 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
-  interface Socket<Data = undefined> {
+  interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
      *
@@ -4231,15 +4231,18 @@ declare module "bun" {
     hostname: string;
     port: number;
     tls?: TLSOptions;
+    exclusive?: boolean;
   }
 
   interface TCPSocketConnectOptions<Data = undefined> extends SocketOptions<Data> {
     hostname: string;
     port: number;
     tls?: boolean;
+    exclusive?: boolean;
   }
 
   interface UnixSocketOptions<Data = undefined> extends SocketOptions<Data> {
+    tls?: TLSOptions;
     unix: string;
   }
 

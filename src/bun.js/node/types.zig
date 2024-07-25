@@ -2088,7 +2088,7 @@ pub const Process = struct {
 
         vm.exit_handler.exit_code = code;
         vm.onExit();
-        bun.Global.exit(vm.exit_handler.exit_code);
+        vm.globalExit();
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

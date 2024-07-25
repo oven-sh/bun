@@ -1216,6 +1216,10 @@ pub const VirtualMachine = struct {
         }
     }
 
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
+    }
+
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
         var debugger: *Debugger = &(this.debugger orelse return 0);
         debugger.next_debugger_id +%= 1;

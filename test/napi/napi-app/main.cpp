@@ -95,7 +95,8 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
   // simple
   const char string1[] = "hello world";
   // non-ascii characters
-  const char string2[] = u8"🏳️‍⚧️";
+  const unsigned char string2[] = {240, 159, 143, 179, 239, 184, 143, 226, 128,
+                                   141, 226, 154, 167, 239, 184, 143, 0};
   // mixed valid/invalid utf-8
   const unsigned char string3[] = {'o', 'h',  ' ', 0xc0, 'n',
                                    'o', 0xc2, '!', 0xf5, 0};
@@ -149,10 +150,13 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
   (void)str->WriteUtf8(isolate, buf, sizeof buf, nullptr);
 
   maybe_str =
-      v8::String::NewFromUtf8(isolate, string2, v8::NewStringType::kNormal, -1);
+      v8::String::NewFromUtf8(isolate, reinterpret_cast<const char *>(string2),
+                              v8::NewStringType::kNormal, -1);
   str = maybe_str.ToLocalChecked();
   if (str->Length() != 6) {
-    return fail(env, "wrong length");
+    char *s;
+    asprintf(&s, "wrong length: expected 6 got %d", str->Length());
+    return fail(env, s);
   }
 
   maybe_str = maybe_str =
@@ -160,7 +164,9 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
                               v8::NewStringType::kNormal, -1);
   str = maybe_str.ToLocalChecked();
   if (str->Length() != 9) {
-    return fail(env, "wrong length");
+    char *s;
+    asprintf(&s, "wrong length: expected 9 got %d", str->Length());
+    return fail(env, s);
   }
 
   return ok(env);

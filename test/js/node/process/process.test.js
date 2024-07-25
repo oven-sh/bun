@@ -1,8 +1,52 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "fs";
+import { existsSync, readFileSync, writeFileSync } from "fs";
 import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+
+expect.extend({
+  toRunInlineFixture(input) {
+    const script = input[0];
+    const optionalStdout = input[1];
+    const expectedCode = input[2];
+    const x = tmpdirSync();
+    const path = join(x, "index.js");
+    writeFileSync(path, script);
+
+    // return expect([path]).toRun(optionalStdout, expectedCode);
+    const cmds = [path];
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), ...cmds],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+
+    if (result.exitCode !== expectedCode) {
+      return {
+        pass: false,
+        message: () =>
+          `Command ${cmds.join(" ")} failed: ${result.exitCode} != ${expectedCode}:` +
+          "\n" +
+          result.stdout.toString("utf-8") +
+          "\n" +
+          result.stderr.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout != null) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+      };
+    }
+
+    return {
+      pass: true,
+      message: () => `Expected ${cmds.join(" ")} to fail`,
+    };
+  },
+});
 
 const process_sleep = join(import.meta.dir, "process-sleep.js");
 
@@ -622,7 +666,7 @@ it("aborts when the uncaughtException handler throws", async () => {
   const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
     stderr: "pipe",
   });
-  expect(await proc.exited).toBe(1);
+  expect(await proc.exited).toBe(7);
   expect(await new Response(proc.stderr).text()).toContain("bar");
 });
 
@@ -757,6 +801,187 @@ describe("process.exitCode", () => {
     `,
       "exit 1 1\n",
       1,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitsOnExitCodeSet", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 42;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 42);
+        assert.strictEqual(code, 42);
+      });
+    `,
+      "",
+      42,
+    ]).toRunInlineFixture();
+  });
+
+  it("changesCodeViaExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 42);
+        assert.strictEqual(code, 42);
+      });
+      process.exit(42);
+    `,
+      "",
+      42,
+    ]).toRunInlineFixture();
+  });
+
+  it("changesCodeZeroExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 0);
+        assert.strictEqual(code, 0);
+      });
+      process.exit(0);
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithOneOnUncaught", () => {
+    expect([
+      `
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        // cannot use assert because it will be uncaughtException -> 1 exit code that will render this test useless
+        if (code !== 1 || process.exitCode !== 1) {
+          console.log('wrong code! expected 1 for uncaughtException');
+          process.exit(99);
+        }
+      });
+      throw new Error('ok');
+    `,
+      "",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("changeCodeInsideExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 95;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 95);
+        assert.strictEqual(code, 95);
+        process.exitCode = 99;
+      });
+    `,
+      "",
+      99,
+    ]).toRunInlineFixture();
+  });
+
+  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", () => {
+    expect([
+      `
+      process.on('exit', (code) => {
+        if (code !== 0) {
+          console.log('wrong code! expected 0; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== undefined) {
+          console.log('wrong exitCode! expected undefined; got', process.exitCode);
+          process.exit(99);
+        }
+      });
+      process.on('uncaughtException', () => { });
+      throw new Error('ok');
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todoIf(isWindows)("changeCodeInUncaughtHandler", () => {
+    expect([
+      `
+      process.on('exit', (code) => {
+        if (code !== 97) {
+          console.log('wrong code! expected 97; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== 97) {
+          console.log('wrong exitCode! expected 97; got', process.exitCode);
+          process.exit(99);
+        }
+      });
+      process.on('uncaughtException', () => {
+        process.exitCode = 97;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      97,
+    ]).toRunInlineFixture();
+  });
+
+  it("changeCodeInExitWithUncaught", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 1);
+        assert.strictEqual(code, 1);
+        process.exitCode = 98;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      98,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithZeroInExitWithUncaught", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 1);
+        assert.strictEqual(code, 1);
+        process.exitCode = 0;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithThrowInUncaughtHandler", () => {
+    expect([
+      `
+      process.on('uncaughtException', () => {
+        throw new Error('ok')
+      });
+      throw new Error('bad');
+    `,
+      "",
+      7,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("exitWithUndefinedFatalException", () => {
+    expect([
+      `
+      process._fatalException = undefined;
+      throw new Error('ok');
+    `,
+      "",
+      6,
     ]).toRunInlineFixture();
   });
 });

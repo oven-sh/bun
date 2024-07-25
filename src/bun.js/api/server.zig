@@ -3183,7 +3183,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             JSC.markBinding(@src());
             if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
                 this.flags.has_called_error_handler = true;
-                const result = this.server.config.onError.callWithThis(
+                const result = this.server.config.onError.call(
                     this.server.globalThis,
                     this.server.thisObject,
                     &.{value},
@@ -3654,7 +3654,7 @@ pub const WebSocketServer = struct {
         pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
             const onError = this.onError;
             if (!onError.isEmptyOrUndefinedOrNull()) {
-                const err_ret = onError.callWithThis(globalObject, .undefined, &.{error_value});
+                const err_ret = onError.call(globalObject, .undefined, &.{error_value});
                 if (err_ret.toError()) |actual_err| {
                     _ = vm.uncaughtException(globalObject, actual_err, false);
                 }
@@ -3979,9 +3979,9 @@ const Corker = struct {
     pub fn run(this: *Corker) void {
         const this_value = this.this_value;
         this.result = if (this_value == .zero)
-            this.callback.call(this.globalObject, this.args)
+            this.callback.call(this.globalObject, .undefined, this.args)
         else
-            this.callback.callWithThis(this.globalObject, this_value, this.args);
+            this.callback.call(this.globalObject, this_value, this.args);
     }
 };
 
@@ -4224,6 +4224,7 @@ pub const ServerWebSocket = struct {
 
         const result = cb.call(
             globalThis,
+            .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
@@ -4252,6 +4253,7 @@ pub const ServerWebSocket = struct {
 
         const result = cb.call(
             globalThis,
+            .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
         );
 
@@ -4284,6 +4286,7 @@ pub const ServerWebSocket = struct {
             str.markUTF8();
             const result = handler.onClose.call(
                 globalObject,
+                .undefined,
                 &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
             );
 
@@ -5684,7 +5687,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var request = bun.default_allocator.create(Request) catch unreachable;
             request.* = existing_request;
 
-            const response_value = this.config.onRequest.callWithThis(
+            const response_value = this.config.onRequest.call(
                 this.globalThis,
                 this.thisObject,
                 &[_]JSC.JSValue{request.toJS(this.globalThis)},
@@ -6308,7 +6311,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const request_value = args[0];
             request_value.ensureStillAlive();
 
-            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
@@ -6375,7 +6378,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
-            const response_value = this.config.onRequest.callWithThis(this.globalThis, this.thisObject, &args);
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
             defer {
                 if (!ctx.didUpgradeWebSocket()) {}
                 // uWS request will not live longer than this function

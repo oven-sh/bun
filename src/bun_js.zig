@@ -321,7 +321,7 @@ pub const Run = struct {
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
-                    Global.exit(1);
+                    vm.globalExit();
                 }
             }
 
@@ -354,7 +354,7 @@ pub const Run = struct {
                         .{Global.unhandled_error_bun_version_string},
                     );
                 }
-                Global.exit(1);
+                vm.globalExit();
             }
         }
 
@@ -458,12 +458,10 @@ pub const Run = struct {
                 .{Global.unhandled_error_bun_version_string},
             );
         }
-        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
-
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(exit_code);
+        vm.globalExit();
     }
 };
 

@@ -1040,7 +1040,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;
@@ -1214,6 +1214,10 @@ pub const VirtualMachine = struct {
             next.execute();
             hook = next;
         }
+    }
+
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
     }
 
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
@@ -2934,7 +2938,7 @@ pub const VirtualMachine = struct {
 
                 const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
-                if (has_name) {
+                if (has_name and !frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
@@ -2952,10 +2956,37 @@ pub const VirtualMachine = struct {
                             ),
                         },
                     );
-                } else {
+                } else if (!frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -3125,6 +3156,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;

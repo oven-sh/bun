@@ -166,6 +166,7 @@ fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8)
 
 fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
+    if (bun.getRuntimeFeatureFlag("BUN_DEBUG_NO_DUMP")) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;

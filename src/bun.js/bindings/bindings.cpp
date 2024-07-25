@@ -4311,7 +4311,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
     while (frame_i < frame_count && stack_frame_i < total_frame_count) {
         // Skip native frames
-        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->codeBlock() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
+        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->hasLineAndColumnInfo() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
             stack_frame_i++;
         }
         if (stack_frame_i >= total_frame_count)

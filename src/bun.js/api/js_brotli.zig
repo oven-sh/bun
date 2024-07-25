@@ -115,7 +115,7 @@ pub const BrotliEncoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
+        const result = this.callback_value.get().?.call(this.globalThis, .undefined, &.{
             if (this.write_failed)
                 // TODO: propagate error from brotli
                 this.globalThis.createErrorInstance("BrotliError", .{})
@@ -420,7 +420,7 @@ pub const BrotliDecoder = struct {
         defer _ = this.has_pending_activity.fetchSub(1, .monotonic);
         this.drainFreelist();
 
-        const result = this.callback_value.get().?.call(this.globalThis, &.{
+        const result = this.callback_value.get().?.call(this.globalThis, .undefined, &.{
             if (this.write_failed)
                 // TODO: propagate error from brotli
                 this.globalThis.createErrorInstance("BrotliError", .{})

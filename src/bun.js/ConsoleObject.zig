@@ -2311,7 +2311,7 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2326,7 +2326,7 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2575,7 +2575,7 @@ pub const Formatter = struct {
             },
             .toJSON => {
                 if (value.get(this.globalThis, "toJSON")) |func| {
-                    const result = func.callWithThis(this.globalThis, value, &.{});
+                    const result = func.call(this.globalThis, value, &.{});
                     if (result.toError() == null) {
                         const prev_quote_keys = this.quote_keys;
                         this.quote_keys = true;

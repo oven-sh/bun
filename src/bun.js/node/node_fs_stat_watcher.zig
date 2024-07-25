@@ -417,6 +417,7 @@ pub const StatWatcher = struct {
 
         const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 jsvalue,
                 jsvalue,
@@ -454,6 +455,7 @@ pub const StatWatcher = struct {
 
         const result = StatWatcher.listenerGetCached(this.js_this).?.call(
             this.globalThis,
+            .undefined,
             &[2]JSC.JSValue{
                 current_jsvalue,
                 prev_jsvalue,

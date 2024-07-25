@@ -2069,7 +2069,7 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     }
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, args);
+    const result = function.call(globalObject, .undefined, args);
     result.ensureStillAlive();
 
     return result;

@@ -1381,7 +1381,7 @@ pub fn WindowsStreamingWriter(
 
             this.is_done = true;
             this.closed_without_reporting = false;
-            // if we are done we can call close if not we wait all the data to be flushed
+            if (this.hasPendingData()) _ = this.flush();
             this.close();
         }
     };

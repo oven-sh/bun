@@ -85,7 +85,14 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                                 return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
                             }
 
-                            return ArgType{ .param = param, .value = maybe_value };
+                            if (parser.iter.peek()) |value| {
+                                if (!mem.startsWith(u8, value, "--") and !mem.startsWith(u8, value, "-")) {
+                                    _ = parser.iter.next();
+                                    return ArgType{ .param = param, .value = value };
+                                }
+                            }
+
+                            return ArgType{ .param = param, .value = null };
                         }
 
                         const value = blk: {

@@ -80,6 +80,14 @@ pub const OsIterator = struct {
 
         return null;
     }
+
+    pub fn peek(iter: *OsIterator) ?[:0]const u8 {
+        if (iter.remain.len > 0) {
+            return iter.remain[0];
+        }
+
+        return null;
+    }
 };
 
 /// An argument iterator that takes a string and parses it into arguments, simulating

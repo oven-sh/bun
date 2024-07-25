@@ -72,3 +72,7 @@ pub const overrides = struct {
         }
     };
 };
+
+pub export fn Bun__panic(msg: [*]const u8, len: usize) noreturn {
+    Output.panic("{s}\n", .{msg[0..len]});
+}

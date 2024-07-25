@@ -3824,10 +3824,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isInstanceOf", .{ this, global, constructor });
     }
 
-    pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
-    }
-
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
@@ -3847,7 +3843,7 @@ pub const JSValue = enum(JSValueReprInt) {
         );
     }
 
-    pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    pub fn call(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();

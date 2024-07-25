@@ -111,8 +111,14 @@ pub const BuildCommand = struct {
         this_bundler.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
         this_bundler.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
-        this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
+    this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+
+        this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_bundler.resolver.opts.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+
+        this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_bundler.resolver.opts.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {

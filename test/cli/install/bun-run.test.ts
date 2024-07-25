@@ -1,6 +1,6 @@
 import { file, spawn, spawnSync } from "bun";
 import { afterEach, beforeEach, expect, it, describe } from "bun:test";
-import { bunEnv, bunExe, bunEnv as env, isWindows, tmpdirSync } from "harness";
+import { bunEnv, bunExe, bunEnv as env, isWindows, tempDirWithFiles, tmpdirSync } from "harness";
 import { rm, writeFile, exists, mkdir } from "fs/promises";
 import { join } from "path";
 import { readdirSorted } from "./dummy.registry";
@@ -436,4 +436,23 @@ it("should show the correct working directory when run with --cwd", async () => 
   // The exit code will not be 1 if it panics.
   expect(await res.exited).toBe(0);
   expect(await Bun.readableStreamToText(res.stdout)).toMatch(/subdir/);
+});
+
+it("runtime code always ignores DCE annotations", () => {
+  const dir = tempDirWithFiles("test", {
+    "index.ts": `
+      /* @__PURE__ */ console.log("Hello, world!");
+    `,
+  });
+
+  const { stdout, stderr, exitCode } = spawnSync({
+    cmd: [bunExe(), "run", "index.ts"],
+    cwd: dir,
+    env: bunEnv,
+  });
+
+  expect(exitCode).toBe(0);
+
+  expect(stderr.toString()).toBe("");
+  expect(stdout.toString()).toBe("Hello, world!\n");
 });

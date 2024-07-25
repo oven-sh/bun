@@ -165,6 +165,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
     runtime?: "automatic" | "classic";
@@ -438,6 +439,8 @@ function expectBundled(
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
+    ignoreDCEAnnotations,
+    emitDCEAnnotations,
     // @ts-expect-error
     _referenceFn,
     ...unknownProps
@@ -642,6 +645,8 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               outbase && `--root=${outbase}`,
+              ignoreDCEAnnotations && `--ignore-annotations`,
+              emitDCEAnnotations && `--emit-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -684,6 +689,7 @@ function expectBundled(
               sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
               legalComments && `--legal-comments=${legalComments}`,
+              ignoreDCEAnnotations && `--ignore-annotations`,
               splitting && `--splitting`,
               treeShaking && `--tree-shaking`,
               outbase && `--outbase=${outbase}`,

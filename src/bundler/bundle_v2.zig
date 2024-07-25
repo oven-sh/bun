@@ -760,6 +760,9 @@ pub const BundleV2 = struct {
         generator.linker.options.minify_syntax = bundler.options.minify_syntax;
         generator.linker.options.minify_identifiers = bundler.options.minify_identifiers;
         generator.linker.options.minify_whitespace = bundler.options.minify_whitespace;
+        generator.linker.options.emit_dce_annotations = bundler.options.emit_dce_annotations;
+        generator.linker.options.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
+
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
         generator.linker.options.public_path = bundler.options.public_path;
@@ -2870,6 +2873,7 @@ pub const ParseTask = struct {
         opts.features.minify_syntax = bundler.options.minify_syntax;
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
+        opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
@@ -3847,6 +3851,7 @@ pub const LinkerContext = struct {
     pub const LinkerOptions = struct {
         output_format: options.OutputFormat = .esm,
         ignore_dce_annotations: bool = false,
+        emit_dce_annotations: bool = true,
         tree_shaking: bool = true,
         minify_whitespace: bool = false,
         minify_syntax: bool = false,
@@ -6798,6 +6803,7 @@ pub const LinkerContext = struct {
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
+                .print_dce_annotations = c.options.emit_dce_annotations,
                 // .const_values = c.graph.const_values,
             };
 
@@ -7708,6 +7714,7 @@ pub const LinkerContext = struct {
             .require_or_import_meta_for_source_callback = js_printer.RequireOrImportMeta.Callback.init(LinkerContext, requireOrImportMetaForSource, c),
 
             .minify_whitespace = c.options.minify_whitespace,
+            .print_dce_annotations = c.options.emit_dce_annotations,
             .minify_syntax = c.options.minify_syntax,
             // .const_values = c.graph.const_values,
         };
@@ -9009,6 +9016,7 @@ pub const LinkerContext = struct {
             .minify_whitespace = c.options.minify_whitespace,
             .minify_syntax = c.options.minify_syntax,
             .module_type = c.options.output_format,
+            .print_dce_annotations = c.options.emit_dce_annotations,
             .has_run_symbol_renamer = true,
 
             .allocator = allocator,

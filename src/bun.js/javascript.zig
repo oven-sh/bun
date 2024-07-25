@@ -2934,7 +2934,7 @@ pub const VirtualMachine = struct {
 
                 const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
-                if (has_name) {
+                if (has_name and !frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
@@ -2952,10 +2952,37 @@ pub const VirtualMachine = struct {
                             ),
                         },
                     );
-                } else {
+                } else if (!frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
                             allow_ansi_colors,
                         ),
                         .{

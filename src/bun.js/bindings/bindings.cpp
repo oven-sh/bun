@@ -3994,13 +3994,24 @@ bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globa
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
 
-    frame->source_url = Bun::toStringRef(stackFrame->sourceURL(vm));
-
     if (stackFrame->isWasmFrame()) {
         frame->code_type = ZigStackFrameCodeWasm;
+
+        auto name = stackFrame->functionName(vm);
+        if (!name.isEmpty()) {
+            frame->function_name = Bun::toStringRef(name);
+        }
+
+        auto sourceURL = stackFrame->sourceURL(vm);
+        if (sourceURL != "[wasm code]"_s) {
+            // [wasm code] is a useless source URL, so we don't bother to set it.
+            // It is the default value JSC returns.
+            frame->source_url = Bun::toStringRef(sourceURL);
+        }
         return;
     }
 
+    frame->source_url = Bun::toStringRef(stackFrame->sourceURL(vm));
     auto m_codeBlock = stackFrame->codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -4057,9 +4068,12 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     if (UNLIKELY(sourceString.isNull()))
         return;
     if (!stackFrame->hasBytecodeIndex()) {
-        auto lineColumn = stackFrame->computeLineAndColumn();
-        position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-        position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        if (stackFrame->hasLineAndColumnInfo()) {
+            auto lineColumn = stackFrame->computeLineAndColumn();
+            position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+            position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        }
+
         position->byte_position = -1;
         return;
     }

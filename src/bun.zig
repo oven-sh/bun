@@ -2960,7 +2960,7 @@ pub inline fn destroy(ptr: anytype) void {
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    if (heap_breakdown.enabled) {
+    if (comptime heap_breakdown.enabled) {
         heap_breakdown.getZone(T).destroy(T, ptr);
     } else {
         default_allocator.destroy(ptr);

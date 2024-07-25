@@ -269,6 +269,26 @@ pub const BlobOrStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn protect(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.protect();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.deinitAndUnprotect();
+            },
+            .blob => |*blob| {
+                blob.deinit();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
@@ -313,6 +333,15 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {},
+        }
+    }
+
+    pub fn protect(this: *const StringOrBuffer) void {
+        switch (this.*) {
+            .buffer => |buf| {
+                buf.buffer.value.protect();
+            },
+            else => {},
         }
     }
 

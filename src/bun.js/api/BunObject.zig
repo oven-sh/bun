@@ -2178,6 +2178,8 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
+            pub usingnamespace bun.New(@This());
+
             pub const Result = struct {
                 value: Value,
                 ref: Async.KeepAlive = .{},
@@ -2185,6 +2187,8 @@ pub const Crypto = struct {
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
+
+                pub usingnamespace bun.New(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -2201,18 +2205,19 @@ pub const Crypto = struct {
 
                 pub fn runFromJS(this: *Result) void {
                     var promise = this.promise;
+                    defer promise.deinit();
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
                     const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.reject(global, error_instance);
                         },
                         .hash => |value| {
                             const js_string = JSC.ZigString.init(value).toJS(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.resolve(global, js_string);
                         },
                     }
@@ -2220,10 +2225,9 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *HashJob) void {
-                this.ref = .{};
                 this.promise.strong.deinit();
                 bun.default_allocator.free(this.password);
-                bun.default_allocator.destroy(this);
+                this.destroy();
             }
 
             pub fn getValue(password: []const u8, algorithm: PasswordObject.Algorithm.Value) Result.Value {
@@ -2236,14 +2240,14 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this: *HashJob = @fieldParentPtr("task", task);
 
-                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-                result.* = Result{
+                var result = Result.new(.{
                     .value = getValue(this.password, this.algorithm),
-                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .task = undefined,
                     .promise = this.promise,
                     .global = this.global,
                     .ref = this.ref,
-                };
+                });
+                result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
                 this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));
@@ -2274,17 +2278,15 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(HashJob) catch bun.outOfMemory();
-            var promise = JSC.JSPromise.Strong.init(globalObject);
+            const promise = JSC.JSPromise.Strong.init(globalObject);
 
-            job.* = HashJob{
+            var job = HashJob.new(.{
                 .algorithm = algorithm,
                 .password = password,
                 .promise = promise,
                 .event_loop = globalObject.bunVM().eventLoop(),
                 .global = globalObject,
-            };
-
+            });
             job.ref.ref(globalObject.bunVM());
             JSC.WorkPool.schedule(&job.task);
 
@@ -2316,18 +2318,16 @@ pub const Crypto = struct {
                 unreachable;
             }
 
-            var job = bun.default_allocator.create(VerifyJob) catch bun.outOfMemory();
             var promise = JSC.JSPromise.Strong.init(globalObject);
 
-            job.* = VerifyJob{
+            const job = VerifyJob.new(.{
                 .algorithm = algorithm,
                 .password = password,
                 .prev_hash = prev_hash,
                 .promise = promise,
                 .event_loop = globalObject.bunVM().eventLoop(),
                 .global = globalObject,
-            };
-
+            });
             job.ref.ref(globalObject.bunVM());
             JSC.WorkPool.schedule(&job.task);
 
@@ -2414,6 +2414,8 @@ pub const Crypto = struct {
             ref: Async.KeepAlive = .{},
             task: JSC.WorkPoolTask = .{ .callback = &run },
 
+            pub usingnamespace bun.New(@This());
+
             pub const Result = struct {
                 value: Value,
                 ref: Async.KeepAlive = .{},
@@ -2421,6 +2423,8 @@ pub const Crypto = struct {
                 task: JSC.AnyTask = undefined,
                 promise: JSC.JSPromise.Strong,
                 global: *JSC.JSGlobalObject,
+
+                pub usingnamespace bun.New(@This());
 
                 pub const Value = union(enum) {
                     err: PasswordObject.HashError,
@@ -2437,17 +2441,18 @@ pub const Crypto = struct {
 
                 pub fn runFromJS(this: *Result) void {
                     var promise = this.promise;
+                    defer promise.deinit();
                     this.promise = .{};
                     this.ref.unref(this.global.bunVM());
                     const global = this.global;
                     switch (this.value) {
                         .err => {
                             const error_instance = this.value.toErrorInstance(global);
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.reject(global, error_instance);
                         },
                         .pass => |pass| {
-                            bun.default_allocator.destroy(this);
+                            this.destroy();
                             promise.resolve(global, JSC.JSValue.jsBoolean(pass));
                         },
                     }
@@ -2455,11 +2460,10 @@ pub const Crypto = struct {
             };
 
             pub fn deinit(this: *VerifyJob) void {
-                this.ref = .{};
                 this.promise.strong.deinit();
                 bun.default_allocator.free(this.password);
                 bun.default_allocator.free(this.prev_hash);
-                bun.default_allocator.destroy(this);
+                this.destroy();
             }
 
             pub fn getValue(password: []const u8, prev_hash: []const u8, algorithm: ?PasswordObject.Algorithm) Result.Value {
@@ -2472,14 +2476,14 @@ pub const Crypto = struct {
             pub fn run(task: *bun.ThreadPool.Task) void {
                 var this: *VerifyJob = @fieldParentPtr("task", task);
 
-                var result = bun.default_allocator.create(Result) catch bun.outOfMemory();
-                result.* = Result{
+                var result = Result.new(.{
                     .value = getValue(this.password, this.prev_hash, this.algorithm),
-                    .task = JSC.AnyTask.New(Result, Result.runFromJS).init(result),
+                    .task = undefined,
                     .promise = this.promise,
                     .global = this.global,
                     .ref = this.ref,
-                };
+                });
+                result.task = JSC.AnyTask.New(Result, Result.runFromJS).init(result);
                 this.ref = .{};
                 this.promise.strong = .{};
                 this.event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(&result.task));

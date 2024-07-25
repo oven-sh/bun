@@ -159,7 +159,7 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
     return fail(env, s);
   }
 
-  maybe_str = maybe_str =
+  maybe_str =
       v8::String::NewFromUtf8(isolate, reinterpret_cast<const char *>(string3),
                               v8::NewStringType::kNormal, -1);
   str = maybe_str.ToLocalChecked();

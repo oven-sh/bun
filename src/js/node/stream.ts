@@ -27,6 +27,7 @@ const kPaused = Symbol("kPaused");
 // END moved from require_readable
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
+const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -5819,9 +5820,7 @@ function getNativeReadableStream(Readable, stream, options) {
   $assert(typeof ptr === "object", "Invalid native ptr");
 
   const NativeReadable = getNativeReadableStreamPrototype(type, Readable);
-  stream.$bunNativePtr = -1;
-  stream.$bunNativeType = 0;
-  stream.$disturbed = true;
+  transferToNativeReadable(stream);
   return new NativeReadable(ptr, options);
 }
 

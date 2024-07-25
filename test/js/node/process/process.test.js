@@ -655,3 +655,108 @@ it("process.execArgv", async () => {
     expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
   }
 });
+
+describe("process.exitCode", () => {
+  it("normal", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+    `,
+      "beforeExit 0 undefined\nexit 0 undefined\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("setter", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = 0;
+    `,
+      "beforeExit 0 0\nexit 0 0\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("setter non-zero", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = 3;
+    `,
+      "beforeExit 3 3\nexit 3 3\n",
+      3,
+    ]).toRunInlineFixture();
+  });
+
+  it("exit", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exit(0);
+    `,
+      "exit 0 0\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exit non-zero", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exit(3);
+    `,
+      "exit 3 3\n",
+      3,
+    ]).toRunInlineFixture();
+  });
+
+  it("property access on undefined", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      const x = {};
+      x.y.z();
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("thrown Error", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      throw new Error("oops");
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("unhandled rejected promise", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      await Promise.reject();
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+});

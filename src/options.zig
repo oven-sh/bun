@@ -1240,7 +1240,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
 
     return try defines.Define.init(
         allocator,

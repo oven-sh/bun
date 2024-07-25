@@ -45,6 +45,13 @@
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
 
+#if OS(DARWIN)
+#if BUN_DEBUG
+#include <malloc/malloc.h>
+#define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
+#endif
+
 using namespace JSC;
 using namespace WTF;
 using namespace WebCore;
@@ -226,6 +233,38 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
   stats->putDirect(vm,
                    Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s),
                    protectedCounts);
+
+#if IS_MALLOC_DEBUGGING_ENABLED
+#if OS(DARWIN)
+  {
+    vm_address_t *zones;
+    unsigned count;
+
+    // Zero out the structures in case a zone is missing
+    malloc_statistics_t zone_stats;
+    zone_stats.blocks_in_use = 0;
+    zone_stats.size_in_use = 0;
+    zone_stats.max_size_in_use = 0;
+    zone_stats.size_allocated = 0;
+
+    JSObject *zonesObject = constructEmptyObject(globalObject);
+    stats->putDirect(vm, Identifier::fromString(vm, "zones"_s), zonesObject);
+    malloc_zone_pressure_relief(nullptr, 0);
+    malloc_get_all_zones(mach_task_self(), 0, &zones, &count);
+    for (unsigned i = 0; i < count; i++) {
+      auto zone = reinterpret_cast<malloc_zone_t *>(zones[i]);
+      if (const char *name = malloc_get_zone_name(zone)) {
+        malloc_zone_statistics(reinterpret_cast<malloc_zone_t *>(zones[i]),
+                               &zone_stats);
+        zonesObject->putDirect(
+            vm, Identifier::fromString(vm, String::fromUTF8(name)),
+            jsDoubleNumber(zone_stats.size_in_use));
+      }
+    }
+  }
+#endif
+#endif
+
   return JSValue::encode(stats);
 }
 

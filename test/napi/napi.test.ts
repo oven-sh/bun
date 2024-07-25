@@ -38,6 +38,9 @@ describe("napi", () => {
     it("Object", () => {
       checkSameOutput("test_v8_object", []);
     });
+    it("Array::New", () => {
+      checkSameOutput("test_v8_array_new", []);
+    });
   });
 
   describe("issue_11949", () => {

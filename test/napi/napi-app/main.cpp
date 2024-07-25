@@ -200,6 +200,46 @@ napi_value test_v8_object(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+napi_value test_v8_array_new(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+
+  v8::Local<v8::Value> vals[2] = {
+      v8::Number::New(isolate, 50),
+      v8::String::NewFromUtf8(isolate, "meow").ToLocalChecked(),
+  };
+  v8::Local<v8::Array> v8_array = v8::Array::New(isolate, vals, 2);
+  // TODO(@190n) do the rest of this with V8 APIs
+  napi_value napi_array;
+  static_assert(sizeof v8_array == sizeof napi_array);
+  memcpy(&napi_array, &v8_array, sizeof v8_array);
+
+  uint32_t len;
+  if (napi_get_array_length(env, napi_array, &len) != napi_ok || len != 2) {
+    return fail(env, "napi_get_array_length is wrong");
+  }
+
+  napi_value first, second;
+  if (napi_get_element(env, napi_array, 0, &first) != napi_ok ||
+      napi_get_element(env, napi_array, 1, &second) != napi_ok) {
+    return fail(env, "array lookup failed");
+  }
+
+  double num;
+  if (napi_get_value_double(env, first, &num) != napi_ok || num != 50.0) {
+    return fail(env, "first array element has wrong value");
+  }
+
+  char str[5];
+  size_t string_len;
+  if (napi_get_value_string_utf8(env, second, str, 5, &string_len) != napi_ok ||
+      string_len != 4 || memcmp(str, "meow", 4) != 0) {
+    return fail(env, "second array element has wrong value");
+  }
+
+  return ok(env);
+}
+
 static void callback_1(napi_env env, napi_value js_callback, void *context,
                        void *data) {}
 
@@ -294,10 +334,10 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
               Napi::Function::New(env, test_v8_string_new_from_utf8));
   exports.Set("test_v8_external", Napi::Function::New(env, test_v8_external));
   exports.Set("test_v8_object", Napi::Function::New(env, test_v8_object));
+  exports.Set("test_v8_array_new", Napi::Function::New(env, test_v8_array_new));
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));
-
   exports.Set(
       "test_napi_threadsafe_function_does_not_hang_after_finalize",
       Napi::Function::New(

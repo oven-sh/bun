@@ -278,12 +278,12 @@ pub const BlobOrStringOrBuffer = union(enum) {
         }
     }
 
-    pub fn deinitAndUnprotect(this: *const BlobOrStringOrBuffer) void {
+    pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
         switch (this.*) {
             .string_or_buffer => |sob| {
                 sob.deinitAndUnprotect();
             },
-            .blob => |blob| {
+            .blob => |*blob| {
                 blob.deinit();
             },
         }

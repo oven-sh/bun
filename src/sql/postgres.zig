@@ -2882,7 +2882,7 @@ pub const PostgresSQLConnection = struct {
         if (on_close == .zero) return;
         const instance = this.globalObject.createErrorInstance("{s}", .{message});
         instance.put(this.globalObject, JSC.ZigString.static("code"), String.init(@errorName(err)).toJS(this.globalObject));
-        _ = on_close.callWithThis(
+        _ = on_close.call(
             this.globalObject,
             this.js_value,
             &[_]JSValue{

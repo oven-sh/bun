@@ -371,7 +371,7 @@ expect.extend({
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>

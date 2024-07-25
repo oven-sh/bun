@@ -5,14 +5,40 @@ const brotli = bun.brotli;
 
 const Queue = std.fifo.LinearFifo(JSC.Node.BlobOrStringOrBuffer, .Dynamic);
 
+// We cannot free outside the JavaScript thread.
+const FreeList = struct {
+    write_lock: bun.Lock = bun.Lock.init(),
+    list: std.ArrayListUnmanaged(JSC.Node.BlobOrStringOrBuffer) = .{},
+
+    pub fn append(this: *FreeList, slice: []const JSC.Node.BlobOrStringOrBuffer) void {
+        this.write_lock.lock();
+        defer this.write_lock.unlock();
+        this.list.appendSlice(bun.default_allocator, slice) catch bun.outOfMemory();
+    }
+
+    pub fn drain(this: *FreeList) void {
+        this.write_lock.lock();
+        defer this.write_lock.unlock();
+        const out = this.list.items;
+        for (out) |*item| {
+            item.deinitAndUnprotect();
+        }
+        this.list.clearRetainingCapacity();
+    }
+
+    pub fn deinit(this: *FreeList) void {
+        this.drain();
+        this.list.deinit(bun.default_allocator);
+    }
+};
+
 pub const BrotliEncoder = struct {
     pub usingnamespace bun.New(@This());
     pub usingnamespace JSC.Codegen.JSBrotliEncoder;
 
     stream: brotli.BrotliCompressionStream,
 
-    freelist: Queue = Queue.init(bun.default_allocator),
-    freelist_write_lock: bun.Lock = bun.Lock.init(),
+    freelist: FreeList = .{},
 
     globalThis: *JSC.JSGlobalObject,
 
@@ -85,21 +111,14 @@ pub const BrotliEncoder = struct {
 
     pub fn deinit(this: *BrotliEncoder) void {
         this.callback_value.deinit();
-        this.drainFreelist();
+        this.freelist.deinit();
         this.stream.deinit();
         this.input.deinit();
         this.destroy();
     }
 
     fn drainFreelist(this: *BrotliEncoder) void {
-        this.freelist_write_lock.lock();
-        defer this.freelist_write_lock.unlock();
-        // TODO: Report Zig issue. This constCast should not be necessary.
-        const to_free = @constCast(this.freelist.readableSlice(0));
-        for (to_free) |*input| {
-            input.deinitAndUnprotect();
-        }
-        this.freelist.discard(to_free.len);
+        this.freelist.drain();
     }
 
     fn collectOutputValue(this: *BrotliEncoder) JSC.JSValue {
@@ -176,9 +195,7 @@ pub const BrotliEncoder = struct {
                     };
 
                     defer {
-                        this.encoder.freelist_write_lock.lock();
-                        this.encoder.freelist.write(pending) catch unreachable;
-                        this.encoder.freelist_write_lock.unlock();
+                        this.encoder.freelist.append(pending);
                     }
                     for (pending) |*input| {
                         var writer = this.encoder.stream.writer(Writer{ .encoder = this.encoder });
@@ -341,8 +358,7 @@ pub const BrotliDecoder = struct {
     output: std.ArrayListUnmanaged(u8) = .{},
     output_lock: bun.Lock = bun.Lock.init(),
 
-    freelist: Queue = Queue.init(bun.default_allocator),
-    freelist_write_lock: bun.Lock = bun.Lock.init(),
+    freelist: FreeList = .{},
 
     pub fn hasPendingActivity(this: *BrotliDecoder) callconv(.C) bool {
         return this.has_pending_activity.load(.monotonic) > 0;
@@ -350,7 +366,7 @@ pub const BrotliDecoder = struct {
 
     pub fn deinit(this: *BrotliDecoder) void {
         this.callback_value.deinit();
-        this.drainFreelist();
+        this.freelist.deinit();
         this.output.deinit(bun.default_allocator);
         this.stream.brotli.destroyInstance();
         this.input.deinit();
@@ -435,14 +451,7 @@ pub const BrotliDecoder = struct {
     }
 
     fn drainFreelist(this: *BrotliDecoder) void {
-        this.freelist_write_lock.lock();
-        defer this.freelist_write_lock.unlock();
-        // TODO: Report Zig issue. This constCast should not be necessary.
-        const to_free = @constCast(this.freelist.readableSlice(0));
-        for (to_free) |*input| {
-            input.deinitAndUnprotect();
-        }
-        this.freelist.discard(to_free.len);
+        this.freelist.drain();
     }
 
     pub fn decode(this: *BrotliDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
@@ -561,9 +570,7 @@ pub const BrotliDecoder = struct {
                     const pending = this.decoder.input.readableSlice(0);
 
                     defer {
-                        this.decoder.freelist_write_lock.lock();
-                        this.decoder.freelist.write(pending) catch unreachable;
-                        this.decoder.freelist_write_lock.unlock();
+                        this.decoder.freelist.append(pending);
                     }
 
                     var input_list = std.ArrayListUnmanaged(u8){};

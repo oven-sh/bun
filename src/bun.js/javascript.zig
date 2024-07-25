@@ -1040,7 +1040,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;
@@ -1214,6 +1214,10 @@ pub const VirtualMachine = struct {
             next.execute();
             hook = next;
         }
+    }
+
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
     }
 
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {

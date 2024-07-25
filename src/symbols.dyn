@@ -178,4 +178,5 @@
     __ZN2v824EscapableHandleScopeBase10EscapeSlotEPm;
     __ZN2v824EscapableHandleScopeBaseC2EPNS_7IsolateE;
     __ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm;
+    _node_module_register;
 };

@@ -371,6 +371,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionDlopen,
 #define dlsym GetProcAddress
 #endif
 
+    // TODO(@190n) look for node_register_module_vXYZ according to BuildOptions.reported_nodejs_version
+    // (bun/src/env.zig:36) and the table at https://github.com/nodejs/node/blob/main/doc/abi_version_registry.json
     napi_register_module_v1 = reinterpret_cast<JSC::EncodedJSValue (*)(JSC::JSGlobalObject*,
         JSC::EncodedJSValue)>(
         dlsym(handle, "napi_register_module_v1"));

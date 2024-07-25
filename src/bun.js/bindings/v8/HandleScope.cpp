@@ -2,12 +2,12 @@
 
 namespace v8 {
 
-HandleScope::HandleScope(Isolate* isolate) {}
-
-HandleScope::~HandleScope()
+HandleScope::HandleScope(Isolate* isolate)
+    : i_isolate(reinterpret_cast<internal::Isolate*>(isolate))
 {
-    abort();
 }
+
+HandleScope::~HandleScope() {}
 
 uintptr_t* HandleScope::CreateHandle(internal::Isolate* isolate, uintptr_t value)
 {

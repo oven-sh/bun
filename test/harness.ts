@@ -384,15 +384,6 @@ expect.extend({
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
   },
-  toRunInlineFixture(input: [string, string?, number?]) {
-    const script = input[0];
-    const optionalStdout = input[1];
-    const expectedCode = input[2];
-    const x = tmpdirSync();
-    const path = join(x, "index.js");
-    fs.writeFileSync(path, script);
-    return expect([path]).toRun(optionalStdout, expectedCode);
-  },
 });
 
 export function ospath(path: string) {
@@ -1040,7 +1031,6 @@ interface BunHarnessTestMatchers {
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string, expectedCode?: number): void;
-  toRunInlineFixture(input: [string, string?]): void;
 }
 
 declare module "bun:test" {

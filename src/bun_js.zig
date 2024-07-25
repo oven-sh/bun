@@ -321,7 +321,7 @@ pub const Run = struct {
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
-                    Global.exit(1);
+                    Global.exit(vm.exit_handler.exit_code);
                 }
             }
 
@@ -354,7 +354,7 @@ pub const Run = struct {
                         .{Global.unhandled_error_bun_version_string},
                     );
                 }
-                Global.exit(1);
+                Global.exit(vm.exit_handler.exit_code);
             }
         }
 
@@ -458,12 +458,11 @@ pub const Run = struct {
                 .{Global.unhandled_error_bun_version_string},
             );
         }
-        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(exit_code);
+        Global.exit(this.vm.exit_handler.exit_code);
     }
 };
 
@@ -504,5 +503,5 @@ noinline fn dumpBuildError(vm: *JSC.VirtualMachine) void {
 noinline fn failWithBuildError(vm: *JSC.VirtualMachine) noreturn {
     @setCold(true);
     dumpBuildError(vm);
-    Global.exit(1);
+    Global.exit(vm.exit_handler.exit_code);
 }

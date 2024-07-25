@@ -1040,7 +1040,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;

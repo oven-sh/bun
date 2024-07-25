@@ -85,14 +85,23 @@ pub fn StreamingClap(comptime Id: type, comptime ArgIterator: type) type {
                                 return parser.err(arg, .{ .long = name }, error.DoesntTakeValue);
                             }
 
-                            if (parser.iter.peek()) |value| {
-                                if (!mem.startsWith(u8, value, "--") and !mem.startsWith(u8, value, "-")) {
-                                    _ = parser.iter.next();
-                                    return ArgType{ .param = param, .value = value };
+                            const value = blk: {
+                                // Check if a value was provided using '=' syntax (e.g., --option=value)
+                                if (maybe_value) |value| {
+                                    break :blk value;
                                 }
-                            }
+                                // If no value was provided with '=', check the next argument
+                                // If it's not a flag (doesn't start with '-' or '--'), use it as the value
+                                if (parser.iter.peek()) |value| {
+                                    if (!mem.startsWith(u8, value, "--") and !mem.startsWith(u8, value, "-")) {
+                                        _ = parser.iter.next();
+                                        break :blk value;
+                                    }
+                                }
+                                break :blk null;
+                            };
 
-                            return ArgType{ .param = param, .value = null };
+                            return ArgType{ .param = param, .value = value };
                         }
 
                         const value = blk: {

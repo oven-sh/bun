@@ -5051,8 +5051,8 @@ static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlob
             }
         }
     }
-
-    auto* clientData = WebCore::clientData(vm);
+    auto* propertyNames = vm.propertyNames;
+    auto& builtinNames = WebCore::builtinNames(vm);
     WTF::Vector<Identifier, 6> visitedProperties;
 
 restart:
@@ -5065,12 +5065,12 @@ restart:
             }
             auto* prop = entry.key();
 
-            if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->underscoreProto
-                || prop == vm.propertyNames->toStringTagSymbol)
+            if (prop == propertyNames->constructor
+                || prop == propertyNames->underscoreProto
+                || prop == propertyNames->toStringTagSymbol)
                 return true;
 
-            if (clientData->builtinNames().bunNativePtrPrivateName() == prop)
+            if (builtinNames.bunNativePtrPrivateName() == prop)
                 return true;
 
             if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
@@ -5149,11 +5149,11 @@ restart:
                     continue;
 
                 // ignore constructor
-                if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
+                if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
                     continue;
 
                 if constexpr (nonIndexedOnly) {
-                    if (property == vm.propertyNames->length) {
+                    if (property == propertyNames->length) {
                         continue;
                     }
                 }
@@ -5163,8 +5163,8 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->underscoreProto
-                        || property == vm.propertyNames->toStringTagSymbol)
+                    if (property == propertyNames->underscoreProto
+                        || property == propertyNames->toStringTagSymbol)
                         continue;
                 }
 

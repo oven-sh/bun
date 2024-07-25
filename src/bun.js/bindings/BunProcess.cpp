@@ -466,6 +466,8 @@ extern "C" void Process__dispatchOnExit(Zig::GlobalObject* globalObject, uint8_t
     }
 
     auto* process = jsCast<Process*>(globalObject->processObject());
+    if (exitCode > 0)
+        process->m_isExitCodeObservable = true;
     dispatchExitInternal(globalObject, process, exitCode);
 }
 
@@ -489,6 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
         RETURN_IF_EXCEPTION(throwScope, JSC::JSValue::encode(JSC::JSValue {}));
 
         exitCode = static_cast<uint8_t>(extiCode32);
+        Bun__setExitCode(Bun__getVM(), exitCode);
     } else if (!arg0.isUndefinedOrNull()) {
         throwTypeError(globalObject, throwScope, "The \"code\" argument must be an integer"_s);
         return JSC::JSValue::encode(JSC::JSValue {});
@@ -500,6 +503,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     if (UNLIKELY(!zigGlobal)) {
         zigGlobal = Bun__getDefaultGlobal();
     }
+    auto process = jsCast<Process*>(zigGlobal->processObject());
+    process->m_isExitCodeObservable = true;
 
     Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
@@ -1093,6 +1098,9 @@ JSC_DEFINE_CUSTOM_GETTER(processExitCode, (JSC::JSGlobalObject * lexicalGlobalOb
     if (!process) {
         return JSValue::encode(jsUndefined());
     }
+    if (!process->m_isExitCodeObservable) {
+        return JSValue::encode(jsUndefined());
+    }
 
     return JSValue::encode(jsNumber(Bun__getExitCode(jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM())));
 }
@@ -1113,6 +1121,7 @@ JSC_DEFINE_CUSTOM_SETTER(setProcessExitCode, (JSC::JSGlobalObject * lexicalGloba
     int exitCodeInt = exitCode.toInt32(lexicalGlobalObject) % 256;
     RETURN_IF_EXCEPTION(throwScope, false);
 
+    process->m_isExitCodeObservable = true;
     void* ptr = jsCast<Zig::GlobalObject*>(process->globalObject())->bunVM();
     Bun__setExitCode(ptr, static_cast<uint8_t>(exitCodeInt));
 

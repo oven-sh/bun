@@ -6,6 +6,7 @@ namespace internal {
 Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj)
 {
     assert("IsolateFromNeverReadOnlySpaceObject" && 0);
+    return nullptr;
 }
 
 }

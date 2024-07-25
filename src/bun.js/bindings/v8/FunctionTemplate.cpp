@@ -16,11 +16,13 @@ Local<FunctionTemplate> FunctionTemplate::New(
     uint16_t allowed_receiver_instance_type_range_end)
 {
     assert("FunctionTemplate::New" && 0);
+    return Local<FunctionTemplate>();
 }
 
 MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
 {
     assert("FunctionTemplate::GetFunction" && 0);
+    return MaybeLocal<Function>();
 }
 
 }

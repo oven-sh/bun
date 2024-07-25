@@ -52,6 +52,7 @@ void Object::SetInternalField(int index, Local<Data> data)
 Local<Data> Object::SlowGetInternalField(int index)
 {
     assert("Object::SlowGetInternalField" && 0);
+    return Local<Data>();
 }
 
 }

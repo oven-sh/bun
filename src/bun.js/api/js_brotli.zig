@@ -297,7 +297,6 @@ pub const BrotliEncoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
-            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();
@@ -523,7 +522,6 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
-            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();

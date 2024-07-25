@@ -3294,6 +3294,8 @@ const AstSourceIDMapping = struct {
 const LinkerGraph = struct {
     const debug = Output.scoped(.LinkerGraph, false);
 
+    /// TODO(@paperdave): remove this. i added it before realizing this is available
+    /// via LinkerContext.parse_graph. it may also be worth removing the other cloned data.
     bundler_graph: *const Graph,
 
     files: File.List = .{},
@@ -3804,7 +3806,7 @@ const LinkerGraph = struct {
     };
 };
 
-const LinkerContext = struct {
+pub const LinkerContext = struct {
     const debug = Output.scoped(.LinkerCtx, false);
 
     parse_graph: *Graph = undefined,
@@ -4951,7 +4953,6 @@ const LinkerContext = struct {
                     }
 
                     const wrapped_ref = this.graph.ast.items(.wrapper_ref)[source_index];
-                    if (wrapped_ref.isNull() or wrapped_ref.isEmpty()) continue;
 
                     // Create the wrapper part for wrapped files. This is needed by a later step.
                     this.createWrapperForFile(
@@ -5011,7 +5012,6 @@ const LinkerContext = struct {
 
                 const module_ref = module_refs[id];
 
-                // TODO: see if counting and batching into a single large allocation instead of per-file improves perf
                 const string_buffer_len: usize = brk: {
                     var count: usize = 0;
                     if (is_entry_point and this.options.output_format == .esm) {
@@ -5025,7 +5025,7 @@ const LinkerContext = struct {
                     else
                         std.fmt.count("{}", .{source.fmtIdentifier()});
 
-                    if (wrap == .esm) {
+                    if (wrap == .esm and wrapper_refs[id].isValid()) {
                         count += "init_".len + ident_fmt_len;
                     }
 
@@ -5061,14 +5061,15 @@ const LinkerContext = struct {
 
                 // Use "init_*" for ESM wrappers instead of "require_*"
                 if (wrap == .esm) {
-                    const original_name = builder.fmt(
-                        "init_{}",
-                        .{
-                            source.fmtIdentifier(),
-                        },
-                    );
+                    const ref = wrapper_refs[id];
+                    if (ref.isValid()) {
+                        const original_name = builder.fmt(
+                            "init_{}",
+                            .{source.fmtIdentifier()},
+                        );
 
-                    this.graph.symbols.get(wrapper_refs[id]).?.original_name = original_name;
+                        this.graph.symbols.get(ref).?.original_name = original_name;
+                    }
                 }
 
                 // If this isn't CommonJS, then rename the unused "exports" and "module"
@@ -5310,13 +5311,15 @@ const LinkerContext = struct {
                         if (other_flags.wrap != .none) {
                             // Depend on the automatically-generated require wrapper symbol
                             const wrapper_ref = wrapper_refs[other_id];
-                            this.graph.generateSymbolImportAndUse(
-                                source_index,
-                                @as(u32, @intCast(part_index)),
-                                wrapper_ref,
-                                1,
-                                Index.source(other_source_index),
-                            ) catch unreachable;
+                            if (wrapper_ref.isValid()) {
+                                this.graph.generateSymbolImportAndUse(
+                                    source_index,
+                                    @as(u32, @intCast(part_index)),
+                                    wrapper_ref,
+                                    1,
+                                    Index.source(other_source_index),
+                                ) catch unreachable;
+                            }
 
                             // This is an ES6 import of a CommonJS module, so it needs the
                             // "__toESM" wrapper as long as it's not a bare "require()"
@@ -5861,7 +5864,7 @@ const LinkerContext = struct {
                 const other_parts = c.topLevelSymbolsToParts(id, ref);
 
                 for (other_parts) |other_part_index| {
-                    const local = local_dependencies.getOrPut(@as(u32, @intCast(other_part_index))) catch unreachable;
+                    const local = local_dependencies.getOrPut(other_part_index) catch unreachable;
                     if (!local.found_existing or local.value_ptr.* != part_index) {
                         local.value_ptr.* = @as(u32, @intCast(part_index));
                         // note: if we crash on append, it is due to threadlocal heaps in mimalloc
@@ -5877,7 +5880,7 @@ const LinkerContext = struct {
 
                 // Also map from imports to parts that use them
                 if (named_imports.getPtr(ref)) |existing| {
-                    existing.local_parts_with_uses.push(allocator, @as(u32, @intCast(part_index))) catch unreachable;
+                    existing.local_parts_with_uses.push(allocator, @intCast(part_index)) catch unreachable;
                 }
             }
         }
@@ -6048,26 +6051,28 @@ const LinkerContext = struct {
 
                     const used_refs = part.symbol_uses.keys();
 
-                    for (used_refs) |ref_| {
+                    // Record each symbol used in this part. This will later be matched up
+                    // with our map of which chunk a given symbol is declared in to
+                    // determine if the symbol needs to be imported from another chunk.
+                    for (used_refs) |ref| {
                         const ref_to_use = brk: {
-                            var ref = ref_;
-                            var symbol = deps.symbols.getConst(ref).?;
+                            var ref_to_use = ref;
+                            var symbol = deps.symbols.getConst(ref_to_use).?;
 
                             // Ignore unbound symbols
                             if (symbol.kind == .unbound)
                                 continue;
 
                             // Ignore symbols that are going to be replaced by undefined
-                            if (symbol.import_item_status == .missing) {
+                            if (symbol.import_item_status == .missing)
                                 continue;
-                            }
 
                             // If this is imported from another file, follow the import
                             // reference and reference the symbol in that file instead
-                            if (imports_to_bind.get(ref)) |import_data| {
-                                ref = import_data.data.import_ref;
-                                symbol = deps.symbols.getConst(ref).?;
-                            } else if (wrap == .cjs and ref.eql(wrapper_ref)) {
+                            if (imports_to_bind.get(ref_to_use)) |import_data| {
+                                ref_to_use = import_data.data.import_ref;
+                                symbol = deps.symbols.getConst(ref_to_use).?;
+                            } else if (wrap == .cjs and ref_to_use.eql(wrapper_ref)) {
                                 // The only internal symbol that wrapped CommonJS files export
                                 // is the wrapper itself.
                                 continue;
@@ -6078,9 +6083,9 @@ const LinkerContext = struct {
                             // identifier. In that case we want to pull in the namespace symbol
                             // instead. The namespace symbol stores the result of "require()".
                             if (symbol.namespace_alias) |*namespace_alias| {
-                                ref = namespace_alias.namespace_ref;
+                                ref_to_use = namespace_alias.namespace_ref;
                             }
-                            break :brk ref;
+                            break :brk ref_to_use;
                         };
 
                         if (comptime Environment.allow_assert)
@@ -6703,6 +6708,17 @@ const LinkerContext = struct {
         defer ctx.wg.finish();
         var worker = ThreadPool.Worker.get(@fieldParentPtr("linker", ctx.c));
         defer worker.unget();
+
+        const prev_action = if (Environment.isDebug) bun.crash_handler.current_action;
+        defer if (Environment.isDebug) {
+            bun.crash_handler.current_action = prev_action;
+        };
+        if (Environment.isDebug) bun.crash_handler.current_action = .{ .bundle_generate_chunk = .{
+            .chunk = ctx.chunk,
+            .context = ctx.c,
+            .part_range = &part_range.part_range,
+        } };
+
         ctx.chunk.compile_results_for_chunk[part_range.i] = generateCompileResultForJSChunk_(worker, ctx.c, ctx.chunk, part_range.part_range);
     }
 
@@ -7331,7 +7347,7 @@ const LinkerContext = struct {
                         ) catch unreachable;
                     },
                     else => {
-                        if (flags.wrap == .esm) {
+                        if (flags.wrap == .esm and ast.wrapper_ref.isValid()) {
                             if (flags.is_async_or_has_async_dependency) {
                                 // "await init_foo();"
                                 stmts.append(
@@ -7867,33 +7883,21 @@ const LinkerContext = struct {
             .cjs => {
                 // Replace the statement with a call to "require()" if this module is not wrapped
                 try stmts.inside_wrapper_prefix.append(
-                    Stmt.alloc(
-                        S.Local,
-                        S.Local{
-                            .decls = try G.Decl.List.fromSlice(
-                                allocator,
-                                &.{
-                                    .{
-                                        .binding = Binding.alloc(
-                                            allocator,
-                                            B.Identifier{
-                                                .ref = namespace_ref,
-                                            },
-                                            loc,
-                                        ),
-                                        .value = Expr.init(
-                                            E.RequireString,
-                                            E.RequireString{
-                                                .import_record_index = import_record_index,
-                                            },
-                                            loc,
-                                        ),
-                                    },
+                    Stmt.alloc(S.Local, .{
+                        .decls = try G.Decl.List.fromSlice(
+                            allocator,
+                            &.{
+                                .{
+                                    .binding = Binding.alloc(allocator, B.Identifier{
+                                        .ref = namespace_ref,
+                                    }, loc),
+                                    .value = Expr.init(E.RequireString, .{
+                                        .import_record_index = import_record_index,
+                                    }, loc),
                                 },
-                            ),
-                        },
-                        loc,
-                    ),
+                            },
+                        ),
+                    }, loc),
                 );
             },
             .esm => {
@@ -7904,43 +7908,36 @@ const LinkerContext = struct {
                     return true;
                 }
 
+                const wrapper_ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()];
+                if (wrapper_ref.isEmpty()) {
+                    return true;
+                }
+
                 // Replace the statement with a call to "init()"
                 const value: Expr = brk: {
-                    const default = Expr.init(
-                        E.Call,
-                        E.Call{
-                            .target = Expr.initIdentifier(
-                                c.graph.ast.items(.wrapper_ref)[record.source_index.get()],
-                                loc,
-                            ),
-                        },
-                        loc,
-                    );
+                    const default = Expr.init(E.Call, .{
+                        .target = Expr.initIdentifier(
+                            wrapper_ref,
+                            loc,
+                        ),
+                    }, loc);
 
                     if (other_flags.is_async_or_has_async_dependency) {
                         // This currently evaluates sibling dependencies in serial instead of in
                         // parallel, which is incorrect. This should be changed to store a promise
                         // and await all stored promises after all imports but before any code.
-                        break :brk Expr.init(
-                            E.Await,
-                            E.Await{
-                                .value = default,
-                            },
-                            loc,
-                        );
+                        break :brk Expr.init(E.Await, .{
+                            .value = default,
+                        }, loc);
                     }
 
                     break :brk default;
                 };
 
                 try stmts.inside_wrapper_prefix.append(
-                    Stmt.alloc(
-                        S.SExpr,
-                        S.SExpr{
-                            .value = value,
-                        },
-                        loc,
-                    ),
+                    Stmt.alloc(S.SExpr, .{
+                        .value = value,
+                    }, loc),
                 );
             },
         }
@@ -7957,12 +7954,12 @@ const LinkerContext = struct {
     ///
     ///      prefix - outer
     ///      ...
-    ///      init_esm = () => {
+    ///      var init_foo = __esm(() => {
     ///          prefix - inner
     ///          ...
     ///          suffix - inenr
-    ///       };
-    ///       ...
+    ///      });
+    ///      ...
     ///      suffix - outer
     ///
     /// Keep in mind that we may need to wrap ES modules in some cases too
@@ -8152,27 +8149,20 @@ const LinkerContext = struct {
                         } else {
                             if (record.source_index.isValid()) {
                                 const flag = flags[record.source_index.get()];
-                                if (flag.wrap == .esm) {
+                                const wrapper_ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()];
+                                if (flag.wrap == .esm and wrapper_ref.isValid()) {
                                     try stmts.inside_wrapper_prefix.append(
-                                        Stmt.alloc(
-                                            S.SExpr,
-                                            .{
-                                                .value = Expr.init(
-                                                    E.Call,
-                                                    E.Call{
-                                                        .target = Expr.init(
-                                                            E.Identifier,
-                                                            E.Identifier{
-                                                                .ref = c.graph.ast.items(.wrapper_ref)[record.source_index.get()],
-                                                            },
-                                                            stmt.loc,
-                                                        ),
+                                        Stmt.alloc(S.SExpr, .{
+                                            .value = Expr.init(E.Call, .{
+                                                .target = Expr.init(
+                                                    E.Identifier,
+                                                    E.Identifier{
+                                                        .ref = wrapper_ref,
                                                     },
                                                     stmt.loc,
                                                 ),
-                                            },
-                                            stmt.loc,
-                                        ),
+                                            }, stmt.loc),
+                                        }, stmt.loc),
                                     );
                                 }
                             }
@@ -8243,7 +8233,6 @@ const LinkerContext = struct {
 
                     .s_export_from => |s| {
                         // "export {foo} from 'path'"
-
                         if (try c.shouldRemoveImportExportStmt(
                             stmts,
                             stmt.loc,
@@ -8291,7 +8280,6 @@ const LinkerContext = struct {
 
                         if (shouldStripExports) {
                             // Remove export statements entirely
-
                             continue;
                         }
 
@@ -8796,13 +8784,16 @@ const LinkerContext = struct {
                     // isn't async because then calling "require()" on that module would
                     // swallow any exceptions thrown during module initialization.
                     const is_async = flags.is_async_or_has_async_dependency;
-                    const Hoisty = struct {
-                        decls: std.ArrayList(G.Decl),
+
+                    const ExportHoist = struct {
+                        decls: std.ArrayListUnmanaged(G.Decl),
                         allocator: std.mem.Allocator,
+                        next_value: ?Expr = null,
 
                         pub fn wrapIdentifier(w: *@This(), loc: Logger.Loc, ref: Ref) Expr {
                             w.decls.append(
-                                G.Decl{
+                                w.allocator,
+                                .{
                                     .binding = Binding.alloc(
                                         w.allocator,
                                         B.Identifier{
@@ -8810,113 +8801,119 @@ const LinkerContext = struct {
                                         },
                                         loc,
                                     ),
+                                    .value = w.next_value,
                                 },
-                            ) catch unreachable;
-                            return Expr.init(
-                                E.Identifier,
-                                E.Identifier{
-                                    .ref = ref,
-                                },
-                                loc,
-                            );
+                            ) catch bun.outOfMemory();
+
+                            return Expr.initIdentifier(ref, loc);
                         }
                     };
-                    var hoisty = Hoisty{
-                        .decls = std.ArrayList(G.Decl).init(temp_allocator),
+
+                    var hoist = ExportHoist{
+                        .decls = .{},
                         .allocator = temp_allocator,
                     };
+
                     var inner_stmts = stmts.all_stmts.items;
+
                     // Hoist all top-level "var" and "function" declarations out of the closure
                     {
                         var end: usize = 0;
-                        for (stmts.all_stmts.items) |stmt_| {
-                            var stmt: Stmt = stmt_;
-                            switch (stmt.data) {
-                                .s_local => |local| {
-                                    if (local.was_commonjs_export or ast.commonjs_named_exports.count() == 0) {
-                                        var value: Expr = Expr.init(E.Missing, E.Missing{}, Logger.Loc.Empty);
-                                        for (local.decls.slice()) |*decl| {
-                                            const binding = decl.binding.toExpr(&hoisty);
-                                            if (decl.value) |other| {
+                        for (stmts.all_stmts.items) |stmt| {
+                            const transformed = switch (stmt.data) {
+                                .s_local => |local| stmt: {
+                                    // Convert the declarations to assignments
+                                    var value = Expr.empty;
+                                    for (local.decls.slice()) |*decl| {
+                                        if (decl.value) |initializer| {
+                                            const can_be_moved = initializer.canBeMoved();
+                                            hoist.next_value = if (can_be_moved) initializer else null;
+                                            const binding = decl.binding.toExpr(&hoist);
+                                            if (!can_be_moved) {
                                                 value = value.joinWithComma(
-                                                    binding.assign(
-                                                        other,
-                                                    ),
+                                                    binding.assign(initializer),
                                                     temp_allocator,
                                                 );
                                             }
+                                        } else {
+                                            _ = decl.binding.toExpr(&hoist);
                                         }
-
-                                        if (value.isEmpty()) {
-                                            continue;
-                                        }
-                                        stmt = Stmt.alloc(
-                                            S.SExpr,
-                                            S.SExpr{
-                                                .value = value,
-                                            },
-                                            stmt.loc,
-                                        );
                                     }
+
+                                    if (value.isEmpty()) {
+                                        continue;
+                                    }
+
+                                    break :stmt Stmt.allocateExpr(temp_allocator, value);
                                 },
-                                .s_class, .s_function => {
-                                    stmts.outside_wrapper_prefix.append(stmt) catch unreachable;
+                                .s_function => {
+                                    stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
                                     continue;
                                 },
-                                else => {},
-                            }
-                            inner_stmts[end] = stmt;
+                                .s_class => |class| stmt: {
+                                    if (class.class.canBeMoved()) {
+                                        stmts.outside_wrapper_prefix.append(stmt) catch bun.outOfMemory();
+                                        continue;
+                                    }
+
+                                    hoist.next_value = null;
+
+                                    break :stmt Stmt.allocateExpr(
+                                        temp_allocator,
+                                        Expr.assign(hoist.wrapIdentifier(
+                                            class.class.class_name.?.loc,
+                                            class.class.class_name.?.ref.?,
+                                        ), .{
+                                            .data = .{ .e_class = &class.class },
+                                            .loc = stmt.loc,
+                                        }),
+                                    );
+                                },
+                                else => stmt,
+                            };
+
+                            inner_stmts[end] = transformed;
                             end += 1;
                         }
                         inner_stmts.len = end;
                     }
 
-                    if (hoisty.decls.items.len > 0) {
+                    if (hoist.decls.items.len > 0) {
                         stmts.outside_wrapper_prefix.append(
                             Stmt.alloc(
                                 S.Local,
                                 S.Local{
-                                    .decls = G.Decl.List.fromList(hoisty.decls),
+                                    .decls = G.Decl.List.fromList(hoist.decls),
                                 },
                                 Logger.Loc.Empty,
                             ),
                         ) catch unreachable;
-                        hoisty.decls.items.len = 0;
+                        hoist.decls.items.len = 0;
                     }
 
-                    // "__esm(() => { ... })"
-                    var esm_args = temp_allocator.alloc(Expr, 1) catch unreachable;
-                    esm_args[0] = Expr.init(
-                        E.Arrow,
-                        E.Arrow{
+                    if (inner_stmts.len > 0) {
+                        // See the comment in needsWrapperRef for why the symbol
+                        // is sometimes not generated.
+                        bun.assert(!ast.wrapper_ref.isEmpty()); // js_parser's needsWrapperRef thought wrapper was not needed
+
+                        // "__esm(() => { ... })"
+                        var esm_args = temp_allocator.alloc(Expr, 1) catch bun.outOfMemory();
+                        esm_args[0] = Expr.init(E.Arrow, .{
                             .args = &.{},
                             .is_async = is_async,
                             .body = .{
                                 .stmts = inner_stmts,
                                 .loc = Logger.Loc.Empty,
                             },
-                        },
-                        Logger.Loc.Empty,
-                    );
+                        }, Logger.Loc.Empty);
 
-                    // "var init_foo = __esm(...);"
-                    {
-                        const value = Expr.init(
-                            E.Call,
-                            E.Call{
-                                .target = Expr.init(
-                                    E.Identifier,
-                                    E.Identifier{
-                                        .ref = c.esm_runtime_ref,
-                                    },
-                                    Logger.Loc.Empty,
-                                ),
-                                .args = bun.BabyList(Expr).init(esm_args),
-                            },
-                            Logger.Loc.Empty,
-                        );
+                        // "var init_foo = __esm(...);"
+                        const value = Expr.init(E.Call, .{
+                            .target = Expr.initIdentifier(c.esm_runtime_ref, Logger.Loc.Empty),
+                            .args = bun.BabyList(Expr).init(esm_args),
+                        }, Logger.Loc.Empty);
 
-                        var decls = temp_allocator.alloc(G.Decl, 1) catch unreachable;
+                        var decls = temp_allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
                         decls[0] = G.Decl{
                             .binding = Binding.alloc(
                                 temp_allocator,
@@ -8929,14 +8926,53 @@ const LinkerContext = struct {
                         };
 
                         stmts.outside_wrapper_prefix.append(
-                            Stmt.alloc(
-                                S.Local,
-                                S.Local{
-                                    .decls = G.Decl.List.init(decls),
+                            Stmt.alloc(S.Local, .{
+                                .decls = G.Decl.List.init(decls),
+                            }, Logger.Loc.Empty),
+                        ) catch bun.outOfMemory();
+                    } else {
+                        // // If this fails, then there will be places we reference
+                        // // `init_foo` without it actually existing.
+                        // bun.assert(ast.wrapper_ref.isEmpty());
+
+                        // TODO: the edge case where we are wrong is when there
+                        // are references to other ESM modules, but those get
+                        // fully hoisted. The look like side effects, but they
+                        // are removed.
+                        //
+                        // It is too late to retroactively delete the
+                        // wrapper_ref, since printing has already begun.  The
+                        // most we can do to salvage the situation is to print
+                        // an empty arrow function.
+                        //
+                        // This is marked as a TODO, because this can be solved
+                        // via a count of external modules, decremented during
+                        // linking.
+                        if (!ast.wrapper_ref.isEmpty()) {
+                            const value = Expr.init(E.Arrow, .{
+                                .args = &.{},
+                                .is_async = is_async,
+                                .body = .{
+                                    .stmts = inner_stmts,
+                                    .loc = Logger.Loc.Empty,
                                 },
-                                Logger.Loc.Empty,
-                            ),
-                        ) catch unreachable;
+                            }, Logger.Loc.Empty);
+
+                            stmts.outside_wrapper_prefix.append(
+                                Stmt.alloc(S.Local, .{
+                                    .decls = G.Decl.List.fromSlice(temp_allocator, &.{.{
+                                        .binding = Binding.alloc(
+                                            temp_allocator,
+                                            B.Identifier{
+                                                .ref = ast.wrapper_ref,
+                                            },
+                                            Logger.Loc.Empty,
+                                        ),
+                                        .value = value,
+                                    }}) catch bun.outOfMemory(),
+                                }, Logger.Loc.Empty),
+                            ) catch bun.outOfMemory();
+                        }
                     }
                 },
                 else => {},
@@ -10064,40 +10100,43 @@ const LinkerContext = struct {
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
     ) void {
-        if (comptime bun.Environment.allow_assert)
-            debugTreeShake(
-                "markFileLiveForTreeShaking({d}, {s}) = {s}",
-                .{
-                    source_index,
-                    c.parse_graph.input_files.get(source_index).source.path.text,
-                    if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
-                },
-            );
+        if (comptime bun.Environment.allow_assert) {
+            debugTreeShake("markFileLiveForTreeShaking({d}, {s}) = {s}", .{
+                source_index,
+                c.parse_graph.input_files.get(source_index).source.path.text,
+                if (c.graph.files_live.isSet(source_index)) "seen" else "not seen",
+            });
+        }
 
-        if (c.graph.files_live.isSet(source_index))
+        defer if (Environment.allow_assert) {
+            debugTreeShake("end()", .{});
+        };
+
+        if (c.graph.files_live.isSet(source_index)) {
+            if (Environment.allow_assert) {
+                debugTreeShake("already set", .{});
+            }
             return;
-
+        }
         c.graph.files_live.set(source_index);
 
-        // TODO: CSS source index
-
-        const id = source_index;
-        if (@as(usize, id) >= c.graph.ast.len)
+        if (source_index >= c.graph.ast.len) {
+            bun.assert(false);
             return;
-        const _parts = parts[id].slice();
-        for (_parts, 0..) |part, part_index| {
+        }
+
+        for (parts[source_index].slice(), 0..) |part, part_index| {
             var can_be_removed_if_unused = part.can_be_removed_if_unused;
 
             if (can_be_removed_if_unused and part.tag == .commonjs_named_export) {
-                if (c.graph.meta.items(.flags)[id].wrap == .cjs) {
+                if (c.graph.meta.items(.flags)[source_index].wrap == .cjs) {
                     can_be_removed_if_unused = false;
                 }
             }
 
             // Also include any statement-level imports
-            for (part.import_record_indices.slice()) |import_record_Index| {
-                var record: *ImportRecord = &import_records[source_index].slice()[import_record_Index];
-
+            for (part.import_record_indices.slice()) |import_index| {
+                const record = import_records[source_index].at(import_index);
                 if (record.kind != .stmt)
                     continue;
 
@@ -10106,7 +10145,11 @@ const LinkerContext = struct {
 
                     // Don't include this module for its side effects if it can be
                     // considered to have no side effects
-                    if (side_effects[other_source_index] != .has_side_effects and !c.options.ignore_dce_annotations) {
+                    const se = side_effects[other_source_index];
+
+                    if (se != .has_side_effects and
+                        !c.options.ignore_dce_annotations)
+                    {
                         continue;
                     }
 
@@ -10134,11 +10177,11 @@ const LinkerContext = struct {
             if (!can_be_removed_if_unused or
                 (!part.force_tree_shaking and
                 !c.options.tree_shaking and
-                entry_point_kinds[id].isEntryPoint()))
+                entry_point_kinds[source_index].isEntryPoint()))
             {
-                _ = c.markPartLiveForTreeShaking(
-                    @as(u32, @intCast(part_index)),
-                    id,
+                c.markPartLiveForTreeShaking(
+                    @intCast(part_index),
+                    source_index,
                     side_effects,
                     parts,
                     import_records,
@@ -10151,32 +10194,37 @@ const LinkerContext = struct {
     pub fn markPartLiveForTreeShaking(
         c: *LinkerContext,
         part_index: Index.Int,
-        id: Index.Int,
+        source_index: Index.Int,
         side_effects: []_resolver.SideEffects,
         parts: []bun.BabyList(js_ast.Part),
         import_records: []bun.BabyList(bun.ImportRecord),
         entry_point_kinds: []EntryPoint.Kind,
-    ) bool {
-        const part: *js_ast.Part = &parts[id].slice()[part_index];
+    ) void {
+        const part: *js_ast.Part = &parts[source_index].slice()[part_index];
 
         // only once
         if (part.is_live) {
-            return false;
+            return;
         }
         part.is_live = true;
 
-        if (comptime bun.Environment.isDebug)
+        if (comptime bun.Environment.isDebug) {
             debugTreeShake("markPartLiveForTreeShaking({d}): {s}:{d} = {d}, {s}", .{
-                id,
-                c.parse_graph.input_files.get(id).source.path.text,
+                source_index,
+                c.parse_graph.input_files.get(source_index).source.path.text,
                 part_index,
                 if (part.stmts.len > 0) part.stmts[0].loc.start else Logger.Loc.Empty.start,
                 if (part.stmts.len > 0) @tagName(part.stmts[0].data) else @tagName(Stmt.empty().data),
             });
+        }
+
+        defer if (Environment.allow_assert) {
+            debugTreeShake("end()", .{});
+        };
 
         // Include the file containing this part
         c.markFileLiveForTreeShaking(
-            id,
+            source_index,
             side_effects,
             parts,
             import_records,
@@ -10185,18 +10233,18 @@ const LinkerContext = struct {
 
         if (Environment.enable_logs and part.dependencies.slice().len == 0) {
             logPartDependencyTree("markPartLiveForTreeShaking {d}:{d} | EMPTY", .{
-                id, part_index,
+                source_index, part_index,
             });
         }
 
         for (part.dependencies.slice()) |dependency| {
-            if (Environment.enable_logs and id != 0 and dependency.source_index.get() != 0) {
+            if (Environment.enable_logs and source_index != 0 and dependency.source_index.get() != 0) {
                 logPartDependencyTree("markPartLiveForTreeShaking: {d}:{d} --> {d}:{d}\n", .{
-                    id, part_index, dependency.source_index.get(), dependency.part_index,
+                    source_index, part_index, dependency.source_index.get(), dependency.part_index,
                 });
             }
 
-            _ = c.markPartLiveForTreeShaking(
+            c.markPartLiveForTreeShaking(
                 dependency.part_index,
                 dependency.source_index.get(),
                 side_effects,
@@ -10205,8 +10253,6 @@ const LinkerContext = struct {
                 entry_point_kinds,
             );
         }
-
-        return true;
     }
 
     pub fn matchImportWithExport(
@@ -10589,7 +10635,10 @@ const LinkerContext = struct {
                 //
                 // This depends on the "__esm" symbol and declares the "init_foo" symbol
                 // for similar reasons to the CommonJS closure above.
-                const esm_parts = c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref);
+                const esm_parts = if (wrapper_ref.isValid())
+                    c.topLevelSymbolsToPartsForRuntime(c.esm_runtime_ref)
+                else
+                    &.{};
 
                 // generate a dummy part that depends on the "__esm" symbol
                 const dependencies = c.allocator.alloc(js_ast.Dependency, esm_parts.len) catch unreachable;
@@ -10618,13 +10667,16 @@ const LinkerContext = struct {
                 ) catch unreachable;
                 bun.assert(part_index != js_ast.namespace_export_part_index);
                 wrapper_part_index.* = Index.part(part_index);
-                c.graph.generateSymbolImportAndUse(
-                    source_index,
-                    part_index,
-                    c.esm_runtime_ref,
-                    1,
-                    Index.runtime,
-                ) catch unreachable;
+
+                if (wrapper_ref.isValid()) {
+                    c.graph.generateSymbolImportAndUse(
+                        source_index,
+                        part_index,
+                        c.esm_runtime_ref,
+                        1,
+                        Index.runtime,
+                    ) catch unreachable;
+                }
             },
             else => {},
         }

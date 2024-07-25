@@ -652,24 +652,28 @@ describe("fetch() with streaming", () => {
     }
   }
 
-  type CompressionType = "no" | "gzip" | "deflate" | "br" | "deflate_with_headers";
-  type TestType = { headers: Record<string, string>; compression: CompressionType; skip?: boolean };
-  const types: Array<TestType> = [
+  const types = [
     { headers: {}, compression: "no" },
     { headers: { "Content-Encoding": "gzip" }, compression: "gzip" },
+    { headers: { "Content-Encoding": "gzip" }, compression: "gzip-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate" },
+    { headers: { "Content-Encoding": "deflate" }, compression: "deflate-libdeflate" },
     { headers: { "Content-Encoding": "deflate" }, compression: "deflate_with_headers" },
-    // { headers: { "Content-Encoding": "br" }, compression: "br", skip: true }, // not implemented yet
-  ];
+    { headers: { "Content-Encoding": "br" }, compression: "br" },
+  ] as const;
 
-  function compress(compression: CompressionType, data: Uint8Array) {
+  function compress(compression, data: Uint8Array) {
     switch (compression) {
+      case "gzip-libdeflate":
       case "gzip":
-        return Bun.gzipSync(data);
+        return Bun.gzipSync(data, { library: compression === "gzip-libdeflate" ? "libdeflate" : "zlib" });
+      case "deflate-libdeflate":
       case "deflate":
-        return Bun.deflateSync(data);
+        return Bun.deflateSync(data, { library: compression === "deflate-libdeflate" ? "libdeflate" : "zlib" });
       case "deflate_with_headers":
         return zlib.deflateSync(data);
+      case "br":
+        return zlib.brotliCompressSync(data);
       default:
         return data;
     }
@@ -1186,7 +1190,14 @@ describe("fetch() with streaming", () => {
             gcTick(false);
             expect(buffer.toString("utf8")).toBe("unreachable");
           } catch (err) {
-            expect((err as Error).name).toBe("ZlibError");
+            if (compression === "br") {
+              expect((err as Error).name).toBe("BrotliDecompressionError");
+            } else if (compression === "deflate-libdeflate") {
+              // Since the compressed data is different, the error ends up different.
+              expect((err as Error).name).toBe("ShortRead");
+            } else {
+              expect((err as Error).name).toBe("ZlibError");
+            }
           }
         }
       });

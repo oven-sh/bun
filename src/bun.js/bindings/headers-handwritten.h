@@ -348,6 +348,7 @@ extern "C" const char* Bun__versions_mimalloc;
 extern "C" const char* Bun__versions_picohttpparser;
 extern "C" const char* Bun__versions_uws;
 extern "C" const char* Bun__versions_webkit;
+extern "C" const char* Bun__versions_libdeflate;
 extern "C" const char* Bun__versions_zig;
 extern "C" const char* Bun__versions_zlib;
 extern "C" const char* Bun__versions_tinycc;

@@ -1,13 +1,17 @@
+// Since runtime.js loads first in the bundler, Ref.none will point at this
+// value. And since it isnt exported, it will always be tree-shaken away.
+var __INVALID__REF__;
+
 var tagSymbol;
 var cjsRequireSymbol;
+// This ordering is deliberate so that the printer does optimizes these into a
+// single destructuring assignment.
 var __create = Object.create;
 var __descs = Object.getOwnPropertyDescriptors;
-var __defProp = Object.defineProperty;
 var __getProtoOf = Object.getPrototypeOf;
+var __defProp = Object.defineProperty;
 var __getOwnPropNames = Object.getOwnPropertyNames;
 var __getOwnPropDesc = Object.getOwnPropertyDescriptor;
-
-// This order is deliberate so that the printer does the {} optimization here
 var __hasOwnProp = Object.prototype.hasOwnProperty;
 
 export var __markAsModule = target => __defProp(target, "__esModule", { value: true, configurable: true });
@@ -63,22 +67,23 @@ export var __toESM = (mod, isNodeMode, target) => {
 // Converts the module from ESM to CommonJS. This clones the input module
 // object with the addition of a non-enumerable "__esModule" property set
 // to "true", which overwrites any existing export named "__esModule".
+var __moduleCache = /* @__PURE__ */ new WeakMap();
 export var __toCommonJS = /* @__PURE__ */ from => {
-  const moduleCache = (__toCommonJS.moduleCache ??= new WeakMap());
-  var cached = moduleCache.get(from);
-  if (cached) return cached;
-  var to = __defProp({}, "__esModule", { value: true });
-  var desc = { enumerable: false };
+  var entry = __moduleCache.get(from),
+    desc;
+  if (entry) return entry;
+  entry = __defProp({}, "__esModule", { value: true });
   if ((from && typeof from === "object") || typeof from === "function")
-    for (let key of __getOwnPropNames(from))
-      if (!__hasOwnProp.call(to, key))
-        __defProp(to, key, {
+    __getOwnPropNames(from).map(
+      key =>
+        !__hasOwnProp.call(entry, key) &&
+        __defProp(entry, key, {
           get: () => from[key],
           enumerable: !(desc = __getOwnPropDesc(from, key)) || desc.enumerable,
-        });
-
-  moduleCache.set(from, to);
-  return to;
+        }),
+    );
+  __moduleCache.set(from, entry);
+  return entry;
 };
 
 // lazy require to prevent loading one icon from a design system

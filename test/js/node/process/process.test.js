@@ -888,10 +888,15 @@ describe("process.exitCode", () => {
   it("zeroExitWithUncaughtHandler", () => {
     expect([
       `
-      const assert = require('assert');
       process.on('exit', (code) => {
-        assert.strictEqual(process.exitCode, 0);
-        assert.strictEqual(code, 0);
+        if (code !== 0) {
+          console.log('wrong code! expected 0; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== undefined) {
+          console.log('wrong exitCode! expected undefined; got', process.exitCode);
+          process.exit(99);
+        }
       });
       process.on('uncaughtException', () => { });
       throw new Error('ok');
@@ -904,10 +909,15 @@ describe("process.exitCode", () => {
   it("changeCodeInUncaughtHandler", () => {
     expect([
       `
-      const assert = require('assert');
       process.on('exit', (code) => {
-        assert.strictEqual(process.exitCode, 97);
-        assert.strictEqual(code, 97);
+        if (code !== 97) {
+          console.log('wrong code! expected 97; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== 97) {
+          console.log('wrong exitCode! expected 97; got', process.exitCode);
+          process.exit(99);
+        }
       });
       process.on('uncaughtException', () => {
         process.exitCode = 97;

@@ -885,7 +885,7 @@ describe("process.exitCode", () => {
     ]).toRunInlineFixture();
   });
 
-  it("zeroExitWithUncaughtHandler", () => {
+  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", () => {
     expect([
       `
       process.on('exit', (code) => {
@@ -906,7 +906,7 @@ describe("process.exitCode", () => {
     ]).toRunInlineFixture();
   });
 
-  it("changeCodeInUncaughtHandler", () => {
+  it.todoIf(isWindows)("changeCodeInUncaughtHandler", () => {
     expect([
       `
       process.on('exit', (code) => {

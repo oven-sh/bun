@@ -8,7 +8,7 @@ namespace v8 {
 MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int signed_length)
 {
     // TODO(@190n) maybe use JSC::AtomString instead of ignoring type
-    (void)type;
+    assert(type == NewStringType::kNormal);
     size_t length = 0;
     if (signed_length < 0) {
         length = strlen(data);

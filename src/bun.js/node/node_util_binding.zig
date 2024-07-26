@@ -7,8 +7,6 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const uv = bun.windows.libuv;
 
-extern fn Bun__util__jsErrname(*JSC.JSGlobalObject, c_int) JSC.JSValue;
-
 pub fn internalErrorName(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     if (arguments.len < 1) {

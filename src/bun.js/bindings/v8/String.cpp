@@ -70,7 +70,6 @@ int String::Length() const
     WTF::String s;
     jsValue.getString(Isolate::GetCurrent()->globalObject(), s);
     return s.length();
-    // return jsValue.isString();
 }
 
 }

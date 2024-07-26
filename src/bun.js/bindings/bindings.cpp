@@ -1570,6 +1570,7 @@ JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* headers, JSC__JS
 
     return JSC::JSValue::encode(value);
 }
+
 JSC__JSValue WebCore__FetchHeaders__clone(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* arg1)
 {
     auto throwScope = DECLARE_THROW_SCOPE(arg1->vm());
@@ -2132,6 +2133,7 @@ JSC__JSPromise* JSC__JSValue__asPromise(JSC__JSValue JSValue0)
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     return JSC::jsDynamicCast<JSC::JSPromise*>(value);
 }
+
 JSC__JSValue JSC__JSValue__createInternalPromise(JSC__JSGlobalObject* globalObject)
 {
     JSC::VM& vm = globalObject->vm();
@@ -2192,6 +2194,7 @@ JSC__JSValue JSC__JSPromise__asValue(JSC__JSPromise* arg0, JSC__JSGlobalObject* 
     ASSERT_WITH_MESSAGE(value.inherits<JSC::JSPromise>(), "JSPromise::asValue() called on a non-promise object");
     return JSC::JSValue::encode(value);
 }
+
 JSC__JSPromise* JSC__JSPromise__create(JSC__JSGlobalObject* arg0)
 {
     return JSC::JSPromise::create(arg0->vm(), arg0->promiseStructure());
@@ -2232,6 +2235,7 @@ JSC__JSValue JSC__JSGlobalObject__getCachedObject(JSC__JSGlobalObject* globalObj
     JSC::JSValue result = globalObject->getIfPropertyExists(globalObject, ident);
     return JSC::JSValue::encode(result);
 }
+
 JSC__JSValue JSC__JSGlobalObject__putCachedObject(JSC__JSGlobalObject* globalObject, const ZigString* arg1, JSC__JSValue JSValue2)
 {
     JSC::VM& vm = globalObject->vm();
@@ -2473,6 +2477,7 @@ JSC__Exception* JSC__Exception__create(JSC__JSGlobalObject* arg0, JSC__JSObject*
             ? JSC::Exception::StackCaptureAction::CaptureStack
             : JSC::Exception::StackCaptureAction::DoNotCaptureStack);
 }
+
 JSC__JSValue JSC__Exception__value(JSC__Exception* arg0)
 {
     return JSC::JSValue::encode(arg0->value());
@@ -2485,17 +2490,20 @@ JSC__JSValue JSC__Exception__value(JSC__Exception* arg0)
 // JSC__PropertyNameArray__next(JSC__PropertyNameArray* arg0, size_t arg1);
 // CPP_DECL void JSC__PropertyNameArray__release(JSC__PropertyNameArray* arg0);
 size_t JSC__JSObject__getArrayLength(JSC__JSObject* arg0) { return arg0->getArrayLength(); }
+
 JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
     uint32_t arg3)
 {
     return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
+
 JSC__JSValue JSC__JSValue__getDirectIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
     uint32_t arg3)
 {
     JSC::JSObject* object = JSC::JSValue::decode(jsValue).getObject();
     return JSC::JSValue::encode(object->getDirectIndex(arg1, arg3));
 }
+
 JSC__JSValue JSC__JSObject__getDirect(JSC__JSObject* arg0, JSC__JSGlobalObject* arg1,
     const ZigString* arg2)
 {
@@ -2530,6 +2538,7 @@ bool JSC__JSString__eql(const JSC__JSString* arg0, JSC__JSGlobalObject* obj, JSC
 }
 bool JSC__JSString__is8Bit(const JSC__JSString* arg0) { return arg0->is8Bit(); };
 size_t JSC__JSString__length(const JSC__JSString* arg0) { return arg0->length(); }
+
 JSC__JSObject* JSC__JSString__toObject(JSC__JSString* arg0, JSC__JSGlobalObject* arg1)
 {
     return arg0->toObject(arg1);
@@ -2551,6 +2560,7 @@ extern "C" JSC::JSInternalPromise* JSModuleLoader__import(JSC::JSGlobalObject* g
     RETURN_IF_EXCEPTION(scope, nullptr);
     return promise;
 }
+
 JSC__JSValue JSC__JSModuleLoader__evaluate(JSC__JSGlobalObject* globalObject, const unsigned char* arg1,
     size_t arg2, const unsigned char* originUrlPtr, size_t originURLLen, const unsigned char* referrerUrlPtr, size_t referrerUrlLen,
     JSC__JSValue JSValue5, JSC__JSValue* arg6)
@@ -2625,6 +2635,7 @@ JSC__JSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigS
 
     return JSC::JSValue::encode(rangeError);
 }
+
 JSC__JSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigString* arg1,
     JSC__JSGlobalObject* globalObject)
 {
@@ -3083,6 +3094,7 @@ void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC__JSGloba
 {
     arg0->rejectAsHandled(arg1, arg2);
 }
+
 JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1)
 {
     return JSC::JSPromise::rejectedPromise(arg0, JSC::JSValue::decode(JSValue1));
@@ -3148,6 +3160,7 @@ void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* promise, JSC__J
         RETURN_IF_EXCEPTION(scope, void());
     }
 }
+
 JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* globalObject, JSC__JSValue JSValue1)
 {
     JSC::VM& vm = globalObject->vm();
@@ -3236,6 +3249,7 @@ void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* ar
 {
     arg0->rejectAsHandled(arg1, arg2);
 }
+
 JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
@@ -3248,6 +3262,7 @@ void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobal
 {
     arg0->resolve(arg1, JSC::JSValue::decode(JSValue2));
 }
+
 JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0,
     JSC__JSValue JSValue1)
 {
@@ -3493,6 +3508,7 @@ bool JSC__JSValue__isUndefinedOrNull(JSC__JSValue JSValue0)
 {
     return JSC::JSValue::decode(JSValue0).isUndefinedOrNull();
 }
+
 JSC__JSValue JSC__JSValue__jsBoolean(bool arg0)
 {
     return JSC::JSValue::encode(JSC::jsBoolean(arg0));
@@ -3501,6 +3517,7 @@ JSC__JSValue JSC__JSValue__jsDoubleNumber(double arg0)
 {
     return JSC::JSValue::encode(JSC::jsNumber(arg0));
 }
+
 JSC__JSValue JSC__JSValue__jsEmptyString(JSC__JSGlobalObject* arg0)
 {
     return JSC::JSValue::encode(JSC::jsEmptyString(arg0->vm()));
@@ -4915,6 +4932,7 @@ JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* globalObj
     JSC::ensureStillAliveHere(JSC::JSValue::decode(JSValue1));
     return JSC::JSValue::encode(promise);
 }
+
 JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue1)
 {

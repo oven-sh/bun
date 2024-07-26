@@ -45,10 +45,11 @@ for name in bun bun-profile; do
   if [ "$name" == "bun-profile" ]; then
     dir="$tag-profile"
   fi
+  run_command pwd
   run_command chmod +x "$name"
   run_command "$name" --revision
   run_command mkdir -p "$dir"
   run_command mv "$name" "$dir/$name"
   run_command zip -r "$dir.zip" "$dir"
-  source "$cwd/$(dirname "$0")/upload-artifact.sh" "$dir.zip"
+  source "$cwd/.buildkite/scripts/upload-artifact.sh" "$dir.zip"
 done

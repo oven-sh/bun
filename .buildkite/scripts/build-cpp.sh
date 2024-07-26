@@ -2,23 +2,14 @@
 
 set -eo pipefail
 source "$(dirname "$0")/env.sh"
+source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
+{ set +x; } 2>/dev/null
 
 function run_command() {
   set -x
   "$@"
   { set +x; } 2>/dev/null
 }
-
-# Some submodules are needed, otherwise the build fails
-submodules=(
-  libdeflate
-  mimalloc
-  boringssl
-)
-
-for submodule in "${submodules[@]}"; do
-  run_command git submodule update --init --recursive --progress --depth=1 --checkout "src/deps/$submodule"
-done
 
 mkdir -p build
 cd build

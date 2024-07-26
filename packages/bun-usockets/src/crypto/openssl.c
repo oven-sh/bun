@@ -227,7 +227,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 /// @param s 
 void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(us_socket_is_shut_down(0, &s->s) || !s->ssl) return;
+  if(!s->ssl && us_socket_is_shut_down(0, &s->s)) return;
   
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl) ;

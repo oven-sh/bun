@@ -9,10 +9,16 @@ function assert_target() {
     x64 | x86_64 | amd64)
       export ARCH="x86_64"
       export BUILDARCH="amd64"
+      if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
+        export CPU_TARGET="nehalem"
+      else
+        export CPU_TARGET="haswell"
+      fi
       ;;
     aarch64 | arm64)
       export ARCH="arm64"
       export BUILDARCH="arm64"
+      export CPU_TARGET="native"
       ;;
     *)
       echo "error: Unsupported architecture: $arch" 1>&2

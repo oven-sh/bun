@@ -36,7 +36,6 @@ fi
 dep() {
     local submodule="$1"
     local script="$2"
-    CACHE_KEY=
     if [ "$CACHE" == "1" ]; then
         local hash="$(echo "$SUBMODULES" | grep "$submodule" | awk '{print $1}')"
         local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
@@ -77,10 +76,11 @@ dep() {
 
     if [ "$CACHE" == "1" ]; then
         mkdir -p "$CACHE_DIR/$CACHE_KEY"
-        for lib in "${@:3}"; do
+        for lib in "${@:2}"; do
             cp "$BUN_DEPS_OUT_DIR/$lib" "$CACHE_DIR/$CACHE_KEY/$lib"
             printf "%s %s - cached\n" "$script" "$lib"
         done
+        exit 1
     fi
 
     BUILT_ANY=1

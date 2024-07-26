@@ -7,18 +7,16 @@ function assert_target() {
   local arch="${2-$(uname -m)}"
   case "$(echo "$arch" | tr '[:upper:]' '[:lower:]')" in
     x64 | x86_64 | amd64)
-      export ARCH="x86_64"
-      # export BUILDARCH="amd64"
+      export ZIG_ARCH="x86_64"
       if [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
-        export CPU_TARGET="nehalem"
+        export ZIG_CPU_TARGET="nehalem"
       else
-        export CPU_TARGET="haswell"
+        export ZIG_CPU_TARGET="haswell"
       fi
       ;;
     aarch64 | arm64)
-      export ARCH="arm64"
-      # export BUILDARCH="arm64"
-      export CPU_TARGET="native"
+      export ZIG_ARCH="aarch64"
+      export ZIG_CPU_TARGET="native"
       ;;
     *)
       echo "error: Unsupported architecture: $arch" 1>&2
@@ -66,9 +64,9 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DWEBKIT_DIR="omit" \
   -DBUN_ZIG_OBJ_DIR="$cwd/build" \
   -DZIG_LIB_DIR="$cwd/src/deps/zig/lib" \
-  -DARCH="$ARCH" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
-  -DCPU_TARGET="$CPU_TARGET" \
+  -DARCH="$ZIG_ARCH" \
+  -DCPU_TARGET="$ZIG_CPU_TARGET" \
   -DZIG_TARGET="$ZIG_TARGET" \
   -DUSE_LTO="$USE_LTO" \
   -DUSE_DEBUG_JSC="$USE_DEBUG_JSC" \

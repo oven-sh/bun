@@ -45,12 +45,16 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 
 void Object::SetInternalField(int index, Local<Data> data)
 {
-    ASSERT_NOT_REACHED();
+    auto fields = getInternalFieldsContainer(this);
+    if (fields && index >= 0 && index < fields->size()) {
+        fields->at(index) = InternalFieldObject::InternalField((*data)->toJSValue());
+    }
 }
 
 Local<Data> Object::SlowGetInternalField(int index)
 {
     ASSERT_NOT_REACHED();
+    return Local<Data>();
 }
 
 }

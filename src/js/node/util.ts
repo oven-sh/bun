@@ -2,10 +2,9 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { ERR_INVALID_ARG_TYPE, ERR_OUT_OF_RANGE } = require("internal/errors");
 
 const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
-const ERR_OUT_OF_RANGE = $newCppFunction("NodeError.cpp", "jsFunction_ERR_OUT_OF_RANGE", 3);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 

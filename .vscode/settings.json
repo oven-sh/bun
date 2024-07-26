@@ -42,8 +42,11 @@
     "editor.defaultFormatter": "ziglang.vscode-zig",
   },
 
-  // C++
+  // lldb
+  "lldb.launch.initCommands": ["command source ${workspaceFolder}/.lldbinit"],
   "lldb.verboseLogging": false,
+
+  // C++
   "cmake.configureOnOpen": false,
   "C_Cpp.errorSquiggles": "enabled",
   "[cpp]": {

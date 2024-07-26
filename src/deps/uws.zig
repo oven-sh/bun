@@ -3090,3 +3090,8 @@ pub const udp = struct {
     extern fn us_udp_packet_buffer_payload(buf: ?*PacketBuffer, index: c_int) [*]u8;
     extern fn us_udp_packet_buffer_payload_length(buf: ?*PacketBuffer, index: c_int) c_int;
 };
+
+extern fn bun_clear_loop_at_thread_exit() void;
+pub fn onThreadExit() void {
+    bun_clear_loop_at_thread_exit();
+}

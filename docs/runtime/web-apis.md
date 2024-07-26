@@ -28,7 +28,7 @@ The following Web APIs are partially or completely supported.
   [`structuredClone`](https://developer.mozilla.org/en-US/docs/Web/API/structuredClone)
   [`MessagePort`](https://developer.mozilla.org/en-US/docs/Web/API/MessagePort)
   [`MessageChannel`](https://developer.mozilla.org/en-US/docs/Web/API/MessageChannel)
-  [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel)
+  [`BroadcastChannel`](https://developer.mozilla.org/en-US/docs/Web/API/BroadcastChannel).
 
 ---
 

@@ -142,9 +142,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;
@@ -357,21 +359,21 @@ expect.extend({
       }
     }
   },
-  toRun(cmds: string[], optionalStdout?: string) {
+  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== expectedCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>

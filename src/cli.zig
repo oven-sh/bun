@@ -206,6 +206,7 @@ pub const Arguments = struct {
         clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
+        clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -649,6 +650,8 @@ pub const Arguments = struct {
             }
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
+            ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{} }
@@ -1066,7 +1069,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
-        \\  <b><blue>patch <d>\<pkg\><r>                     Prepare a package for patching
+        \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -1228,6 +1231,7 @@ pub const Command = struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
         } = .{},
+        preconnect: []const []const u8 = &[_][]const u8{},
     };
 
     var global_cli_ctx: Context = undefined;

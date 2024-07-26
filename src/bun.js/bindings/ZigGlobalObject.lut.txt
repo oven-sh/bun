@@ -11,7 +11,7 @@
   clearTimeout                    functionClearTimeout                                 Function 1
   confirm                         WebCore__confirm                                     Function 1
   dispatchEvent                   jsFunctionDispatchEvent                              Function 1
-  fetch                           Bun__fetch                                           Function 2
+  fetch                           constructBunFetchObject                              PropertyCallback
   postMessage                     jsFunctionPostMessage                                Function 1
   prompt                          WebCore__prompt                                      Function 1
   queueMicrotask                  functionQueueMicrotask                               Function 2

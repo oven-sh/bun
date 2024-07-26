@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG dac47fbd5444cbd4e3568267099ae276c547e897)
+set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -72,7 +72,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -116,7 +116,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32)
+if(WIN32 OR APPLE)
     set(LLVM_VERSION 18)
 else()
     set(LLVM_VERSION 16)
@@ -154,11 +154,12 @@ macro(BUN_FIND_LLVM)
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
+
     find_program(
         STRIP
         NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+        DOC "Path to strip binary"
     )
     find_program(
         DSYMUTIL
@@ -309,6 +310,7 @@ endif()
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
+option(USE_CUSTOM_LIBDEFLATE "Use Bun's recommended version of libdeflate" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
@@ -329,6 +331,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(APPLE AND USE_LTO)
+    set(USE_LTO OFF)
+    message(WARNING "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
+endif()
 
 if(WIN32 AND USE_LTO)
     set(CMAKE_LINKER_TYPE LLD)
@@ -1081,7 +1088,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -1170,7 +1177,7 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" -Xclang -fno-c++-static-destructors)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
@@ -1179,6 +1186,9 @@ else()
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
@@ -1348,6 +1358,19 @@ if(USE_CUSTOM_LIBARCHIVE)
 else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
+endif()
+
+if(USE_CUSTOM_LIBDEFLATE)
+    include_directories(${BUN_DEPS_DIR}/libdeflate)
+
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/deflate.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdeflate.a")
+    endif()
+else()
+    find_package(LibDeflate REQUIRED)
+    target_link_libraries(${bun} PRIVATE LibDeflate::LibDeflate)
 endif()
 
 if(USE_CUSTOM_MIMALLOC)

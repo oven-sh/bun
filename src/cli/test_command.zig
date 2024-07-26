@@ -598,7 +598,7 @@ const Scanner = struct {
         };
 
         // always ignore node_modules.
-        if (strings.contains(slice, "/" ++ "node_modules" ++ "/")) {
+        if (strings.contains(slice, "/node_modules/") or strings.contains(slice, "\\node_modules\\")) {
             return false;
         }
 
@@ -1105,7 +1105,7 @@ pub const TestCommand = struct {
         if (reporter.summary.fail > 0 or (coverage.enabled and coverage.fractions.failing and coverage.fail_on_low_coverage)) {
             Global.exit(1);
         } else if (reporter.jest.unhandled_errors_between_tests > 0) {
-            Global.exitWide(@intCast(reporter.jest.unhandled_errors_between_tests));
+            Global.exit(reporter.jest.unhandled_errors_between_tests);
         }
     }
 

@@ -172,7 +172,7 @@ exports[`most types: Float32Array 1`] = `Float32Array []`;
 
 exports[`most types: Float64Array 1`] = `Float64Array []`;
 
-exports[`most types: Function 1`] = `[Function]`;
+exports[`most types: Function 1`] = `[Function: test1000000]`;
 
 exports[`most types: Int8Array 1`] = `Int8Array []`;
 

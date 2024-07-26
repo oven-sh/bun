@@ -169,6 +169,7 @@ typedef struct ZigStackTrace {
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
+    JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {

@@ -223,6 +223,13 @@ pub const ResolvedSource = extern struct {
     pub const Tag = @import("ResolvedSourceTag").ResolvedSourceTag;
 };
 
+pub const SourceProvider = opaque {
+    extern fn JSC__SourceProvider__deref(*SourceProvider) void;
+    pub fn deref(provider: *SourceProvider) void {
+        JSC__SourceProvider__deref(provider);
+    }
+};
+
 const Mimalloc = @import("../../allocators/mimalloc.zig");
 
 export fn ZigString__free(raw: [*]const u8, len: usize, allocator_: ?*anyopaque) void {
@@ -425,6 +432,10 @@ pub const ZigStackTrace = extern struct {
 
     frames_ptr: [*]ZigStackFrame,
     frames_len: u8,
+
+    /// Non-null if `source_lines_*` points into data owned by a JSC::SourceProvider.
+    /// If so, then .deref must be called on it to release the memory.
+    referenced_source_provider: ?*JSC.SourceProvider = null,
 
     pub fn toAPI(
         this: *const ZigStackTrace,
@@ -786,6 +797,10 @@ pub const ZigException = extern struct {
         for (this.stack.frames_ptr[0..this.stack.frames_len]) |*frame| {
             frame.deinit();
         }
+
+        if (this.stack.referenced_source_provider) |source| {
+            source.deref();
+        }
     }
 
     pub const shim = Shimmer("Zig", "Exception", @This());
@@ -828,7 +843,9 @@ pub const ZigException = extern struct {
         }
 
         pub fn deinit(this: *Holder, vm: *JSC.VirtualMachine) void {
-            this.zigException().deinit();
+            if (this.loaded) {
+                this.zig_exception.deinit();
+            }
             if (this.need_to_clear_parser_arena_on_deinit) {
                 vm.module_loader.resetArena(vm);
             }

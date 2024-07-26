@@ -225,13 +225,10 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 
 /// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
 /// @param s 
-void us_internal_fast_shutdown(struct us_internal_ssl_socket_t *s) {
-  if (SSL_in_init(s->ssl) || SSL_get_quiet_shutdown(s->ssl)) {
-    // when SSL_in_init or quiet shutdown in BoringSSL, we call shutdown
-    // directly
-    us_socket_shutdown(0, &s->s);
-    return;
-  }
+void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s) {
+  // if we are already shutdown or in the middle of a handshake we dont need to do anything
+  if(us_socket_is_shut_down(0, &s->s) || !s->ssl) return;
+  
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl) ;
   int sent_shutdown = state & SSL_SENT_SHUTDOWN;
@@ -280,7 +277,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   }
 
   // if we are in the middle of a close_notify we need to finish it
-  us_internal_fast_shutdown(s);
+  us_internal_handle_shutdown(s);
 
   return (struct us_internal_ssl_socket_t *)us_socket_close(
       0, (struct us_socket_t *)s, code, reason);
@@ -379,9 +376,10 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
-  SSL_free(s->ssl);
-
-  return context->on_close(s, code, reason);
+  struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
+  SSL_free(s->ssl); // free SSL after on_close
+  s->ssl = NULL; // set to NULL
+  return ret;
 }
 
 struct us_internal_ssl_socket_t *
@@ -448,7 +446,8 @@ restart:
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           // Remotely-Initiated Shutdown
           // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-          
+          us_internal_handle_shutdown(s);
+
           if (read) {
             context =
                 (struct us_internal_ssl_socket_context_t *)us_socket_context(

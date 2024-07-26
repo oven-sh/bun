@@ -9,8 +9,16 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
-# libdeflate.h is needed otherwise the build fails
-run_command git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
+# Some submodules are needed, otherwise the build fails
+submodules=(
+  libdeflate
+  mimalloc
+  boringssl
+)
+
+for submodule in "${submodules[@]}"; do
+  run_command git submodule update --init --recursive --progress --depth=1 --checkout "src/deps/$submodule"
+done
 
 mkdir -p build
 cd build

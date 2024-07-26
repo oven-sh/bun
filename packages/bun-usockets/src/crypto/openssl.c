@@ -206,6 +206,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
     SSL_set_connect_state(s->ssl);
   } else {
     SSL_set_accept_state(s->ssl);
+    // we do not allow renegotiation on the server side (should be the default for BoringSSL, but we set to make openssl compatible)
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
   }
 
   struct us_internal_ssl_socket_t *result =

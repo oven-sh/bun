@@ -3683,7 +3683,7 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        context: if (Environment.isPosix) *uws.SocketContext else u0,
+        context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
 
         pub usingnamespace bun.New(@This());
@@ -3692,10 +3692,7 @@ pub const VirtualMachine = struct {
             return &this.data;
         }
 
-        pub fn handleIPCMessage(
-            this: *IPCInstance,
-            message: IPC.DecodedIPCMessage,
-        ) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
@@ -3730,9 +3727,7 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        this.ipc = .{
-            .waiting = .{ .info = info, .mode = mode },
-        };
+        this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3770,7 +3765,7 @@ pub const VirtualMachine = struct {
             .windows => instance: {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
-                    .context = 0,
+                    .context = {},
                     .data = .{ .mode = opts.mode },
                 });
 

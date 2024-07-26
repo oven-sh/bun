@@ -2871,6 +2871,13 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
+        if (bundler.options.inline_entrypoint_import_meta_main) {
+            // TODO: how can i determine if this file is ANY of the
+            // specified entrypoints. the following will only work for
+            // --compile or other single file entrypoints
+            opts.import_meta_main_value = source.index.get() == 1;
+        }
+
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
         opts.features.unwrap_commonjs_packages = bundler.options.unwrap_commonjs_packages;

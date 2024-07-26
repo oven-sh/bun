@@ -3099,6 +3099,9 @@ pub const Parser = struct {
 
         transform_only: bool = false,
 
+        /// Used for inlining the state of import.meta.main during visiting
+        import_meta_main_value: ?bool = null,
+
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
 
@@ -7527,8 +7530,20 @@ fn NewParser_(
                         }
                     },
                     .bin_loose_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                p.ignoreUsage(p.module_ref);
+                                return .{
+                                    .loc = v.loc,
+                                    .data = if (p.options.import_meta_main_value) |known|
+                                        .{ .e_boolean = .{ .value = known } }
+                                    else
+                                        .{ .e_import_meta_main = .{} },
+                                };
+                            }
+
                             return p.newExpr(
                                 E.Boolean{ .value = equality.equal },
                                 v.loc,
@@ -7550,8 +7565,20 @@ fn NewParser_(
 
                     },
                     .bin_strict_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return .{
+                                    .loc = v.loc,
+                                    .data = if (p.options.import_meta_main_value) |known|
+                                        .{ .e_boolean = .{ .value = known } }
+                                    else
+                                        .{ .e_import_meta_main = .{} },
+                                };
+                            }
+
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
                         }
 
@@ -7560,8 +7587,20 @@ fn NewParser_(
                         // TODO: warn about typeof string
                     },
                     .bin_loose_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return .{
+                                    .loc = v.loc,
+                                    .data = if (p.options.import_meta_main_value) |known|
+                                        .{ .e_boolean = .{ .value = !known } }
+                                    else
+                                        .{ .e_import_meta_main = .{ .inverted = true } },
+                                };
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                         // const after_op_loc = locAfterOp(e_.);
@@ -7574,8 +7613,20 @@ fn NewParser_(
                         }
                     },
                     .bin_strict_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return .{
+                                    .loc = v.loc,
+                                    .data = if (p.options.import_meta_main_value) |known|
+                                        .{ .e_boolean = .{ .value = !known } }
+                                    else
+                                        .{ .e_import_meta_main = .{ .inverted = true } },
+                                };
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                     },
@@ -16894,24 +16945,6 @@ fn NewParser_(
                     }
                 },
 
-                .inline_identifier => |id| {
-                    const ref = p.macro.imports.get(id) orelse {
-                        p.panic("Internal error: missing identifier from macro: {d}", .{id});
-                    };
-
-                    if (!p.is_control_flow_dead) {
-                        p.recordUsage(ref);
-                    }
-
-                    return p.newExpr(
-                        E.ImportIdentifier{
-                            .was_originally_identifier = false,
-                            .ref = ref,
-                        },
-                        expr.loc,
-                    );
-                },
-
                 .e_binary => |e_| {
 
                     // The handling of binary expressions is convoluted because we're using
@@ -17182,6 +17215,11 @@ fn NewParser_(
                                 );
                             }
 
+                            if (e_.value.data == .e_require_call_target) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.newExpr(E.String{ .data = "function" }, expr.loc);
+                            }
+
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
                                 return p.newExpr(E.String{ .data = typeof }, expr.loc);
                             }
@@ -17206,6 +17244,9 @@ fn NewParser_(
                                     if (p.options.features.minify_syntax) {
                                         if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
                                             return exp;
+                                        }
+                                        if (e_.value.data == .e_import_meta_main) {
+                                            e_.value.data.e_import_meta_main.inverted = !e_.value.data.e_import_meta_main.inverted;
                                         }
                                     }
                                 },
@@ -17879,6 +17920,15 @@ fn NewParser_(
 
                 p.ensureRequireSymbol();
                 p.recordUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+            }
+        }
+
+        fn ignoreUsageOfRuntimeRequire(p: *P) void {
+            // target bun does not have __require
+            if (!p.options.features.use_import_meta_require) {
+                bun.assert(p.options.features.allow_runtime);
+                bun.assert(p.runtime_imports.__require != null);
+                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
             }
         }
 
@@ -18960,6 +19010,21 @@ fn NewParser_(
                             },
                             target.loc,
                         );
+                    }
+
+                    if (strings.eqlComptime(name, "main")) {
+                        return .{
+                            .loc = target.loc,
+                            .data = if (p.options.import_meta_main_value) |known|
+                                .{ .e_boolean = .{ .value = known } }
+                            else
+                                .{ .e_import_meta_main = .{} },
+                        };
+                    }
+                },
+                .e_require_call_target => {
+                    if (strings.eqlComptime(name, "main")) {
+                        return .{ .loc = loc, .data = .e_require_main };
                     }
                 },
                 .e_import_identifier => |id| {
@@ -23898,12 +23963,10 @@ fn NewParser_(
                     p.require_ref,
 
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
-                .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
-                .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
-                .uses_require_ref = if (p.runtime_imports.__require != null)
-                    (p.symbols.items[p.runtime_imports.__require.?.ref.innerIndex()].use_count_estimate > 0)
-                else
-                    false,
+                .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
+                .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
+                .uses_require_ref = p.runtime_imports.__require != null and
+                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .commonjs_export_names = p.commonjs_export_names.keys(),

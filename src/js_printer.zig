@@ -532,6 +532,7 @@ pub const Options = struct {
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
+    commonjs_module_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
@@ -2329,6 +2330,27 @@ fn NewPrinter(
                         p.printSymbol(p.options.import_meta_ref);
                     }
                 },
+                .e_import_meta_main => |data| {
+                    p.addSourceMapping(expr.loc);
+                    if (p.options.module_type == .esm) {
+                        // Most of the time, leave it in there
+                        if (data.inverted) {
+                            p.print("!");
+                        } else {
+                            p.printSpaceBeforeIdentifier();
+                        }
+                        p.print("import.meta.main");
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(p.options.require_ref orelse Ref.None);
+                        if (data.inverted) {
+                            p.printWhitespacer(ws(".main != "));
+                        } else {
+                            p.printWhitespacer(ws(".main == "));
+                        }
+                        p.printSymbol(p.options.commonjs_module_ref);
+                    }
+                },
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2455,6 +2477,19 @@ fn NewPrinter(
                     p.print(")");
                     if (wrap) {
                         p.print(")");
+                    }
+                },
+                .e_require_main => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.main");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".main");
+                    } else {
+                        p.print("require.main");
                     }
                 },
                 .e_require_call_target => {
@@ -3221,7 +3256,11 @@ fn NewPrinter(
                         p.print(" */");
                     }
                 },
-                else => {
+
+                .e_jsx_element,
+                .e_private_identifier,
+                .e_template_part,
+                => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },

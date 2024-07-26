@@ -2543,6 +2543,42 @@ extern "C" napi_status napi_create_symbol(napi_env env, napi_value description,
     return napi_ok;
 }
 
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/src/js_native_api_v8.cc#L2904-L2930
+extern "C" napi_status napi_new_instance(napi_env env, napi_value constructor,
+    size_t argc, const napi_value* argv,
+    napi_value* result)
+{
+    NAPI_PREMABLE
+    if (UNLIKELY(!result)) {
+        return napi_invalid_arg;
+    }
+
+    Zig::GlobalObject* globalObject = toJS(env);
+    JSC::VM& vm = globalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    JSC::JSValue constructorValue = toJS(constructor);
+    if (UNLIKELY(!constructorValue.isObject())) {
+        return napi_function_expected;
+    }
+
+    JSC::JSObject* constructorObject = constructorValue.getObject();
+    JSC::CallData constructData = getConstructData(constructorObject);
+    if (UNLIKELY(constructData.type == JSC::CallData::Type::None)) {
+        return napi_function_expected;
+    }
+
+    JSC::MarkedArgumentBuffer args;
+    args.fill(vm, argc, [&](auto* slot) {
+        memcpy(slot, argv, sizeof(JSC::JSValue) * argc);
+    });
+
+    auto value = construct(globalObject, constructorObject, constructData, args);
+    RETURN_IF_EXCEPTION(throwScope, napi_pending_exception);
+    *result = toNapi(value);
+
+    RELEASE_AND_RETURN(throwScope, napi_ok);
+}
 extern "C" napi_status napi_call_function(napi_env env, napi_value recv_napi,
     napi_value func_napi, size_t argc,
     const napi_value* argv,

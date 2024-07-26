@@ -385,5 +385,9 @@ describe("util", () => {
         expect(util.getSystemErrorName(code)).toBe(name);
       });
     }
+
+    it("getSystemErrorName(-4096) should be unknown", () => {
+      expect(util.getSystemErrorName(-4096)).toBe("Unknown system error -4096");
+    });
   });
 });

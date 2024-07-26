@@ -47,6 +47,8 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
     child_singleton.seq +%= 1;
 
     // similar code as Bun__Process__send
+    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    if (Environment.isDebug) log("child: {}", .{message.toFmt(&formatter)});
 
     const ipc_instance = vm.getIPCInstance().?;
     const process_queueNextTick1 = Bun__Process__queueNextTick1;
@@ -156,6 +158,8 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     ipc_data.iimh.seq +%= 1;
 
     // similar code as bun.JSC.Subprocess.doSend
+    var formatter = JSC.ConsoleObject.Formatter{ .globalThis = globalThis };
+    if (Environment.isDebug) log("primary: {}", .{message.toFmt(&formatter)});
 
     _ = handle;
     const success = ipc_data.serializeAndSendInternal(globalThis, message);

@@ -404,10 +404,6 @@ pub const SavedSourceMap = struct {
 };
 const uws = bun.uws;
 
-pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    return JSC.VirtualMachine.get().global;
-}
-
 pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
@@ -841,6 +837,23 @@ pub const VirtualMachine = struct {
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
+        pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
+        pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
+            if (vm) |vm_instance| {
+                vm_instance.global = global;
+            }
+
+            cached_global_object = global;
+        }
+
+        pub export fn Bun__getDefaultGlobalObject() ?*JSGlobalObject {
+            return cached_global_object orelse {
+                if (vm) |vm_instance| {
+                    cached_global_object = vm_instance.global;
+                }
+                return null;
+            };
+        }
     };
 
     pub inline fn get() *VirtualMachine {

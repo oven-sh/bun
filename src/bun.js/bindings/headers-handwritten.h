@@ -272,7 +272,10 @@ extern "C" void Bun__WTFStringImpl__ref(WTF::StringImpl* impl);
 extern "C" bool BunString__fromJS(JSC::JSGlobalObject*, JSC::EncodedJSValue, BunString*);
 extern "C" JSC::EncodedJSValue BunString__toJS(JSC::JSGlobalObject*, const BunString*);
 extern "C" void BunString__toWTFString(BunString*);
-
+extern "C" void Bun__panic(const char* message, size_t length);
+#ifndef PANIC
+#define PANIC(message) Bun__panic(message, sizeof(message) - 1)
+#endif
 namespace Bun {
 JSC::JSValue toJS(JSC::JSGlobalObject*, BunString);
 BunString toString(JSC::JSGlobalObject* globalObject, JSC::JSValue value);

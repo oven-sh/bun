@@ -109,7 +109,7 @@ static bool processIsExiting = false;
 extern "C" uint8_t Bun__getExitCode(void*);
 extern "C" uint8_t Bun__setExitCode(void*, uint8_t);
 extern "C" void* Bun__getVM();
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 extern "C" bool Bun__GlobalObject__hasIPC(JSGlobalObject*);
 extern "C" bool Bun__ensureProcessIPCInitialized(JSGlobalObject*);
 extern "C" const char* Bun__githubURL;
@@ -501,7 +501,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
 
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
-        zigGlobal = Bun__getDefaultGlobal();
+        zigGlobal = Bun__getDefaultGlobalObject();
     }
     auto process = jsCast<Process*>(zigGlobal->processObject());
     process->m_isExitCodeObservable = true;
@@ -522,7 +522,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_setUncaughtExceptionCaptureCallback,
     }
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
-        zigGlobal = Bun__getDefaultGlobal();
+        zigGlobal = Bun__getDefaultGlobalObject();
     }
     jsCast<Process*>(zigGlobal->processObject())->setUncaughtExceptionCaptureCallback(arg0);
     return JSC::JSValue::encode(jsUndefined());
@@ -533,7 +533,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_hasUncaughtExceptionCaptureCallback,
 {
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
-        zigGlobal = Bun__getDefaultGlobal();
+        zigGlobal = Bun__getDefaultGlobalObject();
     }
     JSValue cb = jsCast<Process*>(zigGlobal->processObject())->getUncaughtExceptionCaptureCallback();
     if (cb.isEmpty() || !cb.isCell()) {
@@ -1852,13 +1852,13 @@ static JSValue constructStdioWriteStream(JSC::JSGlobalObject* globalObject, int 
 
 static JSValue constructStdout(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     return constructStdioWriteStream(globalObject, 1);
 }
 
 static JSValue constructStderr(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     return constructStdioWriteStream(globalObject, 2);
 }
 
@@ -1868,7 +1868,7 @@ static JSValue constructStderr(VM& vm, JSObject* processObject)
 
 static JSValue constructStdin(VM& vm, JSObject* processObject)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     auto scope = DECLARE_THROW_SCOPE(vm);
     JSC::JSFunction* getStdioWriteStream = JSC::JSFunction::create(vm, processObjectInternalsGetStdinStreamCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
@@ -2157,7 +2157,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyExit, (JSGlobalObject * globalObj
 
     auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!zigGlobal)) {
-        zigGlobal = Bun__getDefaultGlobal();
+        zigGlobal = Bun__getDefaultGlobalObject();
     }
     Bun__Process__exit(zigGlobal, exitCode);
     return JSC::JSValue::encode(jsUndefined());
@@ -2244,7 +2244,7 @@ static Process* getProcessObject(JSC::JSGlobalObject* lexicalGlobalObject, JSVal
         Zig::GlobalObject* zigGlobalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
         if (UNLIKELY(!zigGlobalObject)) {
-            zigGlobalObject = Bun__getDefaultGlobal();
+            zigGlobalObject = Bun__getDefaultGlobalObject();
         }
 
         return jsCast<Process*>(zigGlobalObject->processObject());
@@ -2490,7 +2490,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionOpenStdin, (JSGlobalObject * globalObje
     auto& vm = globalObject->vm();
     Zig::GlobalObject* global = jsDynamicCast<Zig::GlobalObject*>(globalObject);
     if (UNLIKELY(!global)) {
-        global = Bun__getDefaultGlobal();
+        global = Bun__getDefaultGlobalObject();
     }
     auto throwScope = DECLARE_THROW_SCOPE(vm);
 

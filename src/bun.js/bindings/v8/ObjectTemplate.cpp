@@ -37,7 +37,7 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 
 void ObjectTemplate::SetInternalFieldCount(int value)
 {
-    ASSERT_NOT_REACHED();
+    internalFieldCount = value;
 }
 
 Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSValue prototype)

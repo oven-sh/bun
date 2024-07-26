@@ -1,5 +1,6 @@
 #pragma once
 
+#include "JavaScriptCore/SubspaceAccess.h"
 #include "v8.h"
 #include "v8/Context.h"
 #include "v8/Local.h"
@@ -20,7 +21,22 @@ public:
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
+    template<typename, JSC::SubspaceAccess mode>
+    static JSC::GCClient::IsoSubspace* subspaceFor(JSC::VM& vm)
+    {
+        if constexpr (mode == JSC::SubspaceAccess::Concurrently)
+            return nullptr;
+        return WebCore::subspaceForImpl<ObjectTemplate, WebCore::UseCustomHeapCellType::No>(
+            vm,
+            [](auto& spaces) { return spaces.m_clientSubspaceForObjectTemplate.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForObjectTemplate = std::forward<decltype(space)>(space); },
+            [](auto& spaces) { return spaces.m_subspaceForObjectTemplate.get(); },
+            [](auto& spaces, auto&& space) { spaces.m_subspaceForObjectTemplate = std::forward<decltype(space)>(space); });
+    }
+
 private:
+    int internalFieldCount = 0;
+
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
     ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)

@@ -7,6 +7,7 @@ const Output = bun.Output;
 const ZigString = JSC.ZigString;
 const createTypeError = JSC.JSGlobalObject.createTypeErrorInstanceWithCode;
 const createError = JSC.JSGlobalObject.createErrorInstanceWithCode;
+const createRangeError = JSC.JSGlobalObject.createRangeErrorInstanceWithCode;
 
 pub const ERR_SOCKET_BAD_TYPE = createSimpleError(createTypeError, .ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6");
 pub const ERR_IPC_CHANNEL_CLOSED = createSimpleError(createError, .ERR_IPC_CHANNEL_CLOSED, "Channel closed");
@@ -33,7 +34,7 @@ fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCo
 pub fn ERR_INVALID_ARG_TYPE(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(3);
     if (arguments.len < 3) {
-        globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 2, arguments.len);
+        globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 3, arguments.len);
         return .zero;
     }
     return globalThis.ERR_INVALID_ARG_TYPE(arguments.ptr[0], arguments.ptr[1], arguments.ptr[2]);
@@ -58,4 +59,20 @@ pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSVa
         }
     };
     return JSC.JSFunction.create(global, "ERR_MISSING_ARGS", S.cb, 0, .{});
+}
+
+pub fn ERR_OUT_OF_RANGE(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    const arguments = callframe.arguments(3);
+    if (arguments.len < 3) {
+        globalThis.throwNotEnoughArguments("ERR_INVALID_ARG_TYPE", 3, arguments.len);
+        return .zero;
+    }
+    const args = arguments.ptr;
+    const str = args[0].toString(globalThis).getZigString(globalThis).slice();
+    if (globalThis.hasException()) return .zero;
+    const range = args[1].toString(globalThis).getZigString(globalThis).slice();
+    if (globalThis.hasException()) return .zero;
+    const input = args[2].toString(globalThis).getZigString(globalThis).slice();
+    if (globalThis.hasException()) return .zero;
+    return createRangeError(globalThis, .ERR_OUT_OF_RANGE, "The value of \"{s}\" is out of range. It must be {s}. Received {s}", .{ str, range, input });
 }

@@ -384,6 +384,43 @@ expect.extend({
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
   },
+  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
+  },
 });
 
 export function ospath(path: string) {
@@ -1031,6 +1068,7 @@ interface BunHarnessTestMatchers {
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
   toRun(optionalStdout?: string): void;
+  toThrowWithCode(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {

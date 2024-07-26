@@ -24,6 +24,7 @@
 import { expect, describe, it } from "bun:test";
 import util from "util";
 import assert from "assert";
+import "harness";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
@@ -356,5 +357,33 @@ describe("util", () => {
     );
 
     assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+  });
+
+  describe("getSystemErrorName", () => {
+    for (const item of ["test", {}, []]) {
+      it(`throws when passing: ${item}`, () => {
+        expect(() => util.getSystemErrorName(item)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    }
+
+    for (const item of [0, 1, Infinity, -Infinity, NaN]) {
+      it(`throws when passing: ${item}`, () => {
+        expect(() => util.getSystemErrorName(item)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+      });
+    }
+
+    const proc = Bun.spawnSync({
+      cmd: [
+        "node",
+        "-e",
+        "console.log(JSON.stringify([...require('node:util').getSystemErrorMap().entries()].map((v) => [v[0], v[1][0]])));",
+      ],
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    for (const [code, name] of JSON.parse(proc.stdout.toString())) {
+      it(`getSystemErrorName(${code}) should be ${name}`, () => {
+        expect(util.getSystemErrorName(code)).toBe(name);
+      });
+    }
   });
 });

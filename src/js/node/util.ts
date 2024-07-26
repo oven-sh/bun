@@ -4,7 +4,8 @@ const types = require("node:util/types");
 const utl = require("internal/util/inspect");
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
-const internalErrorName = $zig("node_util_binding.zig", "internalErrorName");
+const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const ERR_OUT_OF_RANGE = $newZigFunction("node_error_binding.zig", "ERR_OUT_OF_RANGE", 3);
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 
@@ -287,8 +288,7 @@ function styleText(format, text) {
 
 function getSystemErrorName(err: any) {
   if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
-  if (err >= 0 || !NumberIsSafeInteger(err))
-    throw new RangeError(`The value of "err" is out of range. It must be a negative integer. Received ${err}`);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
   return internalErrorName(err);
 }
 

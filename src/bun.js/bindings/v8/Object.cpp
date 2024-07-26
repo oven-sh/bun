@@ -22,7 +22,6 @@ Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> v
 {
     JSGlobalObject* globalObject = *context;
     JSObject* object = toJSValue().getObject();
-    assert(object);
     JSValue k = (*key)->toJSValue();
     JSValue v = (*value)->toJSValue();
     auto& vm = globalObject->vm();

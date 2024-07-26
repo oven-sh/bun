@@ -1,0 +1,2 @@
+command script import src/deps/zig/tools/lldb_pretty_printers.py
+command script import src/bun.js/WebKit/Tools/lldb/lldb_webkit.py

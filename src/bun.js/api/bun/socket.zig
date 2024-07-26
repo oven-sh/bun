@@ -258,7 +258,7 @@ const Handlers = struct {
             return false;
         }
 
-        const result = onError.callWithThis(globalObject, thisValue, err);
+        const result = onError.call(globalObject, thisValue, err);
         if (result.isAnyError()) {
             _ = vm.uncaughtException(globalObject, result, false);
         }
@@ -874,11 +874,22 @@ pub const Listener = struct {
         return JSValue.jsUndefined();
     }
 
+    pub fn dispose(this: *Listener, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        this.doStop(true);
+        return .undefined;
+    }
+
     pub fn stop(this: *Listener, _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const arguments = callframe.arguments(1);
         log("close", .{});
 
-        var listener = this.listener orelse return JSValue.jsUndefined();
+        this.doStop(if (arguments.len > 0 and arguments.ptr[0].isBoolean()) arguments.ptr[0].toBoolean() else false);
+
+        return .undefined;
+    }
+
+    fn doStop(this: *Listener, force_close: bool) void {
+        var listener = this.listener orelse return;
         this.listener = null;
 
         this.poll_ref.unref(this.handlers.vm);
@@ -891,8 +902,7 @@ pub const Listener = struct {
             this.strong_self.clear();
             this.strong_data.clear();
         } else {
-            const forceClose = arguments.len > 0 and arguments.ptr[0].isBoolean() and arguments.ptr[0].toBoolean() and this.socket_context != null;
-            if (forceClose) {
+            if (force_close) {
                 // close all connections in this context and wait for them to close
                 this.socket_context.?.close(this.ssl);
             } else {
@@ -900,8 +910,6 @@ pub const Listener = struct {
                 listener.close(this.ssl);
             }
         }
-
-        return JSValue.jsUndefined();
     }
 
     pub fn finalize(this: *Listener) callconv(.C) void {
@@ -1275,7 +1283,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
 
@@ -1305,7 +1313,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
 
@@ -1355,7 +1363,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const this_value = this.getThisValue(globalObject);
             const err_value = err.toErrorInstance(globalObject);
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 err_value,
             });
@@ -1472,7 +1480,7 @@ fn NewSocket(comptime ssl: bool) type {
             const vm = handlers.vm;
             vm.eventLoop().enter();
             defer vm.eventLoop().exit();
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
 
@@ -1524,7 +1532,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
             });
 
@@ -1570,7 +1578,7 @@ fn NewSocket(comptime ssl: bool) type {
             // open callback only have 1 parameters and its the socket
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
-                result = callback.callWithThis(globalObject, this_value, &[_]JSValue{this_value});
+                result = callback.call(globalObject, this_value, &[_]JSValue{this_value});
 
                 // only call onOpen once for clients
                 if (!handlers.is_server) {
@@ -1597,7 +1605,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                     authorization_error = fallback.toErrorInstance(globalObject);
                 }
-                result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+                result = callback.call(globalObject, this_value, &[_]JSValue{
                     this_value,
                     JSValue.jsBoolean(authorized),
                     authorization_error,
@@ -1639,7 +1647,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 JSValue.jsNumber(@as(i32, err)),
             });
@@ -1671,7 +1679,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer scope.exit(ssl, this.wrapped);
 
             // const encoding = handlers.encoding;
-            const result = callback.callWithThis(globalObject, this_value, &[_]JSValue{
+            const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 output_value,
             });

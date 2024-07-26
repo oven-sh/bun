@@ -97,8 +97,10 @@ pub const Zone = opaque {
 
     /// Create a single-item pointer with initialized data.
     pub inline fn create(zone: *Zone, comptime T: type, data: T) *T {
+        const align_of_t: usize = @alignOf(T);
+        const log2_align_of_t = @ctz(align_of_t);
         const ptr: *T = @alignCast(@ptrCast(
-            rawAlloc(zone, @sizeOf(T), @alignOf(T), @returnAddress()) orelse bun.outOfMemory(),
+            rawAlloc(zone, @sizeOf(T), log2_align_of_t, @returnAddress()) orelse bun.outOfMemory(),
         ));
         ptr.* = data;
         return ptr;

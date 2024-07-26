@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
+set(WEBKIT_TAG c737b24765cddf5294c425b2e23dd381f1e0b33e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -310,6 +310,7 @@ endif()
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
+option(USE_CUSTOM_LIBDEFLATE "Use Bun's recommended version of libdeflate" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
@@ -999,8 +1000,20 @@ add_compile_definitions(
 )
 
 if(NOT ASSERT_ENABLED)
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
+    endif()
+
     add_compile_definitions("NDEBUG=1")
 else()
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=1")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_compile_definitions("_GLIBCXX_ASSERTIONS=1")
+    endif()
+
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
@@ -1356,6 +1369,19 @@ if(USE_CUSTOM_LIBARCHIVE)
 else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
+endif()
+
+if(USE_CUSTOM_LIBDEFLATE)
+    include_directories(${BUN_DEPS_DIR}/libdeflate)
+
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/deflate.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdeflate.a")
+    endif()
+else()
+    find_package(LibDeflate REQUIRED)
+    target_link_libraries(${bun} PRIVATE LibDeflate::LibDeflate)
 endif()
 
 if(USE_CUSTOM_MIMALLOC)

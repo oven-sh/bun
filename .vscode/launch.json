@@ -152,7 +152,6 @@
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_DEBUG_EventLoop": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
-        "BUN_DEBUG_ALL": "1",
       },
       "console": "internalConsole",
     },

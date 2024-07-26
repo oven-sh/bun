@@ -1,4 +1,3 @@
-#include "JSFFIFunction.h"
 #include "root.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
@@ -8,6 +7,7 @@
 #include "JavaScriptCore/JSPromiseConstructor.h"
 #include "JavaScriptCore/DeleteAllCodeEffort.h"
 #include "JavaScriptCore/BooleanObject.h"
+#include "JSFFIFunction.h"
 #include "headers.h"
 
 #include "BunClientData.h"
@@ -3056,6 +3056,7 @@ void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObj
     JSC__JSValue JSValue2)
 {
     JSValue value = JSC::JSValue::decode(JSValue2);
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "Promise.reject cannot be called with a empty JSValue");
     auto& vm = globalObject->vm();
     ASSERT_WITH_MESSAGE(arg0->inherits<JSC::JSPromise>(), "Argument is not a promise");
     ASSERT_WITH_MESSAGE(arg0->status(vm) == JSC::JSPromise::Status::Pending, "Promise is already resolved or rejected");
@@ -3993,13 +3994,24 @@ bool JSC__JSValue__stringIncludes(JSC__JSValue value, JSC__JSGlobalObject* globa
 static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stackFrame, ZigStackFrame* frame)
 {
 
-    frame->source_url = Bun::toStringRef(stackFrame->sourceURL(vm));
-
     if (stackFrame->isWasmFrame()) {
         frame->code_type = ZigStackFrameCodeWasm;
+
+        auto name = stackFrame->functionName(vm);
+        if (!name.isEmpty()) {
+            frame->function_name = Bun::toStringRef(name);
+        }
+
+        auto sourceURL = stackFrame->sourceURL(vm);
+        if (sourceURL != "[wasm code]"_s) {
+            // [wasm code] is a useless source URL, so we don't bother to set it.
+            // It is the default value JSC returns.
+            frame->source_url = Bun::toStringRef(sourceURL);
+        }
         return;
     }
 
+    frame->source_url = Bun::toStringRef(stackFrame->sourceURL(vm));
     auto m_codeBlock = stackFrame->codeBlock();
     if (m_codeBlock) {
         switch (m_codeBlock->codeType()) {
@@ -4041,7 +4053,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position)
+    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider)
 {
     auto code = stackFrame->codeBlock();
     if (!code)
@@ -4055,15 +4067,20 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     WTF::StringView sourceString = provider->source();
     if (UNLIKELY(sourceString.isNull()))
         return;
+
     if (!stackFrame->hasBytecodeIndex()) {
-        auto lineColumn = stackFrame->computeLineAndColumn();
-        position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
-        position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        if (stackFrame->hasLineAndColumnInfo()) {
+            auto lineColumn = stackFrame->computeLineAndColumn();
+            position->line_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.line).zeroBasedInt();
+            position->column_zero_based = OrdinalNumber::fromOneBasedInt(lineColumn.column).zeroBasedInt();
+        }
+
         position->byte_position = -1;
         return;
     }
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
+    *position = location;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
         // Search for the beginning of the line
@@ -4081,8 +4098,14 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
         const unsigned char* bytes = sourceString.span8().data();
 
-        // Most of the time, when you look at a stack trace, you want a couple lines above
-        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toStringWithoutCopying());
+        // Most of the time, when you look at a stack trace, you want a couple lines above.
+
+        // It is key to not clone this data because source code strings are large.
+        // Usage of toStringView (non-owning) is safe as we ref the provider.
+        provider->ref();
+        ASSERT(*referenced_source_provider == nullptr);
+        *referenced_source_provider = provider;
+        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -4108,9 +4131,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringRef(
-                    sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)
-                        .toStringWithoutCopying());
+                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
@@ -4121,17 +4142,15 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
             }
         }
     }
-
-    *position = location;
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
-    ZigStackFrame* frame, bool is_top)
+    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider)
 {
     populateStackFrameMetadata(vm, stackFrame, frame);
     populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
         is_top ? trace->source_lines_numbers : nullptr,
-        is_top ? trace->source_lines_to_collect : 0, &frame->position);
+        is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider);
 }
 
 class V8StackTraceIterator {
@@ -4310,14 +4329,14 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
 
     while (frame_i < frame_count && stack_frame_i < total_frame_count) {
         // Skip native frames
-        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->codeBlock() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
+        while (stack_frame_i < total_frame_count && !(&frames.at(stack_frame_i))->hasLineAndColumnInfo() && !(&frames.at(stack_frame_i))->isWasmFrame()) {
             stack_frame_i++;
         }
         if (stack_frame_i >= total_frame_count)
             break;
 
         ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0);
+        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider);
         stack_frame_i++;
         frame_i++;
     }
@@ -4739,10 +4758,9 @@ JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
     return JSC::JSValue::encode({});
 }
 
-void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    ZigException* exception)
+void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->code = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -4752,17 +4770,17 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, arg1, error, &jscException->stack(), value);
+            fromErrorInstance(exception, global, error, &jscException->stack(), value);
             return;
         }
     }
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        fromErrorInstance(exception, arg1, error, nullptr, value);
+        fromErrorInstance(exception, global, error, nullptr, value);
         return;
     }
 
-    exceptionFromString(exception, value, arg1);
+    exceptionFromString(exception, value, global);
 }
 
 void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
@@ -5050,8 +5068,8 @@ static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlob
             }
         }
     }
-
-    auto* clientData = WebCore::clientData(vm);
+    auto* propertyNames = vm.propertyNames;
+    auto& builtinNames = WebCore::builtinNames(vm);
     WTF::Vector<Identifier, 6> visitedProperties;
 
 restart:
@@ -5064,12 +5082,12 @@ restart:
             }
             auto* prop = entry.key();
 
-            if (prop == vm.propertyNames->constructor
-                || prop == vm.propertyNames->underscoreProto
-                || prop == vm.propertyNames->toStringTagSymbol)
+            if (prop == propertyNames->constructor
+                || prop == propertyNames->underscoreProto
+                || prop == propertyNames->toStringTagSymbol)
                 return true;
 
-            if (clientData->builtinNames().bunNativePtrPrivateName() == prop)
+            if (builtinNames.bunNativePtrPrivateName() == prop)
                 return true;
 
             if (visitedProperties.contains(Identifier::fromUid(vm, prop))) {
@@ -5148,11 +5166,11 @@ restart:
                     continue;
 
                 // ignore constructor
-                if (property == vm.propertyNames->constructor || clientData->builtinNames().bunNativePtrPrivateName() == property)
+                if (property == propertyNames->constructor || builtinNames.bunNativePtrPrivateName() == property)
                     continue;
 
                 if constexpr (nonIndexedOnly) {
-                    if (property == vm.propertyNames->length) {
+                    if (property == propertyNames->length) {
                         continue;
                     }
                 }
@@ -5162,8 +5180,8 @@ restart:
                     continue;
 
                 if ((slot.attributes() & PropertyAttribute::DontEnum) != 0) {
-                    if (property == vm.propertyNames->underscoreProto
-                        || property == vm.propertyNames->toStringTagSymbol)
+                    if (property == propertyNames->underscoreProto
+                        || property == propertyNames->toStringTagSymbol)
                         continue;
                 }
 
@@ -5759,4 +5777,9 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* get
 CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uint32_t id)
 {
     return JSValue::encode(jsCast<ProxyObject*>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
+}
+
+CPP_DECL void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
+{
+    provider->deref();
 }

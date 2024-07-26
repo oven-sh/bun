@@ -548,12 +548,12 @@ pub const JSBundler = struct {
     ) JSC.JSValue {
         if (arguments.len == 0 or !arguments[0].isObject()) {
             globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var plugins: ?*Plugin = null;
         const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         return bun.BundleV2.generateFromJavaScript(
@@ -563,7 +563,7 @@ pub const JSBundler = struct {
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
         ) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 

@@ -181,3 +181,17 @@ pub const breaking_changes_1_2 = false;
 pub const nonblocking_stdout_and_stderr_on_posix = false;
 
 pub const postgresql = env.is_canary or env.isDebug;
+
+// TODO: fix Windows-only test failures in fetch-preconnect.test.ts
+pub const is_fetch_preconnect_supported = env.isPosix;
+
+pub const libdeflate_supported = env.isNative;
+
+// Mostly exists as a way to turn it off later, if necessary.
+pub fn isLibdeflateEnabled() bool {
+    if (!libdeflate_supported) {
+        return false;
+    }
+
+    return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
+}

@@ -95,13 +95,14 @@ private:
             // This is both a performance thing, and also to prevent freeing some things which are not meant to be freed
             // such as uv_tty_t 
             if(loop && cleanMe && !bun_is_exiting()) {
+                cleanMe = false;
                 loop->free();
             }
         }
         Loop *loop = nullptr;
         bool cleanMe = false;
     };
-    
+
     static LoopCleaner &getLazyLoop() {
         static thread_local LoopCleaner lazyLoop;
         return lazyLoop;
@@ -124,6 +125,12 @@ public:
         }
 
         return getLazyLoop().loop;
+    }
+
+    static void clearLoopAtThreadExit() {
+        if (getLazyLoop().cleanMe) {
+            getLazyLoop().loop->free();
+        }
     }
 
     /* Freeing the default loop should be done once */

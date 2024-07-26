@@ -1,8 +1,9 @@
 
+
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
-
+#include "JavaScriptCore/ArgList.h"
 #include "JavaScriptCore/JSImmutableButterfly.h"
 #include "wtf/text/Base64.h"
 #include "JavaScriptCore/BuiltinNames.h"
@@ -165,7 +166,6 @@
 using namespace Bun;
 
 BUN_DECLARE_HOST_FUNCTION(Bun__NodeUtil__jsParseArgs);
-BUN_DECLARE_HOST_FUNCTION(Bun__fetch);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2__getUnpackedSettings);
 BUN_DECLARE_HOST_FUNCTION(BUN__HTTP2_getPackedSettings);
 
@@ -245,7 +245,8 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 }
 
 extern "C" void* Bun__getVM();
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
+extern "C" void Bun__setDefaultGlobalObject(Zig::GlobalObject* globalObject);
 
 // Error.captureStackTrace may cause computeErrorInfo to be called twice
 // Rather than figure out the plumbing in JSC, we just skip the next call
@@ -561,7 +562,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     }
 
     if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobal();
+        globalObject = Bun__getDefaultGlobalObject();
     }
 
     return Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
@@ -640,7 +641,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, Ordi
         // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
         if (!globalObject) {
             // node:vm will use a different JSGlobalObject
-            globalObject = Bun__getDefaultGlobal();
+            globalObject = Bun__getDefaultGlobalObject();
 
             auto* errorConstructor = lexicalGlobalObject->m_errorStructure.constructor(lexicalGlobalObject);
             if (JSValue prepareStackTrace = errorConstructor->getIfPropertyExists(lexicalGlobalObject, Identifier::fromString(vm, "prepareStackTrace"_s))) {
@@ -676,7 +677,7 @@ static String computeErrorInfoWrapper(JSC::VM& vm, Vector<StackFrame>& stackTrac
 
 static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     if (auto nextTickQueueValue = globalObject->m_nextTickQueue.get()) {
         auto* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueueValue);
         globalObject->resetOnEachMicrotaskTick();
@@ -686,7 +687,7 @@ static void checkIfNextTickWasCalledDuringMicrotask(JSC::VM& vm)
 
 static void cleanupAsyncHooksData(JSC::VM& vm)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     globalObject->m_asyncContextData.get()->putInternalField(vm, 0, jsUndefined());
     globalObject->asyncHooksNeedsCleanup = false;
     if (!globalObject->m_nextTickQueue) {
@@ -722,55 +723,51 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     WebCore::JSVMClientData::create(&vm, Bun__getVM());
 
-    Zig::GlobalObject* globalObject;
-
-    if (UNLIKELY(executionContextId > -1)) {
-        globalObject = Zig::GlobalObject::create(
-            vm,
-            Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()),
-            static_cast<ScriptExecutionContextIdentifier>(executionContextId));
-
-        if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
-            auto& options = worker->options();
-
-            // ensure remote termination works.
-            vm.ensureTerminationException();
-            vm.forbidExecutionOnTermination();
-
-            if (options.bun.env) {
-                auto map = WTFMove(options.bun.env);
-                auto size = map->size();
-                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
-                for (auto k : *map) {
-                    env->putDirect(vm, JSC::Identifier::fromString(vm, WTFMove(k.key)), JSC::jsString(vm, WTFMove(k.value)));
-                }
-                map->clear();
-                globalObject->m_processEnvObject.set(vm, globalObject, env);
+    const auto createGlobalObject = [&]() -> Zig::GlobalObject* {
+        if (UNLIKELY(executionContextId > -1)) {
+            auto* structure = Zig::GlobalObject::createStructure(vm);
+            if (UNLIKELY(!structure)) {
+                return nullptr;
             }
-        }
-    } else if (evalMode) {
-        globalObject = Zig::EvalGlobalObject::create(
-            vm,
-            Zig::EvalGlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())),
-                JSC::jsNull()),
-            &Zig::EvalGlobalObject::s_globalObjectMethodTable);
+            return Zig::GlobalObject::create(
+                vm,
+                structure,
+                static_cast<ScriptExecutionContextIdentifier>(executionContextId));
+        } else if (evalMode) {
+            auto* structure = Zig::EvalGlobalObject::createStructure(vm);
+            if (UNLIKELY(!structure)) {
+                return nullptr;
+            }
+            return Zig::EvalGlobalObject::create(
+                vm,
+                structure,
+                &Zig::EvalGlobalObject::s_globalObjectMethodTable);
 
-    } else {
-        globalObject = Zig::GlobalObject::create(
-            vm,
-            Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())),
-                JSC::jsNull()));
+        } else {
+            auto* structure = Zig::GlobalObject::createStructure(vm);
+            if (UNLIKELY(!structure)) {
+                return nullptr;
+            }
+            return Zig::GlobalObject::create(
+                vm,
+                structure);
+        }
+    };
+
+    auto* globalObject = createGlobalObject();
+    if (UNLIKELY(!globalObject)) {
+        PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
     }
 
     globalObject->setConsole(console_client);
     globalObject->isThreadLocalDefaultGlobalObject = true;
     globalObject->setStackTraceLimit(DEFAULT_ERROR_STACK_TRACE_LIMIT); // Node.js defaults to 10
-    vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
-
+    Bun__setDefaultGlobalObject(globalObject);
     JSC::gcProtect(globalObject);
 
+    vm.setOnComputeErrorInfo(computeErrorInfoWrapper);
     vm.setOnEachMicrotaskTick([](JSC::VM& vm) -> void {
-        auto* globalObject = Bun__getDefaultGlobal();
+        auto* globalObject = Bun__getDefaultGlobalObject();
         if (auto nextTickQueue = globalObject->m_nextTickQueue.get()) {
             globalObject->resetOnEachMicrotaskTick();
             Bun::JSNextTickQueue* queue = jsCast<Bun::JSNextTickQueue*>(nextTickQueue);
@@ -778,6 +775,43 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
             return;
         }
     });
+
+    if (executionContextId > -1) {
+        const auto initializeWorker = [&](WebCore::Worker& worker) -> void {
+            auto& options = worker.options();
+
+            if (options.bun.env) {
+                auto map = WTFMove(options.bun.env);
+                auto size = map->size();
+
+                // In theory, a GC could happen before we finish putting all the properties on the object.
+                // So we use a MarkedArgumentBuffer to ensure that the strings are not collected and we immediately put them on the object.
+                MarkedArgumentBuffer strings;
+                strings.ensureCapacity(map->size());
+                for (const auto& value : map->values()) {
+                    strings.append(jsString(vm, value));
+                }
+
+                auto env = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), size >= JSFinalObject::maxInlineCapacity ? JSFinalObject::maxInlineCapacity : size);
+                size_t i = 0;
+                for (auto k : *map) {
+                    // They can have environment variables with numbers as keys.
+                    // So we must use putDirectMayBeIndex to handle that.
+                    env->putDirectMayBeIndex(globalObject, JSC::Identifier::fromString(vm, WTFMove(k.key)), strings.at(i++));
+                }
+                map->clear();
+                globalObject->m_processEnvObject.set(vm, globalObject, env);
+            }
+
+            // ensure remote termination works.
+            vm.ensureTerminationException();
+            vm.forbidExecutionOnTermination();
+        };
+
+        if (auto* worker = static_cast<WebCore::Worker*>(worker_ptr)) {
+            initializeWorker(*worker);
+        }
+    }
 
     return globalObject;
 }
@@ -912,7 +946,7 @@ using namespace WebCore;
 static JSGlobalObject* deriveShadowRealmGlobalObject(JSGlobalObject* globalObject)
 {
     auto& vm = globalObject->vm();
-    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm, JSC::JSGlobalObject::create(vm, JSC::JSGlobalObject::createStructure(vm, JSC::jsNull())), JSC::jsNull()));
+    Zig::GlobalObject* shadow = Zig::GlobalObject::create(vm, Zig::GlobalObject::createStructure(vm));
     shadow->setConsole(shadow);
 
     return shadow;
@@ -2436,7 +2470,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDefaultErrorPrepareStackTrace, (JSGlobalObjec
 
     if (!globalObject) {
         // node:vm will use a different JSGlobalObject
-        globalObject = Bun__getDefaultGlobal();
+        globalObject = Bun__getDefaultGlobalObject();
     }
 
     auto errorObject = jsDynamicCast<JSC::ErrorInstance*>(callFrame->argument(0));

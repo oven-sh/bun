@@ -609,10 +609,10 @@ pub const ZigString = extern struct {
 
     pub fn static(comptime slice_: []const u8) *const ZigString {
         const Holder = struct {
-            pub const value = ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
+            pub const value = &ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
         };
 
-        return &Holder.value;
+        return Holder.value;
     }
 
     pub const GithubActionFormatter = struct {
@@ -3824,10 +3824,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isInstanceOf", .{ this, global, constructor });
     }
 
-    pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
-    }
-
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
@@ -3847,7 +3843,7 @@ pub const JSValue = enum(JSValueReprInt) {
         );
     }
 
-    pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    pub fn call(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
@@ -5234,7 +5230,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn toFmt(
         this: JSValue,
-        global: *JSGlobalObject,
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
@@ -5246,7 +5241,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
-            .global = global,
         };
     }
 

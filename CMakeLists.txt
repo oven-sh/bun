@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.20")
-set(WEBKIT_TAG b49be549da59347762aa83f849a65158d2a0d724)
+set(Bun_VERSION "1.1.21")
+set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -22,6 +22,7 @@ set(REPORTED_NODEJS_VERSION "22.3.0")
 # If we do not set this, it will crash at startup on the first memory allocation.
 if(NOT WIN32 AND NOT APPLE)
     set(CMAKE_CXX_EXTENSIONS ON)
+    set(CMAKE_POSITION_INDEPENDENT_CODE FALSE)
 endif()
 
 # --- Build Type ---
@@ -71,7 +72,7 @@ endif()
 
 # --- MacOS SDK ---
 if(APPLE AND DEFINED ENV{CI})
-    set(CMAKE_OSX_DEPLOYMENT_TARGET "12.0")
+    set(CMAKE_OSX_DEPLOYMENT_TARGET "13.0")
 endif()
 
 if(APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
@@ -115,7 +116,7 @@ endif()
 # we do some extra work afterwards to double-check, and we will rerun BUN_FIND_LLVM if the compiler did not match.
 #
 # If the user passes -DLLVM_PREFIX, most of this logic is skipped, but we still warn if invalid.
-if(WIN32)
+if(WIN32 OR APPLE)
     set(LLVM_VERSION 18)
 else()
     set(LLVM_VERSION 16)
@@ -153,11 +154,12 @@ macro(BUN_FIND_LLVM)
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
         DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
     )
+
     find_program(
         STRIP
         NAMES strip
         PATHS ENV PATH ${PLATFORM_LLVM_SEARCH_PATHS}
-        DOC "Path to LLVM ${LLVM_VERSION}'s llvm-strip binary"
+        DOC "Path to strip binary"
     )
     find_program(
         DSYMUTIL
@@ -308,6 +310,7 @@ endif()
 # -- Build Flags --
 option(USE_STATIC_SQLITE "Statically link SQLite?" ${DEFAULT_ON_UNLESS_APPLE})
 option(USE_CUSTOM_ZLIB "Use Bun's recommended version of zlib" ON)
+option(USE_CUSTOM_LIBDEFLATE "Use Bun's recommended version of libdeflate" ON)
 option(USE_CUSTOM_BORINGSSL "Use Bun's recommended version of BoringSSL" ON)
 option(USE_CUSTOM_LIBARCHIVE "Use Bun's recommended version of libarchive" ON)
 option(USE_CUSTOM_MIMALLOC "Use Bun's recommended version of Mimalloc" ON)
@@ -328,6 +331,11 @@ option(USE_UNIFIED_SOURCES "Use unified sources to speed up the build" OFF)
 option(USE_STATIC_LIBATOMIC "Statically link libatomic, requires the presence of libatomic.a" ${DEFAULT_USE_STATIC_LIBATOMIC})
 
 option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
+
+if(APPLE AND USE_LTO)
+    set(USE_LTO OFF)
+    message(WARNING "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
+endif()
 
 if(WIN32 AND USE_LTO)
     set(CMAKE_LINKER_TYPE LLD)
@@ -645,16 +653,6 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
 
-# -- Brotli --
-set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
-file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
-    "${BROTLI_SRC}/common/*.c"
-    "${BROTLI_SRC}/enc/*.c"
-    "${BROTLI_SRC}/dec/*.c"
-)
-list(APPEND BUN_RAW_SOURCES ${BROTLI_FILES})
-include_directories("${BUN_DEPS_DIR}/brotli/include")
-
 # -- uSockets --
 set(USOCKETS_SRC "${CMAKE_CURRENT_SOURCE_DIR}/packages/bun-usockets/src")
 file(GLOB USOCKETS_FILES ${CONFIGURE_DEPENDS}
@@ -902,6 +900,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${ZIG_COMPILER}" "build" "obj"
         "--zig-lib-dir" "${ZIG_LIB_DIR}"
         "--prefix" "${BUN_ZIG_OBJ_DIR}"
+        "--verbose"
         "-Dgenerated-code=${BUN_WORKDIR}/codegen"
         "-freference-trace=10"
         "-Dversion=${Bun_VERSION}"
@@ -1088,7 +1087,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
 
     if(NOT WIN32)
         if(USE_LTO)
-            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm")
+            list(APPEND LTO_FLAG "-flto=full" "-emit-llvm" "-fwhole-program-vtables" "-fforce-emit-vtables")
         endif()
 
         # Leave -Werror=unused off in release builds so we avoid errors from being used in ASSERT
@@ -1177,21 +1176,25 @@ if(WIN32)
     # set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded$<$<CONFIG:Debug>:Debug>")
     set_property(TARGET ${bun} PROPERTY MSVC_RUNTIME_LIBRARY "MultiThreaded")
 
-    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-")
+    target_compile_options(${bun} PUBLIC "/EHsc" "/GR-" -Xclang -fno-c++-static-destructors)
 
     target_link_options(${bun} PUBLIC "/STACK:0x1200000,0x100000" "/DEF:${BUN_SRC}/symbols.def" "/errorlimit:0")
 else()
     target_compile_options(${bun} PUBLIC
-        -fPIC
         -mtune=${CPU_TARGET}
         -fconstexpr-steps=2542484
         -fconstexpr-depth=54
         -fno-exceptions
+        -fno-asynchronous-unwind-tables
+        -fno-unwind-tables
+        -fno-c++-static-destructors
         -fvisibility=hidden
         -fvisibility-inlines-hidden
         -fno-rtti
         -fno-omit-frame-pointer
         -mno-omit-leaf-frame-pointer
+        -fno-pic
+        -fno-pie
         -faddrsig
     )
 endif()
@@ -1208,10 +1211,11 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        "-fuse-ld=lld"
-        "-static-libstdc++"
-        "-static-libgcc"
-        "-Wl,-z,now"
+        -fuse-ld=lld
+        -fno-pic
+        -static-libstdc++
+        -static-libgcc
+        "-Wl,-no-pie"
         "-Wl,-icf=safe"
         "-Wl,--as-needed"
         "-Wl,--gc-sections"
@@ -1241,6 +1245,8 @@ if(UNIX AND NOT APPLE)
         "-rdynamic"
         "-Wl,--dynamic-list=${BUN_SRC}/symbols.dyn"
         "-Wl,--version-script=${BUN_SRC}/linker.lds"
+        -Wl,-z,lazy
+        -Wl,-z,norelro
     )
 
     target_link_libraries(${bun} PRIVATE "c")
@@ -1274,11 +1280,12 @@ endif()
 
 # --- Stripped Binary "bun"
 if(CMAKE_BUILD_TYPE STREQUAL "Release" AND NOT WIN32 AND NOT ASSERT_ENABLED)
-    if(CI AND APPLE)
+    # if(CI AND APPLE)
+    if(APPLE)
         add_custom_command(
             TARGET ${bun}
             POST_BUILD
-            COMMAND ${DSYMUTIL} -z -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
+            COMMAND ${DSYMUTIL} -o ${BUN_WORKDIR}/${bun}.dSYM ${BUN_WORKDIR}/${bun}
             COMMENT "Generating .dSYM"
         )
     endif()
@@ -1350,6 +1357,19 @@ if(USE_CUSTOM_LIBARCHIVE)
 else()
     find_package(LibArchive REQUIRED)
     target_link_libraries(${bun} PRIVATE LibArchive::LibArchive)
+endif()
+
+if(USE_CUSTOM_LIBDEFLATE)
+    include_directories(${BUN_DEPS_DIR}/libdeflate)
+
+    if(WIN32)
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/deflate.lib")
+    else()
+        target_link_libraries(${bun} PRIVATE "${BUN_DEPS_OUT_DIR}/libdeflate.a")
+    endif()
+else()
+    find_package(LibDeflate REQUIRED)
+    target_link_libraries(${bun} PRIVATE LibDeflate::LibDeflate)
 endif()
 
 if(USE_CUSTOM_MIMALLOC)
@@ -1462,6 +1482,24 @@ else()
     message(STATUS "Using dynamicly linked sqlite3")
     target_compile_definitions(${bun} PRIVATE "LAZY_LOAD_SQLITE=1")
 endif()
+
+# -- Brotli --
+set(BROTLI_SRC "${CMAKE_CURRENT_SOURCE_DIR}/src/deps/brotli")
+file(GLOB BROTLI_FILES ${CONFIGURE_DEPENDS}
+    "${BROTLI_SRC}/common/*.c"
+    "${BROTLI_SRC}/enc/*.c"
+    "${BROTLI_SRC}/dec/*.c"
+)
+add_library(brotli STATIC ${BROTLI_FILES})
+target_include_directories(brotli PRIVATE "${BROTLI_SRC}/include")
+target_compile_definitions(brotli PRIVATE "BROTLI_STATIC")
+
+if(WIN32)
+    target_compile_options(brotli PRIVATE /MT /U_DLL)
+endif()
+
+target_link_libraries(${bun} PRIVATE brotli)
+include_directories("${BUN_DEPS_DIR}/brotli/include")
 
 if(USE_CUSTOM_LSHPACK)
     include_directories(${BUN_DEPS_DIR}/ls-hpack)

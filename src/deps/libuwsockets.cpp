@@ -1632,4 +1632,9 @@ extern "C"
       return strlen(*dest);
     }
   }
+
+  // we need to manually call this at thread exit
+  extern "C" void bun_clear_loop_at_thread_exit() {
+      uWS::Loop::clearLoopAtThreadExit();
+  }
 }

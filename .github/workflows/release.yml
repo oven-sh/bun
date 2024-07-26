@@ -63,7 +63,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.0.21"
+          bun-version: "1.1.20"
       - name: Install Dependencies
         run: bun install
       - name: Sign Release
@@ -88,7 +88,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.0.21"
+          bun-version: "1.1.20"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -117,7 +117,7 @@ jobs:
         if: ${{ env.BUN_VERSION != 'canary' }}
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.0.21"
+          bun-version: "1.1.20"
       - name: Setup Bun
         if: ${{ env.BUN_VERSION == 'canary' }}
         uses: ./.github/actions/setup-bun
@@ -259,7 +259,7 @@ jobs:
       - name: Setup Bun
         uses: ./.github/actions/setup-bun
         with:
-          bun-version: "1.0.21"
+          bun-version: "1.1.20"
       - name: Install Dependencies
         run: bun install
       - name: Release
@@ -270,6 +270,24 @@ jobs:
           AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY}}
           AWS_ENDPOINT: ${{ secrets.AWS_ENDPOINT }}
           AWS_BUCKET: bun
+
+  notify-sentry:
+    name: Notify Sentry
+    runs-on: ubuntu-latest
+    needs: s3
+    steps:
+      - name: Notify Sentry
+        uses: getsentry/action-release@v1.7.0
+        env:
+          SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
+          SENTRY_ORG: ${{ secrets.SENTRY_ORG }}
+          SENTRY_PROJECT: ${{ secrets.SENTRY_PROJECT }}
+        with:
+          ignore_missing: true
+          ignore_empty: true
+          version: ${{ env.BUN_VERSION }}
+          environment: production
+
   bump:
     name: "Bump version"
     runs-on: ubuntu-latest

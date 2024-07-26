@@ -269,6 +269,26 @@ pub const BlobOrStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn protect(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.protect();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.deinitAndUnprotect();
+            },
+            .blob => |*blob| {
+                blob.deinit();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
@@ -313,6 +333,15 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {},
+        }
+    }
+
+    pub fn protect(this: *const StringOrBuffer) void {
+        switch (this.*) {
+            .buffer => |buf| {
+                buf.buffer.value.protect();
+            },
+            else => {},
         }
     }
 
@@ -1390,8 +1419,8 @@ pub fn StatType(comptime Big: bool) type {
 
         // Stats stores these as i32, but BigIntStats stores all of these as i64
         // On windows, these two need to be u64 as the numbers are often very large.
-        dev: if (Environment.isWindows) u64 else Int,
-        ino: if (Environment.isWindows) u64 else Int,
+        dev: u64,
+        ino: u64,
         mode: Int,
         nlink: Int,
         uid: Int,
@@ -1441,10 +1470,16 @@ pub fn StatType(comptime Big: bool) type {
             return struct {
                 pub fn callback(this: *This, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                     const value = @field(this, @tagName(field));
-                    if (comptime (Big and @typeInfo(@TypeOf(value)) == .Int)) {
-                        return JSC.JSValue.fromInt64NoTruncate(globalObject, @intCast(value));
+                    const Type = @TypeOf(value);
+                    if (comptime Big and @typeInfo(Type) == .Int) {
+                        if (Type == u64) {
+                            return JSC.JSValue.fromUInt64NoTruncate(globalObject, value);
+                        }
+
+                        return JSC.JSValue.fromInt64NoTruncate(globalObject, value);
                     }
-                    return globalObject.toJS(value, .temporary);
+
+                    return JSC.JSValue.jsNumber(value);
                 }
             }.callback;
         }
@@ -1565,8 +1600,8 @@ pub fn StatType(comptime Big: bool) type {
             const cTime = stat_.ctime();
 
             return .{
-                .dev = if (Environment.isWindows) stat_.dev else @truncate(@as(i64, @intCast(stat_.dev))),
-                .ino = if (Environment.isWindows) stat_.ino else @truncate(@as(i64, @intCast(stat_.ino))),
+                .dev = @intCast(@max(stat_.dev, 0)),
+                .ino = @intCast(@max(stat_.ino, 0)),
                 .mode = @truncate(@as(i64, @intCast(stat_.mode))),
                 .nlink = @truncate(@as(i64, @intCast(stat_.nlink))),
                 .uid = @truncate(@as(i64, @intCast(stat_.uid))),
@@ -2080,8 +2115,9 @@ pub const Process = struct {
             return;
         }
 
+        vm.exit_handler.exit_code = code;
         vm.onExit();
-        bun.Global.exit(code);
+        vm.globalExit();
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;
@@ -2096,6 +2132,7 @@ pub const Process = struct {
     pub export const Bun__versions_tinycc: [*:0]const u8 = bun.Global.versions.tinycc;
     pub export const Bun__versions_lolhtml: [*:0]const u8 = bun.Global.versions.lolhtml;
     pub export const Bun__versions_c_ares: [*:0]const u8 = bun.Global.versions.c_ares;
+    pub export const Bun__versions_libdeflate: [*:0]const u8 = bun.Global.versions.libdeflate;
     pub export const Bun__versions_usockets: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__version_sha: [*:0]const u8 = bun.Environment.git_sha;
     pub export const Bun__versions_lshpack: [*:0]const u8 = bun.Global.versions.lshpack;

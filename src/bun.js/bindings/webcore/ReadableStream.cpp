@@ -240,4 +240,15 @@ bool ReadableStream::isDisturbed() const
     return readableStream()->disturbed();
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->argument(0));
+    readableStream->setTransferred();
+    readableStream->setDisturbed(true);
+    return JSValue::encode(jsUndefined());
+}
+
 }

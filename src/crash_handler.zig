@@ -51,7 +51,12 @@ var panic_mutex = std.Thread.Mutex{};
 threadlocal var panic_stage: usize = 0;
 
 /// This can be set by various parts of the codebase to indicate a broader
-/// action being taken, for example "Crashed while parsing /path/to/file.js"
+/// action being taken. It is printed when a crash happens, which can help
+/// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
+///
+/// Some of these are enabled in release builds, which may encourage users to
+/// attach the affected files to crash report. Others, which may have low crash
+/// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
@@ -102,11 +107,54 @@ pub const Action = union(enum) {
     visit: []const u8,
     print: []const u8,
 
+    /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
+    bundle_generate_chunk: if (bun.Environment.isDebug) struct {
+        context: *const anyopaque, // unfortunate dependency loop workaround
+        chunk: *const bun.bundle_v2.Chunk,
+        part_range: *const bun.bundle_v2.PartRange,
+
+        pub fn linkerContext(data: *const @This()) *const bun.bundle_v2.LinkerContext {
+            return @ptrCast(@alignCast(data.context));
+        }
+    } else void,
+
+    resolver: if (bun.Environment.isDebug) struct {
+        source_dir: []const u8,
+        import_path: []const u8,
+        kind: bun.ImportKind,
+    } else void,
+
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
             .print => |path| try writer.print("printing {s}", .{path}),
+            .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
+                try writer.print(
+                    \\generating bundler chunk
+                    \\  chunk entry point: {s}
+                    \\  source: {s}
+                    \\  part range: {d}..{d}
+                ,
+                    .{
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.chunk.entry_point.source_index]
+                            .path.text,
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.part_range.source_index.get()]
+                            .path.text,
+                        data.part_range.part_index_begin,
+                        data.part_range.part_index_end,
+                    },
+                );
+            },
+            .resolver => |res| if (bun.Environment.isDebug) {
+                try writer.print("resolving {s} from {s} ({s})", .{
+                    res.import_path,
+                    res.source_dir,
+                    res.kind.label(),
+                });
+            },
         }
     }
 };
@@ -175,11 +223,10 @@ pub fn crashHandler(
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
-                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
                     }
-                    writer.writeAll("multiple threads are crashing") catch std.posix.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -234,6 +281,8 @@ pub fn crashHandler(
                 };
 
                 if (debug_trace) {
+                    has_printed_message = true;
+
                     dumpStackTrace(trace.*);
 
                     trace_str_buf.writer().print("{}", .{TraceString{

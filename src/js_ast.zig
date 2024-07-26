@@ -776,7 +776,7 @@ pub const G = struct {
                                 switch (val.data) {
                                     .e_arrow, .e_function => {},
                                     else => {
-                                        if (!val.canBeConstValue()) {
+                                        if (!val.canBeMoved()) {
                                             return false;
                                         }
                                     },
@@ -2774,10 +2774,10 @@ pub const E = struct {
 
     pub const Import = struct {
         expr: ExprNodeIndex,
+        options: ExprNodeIndex = Expr.empty,
         import_record_index: u32,
-        // This will be dynamic at some point.
-        type_attribute: TypeAttribute = .none,
 
+        /// TODO:
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
         /// esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
@@ -2785,30 +2785,43 @@ pub const E = struct {
         /// because esbuild is not Webpack. But we do preserve them since doing so is
         /// harmless, easy to maintain, and useful to people. See the Webpack docs for
         /// more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        /// TODO:
-        leading_interior_comments: []G.Comment = &([_]G.Comment{}),
+        // leading_interior_comments: []G.Comment = &([_]G.Comment{}),
 
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub const TypeAttribute = enum {
-            none,
-            json,
-            toml,
-            text,
-            file,
+        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+            const obj = import.options.data.as(.e_object) orelse
+                return null;
+            const with = obj.get("with") orelse obj.get("assert") orelse
+                return null;
+            const with_obj = with.data.as(.e_object) orelse
+                return null;
+            const str = (with_obj.get("type") orelse
+                return null).data.as(.e_string) orelse
+                return null;
 
-            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
-                return switch (this) {
-                    .none => .none,
-                    .json => .with_type_json,
-                    .toml => .with_type_toml,
-                    .text => .with_type_text,
-                    .file => .with_type_file,
+            if (str.eqlComptime("json")) {
+                return .with_type_json;
+            } else if (str.eqlComptime("toml")) {
+                return .with_type_toml;
+            } else if (str.eqlComptime("text")) {
+                return .with_type_text;
+            } else if (str.eqlComptime("file")) {
+                return .with_type_file;
+            } else if (str.eqlComptime("sqlite")) {
+                const embed = brk: {
+                    const embed = with_obj.get("embed") orelse break :brk false;
+                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
+                    break :brk embed_str.eqlComptime("true");
                 };
+
+                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
             }
-        };
+
+            return null;
+        }
     };
 };
 
@@ -3016,6 +3029,10 @@ pub const Stmt = struct {
             S.With => Stmt.allocateData(allocator, "s_with", S.With, origData, loc),
             else => @compileError("Invalid type in Stmt.init"),
         };
+    }
+
+    pub fn allocateExpr(allocator: std.mem.Allocator, expr: Expr) Stmt {
+        return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
     pub const Tag = enum(u6) {
@@ -3244,8 +3261,13 @@ pub const Expr = struct {
             else => true,
         };
     }
+
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
+    }
+
+    pub fn canBeMoved(expr: Expr) bool {
+        return expr.data.canBeMoved();
     }
 
     pub fn unwrapInlined(expr: Expr) Expr {
@@ -5461,9 +5483,8 @@ pub const Expr = struct {
                 .e_import => |el| {
                     const item = bun.create(allocator, E.Import, .{
                         .expr = try el.expr.deepClone(allocator),
+                        .options = try el.options.deepClone(allocator),
                         .import_record_index = el.import_record_index,
-                        .type_attribute = el.type_attribute,
-                        .leading_interior_comments = el.leading_interior_comments,
                     });
                     return .{ .e_import = item };
                 },
@@ -5495,12 +5516,53 @@ pub const Expr = struct {
             };
         }
 
+        /// "const values" here refers to expressions that can participate in constant
+        /// inlining, as they have no side effects on instantiation, and there would be
+        /// no observable difference if duplicated. This is a subset of canBeMoved()
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                .e_inlined_enum,
+                => true,
                 .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
+                else => false,
+            };
+        }
+
+        /// Expressions that can be moved are those that do not have side
+        /// effects on their own. This is used to determine what can be moved
+        /// outside of a module wrapper (__esm/__commonJS).
+        pub fn canBeMoved(data: Expr.Data) bool {
+            return switch (data) {
+                .e_class => |class| class.canBeMoved(),
+
+                .e_arrow,
+                .e_function,
+
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                // .e_reg_exp,
+                .e_big_int,
+                .e_string,
+                .e_inlined_enum,
+                .e_import_meta,
+                .e_utf8_string,
+                => true,
+
+                .e_template => |template| template.parts.len == 0,
+
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+
+                // TODO: experiment with allowing some e_binary, e_unary, e_if as movable
+
                 else => false,
             };
         }
@@ -6045,11 +6107,7 @@ pub const S = struct {
 
         pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
-                .expr => |e| switch (e.data) {
-                    .e_class => |class| class.canBeMoved(),
-                    .e_arrow, .e_function => true,
-                    else => e.canBeConstValue(),
-                },
+                .expr => |e| e.canBeMoved(),
                 .stmt => |s| switch (s.data) {
                     .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,

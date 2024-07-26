@@ -1,4 +1,6 @@
 #include "JSFFIFunction.h"
+#include "ZigSourceProvider.h"
+#include "headers-handwritten.h"
 #include "root.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
@@ -4053,7 +4055,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position)
+    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider)
 {
     auto code = stackFrame->codeBlock();
     if (!code)
@@ -4067,6 +4069,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     WTF::StringView sourceString = provider->source();
     if (UNLIKELY(sourceString.isNull()))
         return;
+
     if (!stackFrame->hasBytecodeIndex()) {
         if (stackFrame->hasLineAndColumnInfo()) {
             auto lineColumn = stackFrame->computeLineAndColumn();
@@ -4079,6 +4082,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
     }
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
+    *position = location;
 
     if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
         // Search for the beginning of the line
@@ -4096,8 +4100,14 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
         const unsigned char* bytes = sourceString.span8().data();
 
-        // Most of the time, when you look at a stack trace, you want a couple lines above
-        source_lines[0] = Bun::toStringRef(sourceString.substring(lineStart, lineEnd - lineStart).toStringWithoutCopying());
+        // Most of the time, when you look at a stack trace, you want a couple lines above.
+
+        // It is key to not clone this data because source code strings are large.
+        // Usage of toStringView (non-owning) is safe as we ref the provider.
+        provider->ref();
+        ASSERT(*referenced_source_provider == nullptr);
+        *referenced_source_provider = provider;
+        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
         source_line_numbers[0] = location.line();
 
         if (lineStart > 0) {
@@ -4123,9 +4133,7 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
                 }
 
                 // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringRef(
-                    sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1)
-                        .toStringWithoutCopying());
+                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
 
                 source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
                 source_line_i++;
@@ -4136,17 +4144,15 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
             }
         }
     }
-
-    *position = location;
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
-    ZigStackFrame* frame, bool is_top)
+    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider)
 {
     populateStackFrameMetadata(vm, stackFrame, frame);
     populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
         is_top ? trace->source_lines_numbers : nullptr,
-        is_top ? trace->source_lines_to_collect : 0, &frame->position);
+        is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider);
 }
 
 class V8StackTraceIterator {
@@ -4332,7 +4338,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             break;
 
         ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0);
+        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider);
         stack_frame_i++;
         frame_i++;
     }
@@ -4754,10 +4760,9 @@ JSC__JSValue JSC__JSValue__toError_(JSC__JSValue JSValue0)
     return JSC::JSValue::encode({});
 }
 
-void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
-    ZigException* exception)
+void JSC__JSValue__toZigException(JSC__JSValue jsException, JSC__JSGlobalObject* global, ZigException* exception)
 {
-    JSC::JSValue value = JSC::JSValue::decode(JSValue0);
+    JSC::JSValue value = JSC::JSValue::decode(jsException);
     if (value == JSC::JSValue {}) {
         exception->code = JSErrorCodeError;
         exception->name = Bun::toStringRef("Error"_s);
@@ -4767,17 +4772,17 @@ void JSC__JSValue__toZigException(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
 
     if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(value)) {
         if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
-            fromErrorInstance(exception, arg1, error, &jscException->stack(), value);
+            fromErrorInstance(exception, global, error, &jscException->stack(), value);
             return;
         }
     }
 
     if (JSC::ErrorInstance* error = JSC::jsDynamicCast<JSC::ErrorInstance*>(value)) {
-        fromErrorInstance(exception, arg1, error, nullptr, value);
+        fromErrorInstance(exception, global, error, nullptr, value);
         return;
     }
 
-    exceptionFromString(exception, value, arg1);
+    exceptionFromString(exception, value, global);
 }
 
 void JSC__Exception__getStackTrace(JSC__Exception* arg0, ZigStackTrace* trace)
@@ -5774,4 +5779,9 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter* get
 CPP_DECL JSC__JSValue Bun__ProxyObject__getInternalField(JSC__JSValue value, uint32_t id)
 {
     return JSValue::encode(jsCast<ProxyObject*>(JSValue::decode(value))->internalField((ProxyObject::Field)id).get());
+}
+
+CPP_DECL void JSC__SourceProvider__deref(JSC::SourceProvider* provider)
+{
+    provider->deref();
 }

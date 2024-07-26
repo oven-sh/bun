@@ -66,9 +66,11 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 int String::Length() const
 {
     auto jsValue = toJSValue();
+    assert(jsValue.isString());
     WTF::String s;
-    assert(jsValue.getString(Isolate::GetCurrent()->globalObject(), s));
+    jsValue.getString(Isolate::GetCurrent()->globalObject(), s);
     return s.length();
+    // return jsValue.isString();
 }
 
 }

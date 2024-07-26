@@ -1,22 +1,21 @@
 #include "v8/ObjectTemplate.h"
+#include "wtf/Assertions.h"
 
 namespace v8 {
 
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
-    assert("ObjectTemplate::New" && 0);
-    return Local<ObjectTemplate>();
+    ASSERT_NOT_REACHED();
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 {
-    assert("ObjectTemplate::NewInstance" && 0);
-    return MaybeLocal<Object>();
+    ASSERT_NOT_REACHED();
 }
 
 void ObjectTemplate::SetInternalFieldCount(int value)
 {
-    assert("ObjectTemplate::SetInternalFieldCount" && 0);
+    ASSERT_NOT_REACHED();
 }
 
 }

@@ -1220,7 +1220,7 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        const check_result = check_server_identity.call(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
@@ -1623,7 +1623,6 @@ pub const Fetch = struct {
                 fetch_options.headers.buf.items,
                 &fetch_tasklet.response_buffer,
                 fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
@@ -1681,7 +1680,6 @@ pub const Fetch = struct {
             method: Method,
             headers: Headers,
             body: HTTPRequestBody,
-            timeout: usize,
             disable_timeout: bool,
             disable_keepalive: bool,
             disable_decompression: bool,
@@ -2799,7 +2797,6 @@ pub const Fetch = struct {
                     .allocator = allocator,
                 },
                 .body = http_body,
-                .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
                 .disable_decompression = disable_decompression,

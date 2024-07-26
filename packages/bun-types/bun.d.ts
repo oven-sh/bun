@@ -3847,7 +3847,7 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
-  interface Socket<Data = undefined> {
+  interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
      *
@@ -4129,7 +4129,7 @@ declare module "bun" {
     setMaxSendFragment(size: number): boolean;
   }
 
-  interface SocketListener<Data = undefined> {
+  interface SocketListener<Data = undefined> extends Disposable {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;

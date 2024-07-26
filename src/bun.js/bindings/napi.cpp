@@ -184,7 +184,7 @@ void NapiRef::clear()
 // class Reference
 // }
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(NapiRef);
 
@@ -805,13 +805,13 @@ node_api_create_external_string_latin1(napi_env env,
 #if NAPI_VERBOSE
             printf("[napi] string finalize_callback\n");
 #endif
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobal()), nullptr, hint);
+            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
         }
     });
     JSGlobalObject* globalObject = toJS(env);
     // globalObject is allowed to be null here
     if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobal();
+        globalObject = Bun__getDefaultGlobalObject();
     }
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
@@ -847,13 +847,13 @@ node_api_create_external_string_utf16(napi_env env,
 #endif
 
         if (finalize_callback) {
-            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobal()), nullptr, hint);
+            finalize_callback(reinterpret_cast<napi_env>(Bun__getDefaultGlobalObject()), nullptr, hint);
         }
     });
     JSGlobalObject* globalObject = toJS(env);
     // globalObject is allowed to be null here
     if (UNLIKELY(!globalObject)) {
-        globalObject = Bun__getDefaultGlobal();
+        globalObject = Bun__getDefaultGlobalObject();
     }
 
     JSString* out = JSC::jsString(globalObject->vm(), WTF::String(impl));
@@ -866,7 +866,7 @@ node_api_create_external_string_utf16(napi_env env,
 
 extern "C" void napi_module_register(napi_module* mod)
 {
-    auto* globalObject = Bun__getDefaultGlobal();
+    auto* globalObject = Bun__getDefaultGlobalObject();
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;

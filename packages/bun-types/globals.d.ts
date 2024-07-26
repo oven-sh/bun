@@ -33,7 +33,9 @@ type _Performance = typeof globalThis extends {
   ? {}
   : import("perf_hooks").Performance;
 
-type _Worker = typeof globalThis extends { onerror: any; Worker: infer T } ? T : Bun.Worker;
+type _Worker = typeof globalThis extends { onerror: any; Worker: infer T }
+  ? T
+  : Bun.Worker;
 
 type _Event = typeof globalThis extends { onerror: any; Event: any }
   ? {}
@@ -92,7 +94,7 @@ type _EventTarget = typeof globalThis extends {
       addEventListener(
         type: string,
         listener: EventListener | EventListenerObject,
-        options?: AddEventListenerOptions | boolean,
+        options?: AddEventListenerOptions | boolean
       ): void;
       /** Dispatches a synthetic event event to target and returns true if either event's cancelable attribute value is false or its preventDefault() method was not invoked, and false otherwise. */
       dispatchEvent(event: Event): boolean;
@@ -100,7 +102,7 @@ type _EventTarget = typeof globalThis extends {
       removeEventListener(
         type: string,
         listener: EventListener | EventListenerObject,
-        options?: Bun.EventListenerOptions | boolean,
+        options?: Bun.EventListenerOptions | boolean
       ): void;
     };
 
@@ -138,7 +140,10 @@ type _Body = typeof globalThis extends { onerror: any }
     };
 
 import type { MessagePort } from "worker_threads";
-import type { TextEncoder as NodeTextEncoder, TextDecoder as NodeTextDecoder } from "util";
+import type {
+  TextEncoder as NodeTextEncoder,
+  TextDecoder as NodeTextDecoder,
+} from "util";
 import type { WebSocket as _WebSocket } from "ws";
 
 declare module "*.txt" {
@@ -196,9 +201,15 @@ declare global {
     type TimerHandler = (...args: any[]) => void;
     type BufferSource = NodeJS.TypedArray | DataView | ArrayBufferLike;
     type DOMHighResTimeStamp = number;
-    type EventListenerOrEventListenerObject = EventListener | EventListenerObject;
+    type EventListenerOrEventListenerObject =
+      | EventListener
+      | EventListenerObject;
 
-    type BlobOrStringOrBuffer = string | NodeJS.TypedArray | ArrayBufferLike | Blob;
+    type BlobOrStringOrBuffer =
+      | string
+      | NodeJS.TypedArray
+      | ArrayBufferLike
+      | Blob;
 
     type Platform =
       | "aix"
@@ -212,23 +223,56 @@ declare global {
       | "win32"
       | "cygwin"
       | "netbsd";
-    type Architecture = "arm" | "arm64" | "ia32" | "mips" | "mipsel" | "ppc" | "ppc64" | "s390" | "s390x" | "x64";
+    type Architecture =
+      | "arm"
+      | "arm64"
+      | "ia32"
+      | "mips"
+      | "mipsel"
+      | "ppc"
+      | "ppc64"
+      | "s390"
+      | "s390x"
+      | "x64";
 
-    type UncaughtExceptionListener = (error: Error, origin: UncaughtExceptionOrigin) => void;
+    type UncaughtExceptionListener = (
+      error: Error,
+      origin: UncaughtExceptionOrigin
+    ) => void;
     /**
      * Most of the time the unhandledRejection will be an Error, but this should not be relied upon
      * as *anything* can be thrown/rejected, it is therefore unsafe to assume that the value is an Error.
      */
-    type UnhandledRejectionListener = (reason: unknown, promise: Promise<unknown>) => void;
+    type UnhandledRejectionListener = (
+      reason: unknown,
+      promise: Promise<unknown>
+    ) => void;
 
-    type MultipleResolveListener = (type: MultipleResolveType, promise: Promise<unknown>, value: unknown) => void;
+    type MultipleResolveListener = (
+      type: MultipleResolveType,
+      promise: Promise<unknown>,
+      value: unknown
+    ) => void;
 
-    type HeadersInit = Headers | Record<string, string> | Array<[string, string]> | IterableIterator<[string, string]>;
+    type HeadersInit =
+      | Headers
+      | Record<string, string>
+      | Array<[string, string]>
+      | IterableIterator<[string, string]>;
 
-    type ResponseType = "basic" | "cors" | "default" | "error" | "opaque" | "opaqueredirect";
+    type ResponseType =
+      | "basic"
+      | "cors"
+      | "default"
+      | "error"
+      | "opaque"
+      | "opaqueredirect";
 
     interface TextEncoder extends NodeTextEncoder {
-      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextEncoder;
+      new (
+        encoding?: Bun.Encoding,
+        options?: { fatal?: boolean; ignoreBOM?: boolean }
+      ): TextEncoder;
       /**
        * UTF-8 encodes the `src` string to the `dest` Uint8Array and returns an object
        * containing the read Unicode code units and written UTF-8 bytes.
@@ -242,11 +286,17 @@ declare global {
        * @param src The text to encode.
        * @param dest The array to hold the encode result.
        */
-      encodeInto(src?: string, dest?: Bun.BufferSource): import("util").EncodeIntoResult;
+      encodeInto(
+        src?: string,
+        dest?: Bun.BufferSource
+      ): import("util").EncodeIntoResult;
     }
 
     interface TextDecoder extends NodeTextDecoder {
-      new (encoding?: Bun.Encoding, options?: { fatal?: boolean; ignoreBOM?: boolean }): TextDecoder;
+      new (
+        encoding?: Bun.Encoding,
+        options?: { fatal?: boolean; ignoreBOM?: boolean }
+      ): TextDecoder;
     }
 
     interface ErrorEventInit extends EventInit {
@@ -366,7 +416,10 @@ declare global {
     }
 
     interface EventSource extends EventTarget {
-      new (url: string | URL, eventSourceInitDict?: EventSourceInit): EventSource;
+      new (
+        url: string | URL,
+        eventSourceInitDict?: EventSourceInit
+      ): EventSource;
 
       onerror: ((this: EventSource, ev: Event) => any) | null;
       onmessage: ((this: EventSource, ev: MessageEvent) => any) | null;
@@ -388,32 +441,32 @@ declare global {
       addEventListener<K extends keyof EventSourceEventMap>(
         type: K,
         listener: (this: EventSource, ev: EventSourceEventMap[K]) => any,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       addEventListener(
         type: string,
         listener: (this: EventSource, event: MessageEvent) => any,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       addEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       removeEventListener<K extends keyof EventSourceEventMap>(
         type: K,
         listener: (this: EventSource, ev: EventSourceEventMap[K]) => any,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
       removeEventListener(
         type: string,
         listener: (this: EventSource, event: MessageEvent) => any,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
       removeEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
 
       /**
@@ -432,7 +485,9 @@ declare global {
     }
 
     interface TransformerFlushCallback<O> {
-      (controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+      (
+        controller: TransformStreamDefaultController<O>
+      ): void | PromiseLike<void>;
     }
 
     interface TransformerStartCallback<O> {
@@ -440,7 +495,10 @@ declare global {
     }
 
     interface TransformerTransformCallback<I, O> {
-      (chunk: I, controller: TransformStreamDefaultController<O>): void | PromiseLike<void>;
+      (
+        chunk: I,
+        controller: TransformStreamDefaultController<O>
+      ): void | PromiseLike<void>;
     }
 
     interface UnderlyingSinkAbortCallback {
@@ -456,7 +514,10 @@ declare global {
     }
 
     interface UnderlyingSinkWriteCallback<W> {
-      (chunk: W, controller: WritableStreamDefaultController): void | PromiseLike<void>;
+      (
+        chunk: W,
+        controller: WritableStreamDefaultController
+      ): void | PromiseLike<void>;
     }
 
     interface UnderlyingSourceCancelCallback {
@@ -484,7 +545,9 @@ declare global {
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
     interface DirectUnderlyingSource<R = any> {
       cancel?: UnderlyingSourceCancelCallback;
-      pull: (controller: ReadableStreamDirectController) => void | PromiseLike<void>;
+      pull: (
+        controller: ReadableStreamDirectController
+      ) => void | PromiseLike<void>;
       type: "direct";
     }
 
@@ -520,22 +583,22 @@ declare global {
       addEventListener<K extends keyof AbstractWorkerEventMap>(
         type: K,
         listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       addEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       removeEventListener<K extends keyof AbstractWorkerEventMap>(
         type: K,
         listener: (this: AbstractWorker, ev: AbstractWorkerEventMap[K]) => any,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
       removeEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
     }
 
@@ -584,7 +647,10 @@ declare global {
       /**
        * If set, specifies the initial value of process.env inside the Worker thread. As a special value, worker.SHARE_ENV may be used to specify that the parent thread and the child thread should share their environment variables; in that case, changes to one thread's process.env object affect the other thread as well. Default: process.env.
        */
-      env?: Record<string, string> | (typeof import("node:worker_threads"))["SHARE_ENV"] | undefined;
+      env?:
+        | Record<string, string>
+        | (typeof import("node:worker_threads"))["SHARE_ENV"]
+        | undefined;
 
       /**
        * In Bun, this does nothing.
@@ -620,22 +686,22 @@ declare global {
       addEventListener<K extends keyof WorkerEventMap>(
         type: K,
         listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       addEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | AddEventListenerOptions,
+        options?: boolean | AddEventListenerOptions
       ): void;
       removeEventListener<K extends keyof WorkerEventMap>(
         type: K,
         listener: (this: Worker, ev: WorkerEventMap[K]) => any,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
       removeEventListener(
         type: string,
         listener: EventListenerOrEventListenerObject,
-        options?: boolean | EventListenerOptions,
+        options?: boolean | EventListenerOptions
       ): void;
 
       /**
@@ -670,10 +736,13 @@ declare global {
     ? T
     : {
         prototype: ReadableStream;
-        new <R = any>(underlyingSource?: Bun.UnderlyingSource<R>, strategy?: QueuingStrategy<R>): ReadableStream<R>;
+        new <R = any>(
+          underlyingSource?: Bun.UnderlyingSource<R>,
+          strategy?: QueuingStrategy<R>
+        ): ReadableStream<R>;
         new <R = any>(
           underlyingSource?: Bun.DirectUnderlyingSource<R>,
-          strategy?: QueuingStrategy<R>,
+          strategy?: QueuingStrategy<R>
         ): ReadableStream<R>;
       };
 
@@ -685,7 +754,10 @@ declare global {
     ? T
     : {
         prototype: WritableStream;
-        new <W = any>(underlyingSink?: Bun.UnderlyingSink<W>, strategy?: QueuingStrategy<W>): WritableStream<W>;
+        new <W = any>(
+          underlyingSink?: Bun.UnderlyingSink<W>,
+          strategy?: QueuingStrategy<W>
+        ): WritableStream<W>;
       };
 
   interface Worker extends _Worker {}
@@ -696,7 +768,10 @@ declare global {
     ? T
     : {
         prototype: Worker;
-        new (scriptURL: string | URL, options?: Bun.WorkerOptions | undefined): Worker;
+        new (
+          scriptURL: string | URL,
+          options?: Bun.WorkerOptions | undefined
+        ): Worker;
         /**
          * This is the cloned value of the `data` property passed to `new Worker()`
          *
@@ -792,11 +867,17 @@ declare global {
      * @param `name` - The name of the file
      * @param `options` - An object containing properties to be added to the [File](https://developer.mozilla.org/en-US/docs/Web/API/File)
      */
-    new (parts: Bun.BlobPart[], name: string, options?: BlobPropertyBag & { lastModified?: Date | number }): File;
+    new (
+      parts: Bun.BlobPart[],
+      name: string,
+      options?: BlobPropertyBag & { lastModified?: Date | number }
+    ): File;
     readonly lastModified: number;
     readonly name: string;
   }
-  var File: typeof globalThis extends { onerror: any; File: infer T } ? T : typeof File;
+  var File: typeof globalThis extends { onerror: any; File: infer T }
+    ? T
+    : typeof File;
 
   interface FetchRequestInit extends RequestInit {
     /**
@@ -907,42 +988,29 @@ declare global {
     new (): ShadowRealm;
   };
 
-  interface Fetch {
-    /**
-     * Send a HTTP(s) request
-     *
-     * @param request Request object
-     * @param init A structured value that contains settings for the fetch() request.
-     *
-     * @returns A promise that resolves to {@link Response} object.
-     */
-    (request: Request, init?: RequestInit): Promise<Response>;
+  /**
+   * Send a HTTP(s) request
+   *
+   * @param request Request object
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   */
 
-    /**
-     * Send a HTTP(s) request
-     *
-     * @param url URL string
-     * @param init A structured value that contains settings for the fetch() request.
-     *
-     * @returns A promise that resolves to {@link Response} object.
-     */
-    (url: string | URL | Request, init?: FetchRequestInit): Promise<Response>;
-
-    (input: string | URL | globalThis.Request, init?: RequestInit): Promise<Response>;
-
-    /**
-     * Start the DNS resolution, TCP connection, and TLS handshake for a request
-     * before the request is actually sent.
-     *
-     * This can reduce the latency of a request when you know there's some
-     * long-running task that will delay the request starting.
-     *
-     * This is a bun-specific API and is not part of the Fetch API specification.
-     */
-    preconnect(url: string | URL): void;
-  }
-
-  var fetch: Fetch;
+  // tslint:disable-next-line:unified-signatures
+  function fetch(request: Request, init?: RequestInit): Promise<Response>;
+  /**
+   * Send a HTTP(s) request
+   *
+   * @param url URL string
+   * @param init A structured value that contains settings for the fetch() request.
+   *
+   * @returns A promise that resolves to {@link Response} object.
+   */
+  function fetch(
+    url: string | URL | Request,
+    init?: FetchRequestInit
+  ): Promise<Response>;
 
   function queueMicrotask(callback: (...args: any[]) => void): void;
   /**
@@ -984,33 +1052,41 @@ declare global {
    * @param handler function to call
    * @param interval milliseconds to wait between calls
    */
-  function setInterval(handler: Bun.TimerHandler, interval?: number, ...arguments: any[]): Timer;
+  function setInterval(
+    handler: Bun.TimerHandler,
+    interval?: number,
+    ...arguments: any[]
+  ): Timer;
   /**
    * Run a function after `timeout` (milliseconds)
    * @param handler function to call
    * @param timeout milliseconds to wait between calls
    */
-  function setTimeout(handler: Bun.TimerHandler, timeout?: number, ...arguments: any[]): Timer;
+  function setTimeout(
+    handler: Bun.TimerHandler,
+    timeout?: number,
+    ...arguments: any[]
+  ): Timer;
 
   function addEventListener<K extends keyof EventMap>(
     type: K,
     listener: (this: object, ev: EventMap[K]) => any,
-    options?: boolean | AddEventListenerOptions,
+    options?: boolean | AddEventListenerOptions
   ): void;
   function addEventListener(
     type: string,
     listener: Bun.EventListenerOrEventListenerObject,
-    options?: boolean | AddEventListenerOptions,
+    options?: boolean | AddEventListenerOptions
   ): void;
   function removeEventListener<K extends keyof EventMap>(
     type: K,
     listener: (this: object, ev: EventMap[K]) => any,
-    options?: boolean | Bun.EventListenerOptions,
+    options?: boolean | Bun.EventListenerOptions
   ): void;
   function removeEventListener(
     type: string,
     listener: Bun.EventListenerOrEventListenerObject,
-    options?: boolean | Bun.EventListenerOptions,
+    options?: boolean | Bun.EventListenerOptions
   ): void;
 
   /**
@@ -1052,7 +1128,10 @@ declare global {
     ? T
     : {
         prototype: MessageEvent;
-        new <T>(type: string, eventInitDict?: Bun.MessageEventInit<T>): MessageEvent<T>;
+        new <T>(
+          type: string,
+          eventInitDict?: Bun.MessageEventInit<T>
+        ): MessageEvent<T>;
       };
 
   interface CustomEvent<T = any> extends Event {
@@ -1062,7 +1141,10 @@ declare global {
 
   var CustomEvent: {
     prototype: CustomEvent;
-    new <T>(type: string, eventInitDict?: Bun.CustomEventInit<T>): CustomEvent<T>;
+    new <T>(
+      type: string,
+      eventInitDict?: Bun.CustomEventInit<T>
+    ): CustomEvent<T>;
   };
 
   /**
@@ -1164,7 +1246,9 @@ declare global {
         fetch: Promise<any>;
         instantiate: Promise<any>;
         satisfy: Promise<any>;
-        dependencies: Array<(typeof Loader)["registry"] extends Map<any, infer V> ? V : any>;
+        dependencies: Array<
+          (typeof Loader)["registry"] extends Map<any, infer V> ? V : any
+        >;
         /**
          * Your application will probably crash if you mess with this.
          */
@@ -1252,7 +1336,9 @@ declare global {
 
   interface ReadableStreamDirectController {
     close(error?: Error): void;
-    write(data: Bun.BufferSource | ArrayBuffer | string): number | Promise<number>;
+    write(
+      data: Bun.BufferSource | ArrayBuffer | string
+    ): number | Promise<number>;
     end(): number | Promise<number>;
     flush(): number | Promise<number>;
     start(): void;
@@ -1263,13 +1349,16 @@ declare global {
     new (): ReadableStreamDefaultController;
   };
 
-  interface ReadableStreamDefaultReader<R = any> extends ReadableStreamGenericReader {
+  interface ReadableStreamDefaultReader<R = any>
+    extends ReadableStreamGenericReader {
     read(): Promise<Bun.ReadableStreamDefaultReadResult<R>>;
     /**
      * Only available in Bun. If there are multiple chunks in the queue, this will return all of them at the same time.
      * Will only return a promise if the data is not immediately available.
      */
-    readMany(): Promise<Bun.ReadableStreamDefaultReadManyResult<R>> | Bun.ReadableStreamDefaultReadManyResult<R>;
+    readMany():
+      | Promise<Bun.ReadableStreamDefaultReadManyResult<R>>
+      | Bun.ReadableStreamDefaultReadManyResult<R>;
     releaseLock(): void;
   }
 
@@ -1338,7 +1427,7 @@ declare global {
     new <I = any, O = any>(
       transformer?: Transformer<I, O>,
       writableStrategy?: QueuingStrategy<I>,
-      readableStrategy?: QueuingStrategy<O>,
+      readableStrategy?: QueuingStrategy<O>
     ): TransformStream<I, O>;
   };
 
@@ -1528,7 +1617,9 @@ declare global {
      *
      * @see https://v8.dev/docs/stack-trace-api#customizing-stack-traces
      */
-    prepareStackTrace?: ((err: Error, stackTraces: NodeJS.CallSite[]) => any) | undefined;
+    prepareStackTrace?:
+      | ((err: Error, stackTraces: NodeJS.CallSite[]) => any)
+      | undefined;
 
     stackTraceLimit: number;
   }
@@ -1575,7 +1666,9 @@ declare global {
      * @param arrayLike - The iterable or async iterable to convert to an array.
      * @returns A {@link Promise} whose fulfillment is a new {@link Array} instance containing the values from the iterator.
      */
-    fromAsync<T>(arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>): Promise<Awaited<T>[]>;
+    fromAsync<T>(
+      arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>
+    ): Promise<Awaited<T>[]>;
 
     /**
      * Create an array from an iterable or async iterable object.
@@ -1597,7 +1690,7 @@ declare global {
     fromAsync<T, U>(
       arrayLike: AsyncIterable<T> | Iterable<T> | ArrayLike<T>,
       mapFn?: (value: T, index: number) => U,
-      thisArg?: any,
+      thisArg?: any
     ): Promise<Awaited<U>[]>;
   }
 
@@ -1824,7 +1917,10 @@ declare global {
    *
    * [MDN Reference](https://developer.mozilla.org/docs/Web/API/structuredClone)
    */
-  function structuredClone<T>(value: T, options?: Bun.StructuredSerializeOptions): T;
+  function structuredClone<T>(
+    value: T,
+    options?: Bun.StructuredSerializeOptions
+  ): T;
 
   /**
    * Post a message to the parent thread.
@@ -1917,6 +2013,11 @@ declare global {
      * closely to the `BodyMixin` API.
      */
     formData(): Promise<FormData>;
+
+    /**
+     * Returns a promise that resolves to the contents of the blob as a Uint8Array (array of bytes) its the same as `new Uint8Array(await blob.arrayBuffer())`
+     */
+    bytes(): Promise<Uint8Array>;
   }
   var Blob: typeof globalThis extends {
     onerror: any;

@@ -223,6 +223,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   return result;
 }
 
+/// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
+/// @param s 
 void us_internal_fast_shutdown(struct us_internal_ssl_socket_t *s) {
   if (SSL_in_init(s->ssl) || SSL_get_quiet_shutdown(s->ssl)) {
     // when SSL_in_init or quiet shutdown in BoringSSL, we call shutdown
@@ -231,7 +233,11 @@ void us_internal_fast_shutdown(struct us_internal_ssl_socket_t *s) {
     return;
   }
   // we are closing the socket but did not sent a shutdown yet
-  if(SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN) {
+  int state = SSL_get_shutdown(s->ssl) ;
+  int sent_shutdown = state & SSL_SENT_SHUTDOWN;
+  int received_shutdown = state & SSL_RECEIVED_SHUTDOWN;
+  // if we are missing a shutdown call, we need to do a fast shutdown here
+  if(!sent_shutdown || !received_shutdown) {
     // Zero means that we should wait for the peer to close the connection
     // but we are already closing the connection so we do a fast shutdown here
     int ret = SSL_shutdown(s->ssl);
@@ -240,11 +246,10 @@ void us_internal_fast_shutdown(struct us_internal_ssl_socket_t *s) {
       ret = SSL_shutdown(s->ssl);
     } 
     if(ret < 0) {
-      // we got some error here
+      // we got some error here, but we dont care about it, we are closing the socket
       int err = SSL_get_error(s->ssl, ret);
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // we need to clear the error queue in case these added to the thread
-        // local queue
+        // clear
         ERR_clear_error();
       }
     }
@@ -274,7 +279,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
     us_internal_trigger_handshake_callback(s, 0);
   }
 
-  // we need to do a fast shutdown here if we did not sent a shutdown yet
+  // if we are in the middle of a close_notify we need to finish it
   us_internal_fast_shutdown(s);
 
   return (struct us_internal_ssl_socket_t *)us_socket_close(

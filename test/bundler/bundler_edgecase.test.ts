@@ -668,6 +668,29 @@ describe("bundler", () => {
       "<bun>": ['ModuleNotFound resolving "/entry.js" (entry point)'],
     },
   });
+  itBundled("edgecase/AssetEntryPoint", {
+    files: {
+      "/entry.zig": `
+        const std = @import("std");
+
+        pub fn main() void {
+          std.debug.print("Hello, world!\\n", .{});
+        }
+      `,
+    },
+    outdir: "/out",
+    entryPointsRaw: ["./entry.zig"],
+    runtimeFiles: {
+      "/exec.js": `
+        import assert from 'node:assert';
+        import the_path from './out/entry.js';
+        assert.strictEqual(the_path, './entry-6dhkdck1.zig');
+      `,
+    },
+    run: {
+      file: "./exec.js",
+    },
+  });
   itBundled("edgecase/ExportDefaultUndefined", {
     files: {
       "/entry.ts": /* ts */ `
@@ -1347,6 +1370,27 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/EntrypointWithoutPrefixSlashOrDotIsNotConsideredExternal#12734", {
+    files: {
+      "/src/entry.ts": /* ts */ `
+        import { helloWorld } from "./second.ts";
+        console.log(helloWorld);
+      `,
+      "/src/second.ts": /* ts */ `
+        export const helloWorld = "Hello World";
+      `,
+    },
+    root: "/src",
+    entryPointsRaw: ["src/entry.ts"],
+    packages: "external",
+    target: "bun",
+    run: {
+      file: "/src/entry.ts",
+      stdout: `
+        Hello World
+      `,
+    },
+  });
   itBundled("edgecase/IntegerUnderflow#12547", {
     files: {
       "/entry.js": `
@@ -1443,6 +1487,123 @@ describe("bundler", () => {
       "/entry.ts": [`"Y" has already been declared`],
     },
   });
+  // This specifically only happens with 'export { ... } from ...' syntax
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
+  itBundled("edgecase/EsmSideEffectsFalseWithSideEffectsExportFromCodeSplitting", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+        console.log('file1');
+      `,
+      "/file1b.js": `
+        import("./file2.js");
+        console.log('file2');
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    splitting: true,
+    outdir: "out",
+    entryPoints: ["./file1.js", "./file1b.js"],
+    run: [
+      {
+        file: "/out/file1.js",
+        stdout: "file1\nside effect",
+      },
+      {
+        file: "/out/file1b.js",
+        stdout: "file2\nside effect",
+      },
+    ],
+  });
+  itBundled("edgecase/RequireSideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        require("./file2.js");
+      `,
+      "/file2.js": `
+        export { a } from './file3.js';
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
+  itBundled("edgecase/SideEffectsFalseWithSideEffectsExportFrom", {
+    files: {
+      "/file1.js": `
+        import("./file2.js");
+      `,
+      "/file2.js": `
+        import * as foo from './file3.js';
+        export default foo;
+      `,
+      "/file3.js": `
+        export function a(input) {
+          return 42;
+        }
+        console.log('side effect');
+      `,
+      "/package.json": `
+        {
+          "name": "my-package",
+          "sideEffects": false
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect",
+    },
+  });
   itBundled("edgecase/BuiltinWithTrailingSlash", {
     files: {
       "/entry.js": `
@@ -1455,6 +1616,155 @@ describe("bundler", () => {
     },
     run: {
       stdout: `{"default":{"hello":"world"}}`,
+    },
+  });
+  itBundled("edgecase/EsmWrapperClassHoisting", {
+    files: {
+      "/entry.ts": `
+        async function hi() {
+          const { default: MyInherited } = await import('./hello');
+          const myInstance = new MyInherited();
+          console.log(myInstance.greet())
+        }
+
+        hi();
+      `,
+      "/hello.ts": `
+        const MyReassignedSuper = class MySuper {
+          greet() {
+            return 'Hello, world!';
+          }
+        };
+
+        class MyInherited extends MyReassignedSuper {};
+
+        export default MyInherited;
+      `,
+    },
+    run: {
+      stdout: "Hello, world!",
+    },
+  });
+  itBundled("edgecase/EsmWrapperElimination1", {
+    files: {
+      "/entry.ts": `
+        async function load() {
+          return import('./hello');
+        }
+        load().then(({ default: def }) => console.log(def()));
+      `,
+      "/hello.ts": `
+        export var x = 123;
+        export var y = function() { return x; };
+        export function z() { return y(); }
+        function a() { return z(); }
+        export default function c() { return a(); }
+      `,
+    },
+    run: {
+      stdout: "123",
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  // this test checks that visit order doesnt matter (inline then use, above is use then inline)
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass2", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        namespace TestClass {
+          console.log(JSON.stringify(TestEnum));
+          console.log((() => TestEnum.A).toString().includes('TestEnum'));
+        }
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        false
+      `,
     },
   });
 

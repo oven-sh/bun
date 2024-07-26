@@ -771,7 +771,7 @@ pub const EventLoop = struct {
     waker: ?Waker = null,
     forever_timer: ?*uws.Timer = null,
     deferred_tasks: DeferredTaskQueue = .{},
-    uws_loop: if (Environment.isWindows) *uws.Loop else void = undefined,
+    uws_loop: if (Environment.isWindows) ?*uws.Loop else void = if (Environment.isWindows) null else {},
 
     debug: Debug = .{},
     entered_event_loop_count: isize = 0,
@@ -871,7 +871,7 @@ pub const EventLoop = struct {
         this.enter();
         defer this.exit();
 
-        const result = callback.callWithThis(globalObject, thisValue, arguments);
+        const result = callback.call(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
             _ = this.virtual_machine.uncaughtException(globalObject, err, false);
@@ -1324,7 +1324,7 @@ pub const EventLoop = struct {
 
     inline fn usocketsLoop(this: *const EventLoop) *uws.Loop {
         if (comptime Environment.isWindows) {
-            return this.uws_loop;
+            return this.uws_loop.?;
         }
 
         return this.virtual_machine.event_loop_handle.?;
@@ -1572,7 +1572,9 @@ pub const EventLoop = struct {
 
     pub fn wakeup(this: *EventLoop) void {
         if (comptime Environment.isWindows) {
-            this.uws_loop.wakeup();
+            if (this.uws_loop) |loop| {
+                loop.wakeup();
+            }
             return;
         }
 

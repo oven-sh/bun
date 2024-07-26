@@ -2016,11 +2016,11 @@ fn NewPrinter(
                 defer if (record.kind == .dynamic) p.printDotThenSuffix();
 
                 // Make sure the comma operator is properly wrapped
-
-                if (meta.exports_ref.isValid() and level.gte(.comma)) {
-                    p.print("(");
-                }
-                defer if (meta.exports_ref.isValid() and level.gte(.comma)) p.print(")");
+                const wrap_comma_operator = meta.exports_ref.isValid() and
+                    meta.wrapper_ref.isValid() and
+                    level.gte(.comma);
+                if (wrap_comma_operator) p.print("(");
+                defer if (wrap_comma_operator) p.print(")");
 
                 // Wrap this with a call to "__toESM()" if this is a CommonJS file
                 const wrap_with_to_esm = record.wrap_with_to_esm;
@@ -2031,17 +2031,20 @@ fn NewPrinter(
                 }
 
                 if (!meta.was_unwrapped_require) {
-
                     // Call the wrapper
-                    p.printSpaceBeforeIdentifier();
-                    p.printSymbol(meta.wrapper_ref);
-                    p.print("()");
+                    if (meta.wrapper_ref.isValid()) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(meta.wrapper_ref);
+                        p.print("()");
+
+                        if (meta.exports_ref.isValid()) {
+                            p.print(",");
+                            p.printSpace();
+                        }
+                    }
 
                     // Return the namespace object if this is an ESM file
                     if (meta.exports_ref.isValid()) {
-                        p.print(",");
-                        p.printSpace();
-
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                         const wrap_with_to_cjs = record.wrap_with_to_commonjs;
                         if (wrap_with_to_cjs) {

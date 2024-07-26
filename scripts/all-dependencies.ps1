@@ -79,6 +79,10 @@ Build-Dependency `
   -Script "lshpack" `
   -Outputs @("lshpack.lib")
 
+Build-Dependency `
+  -Script "libdeflate" `
+  -Outputs @("deflate.lib")
+
 if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"
 }

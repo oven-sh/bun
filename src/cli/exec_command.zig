@@ -50,7 +50,7 @@ pub const ExecCommand = struct {
         //         Output.flush();
         //     }
 
-        Global.exitWide(code);
+        Global.exit(code);
         // }
     }
 };

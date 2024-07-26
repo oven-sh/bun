@@ -26,7 +26,7 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 ARCH_NAME = aarch64
 DOCKER_BUILDARCH = arm64
 BREW_PREFIX_PATH = /opt/homebrew
-DEFAULT_MIN_MACOS_VERSION = 11.0
+DEFAULT_MIN_MACOS_VERSION = 13.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
 ifeq ($(OS_NAME),linux)
 MARCH_NATIVE = -march=armv8-a+crc -mtune=ampere1

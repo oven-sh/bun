@@ -195,7 +195,6 @@ pub fn main() anyerror!void {
             args.headers_buf,
             response_body_string,
             args.body,
-            0,
             HTTP.FetchRedirect.follow,
         ),
     };

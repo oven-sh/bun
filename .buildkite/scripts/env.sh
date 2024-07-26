@@ -78,9 +78,6 @@ function export_environment() {
   export SCCACHE_DIR="$HOME/.cache/sccache/$BUILDKITE_STEP_KEY"
   export ZIG_LOCAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
   export BUN_DEPS_CACHE_DIR="$HOME/.cache/bun-deps/$BUILDKITE_STEP_KEY"
-  if [ "$CLEAN" == "1" ]; then
-    run_command rm -rf "$HOME/.cache"
-  fi
   if [ "$(assert_arch)" == "aarch64" ]; then
     export CPU_TARGET="native"
   elif [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
@@ -107,6 +104,12 @@ function export_environment() {
     export USE_DEBUG_JSC="$(buildkite-agent meta-data get assertions)"
   else
     export USE_DEBUG_JSC="OFF"
+  fi
+  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ]; then
+    rm -rf "$CCACHE_DIR"
+    rm -rf "$SCCACHE_DIR"
+    rm -rf "$ZIG_LOCAL_CACHE_DIR"
+    rm -rf "$BUN_DEPS_CACHE_DIR"
   fi
 }
 

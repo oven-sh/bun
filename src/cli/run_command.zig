@@ -328,7 +328,7 @@ pub const RunCommand = struct {
                     Output.flush();
                 }
 
-                Global.exitWide(code);
+                Global.exit(code);
             }
 
             return true;

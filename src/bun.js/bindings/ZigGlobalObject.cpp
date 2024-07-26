@@ -714,7 +714,6 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
-
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
     // This must happen before JSVMClientData::create

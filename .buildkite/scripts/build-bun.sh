@@ -10,9 +10,9 @@ function run_command() {
 }
 
 mkdir -p build
-source "$(dirname "$0")/download-artifact.sh" "**" --step "$BUILDKITE_GROUP_KEY-build-deps"
-source "$(dirname "$0")/download-artifact.sh" "**" --step "$BUILDKITE_GROUP_KEY-build-zig" --split
-source "$(dirname "$0")/download-artifact.sh" "**" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
+source "$(dirname "$0")/download-artifact.sh" "build/bun-deps/**" --step "$BUILDKITE_GROUP_KEY-build-deps"
+source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKITE_GROUP_KEY-build-zig" --split
+source "$(dirname "$0")/download-artifact.sh" "build/bun-cpp-objects.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
 cd build
 
 cwd="$(pwd)"

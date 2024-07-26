@@ -28,7 +28,7 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DGIT_SHA="$GIT_SHA"
 
 chmod +x compile-cpp-only.sh
-source compile-cpp-only.sh -v
+source compile-cpp-only.sh -v -j "$CPUS"
 { set +x; } 2>/dev/null
 
 cd ..

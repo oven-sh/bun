@@ -30,7 +30,7 @@ function download_buildkite_artifact() {
   else
     run_command buildkite-agent artifact download "$path" . "${args[@]}"
   fi
-  if [ ! -f "$path" ]; then
+  if [[ "$path" != *"*"* ]] && [ ! -f "$path" ]; then
     echo "error: Could not find artifact: $path"
     exit 1
   fi

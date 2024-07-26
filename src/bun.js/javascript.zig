@@ -3246,6 +3246,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
 
+        // The ZigException structure stores substrings of the source code, in
+        // which we need the lifetime of this data to outlive the inner call to
+        // remapZigException, but still get freed.
         var source_code_slice: ?ZigString.Slice = null;
         defer if (source_code_slice) |slice| slice.deinit();
 

@@ -997,7 +997,7 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return (struct us_bun_verify_error_t){
         .error = 0, .code = NULL, .reason = NULL};
   }

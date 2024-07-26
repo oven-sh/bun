@@ -2101,7 +2101,7 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .err => |e| return e.toJSC(globalObject),
         }
@@ -2115,8 +2115,9 @@ pub const Process = struct {
             return;
         }
 
+        vm.exit_handler.exit_code = code;
         vm.onExit();
-        bun.Global.exit(code);
+        vm.globalExit();
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

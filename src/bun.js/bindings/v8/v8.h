@@ -8,7 +8,7 @@
 #define BUN_EXPORT JS_EXPORT
 #endif
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
 namespace v8 {
 }

@@ -145,7 +145,7 @@ pub const FFI = struct {
     ) callconv(.C) JSValue {
         JSC.markBinding(@src());
         if (this.closed) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         this.closed = true;
         if (this.dylib) |*dylib| {
@@ -160,7 +160,7 @@ pub const FFI = struct {
         }
         this.functions.deinit(allocator);
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printCallback(global: *JSGlobalObject, object: JSC.JSValue) JSValue {

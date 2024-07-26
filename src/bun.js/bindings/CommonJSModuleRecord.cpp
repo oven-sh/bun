@@ -290,7 +290,7 @@ RequireFunctionPrototype* RequireFunctionPrototype::create(
     RequireFunctionPrototype* prototype = new (NotNull, JSC::allocateCell<RequireFunctionPrototype>(vm)) RequireFunctionPrototype(vm, structure);
     prototype->finishCreation(vm);
 
-    prototype->putDirect(vm, builtinNames(vm).resolvePublicName(), jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
+    prototype->putDirect(vm, vm.propertyNames->resolve, jsCast<Zig::GlobalObject*>(globalObject)->requireResolveFunctionUnbound(), 0);
 
     return prototype;
 }

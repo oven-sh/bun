@@ -1665,6 +1665,108 @@ describe("bundler", () => {
       stdout: "123",
     },
   });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  // this test checks that visit order doesnt matter (inline then use, above is use then inline)
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass2", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        namespace TestClass {
+          console.log(JSON.stringify(TestEnum));
+          console.log((() => TestEnum.A).toString().includes('TestEnum'));
+        }
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        false
+      `,
+    },
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

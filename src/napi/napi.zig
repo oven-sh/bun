@@ -648,37 +648,7 @@ pub export fn napi_strict_equals(env: napi_env, lhs: napi_value, rhs: napi_value
     return .ok;
 }
 pub extern fn napi_call_function(env: napi_env, recv: napi_value, func: napi_value, argc: usize, argv: [*c]const napi_value, result: *napi_value) napi_status;
-pub export fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result_: ?*napi_value) napi_status {
-    log("napi_new_instance", .{});
-    JSC.markBinding(@src());
-
-    if (argc > 0 and argv == null) {
-        return invalidArg();
-    }
-
-    const result = result_ orelse {
-        return invalidArg();
-    };
-
-    var exception = [_]JSC.C.JSValueRef{null};
-    result.* = JSValue.c(
-        JSC.C.JSObjectCallAsConstructor(
-            env.ref(),
-            constructor.asObjectRef(),
-            argc,
-            if (argv != null)
-                @as([*]const JSC.C.JSValueRef, @ptrCast(argv))
-            else
-                null,
-            &exception,
-        ),
-    );
-    if (exception[0] != null) {
-        return genericFailure();
-    }
-
-    return .ok;
-}
+pub extern fn napi_new_instance(env: napi_env, constructor: napi_value, argc: usize, argv: [*c]const napi_value, result_: ?*napi_value) napi_status;
 pub export fn napi_instanceof(env: napi_env, object: napi_value, constructor: napi_value, result_: ?*bool) napi_status {
     log("napi_instanceof", .{});
     const result = result_ orelse {
@@ -755,7 +725,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
         if (recv != .zero)
             recv
         else
-            JSC.JSValue.jsUndefined(),
+            .undefined,
         if (arg_count > 0 and args != null)
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
@@ -1638,10 +1608,10 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) JSC.JSValue.jsUndefined() else func.withAsyncContextIfNeeded(env),
+                .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
             },
         } else .{
-            .js = if (func == .zero) JSC.JSValue.jsUndefined() else func.withAsyncContextIfNeeded(env),
+            .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

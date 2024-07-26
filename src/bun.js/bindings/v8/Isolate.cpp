@@ -5,7 +5,7 @@ namespace v8 {
 // Returns the isolate inside which the current thread is running or nullptr.
 Isolate* Isolate::TryGetCurrent()
 {
-    auto* global = Bun__getDefaultGlobal();
+    auto* global = Bun__getDefaultGlobalObject();
 
     return global ? reinterpret_cast<v8::Isolate*>(global) : nullptr;
 }
@@ -13,7 +13,7 @@ Isolate* Isolate::TryGetCurrent()
 // Returns the isolate inside which the current thread is running.
 Isolate* Isolate::GetCurrent()
 {
-    auto* global = Bun__getDefaultGlobal();
+    auto* global = Bun__getDefaultGlobalObject();
 
     return global ? reinterpret_cast<v8::Isolate*>(global) : nullptr;
 }

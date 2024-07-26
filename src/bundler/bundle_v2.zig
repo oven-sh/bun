@@ -5797,10 +5797,12 @@ pub const LinkerContext = struct {
                                 }
 
                                 if (!found_non_inlined_enum) {
-                                    _ = part.symbol_uses.swapRemove(ref);
+                                    if (use.count_estimate == 0) {
+                                        _ = part.symbol_uses.swapRemove(ref);
+                                    }
+                                    continue;
                                 }
                             }
-                            continue;
                         }
                     }
                 }

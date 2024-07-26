@@ -114,7 +114,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         errorValue = jsUndefined();
     else {
-        errorValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "error"_s));
+        errorValue = object->get(&lexicalGlobalObject, vm.propertyNames->error);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!errorValue.isUndefined()) {
@@ -150,7 +150,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         messageValue = jsUndefined();
     else {
-        messageValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "message"_s));
+        messageValue = object->get(&lexicalGlobalObject, vm.propertyNames->message);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!messageValue.isUndefined()) {

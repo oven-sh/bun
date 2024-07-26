@@ -198,7 +198,7 @@ pub const TextEncoder = struct {
         array.ensureStillAlive();
 
         if (encoder.any_non_ascii) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         if (array.isEmpty()) {

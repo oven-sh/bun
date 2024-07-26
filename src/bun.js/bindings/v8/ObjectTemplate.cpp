@@ -1,5 +1,4 @@
 #include "v8/ObjectTemplate.h"
-#include "wtf/Assertions.h"
 
 using JSC::JSGlobalObject;
 using JSC::JSValue;
@@ -20,9 +19,11 @@ const JSC::ClassInfo ObjectTemplate::s_info = {
 
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
-    // use structure to create an object template
-    ASSERT_NOT_REACHED();
-    return Local<ObjectTemplate>();
+    auto globalObject = isolate->globalObject();
+    auto& vm = globalObject->vm();
+    Structure* structure = globalObject->ObjectTemplateStructure();
+    auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
+    return Local<ObjectTemplate>(JSValue(objectTemplate));
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
@@ -44,6 +45,12 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSGlobalObject* globalOb
         prototype,
         JSC::TypeInfo(JSC::InternalFunctionType, StructureFlags),
         info());
+}
+
+JSC::EncodedJSValue ObjectTemplate::DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+{
+    ASSERT_NOT_REACHED();
+    return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
 }

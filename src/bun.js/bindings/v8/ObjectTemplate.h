@@ -19,6 +19,14 @@ public:
     BUN_EXPORT void SetInternalFieldCount(int value);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
+
+private:
+    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
+
+    ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)
+        : JSC::InternalFunction(vm, structure, DummyCallback, DummyCallback)
+    {
+    }
 };
 
 }

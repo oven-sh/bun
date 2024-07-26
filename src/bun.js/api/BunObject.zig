@@ -327,7 +327,7 @@ pub fn shell(
     var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
     const string_args = arguments.nextEat() orelse {
         globalThis.throw("shell: expected 2 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     const template_args_js = arguments.nextEat() orelse {
@@ -459,7 +459,7 @@ pub fn braces(
 
     const brace_str_js = arguments.nextEat() orelse {
         globalThis.throw("braces: expected at least 1 argument, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
     const brace_str = brace_str_js.toBunString(globalThis);
     defer brace_str.deref();
@@ -566,7 +566,7 @@ pub fn which(
     defer arguments.deinit();
     const path_arg = arguments.nextEat() orelse {
         globalThis.throw("which: expected 1 argument, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     var path_str: ZigString.Slice = ZigString.Slice.empty;
@@ -589,7 +589,7 @@ pub fn which(
 
     if (bin_str.len >= bun.MAX_PATH_BYTES) {
         globalThis.throw("bin path is too long", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     if (bin_str.len == 0) {
@@ -980,7 +980,7 @@ pub fn openInEditor(
         return .zero;
     };
 
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 pub fn getPublicPath(to: string, origin: URL, comptime Writer: type, writer: Writer) void {
@@ -3445,7 +3445,7 @@ pub export fn Bun__escapeHTML16(globalObject: *JSC.JSGlobalObject, input_value: 
     const input_slice = ptr[0..len];
     const escaped = strings.escapeHTMLForUTF16Input(globalObject.bunVM().allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     switch (escaped) {
@@ -3491,7 +3491,7 @@ pub export fn Bun__escapeHTML8(globalObject: *JSC.JSGlobalObject, input_value: J
 
     const escaped = strings.escapeHTMLForLatin1Input(allocator, input_slice) catch {
         globalObject.vm().throwError(globalObject, ZigString.init("Out of memory").toJS(globalObject));
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     switch (escaped) {
@@ -4557,8 +4557,8 @@ pub const FFIObject = struct {
 
 fn stringWidth(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
     const arguments = callframe.arguments(2).slice();
-    const value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
-    const options_object = if (arguments.len > 1) arguments[1] else JSC.JSValue.jsUndefined();
+    const value = if (arguments.len > 0) arguments[0] else .undefined;
+    const options_object = if (arguments.len > 1) arguments[1] else .undefined;
 
     if (!value.isString()) {
         return JSC.jsNumber(0);
@@ -4671,7 +4671,7 @@ pub const JSZlib = struct {
     // This has to be `inline` due to the callframe.
     inline fn getOptions(globalThis: *JSGlobalObject, callframe: *JSC.CallFrame) ?struct { JSC.Node.StringOrBuffer, ?JSValue } {
         const arguments = callframe.arguments(2).slice();
-        const buffer_value = if (arguments.len > 0) arguments[0] else JSC.JSValue.jsUndefined();
+        const buffer_value = if (arguments.len > 0) arguments[0] else .undefined;
         const options_val: ?JSValue =
             if (arguments.len > 1 and arguments[1].isObject())
             arguments[1]

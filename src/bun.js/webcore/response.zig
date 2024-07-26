@@ -1220,7 +1220,7 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.call(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        const check_result = check_server_identity.call(globalObject, .undefined, &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
@@ -2059,7 +2059,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         } else {
                             body = request.body.value.useAsAnyBlob();
@@ -2372,7 +2372,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         }
 

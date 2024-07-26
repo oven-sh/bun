@@ -220,7 +220,7 @@ pub const Body = struct {
 
                                 break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
                                     .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
-                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                    .URLEncoded => .undefined,
                                 });
                             },
                             else => unreachable,

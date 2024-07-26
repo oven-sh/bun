@@ -716,7 +716,7 @@ pub const H2FrameParser = struct {
 
         stream.state = .CLOSED;
         if (rstCode == .NO_ERROR) {
-            this.dispatchWithExtra(.onStreamEnd, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsUndefined());
+            this.dispatchWithExtra(.onStreamEnd, JSC.JSValue.jsNumber(stream.id), .undefined);
         } else {
             this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream.id), JSC.JSValue.jsNumber(@intFromEnum(rstCode)));
         }
@@ -1428,7 +1428,7 @@ pub const H2FrameParser = struct {
             return .zero;
         };
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn loadSettingsFromJSValue(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, options: JSC.JSValue) bool {
@@ -1544,7 +1544,7 @@ pub const H2FrameParser = struct {
 
         if (this.loadSettingsFromJSValue(globalObject, options)) {
             this.setSettings(this.localSettings);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         return .zero;
@@ -1608,14 +1608,14 @@ pub const H2FrameParser = struct {
                     if (opaque_data_arg.asArrayBuffer(globalObject)) |array_buffer| {
                         const slice = array_buffer.byteSlice();
                         this.sendGoAway(0, @enumFromInt(errorCode), slice, lastStreamID);
-                        return JSC.JSValue.jsUndefined();
+                        return .undefined;
                     }
                 }
             }
         }
 
         this.sendGoAway(0, @enumFromInt(errorCode), "", lastStreamID);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn ping(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -1629,7 +1629,7 @@ pub const H2FrameParser = struct {
         if (args_list.ptr[0].asArrayBuffer(globalObject)) |array_buffer| {
             const slice = array_buffer.slice();
             this.sendPing(false, slice);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         globalObject.throw("Expected payload to be a Buffer", .{});
@@ -2038,7 +2038,7 @@ pub const H2FrameParser = struct {
                         stream.state = .CLOSED;
                         stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                         this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                        return JSC.JSValue.jsUndefined();
+                        return .undefined;
                     };
                 }
             } else {
@@ -2058,7 +2058,7 @@ pub const H2FrameParser = struct {
                     stream.state = .CLOSED;
                     stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                     this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                    return JSC.JSValue.jsUndefined();
+                    return .undefined;
                 };
             }
         }
@@ -2075,7 +2075,7 @@ pub const H2FrameParser = struct {
         frame.write(@TypeOf(writer), writer);
         _ = writer.write(buffer[0..encoded_size]) catch 0;
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
     pub fn writeStream(this: *H2FrameParser, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         JSC.markBinding(@src());
@@ -2250,7 +2250,7 @@ pub const H2FrameParser = struct {
                             stream.state = .CLOSED;
                             stream.rstCode = @intFromEnum(ErrorCode.COMPRESSION_ERROR);
                             this.dispatchWithExtra(.onStreamError, JSC.JSValue.jsNumber(stream_id), JSC.JSValue.jsNumber(stream.rstCode));
-                            return JSC.JSValue.jsUndefined();
+                            return .undefined;
                         };
                     }
                 } else {
@@ -2439,7 +2439,7 @@ pub const H2FrameParser = struct {
                 const result = this.readBytes(bytes);
                 bytes = bytes[result..];
             }
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         globalObject.throw("Expected data to be a Buffer or ArrayBuffer", .{});
         return .zero;

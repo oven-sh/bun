@@ -487,7 +487,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
     _ = jsc_vm.uncaughtException(globalObject, value, false);
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 /// This function is called on another thread
@@ -2928,7 +2928,7 @@ pub const VirtualMachine = struct {
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
         _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {

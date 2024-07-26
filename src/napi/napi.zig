@@ -725,7 +725,7 @@ pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value,
         if (recv != .zero)
             recv
         else
-            JSC.JSValue.jsUndefined(),
+            .undefined,
         if (arg_count > 0 and args != null)
             @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
         else
@@ -1608,10 +1608,10 @@ pub export fn napi_create_threadsafe_function(
         .callback = if (call_js_cb) |c| .{
             .c = .{
                 .napi_threadsafe_function_call_js = c,
-                .js = if (func == .zero) JSC.JSValue.jsUndefined() else func.withAsyncContextIfNeeded(env),
+                .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
             },
         } else .{
-            .js = if (func == .zero) JSC.JSValue.jsUndefined() else func.withAsyncContextIfNeeded(env),
+            .js = if (func == .zero) .undefined else func.withAsyncContextIfNeeded(env),
         },
         .ctx = context,
         .channel = ThreadSafeFunction.Queue.init(max_queue_size, bun.default_allocator),

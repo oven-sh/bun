@@ -2101,7 +2101,7 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .err => |e| return e.toJSC(globalObject),
         }

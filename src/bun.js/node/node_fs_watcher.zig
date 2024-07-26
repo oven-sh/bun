@@ -579,7 +579,7 @@ pub const FSWatcher = struct {
         if (js_this == .zero) return;
         const listener = FSWatcher.listenerGetCached(js_this) orelse return;
         const globalObject = this.globalThis;
-        var filename: JSC.JSValue = JSC.JSValue.jsUndefined();
+        var filename: JSC.JSValue = .undefined;
         if (file_name.len > 0) {
             if (this.encoding == .buffer)
                 filename = JSC.ArrayBuffer.createBuffer(globalObject, file_name)
@@ -615,7 +615,7 @@ pub const FSWatcher = struct {
             this.persistent = true;
             this.poll_ref.ref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn doUnref(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -623,7 +623,7 @@ pub const FSWatcher = struct {
             this.persistent = false;
             this.poll_ref.unref(this.ctx);
         }
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn hasRef(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
@@ -698,7 +698,7 @@ pub const FSWatcher = struct {
 
     pub fn doClose(this: *FSWatcher, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         this.close();
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn finalize(this: *FSWatcher) void {

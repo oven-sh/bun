@@ -417,26 +417,8 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   }
 
   if (us_internal_ssl_socket_is_shut_down(s)) {
-
-    int ret = 0;
-    if ((ret = SSL_shutdown(s->ssl)) == 1) {
-      // two phase shutdown is complete here
-
       us_internal_ssl_socket_close(s, 0, NULL);
       return NULL;
-    } else if (ret < 0) {
-
-      int err = SSL_get_error(s->ssl, ret);
-
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // we need to clear the error queue in case these added to the thread
-        // local queue
-        ERR_clear_error();
-      }
-    }
-
-    // no further processing of data when in shutdown state
-    return s;
   }
 
   // bug checking: this loop needs a lot of attention and clean-ups and
@@ -466,7 +448,6 @@ restart:
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           // Remotely-Initiated Shutdown
           // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-          us_internal_ssl_socket_shutdown(s);
           
           if (read) {
             context =

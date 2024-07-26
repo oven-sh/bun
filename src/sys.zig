@@ -1893,8 +1893,12 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
-        var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(to) catch {};
+        if (to_dir_fd.isValid()) {
+            var to_dir = to_dir_fd.asDir();
+            to_dir.deleteTree(to) catch {};
+        } else {
+            std.fs.deleteTreeAbsolute(to) catch {};
+        }
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };

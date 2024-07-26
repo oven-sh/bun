@@ -503,7 +503,7 @@ Server.prototype = {
     // This logic must align with:
     // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
     if (arguments.length > 0) {
-      if (typeof arguments[0] === "object" && arguments[0] !== null) {
+      if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
         // (options[...][, cb])
         port = arguments[0].port;
         host = arguments[0].host;
@@ -513,7 +513,7 @@ Server.prototype = {
         if (otherTLS && $isObject(otherTLS)) {
           tls = otherTLS;
         }
-      } else if (typeof arguments[0] === "string" && !Number.isSafeInteger(arguments[0])) {
+      } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
         // (path[...][, cb])
         socketPath = arguments[0];
       } else {

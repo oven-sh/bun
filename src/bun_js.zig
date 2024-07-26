@@ -177,7 +177,7 @@ pub const Run = struct {
         // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(ctx, entry_path);
-            Global.exitWide(exit_code);
+            Global.exit(exit_code);
             return;
         }
 

@@ -31,6 +31,7 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DCANARY="$CANARY" \
   -DGIT_SHA="$GIT_SHA"
 run_command ninja -v -j "$CPUS"
+run_command ls
 
 tag="bun-$BUILDKITE_GROUP_KEY"
 if [ "$USE_LTO" == "OFF" ]; then
@@ -45,7 +46,6 @@ for name in bun bun-profile; do
   if [ "$name" == "bun-profile" ]; then
     dir="$tag-profile"
   fi
-  run_command pwd
   run_command chmod +x "$name"
   run_command "$name" --revision
   run_command mkdir -p "$dir"

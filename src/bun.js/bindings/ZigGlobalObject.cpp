@@ -147,6 +147,7 @@
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "v8/ObjectTemplate.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -3069,6 +3070,10 @@ void GlobalObject::finishCreation(VM& vm)
             init.setConstructor(constructor);
         });
 
+    m_ObjectTemplateStructure.initLater([](LazyClassStructure::Initializer& init) {
+        init.setStructure(v8::ObjectTemplate::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
+    });
+
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);
 #endif
@@ -3520,6 +3525,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);
+    thisObject->m_ObjectTemplateStructure.visit(visitor);
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

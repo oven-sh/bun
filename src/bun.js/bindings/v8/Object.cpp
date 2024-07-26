@@ -1,4 +1,5 @@
 #include "v8/Object.h"
+#include "v8/InternalFieldObject.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
 
@@ -10,6 +11,20 @@ using JSC::JSValue;
 using JSC::PutPropertySlot;
 
 namespace v8 {
+
+static WTF::Vector<InternalFieldObject::InternalField>* getInternalFieldsContainer(Object* object)
+{
+    JSObject* js_object = object->toJSValue().getObject();
+    const JSC::ClassInfo* class_info = js_object->classInfo();
+
+    // TODO(@190n): do we need to unwrap proxies like node-jsc did?
+
+    if (class_info->isSubClassOf(InternalFieldObject::info())) {
+        return static_cast<InternalFieldObject*>(js_object)->internalFields();
+    }
+
+    return nullptr;
+}
 
 Local<Object> Object::New(Isolate* isolate)
 {
@@ -53,8 +68,14 @@ void Object::SetInternalField(int index, Local<Data> data)
 
 Local<Data> Object::SlowGetInternalField(int index)
 {
-    ASSERT_NOT_REACHED();
-    return Local<Data>();
+    auto fields = getInternalFieldsContainer(this);
+    if (fields && index >= 0 && index < fields->size()) {
+        auto& field = fields->at(index);
+        if (field.is_js_value) {
+            return Local<Data>(field.data.js_value);
+        }
+    }
+    return Local<Data>(JSC::jsUndefined());
 }
 
 }

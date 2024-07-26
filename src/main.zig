@@ -8,7 +8,7 @@ const Environment = bun.Environment;
 
 pub const panic = bun.crash_handler.panic;
 pub const std_options = std.Options{
-    .enable_segfault_handler = !bun.crash_handler.enable,
+    .enable_segfault_handler = false,
 };
 
 pub const io_mode = .blocking;

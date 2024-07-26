@@ -224,6 +224,12 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 }
 
 void us_internal_fast_shutdown(struct us_internal_ssl_socket_t *s) {
+  if (SSL_in_init(s->ssl) || SSL_get_quiet_shutdown(s->ssl)) {
+    // when SSL_in_init or quiet shutdown in BoringSSL, we call shutdown
+    // directly
+    us_socket_shutdown(0, &s->s);
+    return;
+  }
   // we are closing the socket but did not sent a shutdown yet
   if(SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN) {
     // Zero means that we should wait for the peer to close the connection

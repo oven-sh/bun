@@ -1868,7 +1868,8 @@ pub fn renameatConcurrentlyWithoutFallback(
             var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
-                .err => |err| err,
+                // if ENOENT don't retry
+                .err => |err| if (err.getErrno() == .NOENT) return .{ .err = err } else err,
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 

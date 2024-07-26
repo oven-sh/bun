@@ -7,6 +7,7 @@ namespace v8 {
 
 MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int signed_length)
 {
+    // TODO(@190n) maybe use JSC::AtomString instead of ignoring type
     (void)type;
     size_t length = 0;
     if (signed_length < 0) {
@@ -36,17 +37,10 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     auto jsValue = toJSValue();
     WTF::String string = jsValue.getString(isolate->globalObject());
 
-    if (!string.is8Bit()) {
-        auto span = string.span16();
-        for (auto c : span) {
-            printf("%04x ", c);
-        }
-        printf("\n");
-        abort();
-    }
-
+    // TODO(@190n) handle 16 bit strings
     assert(string.is8Bit());
     auto span = string.span8();
+
     int to_copy = length;
     bool terminate = true;
     if (to_copy < 0) {

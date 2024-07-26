@@ -714,7 +714,6 @@ void Zig::GlobalObject::resetOnEachMicrotaskTick()
 
 extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, int32_t executionContextId, bool miniMode, bool evalMode, void* worker_ptr)
 {
-
     auto heapSize = miniMode ? JSC::HeapType::Small : JSC::HeapType::Large;
     JSC::VM& vm = JSC::VM::create(heapSize).leakRef();
     // This must happen before JSVMClientData::create
@@ -756,7 +755,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     auto* globalObject = createGlobalObject();
     if (UNLIKELY(!globalObject)) {
-        PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
+        BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
     }
 
     globalObject->setConsole(console_client);

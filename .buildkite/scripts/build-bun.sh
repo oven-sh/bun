@@ -9,20 +9,21 @@ function run_command() {
   { set +x; } 2>/dev/null
 }
 
+cwd="$(pwd)"
+
 mkdir -p build
 source "$(dirname "$0")/download-artifact.sh" "build/bun-deps/**" --step "$BUILDKITE_GROUP_KEY-build-deps"
-source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKITE_GROUP_KEY-build-zig" --split
+source "$(dirname "$0")/download-artifact.sh" "build/bun-zig.o" --step "$BUILDKITE_GROUP_KEY-build-zig"
 source "$(dirname "$0")/download-artifact.sh" "build/bun-cpp-objects.a" --step "$BUILDKITE_GROUP_KEY-build-cpp" --split
 cd build
 
-cwd="$(pwd)"
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DBUN_LINK_ONLY="1" \
   -DNO_CONFIGURE_DEPENDS="1" \
-  -DBUN_ZIG_OBJ_DIR="$cwd" \
-  -DBUN_CPP_ARCHIVE="$cwd/bun-cpp-objects.a" \
-  -DBUN_DEPS_OUT_DIR="$cwd/bun-deps" \
+  -DBUN_ZIG_OBJ_DIR="$cwd/build" \
+  -DBUN_CPP_ARCHIVE="$cwd/build/bun-cpp-objects.a" \
+  -DBUN_DEPS_OUT_DIR="$cwd/build/bun-deps" \
   -DCMAKE_BUILD_TYPE="$CMAKE_BUILD_TYPE" \
   -DCPU_TARGET="$CPU_TARGET" \
   -DUSE_LTO="$USE_LTO" \
@@ -49,5 +50,5 @@ for name in bun bun-profile; do
   run_command mkdir -p "$dir"
   run_command mv "$name" "$dir/$name"
   run_command zip -r "$dir.zip" "$dir"
-  source "$(dirname "$0")/upload-artifact.sh" "$dir.zip"
+  source "$cwd/$(dirname "$0")/upload-artifact.sh" "$dir.zip"
 done

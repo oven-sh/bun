@@ -79,4 +79,4 @@ export ONLY_ZIG="1"
 run_command ninja "$cwd/build/bun-zig.o" -v -j "$CPUS"
 
 cd ..
-source "$(dirname "$0")/upload-artifact.sh" "build/bun-zig.o" --split
+source "$(dirname "$0")/upload-artifact.sh" "build/bun-zig.o"

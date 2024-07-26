@@ -26,11 +26,11 @@ function assert_target() {
   local os="${1-$(uname -s)}"
   case "$(echo "$os" | tr '[:upper:]' '[:lower:]')" in
     linux)
-      export ZIG_TARGET="$ARCH-linux-gnu" ;;
+      export ZIG_TARGET="$ZIG_ARCH-linux-gnu" ;;
     darwin)
-      export ZIG_TARGET="$ARCH-macos-none" ;;
+      export ZIG_TARGET="$ZIG_ARCH-macos-none" ;;
     windows)
-      export ZIG_TARGET="$ARCH-windows-msvc" ;;
+      export ZIG_TARGET="$ZIG_ARCH-windows-msvc" ;;
     *)
       echo "error: Unsupported operating system: $os" 1>&2
       exit 1

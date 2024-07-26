@@ -41,6 +41,9 @@ describe("napi", () => {
     it("Array::New", () => {
       checkSameOutput("test_v8_array_new", []);
     });
+    it("ObjectTemplate", () => {
+      checkSameOutput("test_v8_object_template", []);
+    });
   });
 
   describe("issue_11949", () => {

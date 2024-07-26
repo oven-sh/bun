@@ -1,5 +1,6 @@
 #include <node.h>
 
+#include <inttypes.h>
 #include <iostream>
 #include <napi.h>
 
@@ -9,6 +10,15 @@ napi_value fail(napi_env env, const char *msg) {
   napi_value result;
   napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &result);
   return result;
+}
+
+napi_value fail_fmt(napi_env env, const char *fmt, ...) {
+  char buf[1024];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  return fail(env, buf);
 }
 
 napi_value ok(napi_env env) {
@@ -78,11 +88,11 @@ napi_value test_v8_number_new(const Napi::CallbackInfo &info) {
   auto fraction = v8::Number::New(v8::Isolate::GetCurrent(), 6.125);
 
   if (integer->Value() != 123.0) {
-    return fail(
-        env, "integer round-tripped through v8::Number was not expected value");
+    return fail_fmt(env, "wrong v8 number value: expected 123.0 got %f",
+                    integer->Value());
   } else if (fraction->Value() != 6.125) {
-    return fail(env, "floating-point round-tripped through v8::Number was not "
-                     "expected value");
+    return fail_fmt(env, "wrong v8 number value: expected 6.125 got %f",
+                    fraction->Value());
   }
 
   return ok(env);
@@ -112,38 +122,56 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
   // retval counts null terminator
   if ((retval = str->WriteUtf8(isolate, buf, sizeof buf, &nchars)) !=
       strlen(string1) + 1) {
-    return fail(env, "WriteUtf8 wrong return value");
+    return fail_fmt(env, "String::WriteUtf8 return: expected %zu got %d",
+                    strlen(string1) + 1, retval);
   }
   if (nchars != strlen(string1)) {
-    return fail(env, "WriteUtf8 set nchars to wrong value");
+    return fail_fmt(
+        env, "String::WriteUtf8 set nchars to wrong value: expected %zu got %d",
+        strlen(string1), nchars);
   }
   // cmp including terminator
   if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
-    return fail(env, "WriteUtf8 stored wrong data in buffer");
+    return fail_fmt(
+        env,
+        "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
+        string1, buf);
   }
 
   // assumed length
-  if ((retval = str->WriteUtf8(isolate, buf, -1, &nchars)) != 12) {
-    return fail(env, "WriteUtf8 wrong return value");
+  if ((retval = str->WriteUtf8(isolate, buf, -1, &nchars)) !=
+      strlen(string1) + 1) {
+    return fail_fmt(env, "String::WriteUtf8 return: expected %zu got %d",
+                    strlen(string1) + 1, retval);
   }
   if (nchars != strlen(string1)) {
-    return fail(env, "WriteUtf8 set nchars to wrong value");
+    return fail_fmt(
+        env, "String::WriteUtf8 set nchars to wrong value: expected %zu got %d",
+        strlen(string1), nchars);
   }
   if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
-    return fail(env, "WriteUtf8 stored wrong data in buffer");
+    return fail_fmt(
+        env,
+        "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
+        string1, buf);
   }
 
   // too short length
   memset(buf, 0xaa, sizeof buf);
   if ((retval = str->WriteUtf8(isolate, buf, 5, &nchars)) != 5) {
-    return fail(env, "WriteUtf8 wrong return value");
+    return fail_fmt(env, "String::WriteUtf8 return: expected 5 got %d", retval);
   }
   if (nchars != 5) {
-    return fail(env, "WriteUtf8 set nchars to wrong value");
+    return fail_fmt(
+        env, "String::WriteUtf8 set nchars to wrong value: expected 5 got %d",
+        nchars);
   }
   // check it did not write a terminator
   if (memcmp(buf, "hello\xaa", 6) != 0) {
-    return fail(env, "WriteUtf8 stored wrong data in buffer");
+    return fail_fmt(env,
+                    "String::WriteUtf8 stored wrong data in buffer: expected "
+                    "hello\\xaa got %s",
+                    buf);
   }
 
   // nullptr for nchars_ref, just testing it doesn't crash
@@ -154,9 +182,7 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
                               v8::NewStringType::kNormal, -1);
   str = maybe_str.ToLocalChecked();
   if (str->Length() != 6) {
-    char *s;
-    asprintf(&s, "wrong length: expected 6 got %d", str->Length());
-    return fail(env, s);
+    return fail_fmt(env, "wrong length: expected 6 got %d", str->Length());
   }
 
   maybe_str =
@@ -164,9 +190,7 @@ napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
                               v8::NewStringType::kNormal, -1);
   str = maybe_str.ToLocalChecked();
   if (str->Length() != 9) {
-    char *s;
-    asprintf(&s, "wrong length: expected 9 got %d", str->Length());
-    return fail(env, s);
+    return fail_fmt(env, "wrong length: expected 9 got %d", str->Length());
   }
 
   return ok(env);
@@ -180,7 +204,9 @@ napi_value test_v8_external(const Napi::CallbackInfo &info) {
   v8::MaybeLocal<v8::External> maybe_external = v8::External::New(isolate, &x);
   v8::Local<v8::External> external = maybe_external.ToLocalChecked();
   if (external->Value() != &x) {
-    return fail(env, "External::Value() returned wrong pointer");
+    return fail_fmt(
+        env, "External::Value() returned wrong pointer: expected %p got %p", &x,
+        external->Value());
   }
   return ok(env);
 }
@@ -192,9 +218,11 @@ napi_value test_v8_object(const Napi::CallbackInfo &info) {
   v8::Local<v8::Object> obj = v8::Object::New(isolate);
   auto key = v8::String::NewFromUtf8(isolate, "key").ToLocalChecked();
   auto val = v8::Number::New(isolate, 5);
-  if (obj->Set(isolate->GetCurrentContext(), key, val) !=
+  v8::Maybe<bool> retval = v8::Nothing<bool>();
+  if ((retval = obj->Set(isolate->GetCurrentContext(), key, val)) !=
       v8::Just<bool>(true)) {
-    return fail(env, "Object::Set wrong return");
+    return fail_fmt(env, "Object::Set wrong return: expected Just(true) got %s",
+                    retval.IsNothing() ? "Nothing" : "Just(false)");
   }
 
   return ok(env);
@@ -216,7 +244,10 @@ napi_value test_v8_array_new(const Napi::CallbackInfo &info) {
 
   uint32_t len;
   if (napi_get_array_length(env, napi_array, &len) != napi_ok || len != 2) {
-    return fail(env, "napi_get_array_length is wrong");
+    return fail_fmt(
+        env,
+        "napi_get_array_length after v8::Array::New: expected 2 got %" PRIu32,
+        len);
   }
 
   napi_value first, second;
@@ -227,14 +258,29 @@ napi_value test_v8_array_new(const Napi::CallbackInfo &info) {
 
   double num;
   if (napi_get_value_double(env, first, &num) != napi_ok || num != 50.0) {
-    return fail(env, "first array element has wrong value");
+    return fail_fmt(
+        env, "first array element has wrong value: expected 50.0 got %f", num);
   }
 
-  char str[5];
+  char str[5] = {0};
   size_t string_len;
   if (napi_get_value_string_utf8(env, second, str, 5, &string_len) != napi_ok ||
       string_len != 4 || memcmp(str, "meow", 4) != 0) {
-    return fail(env, "second array element has wrong value");
+    return fail_fmt(
+        env, "second array element has wrong value: expected 'meow' got %s",
+        str);
+  }
+
+  return ok(env);
+}
+
+napi_value test_v8_object_template(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+
+  v8::Local<v8::ObjectTemplate> obj_template = v8::ObjectTemplate::New(isolate);
+  if (obj_template.IsEmpty()) {
+    return fail(env, "ObjectTemplate::NewInstance failed");
   }
 
   return ok(env);
@@ -321,10 +367,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
 
   Napi::Object exports = Init2(env, exports1);
 
-  node::AddEnvironmentCleanupHook(
-      isolate, [](void *) {}, isolate);
-  node::RemoveEnvironmentCleanupHook(
-      isolate, [](void *) {}, isolate);
+  node::AddEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
+  node::RemoveEnvironmentCleanupHook(isolate, [](void *) {}, isolate);
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
@@ -335,6 +379,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_v8_external", Napi::Function::New(env, test_v8_external));
   exports.Set("test_v8_object", Napi::Function::New(env, test_v8_object));
   exports.Set("test_v8_array_new", Napi::Function::New(env, test_v8_array_new));
+  exports.Set("test_v8_object_template",
+              Napi::Function::New(env, test_v8_object_template));
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));

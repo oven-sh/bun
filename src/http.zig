@@ -925,10 +925,11 @@ pub const HTTPThread = struct {
         }
 
         while (this.queued_tasks.pop()) |http| {
-            var cloned = default_allocator.create(AsyncHTTP) catch unreachable;
-            cloned.* = http.*;
-            cloned.real = http;
-            cloned.onStart();
+            var cloned = ThreadlocalAsyncHTTP.new(.{
+                .async_http = http.*,
+            });
+            cloned.async_http.real = http;
+            cloned.async_http.onStart();
             if (comptime Environment.allow_assert) {
                 count += 1;
             }
@@ -2228,12 +2229,23 @@ pub const AsyncHTTP = struct {
             this.state.store(State.fail, .monotonic);
         }
 
+        if (comptime Environment.enable_logs) {
+            if (socket_async_http_abort_tracker.count() > 0) {
+                log("socket_async_http_abort_tracker count: {d}", .{socket_async_http_abort_tracker.count()});
+            }
+        }
+
+        if (socket_async_http_abort_tracker.capacity() > 10_000 and socket_async_http_abort_tracker.count() < 100) {
+            socket_async_http_abort_tracker.shrinkAndFree(socket_async_http_abort_tracker.count());
+        }
+
         if (result.has_more) {
             callback.function(callback.ctx, async_http, result);
         } else {
             {
                 this.client.deinit();
-                defer default_allocator.destroy(this);
+                var threadlocal_http: *ThreadlocalAsyncHTTP = @fieldParentPtr("async_http", async_http);
+                defer threadlocal_http.destroy();
                 log("onAsyncHTTPCallback: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
                 callback.function(callback.ctx, async_http, result);
             }
@@ -3990,3 +4002,9 @@ pub fn handleResponseMetadata(
 }
 
 const assert = bun.assert;
+
+// Exists for heap stats reasons.
+const ThreadlocalAsyncHTTP = struct {
+    async_http: AsyncHTTP,
+    pub usingnamespace bun.New(@This());
+};

@@ -21,19 +21,6 @@ function assert_buildkite_agent() {
   fi
 }
 
-function assert_buildkite_secret() {
-  local key="$1"
-  local value=$(buildkite-agent secret get "$key")
-  if [ -z "$value" ]; then
-    echo "error: Cannot find $key secret"
-    echo ""
-    echo "hint: Create a secret named $key with a value:"
-    echo "https://buildkite.com/docs/pipelines/buildkite-secrets"
-    exit 1
-  fi
-  export "$key"="$value"
-}
-
 function assert_jq() {
   assert_command "jq" "jq" "https://stedolan.github.io/jq/"
 }
@@ -61,19 +48,23 @@ function assert_command() {
   fi
 }
 
-function calculate_canary_revision() {
-  local repo=$(echo "$BUILDKITE_REPO" | sed -E 's#https://github.com/([^/]+)/([^/]+).git#\1/\2#g')
-  local tag="$(curl -sL "https://api.github.com/repos/$repo/releases/latest" | jq -r ".tag_name")"
-  if [ "$tag" == "null" ]; then
-    echo "1"
-  else
-    local revision=$(curl -sL "https://api.github.com/repos/$repo/compare/$tag...$BUILDKITE_COMMIT" | jq -r ".ahead_by")
-    if [ "$revision" == "null" ]; then
-      echo "1"
+function assert_canary() {
+  local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
+  if [ -z "$canary" ]; then
+    local repo=$(echo "$BUILDKITE_REPO" | sed -E 's#https://github.com/([^/]+)/([^/]+).git#\1/\2#g')
+    local tag="$(curl -sL "https://api.github.com/repos/$repo/releases/latest" | jq -r ".tag_name")"
+    if [ "$tag" == "null" ]; then
+      canary="1"
     else
-      echo "$revision"
+      local revision=$(curl -sL "https://api.github.com/repos/$repo/compare/$tag...$BUILDKITE_COMMIT" | jq -r ".ahead_by")
+      if [ "$revision" == "null" ]; then
+        canary="1"
+      else
+        canary="$revision"
+      fi
     fi
   fi
+  run_command buildkite-agent meta-data set canary "$canary"
 }
 
 function upload_buildkite_pipeline() {
@@ -82,20 +73,18 @@ function upload_buildkite_pipeline() {
     echo "error: Cannot find pipeline: $path"
     exit 1
   fi
-  local pipeline="$(cat "$path")"
-  local canary="$(buildkite-agent meta-data get canary 2>/dev/null || echo "1")"
-  if [ "$canary" != "1" ] && [ "$canary" != "true" ]; then
-    pipeline="$(echo "$pipeline" | sed "s/CANARY: \"0\"/CANARY: 0/g")"
-  else
-    local revision="$(calculate_canary_revision)"
-    pipeline="$(echo "$pipeline" | sed "s/CANARY: 1/CANARY: \"$revision\"/g")"
-  fi
-  echo "$pipeline" | buildkite-agent pipeline upload
+  run_command buildkite-agent pipeline upload "$path"
+}
+
+function run_command() {
+  set -x
+  "$@"
+  { set +x; } 2>/dev/null
 }
 
 assert_build
 assert_buildkite_agent
-assert_buildkite_secret "GITHUB_TOKEN"
 assert_jq
 assert_curl
+assert_canary
 upload_buildkite_pipeline ".buildkite/ci.yml"

@@ -38,7 +38,10 @@ dep() {
     local script="$2"
     CACHE_KEY=
     if [ "$CACHE" == "1" ]; then
-        CACHE_KEY="$submodule/$(echo "$SUBMODULES" | grep "$submodule" | git hash-object --stdin)"
+        local hash="$(echo "$SUBMODULES" | grep "$submodule" | awk '{print $1}')"
+        local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        local arch="$(uname -m)"
+        CACHE_KEY="$submodule/$hash-$os-$arch-$CPU_TARGET"
     fi
     if [ -z "$FORCE" ]; then
         HAS_ALL_DEPS=1
@@ -74,7 +77,7 @@ dep() {
 
     if [ "$CACHE" == "1" ]; then
         mkdir -p "$CACHE_DIR/$CACHE_KEY"
-        for lib in "${@:2}"; do
+        for lib in "${@:3}"; do
             cp "$BUN_DEPS_OUT_DIR/$lib" "$CACHE_DIR/$CACHE_KEY/$lib"
             printf "%s %s - cached\n" "$script" "$lib"
         done

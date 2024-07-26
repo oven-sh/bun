@@ -498,6 +498,7 @@ Server.prototype = {
     const server = this;
     let port, host, onListen;
     let socketPath;
+    let tls = this[tlsSymbol];
 
     // This logic must align with:
     // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
@@ -507,10 +508,14 @@ Server.prototype = {
         port = arguments[0].port;
         host = arguments[0].host;
         socketPath = arguments[0].path;
+
+        const otherTLS = arguments[0].tls;
+        if (otherTLS && $isObject(otherTLS)) {
+          tls = otherTLS;
+        }
       } else if (typeof arguments[0] === "string" && !Number.isSafeInteger(arguments[0])) {
         // (path[...][, cb])
         socketPath = arguments[0];
-        port = undefined;
       } else {
         // ([port][, host][...][, cb])
         port = arguments[0];
@@ -535,7 +540,6 @@ Server.prototype = {
     let isHTTPS = false;
 
     try {
-      const tls = this[tlsSymbol];
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }

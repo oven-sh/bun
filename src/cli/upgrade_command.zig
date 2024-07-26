@@ -234,24 +234,20 @@ pub const UpgradeCommand = struct {
 
         var metadata_body = try MutableString.init(allocator, 2048);
 
-        // ensure very stable memory address
-        var async_http: *HTTP.AsyncHTTP = try allocator.create(HTTP.AsyncHTTP);
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
+        const response = try bun.http.fetchSync(
+            &.{
+                .allocator = allocator,
+                .progress_node = progress,
+                .headers = header_entries,
+                .headers_buf = headers_buf,
+                .http_proxy = http_proxy,
+                .url = api_url,
+                .method = .GET,
+                .redirect_type = .follow,
+                .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            },
             &metadata_body,
-            "",
-            http_proxy,
-            null,
-            HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
-        if (!silent) async_http.client.progress_node = progress.?;
-        const response = try async_http.sendSync(true);
 
         switch (response.status_code) {
             404 => return error.HTTP404,
@@ -514,26 +510,20 @@ pub const UpgradeCommand = struct {
             var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
-            var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
             var zip_file_buffer = try ctx.allocator.create(MutableString);
             zip_file_buffer.* = try MutableString.init(ctx.allocator, @max(version.size, 1024));
 
-            async_http.* = HTTP.AsyncHTTP.initSync(
-                ctx.allocator,
-                .GET,
-                zip_url,
-                .{},
-                "",
-                zip_file_buffer,
-                "",
-                http_proxy,
-                null,
-                HTTP.FetchRedirect.follow,
-            );
-            async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
-            const response = try async_http.sendSync(true);
+            const response = try bun.http.fetchSync(&.{
+                .allocator = ctx.allocator,
+                .progress_node = progress,
+                .headers = .{},
+                .headers_buf = "",
+                .http_proxy = http_proxy,
+                .url = zip_url,
+                .method = .GET,
+                .redirect_type = .follow,
+                .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            }, zip_file_buffer);
 
             switch (response.status_code) {
                 404 => {

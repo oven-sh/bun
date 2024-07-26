@@ -1967,23 +1967,17 @@ pub const Example = struct {
         mutable.* = try MutableString.init(ctx.allocator, 8192);
 
         // ensure very stable memory address
-        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            api_url,
-            header_entries,
-            headers_buf,
-            mutable,
-            "",
-            http_proxy,
-            null,
-            HTTP.FetchRedirect.follow,
-        );
-        async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
-        const response = try async_http.sendSync(true);
+        const response = try bun.http.fetchSync(&.{
+            .allocator = ctx.allocator,
+            .method = .GET,
+            .url = api_url,
+            .headers = header_entries,
+            .headers_buf = headers_buf,
+            .progress_node = progress,
+            .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            .http_proxy = http_proxy,
+            .redirect_type = .follow,
+        }, mutable);
 
         switch (response.status_code) {
             404 => return error.GitHubRepositoryNotFound,
@@ -2043,24 +2037,17 @@ pub const Example = struct {
 
         var http_proxy: ?URL = env_loader.getHttpProxy(url);
 
-        // ensure very stable memory address
-        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            http_proxy,
-            null,
-            HTTP.FetchRedirect.follow,
-        );
-        async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
-        var response = try async_http.sendSync(true);
+        var response = try bun.http.fetchSync(&.{
+            .allocator = ctx.allocator,
+            .method = .GET,
+            .url = url,
+            .headers = .{},
+            .headers_buf = "",
+            .progress_node = progress,
+            .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            .http_proxy = http_proxy,
+            .redirect_type = .follow,
+        }, mutable);
 
         switch (response.status_code) {
             404 => return error.ExampleNotFound,
@@ -2134,24 +2121,19 @@ pub const Example = struct {
 
         http_proxy = env_loader.getHttpProxy(parsed_tarball_url);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            parsed_tarball_url,
-            .{},
-            "",
-            mutable,
-            "",
-            http_proxy,
-            null,
-            HTTP.FetchRedirect.follow,
-        );
-        async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
         refresher.maybeRefresh();
 
-        response = try async_http.sendSync(true);
+        response = try bun.http.fetchSync(&.{
+            .allocator = ctx.allocator,
+            .method = .GET,
+            .url = parsed_tarball_url,
+            .headers = .{},
+            .headers_buf = "",
+            .progress_node = progress,
+            .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            .http_proxy = http_proxy,
+            .redirect_type = .follow,
+        }, mutable);
 
         refresher.maybeRefresh();
 
@@ -2172,29 +2154,20 @@ pub const Example = struct {
 
         const http_proxy: ?URL = env_loader.getHttpProxy(url);
 
-        var async_http: *HTTP.AsyncHTTP = ctx.allocator.create(HTTP.AsyncHTTP) catch unreachable;
         const mutable = try ctx.allocator.create(MutableString);
         mutable.* = try MutableString.init(ctx.allocator, 2048);
 
-        async_http.* = HTTP.AsyncHTTP.initSync(
-            ctx.allocator,
-            .GET,
-            url,
-            .{},
-            "",
-            mutable,
-            "",
-            http_proxy,
-            null,
-            HTTP.FetchRedirect.follow,
-        );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
-
-        if (Output.enable_ansi_colors) {
-            async_http.client.progress_node = progress_node;
-        }
-
-        const response = async_http.sendSync(true) catch |err| {
+        const response = bun.http.fetchSync(&.{
+            .allocator = ctx.allocator,
+            .method = .GET,
+            .url = url,
+            .headers = .{},
+            .headers_buf = "",
+            .progress_node = progress_node,
+            .reject_unauthorized = env_loader.getTLSRejectUnauthorized(),
+            .http_proxy = http_proxy,
+            .redirect_type = .follow,
+        }, mutable) catch |err| {
             switch (err) {
                 error.WouldBlock => {
                     Output.prettyErrorln("Request timed out while trying to fetch examples list. Please try again", .{});

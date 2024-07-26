@@ -28,7 +28,6 @@ const bundler = bun.bundler;
 const DotEnv = @import("env_loader.zig");
 const which = @import("which.zig").which;
 const JSC = bun.JSC;
-const AsyncHTTP = bun.http.AsyncHTTP;
 const Arena = @import("./mimalloc_arena.zig").Arena;
 
 const OpaqueWrap = JSC.OpaqueWrap;
@@ -112,7 +111,7 @@ pub const Run = struct {
             failWithBuildError(vm);
         };
 
-        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+        bun.http.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;
@@ -146,7 +145,7 @@ pub const Run = struct {
                 Global.exit(1);
             }
 
-            AsyncHTTP.preconnect(url, false);
+            bun.http.preconnect(url, false);
         }
     }
 
@@ -255,7 +254,7 @@ pub const Run = struct {
             failWithBuildError(vm);
         };
 
-        AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
+        bun.http.loadEnv(vm.allocator, vm.log, b.env);
 
         vm.loadExtraEnv();
         vm.is_main_thread = true;

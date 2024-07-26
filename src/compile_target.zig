@@ -143,8 +143,6 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
     {
         refresher.refresh();
 
-        // TODO: This is way too much code necessary to send a single HTTP request...
-        var async_http = try allocator.create(HTTP.AsyncHTTP);
         var compressed_archive_bytes = try allocator.create(MutableString);
         compressed_archive_bytes.* = try MutableString.init(allocator, 24 * 1024 * 1024);
         var url_buffer: [2048]u8 = undefined;
@@ -155,22 +153,15 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
             defer progress.end();
             const http_proxy: ?bun.URL = env.getHttpProxy(url);
 
-            async_http.* = HTTP.AsyncHTTP.initSync(
-                allocator,
-                .GET,
-                url,
-                .{},
-                "",
-                compressed_archive_bytes,
-                "",
-                http_proxy,
-                null,
-                HTTP.FetchRedirect.follow,
-            );
-            async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env.getTLSRejectUnauthorized();
-
-            const response = try async_http.sendSync(true);
+            const response = try bun.http.fetchSync(&.{
+                .method = .GET,
+                .url = url,
+                .headers = .{},
+                .headers_buf = "",
+                .http_proxy = http_proxy,
+                .progress_node = progress,
+                .reject_unauthorized = env.getTLSRejectUnauthorized(),
+            }, compressed_archive_bytes);
 
             switch (response.status_code) {
                 404 => {

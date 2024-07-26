@@ -2773,6 +2773,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     auto global = jsCast<Zig::GlobalObject*>(globalObject);
     auto& vm = global->vm();
     JSValue _killFn = global->processObject()->get(globalObject, Identifier::fromString(vm, "_kill"_s));
+    RETURN_IF_EXCEPTION(scope, {});
     if (!_killFn.isCallable()) {
         throwTypeError(globalObject, scope, "process._kill is not a function"_s);
         return JSValue::encode({});

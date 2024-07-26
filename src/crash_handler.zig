@@ -770,6 +770,8 @@ pub fn init() void {
 }
 
 pub fn resetSegfaultHandler() void {
+    if (!enable) return;
+
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
             const rc = windows.kernel32.RemoveVectoredExceptionHandler(handle);

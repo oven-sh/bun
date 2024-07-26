@@ -756,7 +756,7 @@ extern "C" JSC__JSGlobalObject* Zig__GlobalObject__create(void* console_client, 
 
     auto* globalObject = createGlobalObject();
     if (UNLIKELY(!globalObject)) {
-        PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
+        BUN_PANIC("Failed to allocate JavaScript global object. Did your computer run out of memory?");
     }
 
     globalObject->setConsole(console_client);

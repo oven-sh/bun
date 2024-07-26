@@ -1000,8 +1000,16 @@ add_compile_definitions(
 )
 
 if(NOT ASSERT_ENABLED)
+    if(APPLE)
+        add_compile_definitions("LIBCXX_ENABLE_ASSERTIONS=1")
+    endif()
+
     add_compile_definitions("NDEBUG=1")
 else()
+    if(APPLE)
+        add_compile_definitions("LIBCXX_ENABLE_ASSERTIONS=0")
+    endif()
+
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 

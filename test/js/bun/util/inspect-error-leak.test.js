@@ -1,8 +1,10 @@
 import { test, expect } from "bun:test";
 
+const perBatch = 2000;
+const repeat = 50;
 test("Printing errors does not leak", () => {
   function batch() {
-    for (let i = 0; i < 1000; i++) {
+    for (let i = 0; i < perBatch; i++) {
       Bun.inspect(new Error("leak"));
     }
     Bun.gc(true);
@@ -10,10 +12,12 @@ test("Printing errors does not leak", () => {
 
   batch();
   const baseline = Math.floor(process.memoryUsage.rss() / 1024);
-  for (let i = 0; i < 20; i++) {
+  for (let i = 0; i < repeat; i++) {
     batch();
-    const after = Math.floor(process.memoryUsage.rss() / 1024);
-    const diff = after - baseline;
-    expect(diff, `after ${i} iterations`).toBeLessThan(5000);
   }
+
+  const after = Math.floor(process.memoryUsage.rss() / 1024);
+  const diff = ((after - baseline) / 1024) | 0;
+  console.log(`RSS increased by ${diff} MB`);
+  expect(diff, `RSS grew by ${diff} MB after ${perBatch * repeat} iterations`).toBeLessThan(10);
 }, 10_000);

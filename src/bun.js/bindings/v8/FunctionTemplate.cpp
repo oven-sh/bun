@@ -15,13 +15,13 @@ Local<FunctionTemplate> FunctionTemplate::New(
     uint16_t allowed_receiver_instance_type_range_start,
     uint16_t allowed_receiver_instance_type_range_end)
 {
-    ASSERT_NOT_REACHED();
+    V8_UNIMPLEMENTED();
     return Local<FunctionTemplate>();
 }
 
 MaybeLocal<Function> FunctionTemplate::GetFunction(Local<Context> context)
 {
-    ASSERT_NOT_REACHED();
+    V8_UNIMPLEMENTED();
     return MaybeLocal<Function>();
 }
 

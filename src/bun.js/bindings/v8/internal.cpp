@@ -5,7 +5,7 @@ namespace internal {
 
 Isolate* IsolateFromNeverReadOnlySpaceObject(uintptr_t obj)
 {
-    ASSERT_NOT_REACHED();
+    V8_UNIMPLEMENTED();
     return nullptr;
 }
 

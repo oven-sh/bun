@@ -8,7 +8,7 @@ namespace v8 {
 MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int signed_length)
 {
     // TODO(@190n) maybe use JSC::AtomString instead of ignoring type
-    assert(type == NewStringType::kNormal);
+    RELEASE_ASSERT(type == NewStringType::kNormal);
     size_t length = 0;
     if (signed_length < 0) {
         length = strlen(data);
@@ -24,7 +24,7 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     std::span<const unsigned char> span(reinterpret_cast<const unsigned char*>(data), length);
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
-    assert(!string.isNull());
+    RELEASE_ASSERT(!string.isNull());
     auto jsString = JSC::jsString(isolate->vm(), string);
     JSValue jsValue(jsString);
     Local<String> local(jsValue);
@@ -33,12 +33,12 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
 
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
-    assert(options == 0);
+    RELEASE_ASSERT(options == 0);
     auto jsValue = toJSValue();
     WTF::String string = jsValue.getString(isolate->globalObject());
 
     // TODO(@190n) handle 16 bit strings
-    assert(string.is8Bit());
+    RELEASE_ASSERT(string.is8Bit());
     auto span = string.span8();
 
     int to_copy = length;
@@ -66,7 +66,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 int String::Length() const
 {
     auto jsValue = toJSValue();
-    assert(jsValue.isString());
+    RELEASE_ASSERT(jsValue.isString());
     WTF::String s;
     jsValue.getString(Isolate::GetCurrent()->globalObject(), s);
     return s.length();

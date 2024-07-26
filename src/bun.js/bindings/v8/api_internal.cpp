@@ -6,7 +6,7 @@ namespace api_internal {
 BUN_EXPORT void ToLocalEmpty()
 {
     // TODO(@190n) proper error handling
-    ASSERT_NOT_REACHED();
+    V8_UNIMPLEMENTED();
 }
 
 }

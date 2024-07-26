@@ -19,16 +19,19 @@ const JSC::ClassInfo ObjectTemplate::s_info = {
 
 Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTemplate> constructor)
 {
+    RELEASE_ASSERT(constructor.IsEmpty());
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
     Structure* structure = globalObject->ObjectTemplateStructure();
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
+    // TODO pass constructor
+    objectTemplate->finishCreation(vm);
     return Local<ObjectTemplate>(JSValue(objectTemplate));
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 {
-    ASSERT_NOT_REACHED();
+    V8_UNIMPLEMENTED();
     return MaybeLocal<Object>();
 }
 

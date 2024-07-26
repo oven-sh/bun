@@ -8,6 +8,8 @@
 #define BUN_EXPORT JS_EXPORT
 #endif
 
+#define V8_UNIMPLEMENTED() PANIC("You're using a module which calls a V8 function that Bun does not yet implement. Track progress at issue 4290.")
+
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
 namespace v8 {

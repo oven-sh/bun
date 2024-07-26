@@ -107,7 +107,6 @@ struct us_internal_ssl_socket_t {
   unsigned int ssl_write_wants_read : 1; // we use this for now
   unsigned int ssl_read_wants_write : 1;
   unsigned int handshake_state : 2;
-  unsigned int received_ssl_shutdown : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -188,7 +187,6 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->handshake_state = HANDSHAKE_PENDING;
-  s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 // if we allow renegotiation, we need to set the mode here
@@ -340,7 +338,6 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   int result = SSL_do_handshake(s->ssl);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    s->received_ssl_shutdown = 1;
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
   }
@@ -413,7 +410,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || s->received_ssl_shutdown) {
+  if (us_socket_is_closed(0, &s->s)) {
     return NULL;
   }
 
@@ -445,17 +442,12 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   int read = 0;
 restart:
   // read until shutdown
-  while (!s->received_ssl_shutdown) {
+  while (1) {
     int just_read = SSL_read(s->ssl,
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-    // we need to check if we received a shutdown here
-    if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-      s->received_ssl_shutdown = 1;
-      // we will only close after we handle the data and errors
-    }
-
+   
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
       // as far as I know these are the only errors we want to handle
@@ -551,12 +543,6 @@ restart:
       read = 0;
       goto restart;
     }
-  }
-
-  // we received the shutdown after reading so we close
-  if (s->received_ssl_shutdown) {
-    us_internal_ssl_socket_close(s, 0, NULL);
-    return NULL;
   }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
@@ -2033,7 +2019,6 @@ us_socket_context_on_socket_connect_error(
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;
   socket->handshake_state = HANDSHAKE_PENDING;
-  socket->received_ssl_shutdown = 0;
   return socket;
 }
 

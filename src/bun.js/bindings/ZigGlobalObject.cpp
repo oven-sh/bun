@@ -3438,7 +3438,7 @@ void GlobalObject::drainMicrotasks()
     vm.drainMicrotasks();
 }
 
-extern "C" void JSC__JSGlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
+extern "C" void Zig__GlobalObject__drainMicrotasks(Zig::GlobalObject* globalObject)
 {
     globalObject->drainMicrotasks();
 }

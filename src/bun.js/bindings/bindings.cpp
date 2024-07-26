@@ -1,6 +1,3 @@
-#include "JSFFIFunction.h"
-#include "ZigSourceProvider.h"
-#include "headers-handwritten.h"
 #include "root.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
@@ -10,6 +7,7 @@
 #include "JavaScriptCore/JSPromiseConstructor.h"
 #include "JavaScriptCore/DeleteAllCodeEffort.h"
 #include "JavaScriptCore/BooleanObject.h"
+#include "JSFFIFunction.h"
 #include "headers.h"
 
 #include "BunClientData.h"

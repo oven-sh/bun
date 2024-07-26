@@ -2,6 +2,12 @@
 const types = require("node:util/types");
 /** @type {import('node-inspect-extracted')} */
 const utl = require("internal/util/inspect");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+
+const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const ERR_OUT_OF_RANGE = $newZigFunction("node_error_binding.zig", "ERR_OUT_OF_RANGE", 3);
+
+const NumberIsSafeInteger = Number.isSafeInteger;
 
 var cjs_exports = {};
 
@@ -280,6 +286,12 @@ function styleText(format, text) {
   return `\u001b[${formatCodes[0]}m${text}\u001b[${formatCodes[1]}m`;
 }
 
+function getSystemErrorName(err: any) {
+  if (typeof err !== "number") throw ERR_INVALID_ARG_TYPE("err", "number", err);
+  if (err >= 0 || !NumberIsSafeInteger(err)) throw ERR_OUT_OF_RANGE("err", "a negative integer", err);
+  return internalErrorName(err);
+}
+
 export default Object.assign(cjs_exports, {
   format,
   formatWithOptions,
@@ -315,4 +327,5 @@ export default Object.assign(cjs_exports, {
   TextEncoder,
   parseArgs,
   styleText,
+  getSystemErrorName,
 });

@@ -3235,6 +3235,16 @@ pub const JSGlobalObject = extern struct {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
+    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
+        const arg0 = arg_name.toString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
+        const arg1 = etype.toString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
+        const arg2 = atype.jsTypeString(this).getZigString(this).slice();
+        if (this.hasException()) return .zero;
+        return this.createTypeErrorInstanceWithCode(.ERR_INVALID_ARG_TYPE, "The \"{s}\" argument must be of type {s}. Received {s}", .{ arg0, arg1, arg2 });
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",

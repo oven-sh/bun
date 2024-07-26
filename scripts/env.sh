@@ -76,9 +76,7 @@ fi
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
 if [[ $(uname -s) == 'Darwin' && $LLVM_VERSION == '18' ]]; then
   export CFLAGS="$CFLAGS -fno-define-target-os-macros "
-  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros "
-
-  CXXFLAGS += " -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE "
+  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE "
 fi
 
 # libarchive needs position-independent executables to compile successfully

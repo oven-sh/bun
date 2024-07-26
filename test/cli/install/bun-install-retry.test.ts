@@ -84,24 +84,28 @@ it("retries on 500", async () => {
     `${root_url}/BaR-0.0.2.tgz`,
   ]);
   expect(requested).toBe(12);
-  expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]);
-  expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]);
-  expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
-    name: "bar",
-    version: "0.0.2",
-  });
-  expect(await file(join(package_dir, "package.json")).text()).toEqual(
-    JSON.stringify(
-      {
-        name: "foo",
-        version: "0.0.1",
-        dependencies: {
-          BaR: "^0.0.2",
-        },
-      },
-      null,
-      2,
-    ),
-  );
-  await access(join(package_dir, "bun.lockb"));
+  await Promise.all([
+    (async () => expect(await readdirSorted(join(package_dir, "node_modules"))).toEqual([".cache", "BaR"]))(),
+    (async () => expect(await readdirSorted(join(package_dir, "node_modules", "BaR"))).toEqual(["package.json"]))(),
+    (async () =>
+      expect(await file(join(package_dir, "node_modules", "BaR", "package.json")).json()).toEqual({
+        name: "bar",
+        version: "0.0.2",
+      }))(),
+    (async () =>
+      expect(await file(join(package_dir, "package.json")).text()).toEqual(
+        JSON.stringify(
+          {
+            name: "foo",
+            version: "0.0.1",
+            dependencies: {
+              BaR: "^0.0.2",
+            },
+          },
+          null,
+          2,
+        ),
+      ))(),
+    async () => await access(join(package_dir, "bun.lockb")),
+  ]);
 });

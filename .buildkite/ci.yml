@@ -246,20 +246,6 @@ steps:
         command:
           - "./.buildkite/scripts/build-cpp.sh"
 
-      - key: "linux-aarch64-build-bun-nolto"
-        label: ":linux: aarch64 - build-bun (no-lto)"
-        if: "build.branch != 'main'"
-        depends_on:
-          - "linux-aarch64-build-deps"
-          - "linux-aarch64-build-zig"
-          - "linux-aarch64-build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "aarch64"
-        command:
-          - "./.buildkite/scripts/build-bun.sh"
-
       - key: "linux-aarch64-build-bun"
         label: ":linux: aarch64 - build-bun"
         depends_on:
@@ -292,7 +278,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun-nolto"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -300,7 +286,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 aarch64 - test-bun"
@@ -321,7 +307,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun-nolto"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -329,7 +315,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 aarch64 - test-bun"
@@ -350,7 +336,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-aarch64-build-bun-nolto"
+          - "linux-aarch64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -358,7 +344,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
       - key: "linux-aarch64-test-debian-12-smoke"
         label: ":debian: 12 aarch64 - test-bun-smoke"
@@ -478,20 +464,6 @@ steps:
         command:
           - "./.buildkite/scripts/build-cpp.sh"
 
-      - key: "linux-x64-build-bun-nolto"
-        label: ":linux: x64 - build-bun (no-lto)"
-        if: "build.branch != 'main'"
-        depends_on:
-          - "linux-x64-build-deps"
-          - "linux-x64-build-zig"
-          - "linux-x64-build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-bun.sh"
-
       - key: "linux-x64-build-bun"
         label: ":linux: x64 - build-bun"
         depends_on:
@@ -524,7 +496,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun-nolto"
+          - "linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -532,7 +504,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64 - test-bun"
@@ -553,7 +525,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun-nolto"
+          - "linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -561,7 +533,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64 - test-bun"
@@ -582,7 +554,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-build-bun-nolto"
+          - "linux-x64-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -590,7 +562,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-debian-12-smoke"
         label: ":debian: 12 x64 - test-bun (smoke)"
@@ -710,20 +682,6 @@ steps:
         command:
           - "./.buildkite/scripts/build-cpp.sh"
 
-      - key: "linux-x64-baseline-build-bun-nolto"
-        label: ":linux: x64-baseline - build-bun (no-lto)"
-        if: "build.branch != 'main'"
-        depends_on:
-          - "linux-x64-baseline-build-deps"
-          - "linux-x64-baseline-build-zig"
-          - "linux-x64-baseline-build-cpp"
-        agents:
-          queue: "build-linux"
-          os: "linux"
-          arch: "x64"
-        command:
-          - "./.buildkite/scripts/build-bun.sh"
-
       - key: "linux-x64-baseline-build-bun"
         label: ":linux: x64-baseline - build-bun"
         depends_on:
@@ -756,7 +714,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun-nolto"
+          - "linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -764,7 +722,7 @@ steps:
           distro: "debian"
           release: "12"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-ubuntu-2204"
         label: ":ubuntu: 22.04 x64-baseline - test-bun"
@@ -785,7 +743,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun-nolto"
+          - "linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -793,7 +751,7 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-ubuntu-2004"
         label: ":ubuntu: 20.04 x64-baseline - test-bun"
@@ -814,7 +772,7 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "linux-x64-baseline-build-bun-nolto"
+          - "linux-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "linux"
@@ -822,7 +780,7 @@ steps:
           distro: "ubuntu"
           release: "20.04"
         command:
-          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun-nolto"
+          - "./scripts/runner.node.mjs --step linux-x64-baseline-build-bun"
 
       - key: "linux-x64-baseline-test-debian-12-smoke"
         label: ":debian: 12 x64-baseline - test-bun (smoke)"
@@ -953,29 +911,6 @@ steps:
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
 
-      - key: "windows-x64-build-bun-nolto"
-        label: ":windows: x64 - build-bun (no-lto)"
-        if: "build.branch != 'main'"
-        depends_on:
-          - "windows-x64-build-deps"
-          - "windows-x64-build-zig"
-          - "windows-x64-build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64-nolto.zip"
-          - "bun-windows-x64-nolto-profile.zip"
-          - "features.json"
-        env:
-          CPU_TARGET: "haswell"
-          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
-          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
-        command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Fast $$True"
-
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"
         depends_on:
@@ -1015,13 +950,13 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "windows-x64-build-bun-nolto"
+          - "windows-x64-build-bun"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun-nolto"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-build-bun"
 
       - key: "windows-x64-test-bun-smoke"
         label: ":windows: x64 - test-bun (smoke)"
@@ -1095,29 +1030,6 @@ steps:
         command:
           - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True"
 
-      - key: "windows-x64-baseline-build-bun-nolto"
-        label: ":windows: x64-baseline - build-bun (no-lto)"
-        if: "build.branch != 'main'"
-        depends_on:
-          - "windows-x64-baseline-build-deps"
-          - "windows-x64-baseline-build-zig"
-          - "windows-x64-baseline-build-cpp"
-        agents:
-          queue: "build-windows"
-          os: "windows"
-          arch: "x64"
-        artifact_paths:
-          - "bun-windows-x64-baseline-nolto.zip"
-          - "bun-windows-x64-baseline-nolto-profile.zip"
-          - "features.json"
-        env:
-          CPU_TARGET: "nehalem"
-          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
-          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
-        command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True -Fast $$True"
-
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"
         depends_on:
@@ -1157,13 +1069,13 @@ steps:
             - signal: SIGTERM
               limit: 3
         depends_on:
-          - "windows-x64-baseline-build-bun-nolto"
+          - "windows-x64-baseline-build-bun"
         agents:
           robobun: "true"
           os: "windows"
           arch: "x64"
         command:
-          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun-nolto"
+          - "node .\\scripts\\runner.node.mjs --step windows-x64-baseline-build-bun"
 
       - key: "windows-x64-baseline-test-bun-smoke"
         label: ":windows: x64-baseline - test-bun (smoke)"

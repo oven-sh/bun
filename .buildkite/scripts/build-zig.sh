@@ -46,6 +46,9 @@ assert_target "$@"
 # make sure to update the submodule before building.
 run_command git submodule update --init --recursive --progress --depth=1 --checkout src/deps/zig
 
+# TODO: Move these to be part of the CMake build
+source "$(dirname "$0")/build-old-js.sh"
+
 cwd="$(pwd)"
 mkdir -p build
 cd build

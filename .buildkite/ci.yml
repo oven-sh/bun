@@ -937,15 +937,8 @@ steps:
           queue: "build-darwin"
           os: "darwin" # cross-compile on Linux or Darwin
           arch: "aarch64"
-        artifact_paths:
-          - "build/bun-zig.o"
-        env:
-          CPU_TARGET: "haswell"
-          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
-          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
-          - "./scripts/build-bun-zig.sh windows x64"
+          - "./.buildkite/scripts/build-zig.sh windows x64"
 
       - key: "windows-x64-build-cpp"
         label: ":windows: x64 - build-cpp"
@@ -1081,15 +1074,8 @@ steps:
           queue: "build-darwin"
           os: "darwin" # cross-compile on Linux or Darwin
           arch: "aarch64"
-        artifact_paths:
-          - "build/bun-zig.o"
-        env:
-          CPU_TARGET: "nehalem"
-          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
-          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
-          - "./scripts/build-bun-zig.sh windows x64"
+          - "./.buildkite/scripts/build-zig.sh windows x64"
 
       - key: "windows-x64-baseline-build-cpp"
         label: ":windows: x64-baseline - build-cpp"

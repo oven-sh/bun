@@ -47,15 +47,18 @@ function assert_build() {
     echo "error: Build step '$BUILDKITE_STEP_KEY' does not start with group key '$BUILDKITE_GROUP_KEY'"
     exit 1
   fi
-  local os="$(assert_os)"
-  if [[ "$BUILDKITE_STEP_KEY" != *"$os"* ]]; then
-    echo "error: Build step '$BUILDKITE_STEP_KEY' does not match operating system '$os'"
-    exit 1
-  fi
-  local arch="$(assert_arch)"
-  if [[ "$BUILDKITE_STEP_KEY" != *"$arch"* ]]; then
-    echo "error: Build step '$BUILDKITE_STEP_KEY' does not match architecture '$arch'"
-    exit 1
+  # Skip os and arch checks for Zig, since it's cross-compiled on macOS
+  if [[ "$BUILDKITE_STEP_KEY" != *"zig"* ]]; then
+    local os="$(assert_os)"
+    if [[ "$BUILDKITE_STEP_KEY" != *"$os"* ]]; then
+      echo "error: Build step '$BUILDKITE_STEP_KEY' does not match operating system '$os'"
+      exit 1
+    fi
+    local arch="$(assert_arch)"
+    if [[ "$BUILDKITE_STEP_KEY" != *"$arch"* ]]; then
+      echo "error: Build step '$BUILDKITE_STEP_KEY' does not match architecture '$arch'"
+      exit 1
+    fi
   fi
 }
 

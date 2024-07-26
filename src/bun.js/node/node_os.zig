@@ -66,7 +66,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 
@@ -320,7 +320,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -342,7 +342,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
@@ -425,7 +425,7 @@ pub const OS = struct {
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         defer C.freeifaddrs(interface_start);
 
@@ -736,7 +736,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -750,7 +750,7 @@ pub const OS = struct {
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -765,7 +765,7 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .ACCES => {
                 const err = JSC.SystemError{
@@ -777,12 +777,12 @@ pub const OS = struct {
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             else => {},
         }
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {

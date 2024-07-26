@@ -1616,7 +1616,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             defer ctx.deref();
 
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else JSC.JSValue.jsUndefined());
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
             return JSValue.jsUndefined();
         }
 
@@ -5723,21 +5723,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 };
 
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
-                this.thisObject = JSC.JSValue.jsUndefined();
+                this.thisObject = .undefined;
                 this.stop(abrupt);
             }
 
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
-                this.thisObject = JSC.JSValue.jsUndefined();
+                this.thisObject = .undefined;
                 this.stop(true);
             }
 
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         pub fn getPort(

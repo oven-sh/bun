@@ -4362,7 +4362,7 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string = arguments.nextEat() orelse {
             globalThis.throw("shellInternals.disabledOnPosix: expected 1 arguments, got 0", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         const bunstr = string.toBunString(globalThis);
@@ -4386,7 +4386,7 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         var arena = std.heap.ArenaAllocator.init(bun.default_allocator);
@@ -4476,7 +4476,7 @@ pub const TestingAPIs = struct {
         var arguments = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), arguments_.slice());
         const string_args = arguments.nextEat() orelse {
             globalThis.throw("shell_parse: expected 2 arguments, got 0", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         var arena = bun.ArenaAllocator.init(bun.default_allocator);

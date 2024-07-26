@@ -5,12 +5,6 @@
 
 namespace v8 {
 
-class Value : public Data {
-public:
-    JSC::JSValue toJSValue() const
-    {
-        return JSC::JSValue::decode(reinterpret_cast<JSC::EncodedJSValue>(this));
-    }
-};
+class Value : public Data {};
 
 }

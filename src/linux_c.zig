@@ -353,14 +353,14 @@ pub const UV_ERANGE: i32 = @intFromEnum(SystemErrno.ERANGE);
 pub const UV_ENXIO: i32 = @intFromEnum(SystemErrno.ENXIO);
 pub const UV_EMLINK: i32 = @intFromEnum(SystemErrno.EMLINK);
 pub const UV_EHOSTDOWN: i32 = @intFromEnum(SystemErrno.EHOSTDOWN);
-pub const UV_EREMOTEIO: i32 = -bun.windows.libuv.UV_EREMOTEIO;
+pub const UV_EREMOTEIO: i32 = @intFromEnum(SystemErrno.EREMOTEIO);
 pub const UV_ENOTTY: i32 = @intFromEnum(SystemErrno.ENOTTY);
 pub const UV_EFTYPE: i32 = -bun.windows.libuv.UV_EFTYPE;
 pub const UV_EILSEQ: i32 = @intFromEnum(SystemErrno.EILSEQ);
 pub const UV_EOVERFLOW: i32 = @intFromEnum(SystemErrno.EOVERFLOW);
 pub const UV_ESOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
 pub const UV_ENODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
-pub const UV_EUNATCH: i32 = -bun.windows.libuv.UV_EUNATCH;
+pub const UV_EUNATCH: i32 = @intFromEnum(SystemErrno.EUNATCH);
 
 pub const preallocate_length = 2048 * 1024;
 pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.posix.off_t) anyerror!void {

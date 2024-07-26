@@ -404,10 +404,6 @@ pub const SavedSourceMap = struct {
 };
 const uws = bun.uws;
 
-pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    return JSC.VirtualMachine.get().global;
-}
-
 pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
@@ -841,6 +837,23 @@ pub const VirtualMachine = struct {
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
+        pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
+        pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
+            if (vm) |vm_instance| {
+                vm_instance.global = global;
+            }
+
+            cached_global_object = global;
+        }
+
+        pub export fn Bun__getDefaultGlobalObject() ?*JSGlobalObject {
+            return cached_global_object orelse {
+                if (vm) |vm_instance| {
+                    cached_global_object = vm_instance.global;
+                }
+                return null;
+            };
+        }
     };
 
     pub inline fn get() *VirtualMachine {
@@ -1040,7 +1053,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;
@@ -1214,6 +1227,10 @@ pub const VirtualMachine = struct {
             next.execute();
             hook = next;
         }
+    }
+
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
     }
 
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
@@ -3152,6 +3169,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;

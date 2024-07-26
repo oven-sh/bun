@@ -272,6 +272,9 @@ pub const BrotliEncoder = struct {
         {
             this.input_lock.lock();
             defer this.input_lock.unlock();
+
+            // need to protect because no longer on the stack. unprotected in FreeList.deinit
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         JSC.WorkPool.schedule(&task.task);
@@ -314,6 +317,8 @@ pub const BrotliEncoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            // need to protect because no longer on the stack. unprotected in FreeList.deinit
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();
@@ -489,6 +494,8 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            // need to protect because no longer on the stack. unprotected in FreeList.deinit
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         JSC.WorkPool.schedule(&task.task);
@@ -531,6 +538,8 @@ pub const BrotliDecoder = struct {
             this.input_lock.lock();
             defer this.input_lock.unlock();
 
+            // need to protect because no longer on the stack. unprotected in FreeList.deinit
+            input_to_queue.protect();
             this.input.writeItem(input_to_queue) catch bun.outOfMemory();
         }
         task.run();

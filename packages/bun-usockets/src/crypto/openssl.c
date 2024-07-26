@@ -420,8 +420,8 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
     if ((ret = SSL_shutdown(s->ssl)) == 1) {
       // two phase shutdown is complete here
 
-      /* Todo: this should also report some kind of clean shutdown */
-      return us_internal_ssl_socket_close(s, 0, NULL);
+      us_internal_ssl_socket_close(s, 0, NULL);
+      return NULL;
     } else if (ret < 0) {
 
       int err = SSL_get_error(s->ssl, ret);
@@ -475,11 +475,12 @@ restart:
                 s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
                 read);
             if (!s || us_socket_is_closed(0, &s->s)) {
-              return s;
+              return NULL;  // stop processing data
             }
           }
           // terminate connection here
-          return us_internal_ssl_socket_close(s, 0, NULL);
+          us_internal_ssl_socket_close(s, 0, NULL);
+          return NULL;  // stop processing data
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
@@ -488,7 +489,8 @@ restart:
         }
 
         // terminate connection here
-        return us_internal_ssl_socket_close(s, 0, NULL);
+        us_internal_ssl_socket_close(s, 0, NULL);
+        return NULL; // stop processing data
       } else {
         // emit the data we have and exit
 
@@ -514,7 +516,7 @@ restart:
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
         if (!s || us_socket_is_closed(0, &s->s)) {
-          return s;
+          return NULL; // stop processing data
         }
 
         break;
@@ -537,7 +539,7 @@ restart:
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || us_socket_is_closed(0, &s->s)) {
-        return s;
+        return NULL;
       }
 
       read = 0;
@@ -557,7 +559,7 @@ restart:
         &s->s); // cast here!
     // if we are closed here, then exit
     if (!s || us_socket_is_closed(0, &s->s)) {
-      return s;
+      return NULL;
     }
   }
 

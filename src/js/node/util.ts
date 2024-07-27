@@ -4,7 +4,7 @@ const types = require("node:util/types");
 const utl = require("internal/util/inspect");
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
-const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErrorName", 1);
+const internalErrorName = code => "";
 const ERR_OUT_OF_RANGE = $newZigFunction("node_error_binding.zig", "ERR_OUT_OF_RANGE", 3);
 
 const NumberIsSafeInteger = Number.isSafeInteger;

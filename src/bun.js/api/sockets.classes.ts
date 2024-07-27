@@ -116,7 +116,7 @@ function generate(ssl) {
       },
 
       "@@dispose": {
-        fn: "shutdown",
+        fn: "end",
         length: 0,
       },
 
@@ -191,7 +191,7 @@ export default [
         length: 1,
       },
       "@@dispose": {
-        fn: "stop",
+        fn: "dispose",
         length: 0,
       },
 

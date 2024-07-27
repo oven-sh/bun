@@ -18635,7 +18635,15 @@ fn NewParser_(
                                 name_loc,
                                 E.Identifier{ .ref = ref },
                                 name,
-                                identifier_opts,
+                                .{
+                                    .assign_target = identifier_opts.assign_target,
+                                    .is_call_target = identifier_opts.is_call_target,
+                                    .is_delete_target = identifier_opts.is_delete_target,
+
+                                    // If this expression is used as the target of a call expression, make
+                                    // sure the value of "this" is preserved.
+                                    .was_originally_identifier = false,
+                                },
                             );
                         }
                     }

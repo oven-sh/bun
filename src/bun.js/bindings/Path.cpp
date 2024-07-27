@@ -119,8 +119,7 @@ JSC_DEFINE_HOST_FUNCTION(Path_functionToNamespacedPath,
 static JSC::JSObject* createPath(JSGlobalObject* globalThis, bool isWindows)
 {
     JSC::VM& vm = globalThis->vm();
-    JSC::Structure* plainObjectStructure = JSC::JSFinalObject::createStructure(vm, globalThis, globalThis->objectPrototype(), 0);
-    JSC::JSObject* path = JSC::JSFinalObject::create(vm, plainObjectStructure);
+    auto* path = JSC::constructEmptyObject(globalThis);
     auto clientData = WebCore::clientData(vm);
 
     path->putDirect(vm, clientData->builtinNames().isWindowsPrivateName(),

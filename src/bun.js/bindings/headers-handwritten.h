@@ -139,6 +139,9 @@ const ZigStackFrameCode ZigStackFrameCodeGlobal = 4;
 const ZigStackFrameCode ZigStackFrameCodeWasm = 5;
 const ZigStackFrameCode ZigStackFrameCodeConstructor = 6;
 
+extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
+#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
+
 typedef struct ZigStackFramePosition {
     int32_t line_zero_based;
     int32_t column_zero_based;
@@ -169,6 +172,7 @@ typedef struct ZigStackTrace {
     uint8_t source_lines_to_collect;
     ZigStackFrame* frames_ptr;
     uint8_t frames_len;
+    JSC::SourceProvider* referenced_source_provider;
 } ZigStackTrace;
 
 typedef struct ZigException {

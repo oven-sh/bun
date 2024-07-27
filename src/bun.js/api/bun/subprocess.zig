@@ -2322,8 +2322,7 @@ pub const Subprocess = struct {
             _ = callback.call(this.globalThis, this_jsvalue, &.{
                 JSValue.jsBoolean(ok),
             });
-            const global: *JSC.ZigGlobalObject = @ptrCast(this.globalThis);
-            global.drainMicrotasks();
+            vm.drainMicrotasks();
         }
     }
 

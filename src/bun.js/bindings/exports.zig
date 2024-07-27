@@ -55,10 +55,6 @@ pub const ZigGlobalObject = extern struct {
         return shim.cppFn("getModuleRegistryMap", .{global});
     }
 
-    pub fn drainMicrotasks(global: *ZigGlobalObject) void {
-        return shim.cppFn("drainMicrotasks", .{global});
-    }
-
     pub fn resetModuleRegistryMap(global: *JSGlobalObject, map: *anyopaque) bool {
         return shim.cppFn("resetModuleRegistryMap", .{ global, map });
     }

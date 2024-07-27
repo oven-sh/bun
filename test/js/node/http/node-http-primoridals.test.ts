@@ -1,4 +1,16 @@
-import { test, expect } from "bun:test";
+import { test, expect, afterEach } from "bun:test";
+
+const Response = globalThis.Response;
+const Request = globalThis.Request;
+const Headers = globalThis.Headers;
+const Blob = globalThis.Blob;
+
+afterEach(() => {
+  globalThis.Response = Response;
+  globalThis.Request = Request;
+  globalThis.Headers = Headers;
+  globalThis.Blob = Blob;
+});
 
 // This test passes by not hanging.
 test("Overriding Request, Response, Headers, and Blob should not break node:http server", async () => {

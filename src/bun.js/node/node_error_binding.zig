@@ -9,7 +9,6 @@ const createTypeError = JSC.JSGlobalObject.createTypeErrorInstanceWithCode;
 const createError = JSC.JSGlobalObject.createErrorInstanceWithCode;
 const createRangeError = JSC.JSGlobalObject.createRangeErrorInstanceWithCode;
 
-pub const ERR_SOCKET_BAD_TYPE = createSimpleError(createTypeError, .ERR_SOCKET_BAD_TYPE, "Bad socket type specified. Valid types are: udp4, udp6");
 pub const ERR_INVALID_HANDLE_TYPE = createSimpleError(createTypeError, .ERR_INVALID_HANDLE_TYPE, "This handle type cannot be sent");
 pub const ERR_CHILD_CLOSED_BEFORE_REPLY = createSimpleError(createError, .ERR_CHILD_CLOSED_BEFORE_REPLY, "Child closed before reply received");
 

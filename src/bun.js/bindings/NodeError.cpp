@@ -173,4 +173,10 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 {
     return JSC::JSValue::encode(createErrorWithCode(globalObject, "Channel closed."_s, "ERR_IPC_CHANNEL_CLOSED"_s));
 }
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createTypeErrorWithCode(globalObject, "Bad socket type specified. Valid types are: udp4, udp6"_s, "ERR_SOCKET_BAD_TYPE"_s));
+}
+
 }

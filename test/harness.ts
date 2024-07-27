@@ -1069,7 +1069,7 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string): void;
+  toRun(optionalStdout?: string, expectedCode?: number): void;
   toThrowWithCode(cls: CallableFunction, code: string): void;
 }
 

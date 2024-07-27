@@ -389,5 +389,15 @@ describe("util", () => {
     it("getSystemErrorName(-4096) should be unknown", () => {
       expect(util.getSystemErrorName(-4096)).toBe("Unknown system error -4096");
     });
+
+    // these are the windows/fallback codes and they should match node in either returning the correct name or 'Unknown system error'.
+    // eg on linux getSystemErrorName(-4034) should return unkown and not 'ERANGE' since errno defines it as -34 for that platform.
+    for (let i = -4095; i <= -4023; i++) {
+      it(`negative space: getSystemErrorName(${i}) is correct`, () => {
+        const cmd = ["node", "-e", `console.log(JSON.stringify(util.getSystemErrorName(${i})));`];
+        const stdio = ["ignore", "pipe", "pipe"];
+        expect(util.getSystemErrorName(i)).toEqual(JSON.parse(Bun.spawnSync({ cmd, stdio }).stdout.toString()));
+      });
+    }
   });
 });

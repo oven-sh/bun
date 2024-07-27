@@ -16,6 +16,20 @@ namespace Bun {
 
 using namespace JSC;
 
+JSC::JSValue createErrorWithCode(JSC::JSGlobalObject* globalObject, String message, ASCIILiteral code)
+{
+    JSC::VM& vm = globalObject->vm();
+
+    JSC::JSObject* result = JSC::createError(globalObject, message);
+    JSC::EnsureStillAliveScope ensureAlive(result);
+    auto typeError = JSC::JSValue(result).asCell()->getObject();
+
+    auto clientData = WebCore::clientData(vm);
+    typeError->putDirect(vm, clientData->builtinNames().codePublicName(), jsString(vm, String(code)), 0);
+
+    return typeError;
+}
+
 JSC::JSValue createTypeErrorWithCode(JSC::JSGlobalObject* globalObject, String message, ASCIILiteral code)
 {
     JSC::VM& vm = globalObject->vm();
@@ -90,6 +104,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * glo
 
     auto message = makeString("The value of \""_s, arg_name, "\" is out of range. It must be "_s, range, ". Received "_s, input);
     return JSC::JSValue::encode(createRangeErrorWithCode(globalObject, message, "ERR_OUT_OF_RANGE"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createErrorWithCode(globalObject, "IPC channel is already disconnected"_s, "ERR_IPC_DISCONNECTED"_s));
 }
 
 }

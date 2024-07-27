@@ -3961,11 +3961,6 @@ inline JSC::JSValue GlobalObject__createErrorWithCode(JSGlobalObject* globalObje
     return error;
 }
 
-JSC::JSValue GlobalObject__ERR_IPC_DISCONNECTED(JSGlobalObject* globalObject)
-{
-    return GlobalObject__createErrorWithCode(globalObject, "ERR_IPC_DISCONNECTED"_s, "IPC channel is already disconnected"_s);
-}
-
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
 

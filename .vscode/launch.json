@@ -145,7 +145,7 @@
       "request": "launch",
       "name": "bun run [file]",
       "program": "${workspaceFolder}/build/bun-debug",
-      "args": ["run", "${file}"],
+      "args": ["run", "${fileBasename}"],
       "cwd": "${fileDirname}",
       "env": {
         "FORCE_COLOR": "0",

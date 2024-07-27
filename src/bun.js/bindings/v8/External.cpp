@@ -7,13 +7,13 @@ using JSC::JSValue;
 
 namespace v8 {
 
-MaybeLocal<External> External::New(Isolate* isolate, void* value)
+Local<External> External::New(Isolate* isolate, void* value)
 {
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
     auto structure = globalObject->NapiExternalStructure();
     JSValue val = Bun::NapiExternal::create(vm, structure, value, nullptr, nullptr);
-    return MaybeLocal<External>(Local<External>(val));
+    return Local<External>(Local<External>(val));
 }
 
 void* External::Value() const

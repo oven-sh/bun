@@ -578,7 +578,7 @@ EXPORTS
   ?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z
   ?ToLocalEmpty@api_internal@v8@@YAXXZ
   ?Length@String@v8@@QEBAHXZ
-  ?New@External@v8@@SA?AV?$MaybeLocal@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z
+  ?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z
   ?Value@External@v8@@QEBAPEAXXZ
   ?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z
   ?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z

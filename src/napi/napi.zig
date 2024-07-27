@@ -1740,7 +1740,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z"() *anyopaque;
     pub extern fn @"?ToLocalEmpty@api_internal@v8@@YAXXZ"() *anyopaque;
     pub extern fn @"?Length@String@v8@@QEBAHXZ"() *anyopaque;
-    pub extern fn @"?New@External@v8@@SA?AV?$MaybeLocal@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z"() *anyopaque;
+    pub extern fn @"?New@External@v8@@SA?AV?$Local@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z"() *anyopaque;
     pub extern fn @"?Value@External@v8@@QEBAPEAXXZ"() *anyopaque;
     pub extern fn @"?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z"() *anyopaque;
     pub extern fn @"?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z"() *anyopaque;

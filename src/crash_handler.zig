@@ -376,9 +376,9 @@ pub fn crashHandler(
         },
         inline 1, 2 => |t| {
             if (t == 1) {
-                resetSegfaultHandler();
-
                 panic_stage = 2;
+
+                resetSegfaultHandler();
                 Output.flush();
             }
             panic_stage = 3;

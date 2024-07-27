@@ -55,7 +55,7 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
-
+#include "JavaScriptCore/HashMapImplInlines.h"
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
@@ -889,7 +889,7 @@ extern "C" bool Zig__GlobalObject__resetModuleRegistryMap(JSC__JSGlobalObject* g
 
             // vm.deleteAllLinkedCode(JSC::DeleteAllCodeEffort::DeleteAllCodeIfNotCollecting);
             // JSC::Heap::PreventCollectionScope(vm.heap);
-            oldMap->clear(globalObject);
+            oldMap->clear(vm);
             JSC::gcUnprotect(oldMap);
             // vm.heap.completeAllJITPlans();
 
@@ -3687,12 +3687,13 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 void GlobalObject::reload()
 {
     JSModuleLoader* moduleLoader = this->moduleLoader();
+    auto& vm = this->vm();
     JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
         this,
-        Identifier::fromString(this->vm(), "registry"_s)));
+        Identifier::fromString(vm, "registry"_s)));
 
-    registry->clear(this);
-    this->requireMap()->clear(this);
+    registry->clear(vm);
+    this->requireMap()->clear(vm);
 
     // If we run the GC every time, we will never get the SourceProvider cache hit.
     // So we run the GC every other time.

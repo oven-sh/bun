@@ -1,7 +1,6 @@
 // Hardcoded module "node:zlib"
 
 const stream = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -4592,6 +4591,12 @@ var require_lib = __commonJS({
     util.inherits(Unzip, Zlib);
   },
 });
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
 
 // zlib.js
 export default require_lib();

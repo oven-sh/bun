@@ -1,17 +1,20 @@
 // Hardcoded module "node:trace_events"
 // This is a stub! This is not actually implemented yet.
-
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
-
 class Tracing {
   enabled = false;
   categories = "";
 }
 
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
+
 function createTracing(opts) {
   if (typeof opts !== "object" || opts == null) {
     // @ts-ignore
-    throw ERR_INVALID_ARG_TYPE("options", "Object", opts);
+    throw new ERR_INVALID_ARG_TYPE("options", "Object", opts);
   }
 
   // TODO: validate categories

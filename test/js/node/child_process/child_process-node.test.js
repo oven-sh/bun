@@ -657,7 +657,7 @@ describe("fork", () => {
         expect(() => fork(modulePath, { env: bunEnv })).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${typeof modulePath}`,
+          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`,
         });
       });
     });
@@ -672,7 +672,7 @@ describe("fork", () => {
             expect(() => fork(fixtures.path("child-process-echo-options.js"), arg)).toThrow({
               code: "ERR_INVALID_ARG_TYPE",
               name: "TypeError",
-              message: `The \"args\" argument must be of type Array. Received ${typeof arg}`,
+              message: `The \"args\" argument must be of type Array. Received ${arg?.toString()}`,
             });
           });
         } catch (e) {
@@ -713,7 +713,7 @@ describe("fork", () => {
         }).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: `The \"options\" argument must be of type object. Received ${typeof arg}`,
+          message: `The \"options\" argument must be of type object. Received ${arg?.toString()}`,
         });
       });
     });

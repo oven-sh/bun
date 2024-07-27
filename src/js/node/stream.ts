@@ -2,8 +2,6 @@
 // "readable-stream" npm package
 // just transpiled and debug logs added.
 
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
-
 // BEGIN moved from require_readable
 // when we split this stuff up again, we can move this back
 const kObjectMode = 1 << 0;
@@ -94,6 +92,10 @@ function validateString(value, name) {
 //------------------------------------------------------------------------------
 // Node error polyfills
 //------------------------------------------------------------------------------
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  return new Error(`The argument '${name}' is invalid. Received '${value}' for type '${type}'`);
+}
 
 function ERR_INVALID_ARG_VALUE(name, value, reason) {
   return new Error(`The value '${value}' is invalid for argument '${name}'. Reason: ${reason}`);

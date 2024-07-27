@@ -4,7 +4,6 @@ const EventEmitter = require("node:events");
 const promises = require("node:fs/promises");
 const Stream = require("node:stream");
 const types = require("node:util/types");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const NumberIsFinite = Number.isFinite;
 const DateNow = Date.now;
@@ -24,7 +23,9 @@ var _fs = Symbol.for("#fs");
 
 function ensureCallback(callback) {
   if (!$isCallable(callback)) {
-    throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
+    const err = new TypeError('The "cb" argument must be of type function. Received ' + typeof callback);
+    err.code = "ERR_INVALID_ARG_TYPE";
+    throw err;
   }
 
   return callback;
@@ -173,7 +174,9 @@ var access = function access(path, mode, callback) {
     } else if (callback == undefined) {
       fs.close(fd).then(() => {});
     } else {
-      throw ERR_INVALID_ARG_TYPE("callback", "function", callback);
+      const err = new TypeError("Callback must be a function");
+      err.code = "ERR_INVALID_ARG_TYPE";
+      throw err;
     }
   },
   rm = function rm(path, options, callback) {

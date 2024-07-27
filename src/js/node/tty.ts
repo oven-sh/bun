@@ -4,8 +4,6 @@ const {
   getWindowSize: _getWindowSize,
 } = $cpp("ProcessBindingTTYWrap.cpp", "createBunTTYFunctions");
 
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
-
 // primordials
 const NumberIsInteger = Number.isInteger;
 
@@ -330,6 +328,12 @@ var validateInteger = (value, name, min = Number.MIN_SAFE_INTEGER, max = Number.
 };
 
 export default { ReadStream, WriteStream, isatty };
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
+}
 
 function ERR_OUT_OF_RANGE(name, range, value) {
   const err = new RangeError(`The "${name}" argument is out of range. It must be ${range}. Received ${value}`);

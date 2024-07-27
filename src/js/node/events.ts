@@ -2,7 +2,6 @@
 
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
 const { throwNotImplemented } = require("internal/shared");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const SymbolFor = Symbol.for;
 
@@ -475,6 +474,12 @@ class AbortError extends Error {
     this.code = "ABORT_ERR";
     this.name = "AbortError";
   }
+}
+
+function ERR_INVALID_ARG_TYPE(name, type, value) {
+  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value}`);
+  err.code = "ERR_INVALID_ARG_TYPE";
+  return err;
 }
 
 function ERR_OUT_OF_RANGE(name, range, value) {

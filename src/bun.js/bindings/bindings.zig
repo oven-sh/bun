@@ -626,8 +626,12 @@ pub const ZigString = extern struct {
         return out;
     }
 
-    pub inline fn static(comptime slice_: []const u8) *const ZigString {
-        return comptime &ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
+    pub fn static(comptime slice_: []const u8) *const ZigString {
+        const Holder = struct {
+            pub const value = &ZigString{ ._unsafe_ptr_do_not_use = slice_.ptr, .len = slice_.len };
+        };
+
+        return Holder.value;
     }
 
     pub const GithubActionFormatter = struct {

@@ -1869,6 +1869,9 @@ export function readableStreamIntoText(stream) {
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUint8Array) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
@@ -1936,6 +1939,9 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUi
 }
 
 export async function readableStreamToTextDirect(stream, underlyingSource) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   const capability = $initializeTextStream.$call(stream, underlyingSource, undefined);
   var reader = stream.getReader();
 
@@ -1956,6 +1962,9 @@ export async function readableStreamToTextDirect(stream, underlyingSource) {
 }
 
 export async function readableStreamToArrayDirect(stream, underlyingSource) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   const capability = $initializeArrayStream.$call(stream, underlyingSource, undefined);
   underlyingSource = undefined;
   var reader = stream.getReader();

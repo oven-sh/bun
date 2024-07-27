@@ -107,6 +107,8 @@ export function initializeReadableStream(
 
 $linkTimeConstant;
 export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]> {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -117,6 +119,8 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
 
 $linkTimeConstant;
 export function readableStreamToText(stream: ReadableStream): Promise<string> {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
   if (underlyingSource !== undefined) {
@@ -127,6 +131,8 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
 
 $linkTimeConstant;
 export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>): Promise<ArrayBuffer> | ArrayBuffer {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
@@ -146,6 +152,8 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
 
 $linkTimeConstant;
 export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   // this is a direct stream
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
@@ -168,18 +176,22 @@ export function readableStreamToFormData(
   stream: ReadableStream<ArrayBuffer>,
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
-  return Bun.readableStreamToBlob(stream).then(blob => {
-    return FormData.from(blob, contentType);
-  });
+  if (!$isReadableStream(stream)) throw new TypeError("First argument must be a ReadableStream");
+
+  return Bun.readableStreamToBlob(stream).then(blob => FormData.from(blob, contentType));
 }
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
+  if (!$isReadableStream(stream)) throw new TypeError("Argument must be a ReadableStream");
+
   return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
 }
 

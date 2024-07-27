@@ -1055,3 +1055,16 @@ it("fs.createReadStream(filename) should be able to break inside async loop", as
     expect(true).toBe(true);
   }
 });
+
+test.each([
+  "readableStreamToArray",
+  "readableStreamToText",
+  "readableStreamToArrayBuffer",
+  "readableStreamToBytes",
+  "readableStreamToFormData",
+  "readableStreamToJSON",
+  "readableStreamToBlob",
+])("%s throws if first argument is not ReadableStream", name => {
+  const fn = Bun[name];
+  expect(() => fn({})).toThrow(/Argument must be a ReadableStream/i);
+});

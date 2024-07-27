@@ -1183,10 +1183,10 @@ pub export fn napi_fatal_error(location_ptr: ?[*:0]const u8, location_len: usize
 
     const location = napiSpan(location_ptr, location_len);
     if (location.len > 0) {
-        bun.Global.panic("napi: {s}\n  {s}", .{ message, location });
+        bun.Output.panic("napi: {s}\n  {s}", .{ message, location });
     }
 
-    bun.Global.panic("napi: {s}", .{message});
+    bun.Output.panic("napi: {s}", .{message});
 }
 pub export fn napi_create_buffer(env: napi_env, length: usize, data: ?**anyopaque, result: *napi_value) napi_status {
     log("napi_create_buffer: {d}", .{length});

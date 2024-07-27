@@ -639,7 +639,7 @@ pub const Bundler = struct {
                 framework.resolved = true;
                 this.options.framework = framework.*;
             } else if (!framework.resolved) {
-                Global.panic("directly passing framework path is not implemented yet!", .{});
+                Output.panic("directly passing framework path is not implemented yet!", .{});
             }
         }
     }
@@ -1649,7 +1649,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
+            else => Output.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
         }
 
         return null;

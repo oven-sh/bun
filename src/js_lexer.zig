@@ -32,7 +32,7 @@ pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifi
 pub const ChildlessJSXTags = tables.ChildlessJSXTags;
 
 fn notimpl() noreturn {
-    Global.panic("not implemented yet!", .{});
+    Output.panic("not implemented yet!", .{});
 }
 
 pub var emptyJavaScriptString = ([_]u16{0});

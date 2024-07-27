@@ -1656,16 +1656,10 @@ pub const BundleV2 = struct {
 
         bundler.resolver.opts = bundler.options;
 
-        var this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
+        const this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
         this.plugins = completion.plugins;
         this.completion = completion;
         completion.bundler = this;
-
-        errdefer {
-            var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
-            completion.log = out_log;
-        }
 
         defer {
             if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
@@ -1674,6 +1668,16 @@ pub const BundleV2 = struct {
 
             ast_memory_allocator.pop();
             this.deinit();
+        }
+
+        errdefer {
+            // Wait for wait groups to finish. There still may be
+            this.linker.source_maps.line_offset_wait_group.wait();
+            this.linker.source_maps.quoted_contents_wait_group.wait();
+
+            var out_log = Logger.Log.init(bun.default_allocator);
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            completion.log = out_log;
         }
 
         completion.result = .{
@@ -3826,7 +3830,7 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    wait_group: ThreadPoolLib.WaitGroup = undefined,
+    wait_group: ThreadPoolLib.WaitGroup = .{},
 
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
@@ -3864,10 +3868,10 @@ pub const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        line_offset_wait_group: sync.WaitGroup = undefined,
+        line_offset_wait_group: sync.WaitGroup = .{},
         line_offset_tasks: []Task = &.{},
 
-        quoted_contents_wait_group: sync.WaitGroup = undefined,
+        quoted_contents_wait_group: sync.WaitGroup = .{},
         quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {
@@ -9113,6 +9117,7 @@ pub const LinkerContext = struct {
                 wait_group.deinit();
                 c.allocator.destroy(wait_group);
             }
+            errdefer wait_group.wait();
             {
                 var total_count: usize = 0;
                 for (chunks, chunk_contexts) |*chunk, *chunk_ctx| {

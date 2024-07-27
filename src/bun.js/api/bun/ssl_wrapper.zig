@@ -12,9 +12,9 @@ pub fn SSLWrapper(T: type) type {
 
     // after init we need to call start() to start the SSL handshake
     // this will trigger the onOpen callback before the handshake starts and the onHandshake callback after the handshake completes
-    // onRead and onWrite callbacks are triggered when we have data to read or write respectively
-    // onRead will pass the decrypted data that we received from the network
-    // onWrite will pass the encrypted data that we want to send to the network
+    // onData and write callbacks are triggered when we have data to read or write respectively
+    // onData will pass the decrypted data that we received from the network
+    // write will pass the encrypted data that we want to send to the network
     // onClose callback is triggered when we wanna the network connection to be closed (remember to flush the data before closing the connection)
 
     // Notes:
@@ -48,8 +48,8 @@ pub fn SSLWrapper(T: type) type {
             ctx: T,
             onOpen: fn (T, *This) void,
             onHandshake: fn (T, *This, bool, uws.us_bun_verify_error_t) void,
-            onWrite: fn (T, *This, []const u8) void,
-            onRead: fn (T, *This, []const u8) void,
+            write: fn (T, *This, []const u8) void,
+            onData: fn (T, *This, []const u8) void,
             onClose: fn (T) void,
         };
 
@@ -111,11 +111,11 @@ pub fn SSLWrapper(T: type) type {
         /// Shutdown the read direction of the SSL (fake it just for convenience)
         pub fn shutdownRead(this: *This) void {
             // We cannot shutdown read in SSL, the read direction is closed by the peer.
-            // So we just ignore the onRead data, we still wanna to wait until we received the shutdown
+            // So we just ignore the onData data, we still wanna to wait until we received the shutdown
             const DummyReadHandler = struct {
-                fn onRead(_: T, _: *This, _: []const u8) void {}
+                fn onData(_: T, _: *This, _: []const u8) void {}
             };
-            this.handlers.onRead = DummyReadHandler.onRead;
+            this.handlers.onData = DummyReadHandler.onData;
         }
 
         /// Shutdown the write direction of the SSL and returns if we are completed closed or not
@@ -235,13 +235,13 @@ pub fn SSLWrapper(T: type) type {
         }
 
         fn triggerWannaWriteCallback(this: *This, data: []const u8) void {
-            // trigger the onWrite callback
-            this.handlers.onWrite(this.handlers.ctx, this, data);
+            // trigger the write callback
+            this.handlers.write(this.handlers.ctx, this, data);
         }
 
-        fn triggerReadCallback(this: *This, data: []const u8) void {
-            // trigger the onRead callback
-            this.handlers.onRead(this.handlers.ctx, this, data);
+        fn triggerDataCallback(this: *This, data: []const u8) void {
+            // trigger the onData callback
+            this.handlers.onData(this.handlers.ctx, this, data);
         }
 
         fn triggerCloseCallback(this: *This) void {
@@ -323,7 +323,7 @@ pub fn SSLWrapper(T: type) type {
 
         /// Handle the end of a renegotiation if it was pending
         /// This function is called when we receive a SSL_ERROR_ZERO_RETURN or successfully read data
-        fn handleEndOfRenegociation(this: *This) void {
+        fn handleEndOfRenegotiation(this: *This) void {
             if (this.flags.handshake_state == HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING and BoringSSL.SSL_is_init_finished(this.ssl)) {
                 // renegotiation ended successfully call on_handshake
                 this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
@@ -363,12 +363,12 @@ pub fn SSLWrapper(T: type) type {
                             this.flags.received_ssl_shutdown = true;
                             // 2-step shutdown
                             _ = this.shutdown(false);
-                            this.handleEndOfRenegociation();
+                            this.handleEndOfRenegotiation();
                         }
 
                         // flush the reading
                         if (read > 0) {
-                            this.triggerReadCallback(buffer[0..read]);
+                            this.triggerDataCallback(buffer[0..read]);
                         }
                         BoringSSL.ERR_clear_error();
                         this.triggerCloseCallback();
@@ -379,18 +379,18 @@ pub fn SSLWrapper(T: type) type {
                     }
                 }
 
-                this.handleEndOfRenegociation();
+                this.handleEndOfRenegotiation();
 
                 read += just_read;
                 if (read == buffer.len) {
                     // we filled the buffer
-                    this.triggerReadCallback(buffer[0..read]);
+                    this.triggerDataCallback(buffer[0..read]);
                     read = 0;
                 }
             }
             // we finished reading
             if (read > 0) {
-                this.triggerReadCallback(buffer[0..read]);
+                this.triggerDataCallback(buffer[0..read]);
             }
             return true;
         }

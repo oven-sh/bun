@@ -1,4 +1,14 @@
-import { test, expect } from "bun:test";
+import { afterEach, expect, test } from "bun:test";
+
+const originalResponse = globalThis.Response;
+const originalRequest = globalThis.Request;
+const originalHeaders = globalThis.Headers;
+afterEach(() => {
+  globalThis.Response = originalResponse;
+  globalThis.Request = originalRequest;
+  globalThis.Headers = originalHeaders;
+  globalThis.fetch = Bun.fetch;
+});
 
 test("fetch, Response, Request can be overriden", async () => {
   const { Response, Request } = globalThis;

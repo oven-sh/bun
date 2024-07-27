@@ -280,25 +280,6 @@ pub const ZigString = extern struct {
         return this.slice()[0] == char;
     }
 
-    pub fn hasPrefixComptime(this: ZigString, comptime needle: []const u8) bool {
-        if (this.len == 0)
-            return false;
-        if (this.length() < needle.len)
-            return false;
-
-        if (this.is16Bit()) {
-            const u16_slice = this.utf16SliceAligned();
-            for (needle, 0..) |c, i| {
-                if (u16_slice[i] != c) {
-                    return false;
-                }
-            }
-            return true;
-        }
-
-        return strings.hasPrefix(this.slice(), needle);
-    }
-
     pub fn substringWithLen(this: ZigString, start_index: usize, end_index: usize) ZigString {
         if (this.is16Bit()) {
             return ZigString.from16SliceMaybeGlobal(this.utf16SliceAligned()[start_index..end_index], this.isGloballyAllocated());
@@ -2710,7 +2691,15 @@ pub const JSFunction = extern struct {
         constructor: ?*const JSHostFunctionType = null,
     };
 
-    extern fn JSFunction__createFromZig(global: *JSGlobalObject, fn_name: bun.String, implementation: *const JSHostFunctionType, arg_count: u32, implementation_visibility: ImplementationVisibility, intrinsic: Intrinsic, constructor: ?*const JSHostFunctionType) JSValue;
+    extern fn JSFunction__createFromZig(
+        global: *JSGlobalObject,
+        fn_name: bun.String,
+        implementation: *const JSHostFunctionType,
+        arg_count: u32,
+        implementation_visibility: ImplementationVisibility,
+        intrinsic: Intrinsic,
+        constructor: ?*const JSHostFunctionType,
+    ) JSValue;
 
     pub fn create(
         global: *JSGlobalObject,

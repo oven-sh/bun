@@ -510,13 +510,6 @@ const TransposeState = struct {
     import_options: Expr = Expr.empty,
 };
 
-var true_args = &[_]Expr{
-    .{
-        .data = .{ .e_boolean = .{ .value = true } },
-        .loc = logger.Loc.Empty,
-    },
-};
-
 const JSXTag = struct {
     pub const TagType = enum { fragment, tag };
     pub const Data = union(TagType) {
@@ -17201,9 +17194,9 @@ fn NewParser_(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
-                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_before = e_.value.data == .e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
-                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_after = e_.value.data == .e_identifier;
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
@@ -17247,6 +17240,7 @@ fn NewParser_(
                                         }
                                         if (e_.value.data == .e_import_meta_main) {
                                             e_.value.data.e_import_meta_main.inverted = !e_.value.data.e_import_meta_main.inverted;
+                                            return e_.value;
                                         }
                                     }
                                 },
@@ -17924,11 +17918,12 @@ fn NewParser_(
         }
 
         fn ignoreUsageOfRuntimeRequire(p: *P) void {
-            // target bun does not have __require
-            if (!p.options.features.use_import_meta_require) {
-                bun.assert(p.options.features.allow_runtime);
+            if (!p.options.features.use_import_meta_require and
+                p.options.features.allow_runtime)
+            {
                 bun.assert(p.runtime_imports.__require != null);
                 p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
             }
         }
 

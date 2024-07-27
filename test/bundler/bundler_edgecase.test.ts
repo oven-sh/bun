@@ -1767,6 +1767,20 @@ describe("bundler", () => {
       `,
     },
   });
+  itBundled("edgecase/ImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+  });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later
   const requireTranspilationListESM = [

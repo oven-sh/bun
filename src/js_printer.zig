@@ -2279,8 +2279,8 @@ fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
-            var flags = _flags;
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
+            var flags = in_flags;
 
             switch (expr.data) {
                 .e_missing => {},
@@ -2331,23 +2331,30 @@ fn NewPrinter(
                     }
                 },
                 .e_import_meta_main => |data| {
-                    p.addSourceMapping(expr.loc);
                     if (p.options.module_type == .esm) {
                         // Most of the time, leave it in there
                         if (data.inverted) {
+                            p.addSourceMapping(expr.loc);
                             p.print("!");
                         } else {
                             p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
                         }
                         p.print("import.meta.main");
                     } else {
                         p.printSpaceBeforeIdentifier();
-                        p.printSymbol(p.options.require_ref orelse Ref.None);
-                        if (data.inverted) {
-                            p.printWhitespacer(ws(".main != "));
-                        } else {
+                        p.addSourceMapping(expr.loc);
+
+                        if (p.options.require_ref) |require|
+                            p.printSymbol(require)
+                        else
+                            p.print("require");
+
+                        if (data.inverted)
+                            p.printWhitespacer(ws(".main != "))
+                        else
                             p.printWhitespacer(ws(".main == "));
-                        }
+
                         p.printSymbol(p.options.commonjs_module_ref);
                     }
                 },

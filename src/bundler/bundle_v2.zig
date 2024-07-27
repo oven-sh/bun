@@ -655,6 +655,7 @@ pub const BundleV2 = struct {
         hash: ?u64,
         batch: *ThreadPoolLib.Batch,
         resolve: _resolver.Result,
+        is_entry_point: bool,
     ) !?Index.Int {
         var result = resolve;
         var path = result.path() orelse return null;
@@ -692,6 +693,7 @@ pub const BundleV2 = struct {
         task.loader = loader;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
+        task.is_entry_point = is_entry_point;
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -819,7 +821,7 @@ pub const BundleV2 = struct {
 
             for (entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
+                if (try this.enqueueItem(null, &batch, resolved, true)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -833,7 +835,7 @@ pub const BundleV2 = struct {
 
             for (user_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
+                if (try this.enqueueItem(null, &batch, resolved, true)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -2312,6 +2314,7 @@ pub const ParseTask = struct {
     emit_decorator_metadata: bool = false,
     ctx: *BundleV2,
     package_version: string = "",
+    is_entry_point: bool = false,
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2871,11 +2874,11 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
 
-        if (bundler.options.inline_entrypoint_import_meta_main) {
-            // TODO: how can i determine if this file is ANY of the
-            // specified entrypoints. the following will only work for
-            // --compile or other single file entrypoints
-            opts.import_meta_main_value = source.index.get() == 1;
+        // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
+        // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
+        // in which we inline `true`.
+        if (bundler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
+            opts.import_meta_main_value = task.is_entry_point;
         }
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;

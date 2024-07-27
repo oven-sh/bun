@@ -3830,7 +3830,7 @@ pub const LinkerContext = struct {
 
     options: LinkerOptions = .{},
 
-    wait_group: ThreadPoolLib.WaitGroup = undefined,
+    wait_group: ThreadPoolLib.WaitGroup = .{},
 
     ambiguous_result_pool: std.ArrayList(MatchImport) = undefined,
 
@@ -3868,10 +3868,10 @@ pub const LinkerContext = struct {
     };
 
     pub const SourceMapData = struct {
-        line_offset_wait_group: sync.WaitGroup = undefined,
+        line_offset_wait_group: sync.WaitGroup = .{},
         line_offset_tasks: []Task = &.{},
 
-        quoted_contents_wait_group: sync.WaitGroup = undefined,
+        quoted_contents_wait_group: sync.WaitGroup = .{},
         quoted_contents_tasks: []Task = &.{},
 
         pub const Task = struct {

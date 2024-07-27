@@ -27,6 +27,9 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
             return &pool;
         }
 
+        /// Initialization of WorkPool is not thread-safe, as it is
+        /// assumed a single main thread sets everything up. Calling
+        /// this afterwards is thread-safe.
         pub inline fn get() *ThreadPool {
             if (loaded) return &pool;
             loaded = true;

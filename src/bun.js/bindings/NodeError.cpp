@@ -123,6 +123,11 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject *
     return JSC::JSValue::encode(createErrorWithCode(globalObject, "IPC channel is already disconnected"_s, "ERR_IPC_DISCONNECTED"_s));
 }
 
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
+{
+    return JSC::JSValue::encode(createErrorWithCode(globalObject, "Server is not running."_s, "ERR_SERVER_NOT_RUNNING"_s));
+}
+
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3)
 {
     JSC::VM& vm = globalObject->vm();

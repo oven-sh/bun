@@ -24,8 +24,12 @@ const {
   headersTuple: any;
 };
 
+// TODO: make this more robust.
+function isAbortError(err) {
+  return err?.name === "AbortError";
+}
+
 const ObjectDefineProperty = Object.defineProperty;
-const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
 const GlobalPromise = globalThis.Promise;
 const headerCharRegex = /[^\t\x20-\x7e\x80-\xff]/;
@@ -287,7 +291,7 @@ function Agent(options = kEmptyObject) {
   this.protocol = options.protocol || "http:";
 }
 Agent.prototype = {};
-ObjectSetPrototypeOf(Agent.prototype, EventEmitter.prototype);
+$setPrototypeDirect.$call(Agent.prototype, EventEmitter.prototype);
 
 ObjectDefineProperty(Agent, "globalAgent", {
   get: function () {
@@ -344,21 +348,11 @@ Agent.prototype.destroy = function () {
   $debug(`${NODE_HTTP_WARNING}\n`, "WARN: Agent.destroy is a no-op");
 };
 
-function emitListeningNextTick(self, onListen, err, hostname, port) {
-  if (typeof onListen === "function") {
-    try {
-      onListen.$apply(self, [err, hostname, port]);
-    } catch (err) {
-      self.emit("error", err);
-    }
-  }
-
-  self.listening = !err;
-
-  if (err) {
-    self.emit("error", err);
-  } else {
-    self.emit("listening", hostname, port);
+function emitListeningNextTick(self, hostname, port) {
+  if ((self.listening = !!self[serverSymbol])) {
+    // TODO: remove the arguments
+    // Note does not pass any arguments.
+    self.emit("listening", null, hostname, port);
   }
 }
 
@@ -449,274 +443,220 @@ function Server(options, callback) {
   if (callback) this.on("request", callback);
   return this;
 }
-Object.setPrototypeOf((Server.prototype = {}), EventEmitter.prototype);
-Server.prototype.constructor = Server; // Re-add constructor which got lost when setting prototype
-Object.setPrototypeOf(Server, EventEmitter);
 
-Server.prototype.ref = function () {
-  this._unref = false;
-  this[serverSymbol]?.ref?.();
-  return this;
-};
+Server.prototype = {
+  ref() {
+    this._unref = false;
+    this[serverSymbol]?.ref?.();
+    return this;
+  },
 
-Server.prototype.unref = function () {
-  this._unref = true;
-  this[serverSymbol]?.unref?.();
-  return this;
-};
+  unref() {
+    this._unref = true;
+    this[serverSymbol]?.unref?.();
+    return this;
+  },
 
-Server.prototype.closeAllConnections = function () {
-  const server = this[serverSymbol];
-  if (!server) {
-    return;
-  }
-  this[serverSymbol] = undefined;
-  server.stop(true);
-  this.emit("close");
-};
+  closeAllConnections() {
+    const server = this[serverSymbol];
+    if (!server) {
+      return;
+    }
+    this[serverSymbol] = undefined;
+    server.stop(true);
+    process.nextTick(emitCloseNT, this);
+  },
 
-Server.prototype.closeIdleConnections = function () {
-  // not actually implemented
-};
+  closeIdleConnections() {
+    // not actually implemented
+  },
 
-Server.prototype.close = function (optionalCallback?) {
-  const server = this[serverSymbol];
-  if (!server) {
-    if (typeof optionalCallback === "function") process.nextTick(optionalCallback, new Error("Server is not running"));
-    return;
-  }
-  this[serverSymbol] = undefined;
-  if (typeof optionalCallback === "function") this.once("close", optionalCallback);
-  server.stop();
-  this._emitCloseIfDrained();
-};
+  close(optionalCallback?) {
+    const server = this[serverSymbol];
+    if (!server) {
+      if (typeof optionalCallback === "function")
+        process.nextTick(optionalCallback, new Error("Server is not running"));
+      return;
+    }
+    this[serverSymbol] = undefined;
+    if (typeof optionalCallback === "function") this.once("close", optionalCallback);
+    server.stop();
+    process.nextTick(emitCloseNT, this);
+  },
 
-Server.prototype._emitCloseIfDrained = function () {
-  if (this[serverSymbol] || this[connectionsSymbol] > 0) {
-    return;
-  }
-  process.nextTick(() => {
-    this.emit("close");
-  });
-};
-
-Server.prototype[Symbol.asyncDispose] = function () {
-  const { resolve, reject, promise } = Promise.withResolvers();
-  this.close(function (err, ...args) {
-    if (err) reject(err);
-    else resolve(...args);
-  });
-  return promise;
-};
-
-Server.prototype.address = function () {
-  if (!this[serverSymbol]) return null;
-  return this[serverSymbol].address;
-};
-
-let cluster;
-const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
-Server.prototype.listen = function (port, host, backlog, onListen) {
-  const server = this;
-  let socketPath;
-  if (typeof port === "undefined") {
-    port = 0;
-  }
-  if (typeof port == "string" && !Number.isSafeInteger(Number(port))) {
-    socketPath = port;
-  }
-  if (typeof host === "function") {
-    onListen = host;
-    host = undefined;
-  }
-
-  if (typeof port === "function") {
-    onListen = port;
-  } else if (typeof port === "object") {
-    port?.signal?.addEventListener("abort", () => {
-      this.close();
+  [Symbol.asyncDispose]() {
+    const { resolve, reject, promise } = Promise.withResolvers();
+    this.close(function (err, ...args) {
+      if (err) reject(err);
+      else resolve(...args);
     });
+    return promise;
+  },
 
-    host = port?.host;
-    port = port?.port;
+  address() {
+    if (!this[serverSymbol]) return null;
+    return this[serverSymbol].address;
+  },
 
-    if (typeof port?.callback === "function") onListen = port?.callback;
-  }
+  listen() {
+    const server = this;
+    let port, host, onListen;
+    let socketPath;
+    let tls = this[tlsSymbol];
 
-  if (typeof backlog === "function") {
-    onListen = backlog;
-  }
+    // This logic must align with:
+    // - https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/lib/net.js#L274-L307
+    if (arguments.length > 0) {
+      if (($isObject(arguments[0]) || $isCallable(arguments[0])) && arguments[0] !== null) {
+        // (options[...][, cb])
+        port = arguments[0].port;
+        host = arguments[0].host;
+        socketPath = arguments[0].path;
 
-  if (typeof port === "string" && !Number.isNaN(parseInt(port))) {
-    port = parseInt(port);
-  }
-
-  try {
-    // listenInCluster
-    if (cluster === undefined) cluster = require("node:cluster");
-
-    if (cluster.isPrimary) {
-      server[kRealListen](port, host, socketPath, false, onListen);
-      return this;
+        const otherTLS = arguments[0].tls;
+        if (otherTLS && $isObject(otherTLS)) {
+          tls = otherTLS;
+        }
+      } else if (typeof arguments[0] === "string" && !(Number(arguments[0]) >= 0)) {
+        // (path[...][, cb])
+        socketPath = arguments[0];
+      } else {
+        // ([port][, host][...][, cb])
+        port = arguments[0];
+        if (arguments.length > 1 && typeof arguments[1] === "string") {
+          host = arguments[1];
+        }
+      }
     }
 
-    // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+    // Bun defaults to port 3000.
+    // Node defaults to port 0.
+    if (port === undefined && !socketPath) {
+      port = 0;
+    }
 
-    // const serverQuery = {
-    //   // address: address,
-    //   port: port,
-    //   addressType: 4,
-    //   // fd: fd,
-    //   // flags,
-    //   // backlog,
-    //   // ...options,
-    // };
-    // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
-    //   // err = checkBindError(err, port, handle);
-    //   // if (err) {
-    //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
-    //   // }
-    //   if (err) {
-    //     throw err;
-    //   }
-    //   server[kRealListen](port, host, socketPath, onListen);
-    // });
+    if ($isCallable(arguments[arguments.length - 1])) {
+      onListen = arguments[arguments.length - 1];
+    }
 
-    server.once("listening", () => {
-      cluster.worker.state = "listening";
-      const address = server.address();
-      const message = {
-        act: "listening",
-        port: (address && address.port) || port,
-        data: null,
-        addressType: 4,
-      };
-      sendHelper(message, null);
-    });
+    const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
+    const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+    let isHTTPS = false;
 
-    server[kRealListen](port, host, socketPath, true, onListen);
-  } catch (err) {
-    setTimeout(emitErrorNextTick, 1, this, err);
-  }
-
-  return this;
-};
-
-Server.prototype[kRealListen] = function (port, host, socketPath, reusePort, onListen) {
-  const tls = this[tlsSymbol];
-  if (tls) {
-    this.serverName = tls.serverName || host || "localhost";
-  }
-
-  const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
-  const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-  let isHTTPS = false;
-  const server = this;
-
-  this[serverSymbol] = Bun.serve<any>({
-    tls,
-    port,
-    hostname: host,
-    unix: socketPath,
-    reusePort,
-    // Bindings to be used for WS Server
-    websocket: {
-      open(ws) {
-        server[connectionsSymbol]++;
-        ws.data.open(ws);
-      },
-      message(ws, message) {
-        ws.data.message(ws, message);
-      },
-      close(ws, code, reason) {
-        server[connectionsSymbol]--;
-        ws.data.close(ws, code, reason);
-        server._emitCloseIfDrained();
-      },
-      drain(ws) {
-        ws.data.drain(ws);
-      },
-      ping(ws, data) {
-        ws.data.ping(ws, data);
-      },
-      pong(ws, data) {
-        ws.data.pong(ws, data);
-      },
-    },
-    maxRequestBodySize: Number.MAX_SAFE_INTEGER,
-    // Be very careful not to access (web) Request object
-    // properties:
-    // - request.url
-    // - request.headers
-    //
-    // We want to avoid triggering the getter for these properties because
-    // that will cause the data to be cloned twice, which costs memory & performance.
-    fetch(req, _server) {
-      var pendingResponse;
-      var pendingError;
-      var reject = err => {
-        if (pendingError) return;
-        pendingError = err;
-        if (rejectFunction) rejectFunction(err);
-      };
-
-      var reply = function (resp) {
-        if (pendingResponse) return;
-        pendingResponse = resp;
-        if (resolveFunction) resolveFunction(resp);
-      };
-
-      const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
-      isNextIncomingMessageHTTPS = isHTTPS;
-      const http_req = new RequestClass(req);
-      isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
-
-      const upgrade = http_req.headers.upgrade;
-
-      const http_res = new ResponseClass(http_req, reply);
-
-      http_req.socket[kInternalSocketData] = [server, http_res, req];
-      server.emit("connection", http_req.socket);
-
-      const rejectFn = err => reject(err);
-      http_req.once("error", rejectFn);
-      http_res.once("error", rejectFn);
-
-      if (upgrade) {
-        server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
-      } else {
-        server.emit("request", http_req, http_res);
+    try {
+      if (tls) {
+        this.serverName = tls.serverName || host || "localhost";
       }
+      this[serverSymbol] = Bun.serve<any>({
+        tls,
+        port,
+        hostname: host,
+        unix: socketPath,
+        // Bindings to be used for WS Server
+        websocket: {
+          open(ws) {
+            ws.data.open(ws);
+          },
+          message(ws, message) {
+            ws.data.message(ws, message);
+          },
+          close(ws, code, reason) {
+            ws.data.close(ws, code, reason);
+          },
+          drain(ws) {
+            ws.data.drain(ws);
+          },
+          ping(ws, data) {
+            ws.data.ping(ws, data);
+          },
+          pong(ws, data) {
+            ws.data.pong(ws, data);
+          },
+        },
+        maxRequestBodySize: Number.MAX_SAFE_INTEGER,
+        // Be very careful not to access (web) Request object
+        // properties:
+        // - request.url
+        // - request.headers
+        //
+        // We want to avoid triggering the getter for these properties because
+        // that will cause the data to be cloned twice, which costs memory & performance.
+        fetch(req, _server) {
+          var pendingResponse;
+          var pendingError;
+          var reject = err => {
+            if (pendingError) return;
+            pendingError = err;
+            if (rejectFunction) rejectFunction(err);
+          };
 
-      if (pendingError) {
-        throw pendingError;
-      }
+          var reply = function (resp) {
+            if (pendingResponse) return;
+            pendingResponse = resp;
+            if (resolveFunction) resolveFunction(resp);
+          };
 
-      if (pendingResponse) {
-        return pendingResponse;
-      }
+          const prevIsNextIncomingMessageHTTPS = isNextIncomingMessageHTTPS;
+          isNextIncomingMessageHTTPS = isHTTPS;
+          const http_req = new RequestClass(req);
+          isNextIncomingMessageHTTPS = prevIsNextIncomingMessageHTTPS;
 
-      server[connectionsSymbol]++;
-      var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-      return promise.finally(() => {
-        server[connectionsSymbol]--;
-        server._emitCloseIfDrained();
+          const upgrade = http_req.headers.upgrade;
+
+          const http_res = new ResponseClass(http_req, reply);
+
+          http_req.socket[kInternalSocketData] = [_server, http_res, req];
+          server.emit("connection", http_req.socket);
+
+          const rejectFn = err => reject(err);
+          http_req.once("error", rejectFn);
+          http_res.once("error", rejectFn);
+
+          if (upgrade) {
+            server.emit("upgrade", http_req, http_req.socket, kEmptyBuffer);
+          } else {
+            server.emit("request", http_req, http_res);
+          }
+
+          if (pendingError) {
+            throw pendingError;
+          }
+
+          if (pendingResponse) {
+            return pendingResponse;
+          }
+
+          var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
+          return promise;
+        },
       });
-    },
-  });
-  isHTTPS = this[serverSymbol].protocol === "https";
+      isHTTPS = this[serverSymbol].protocol === "https";
 
-  if (this?._unref) {
-    this[serverSymbol]?.unref?.();
-  }
+      if (this?._unref) {
+        this[serverSymbol]?.unref?.();
+      }
 
-  setTimeout(emitListeningNextTick, 1, this, onListen, null, this[serverSymbol].hostname, this[serverSymbol].port);
+      if ($isCallable(onListen)) {
+        this.once("listening", onListen);
+      }
+
+      setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
+    } catch (err) {
+      server.emit("error", err);
+    }
+
+    return this;
+  },
+
+  setTimeout(msecs, callback) {
+    // TODO:
+    return this;
+  },
+
+  constructor: Server,
 };
-
-Server.prototype.setTimeout = function (msecs, callback) {
-  // TODO:
-  return this;
-};
+$setPrototypeDirect.$call(Server.prototype, EventEmitter.prototype);
+$setPrototypeDirect.$call(Server, EventEmitter);
 
 function assignHeadersSlow(object, req) {
   const headers = req.headers;
@@ -833,133 +773,172 @@ function IncomingMessage(req, defaultIncomingOpts) {
   this.complete = !!this[noBodySymbol];
 }
 
-Object.setPrototypeOf((IncomingMessage.prototype = {}), Readable.prototype);
-IncomingMessage.prototype.constructor = IncomingMessage; // Re-add constructor which got lost when setting prototype
-Object.setPrototypeOf(IncomingMessage, Readable);
-
-IncomingMessage.prototype._construct = function (callback) {
-  // TODO: streaming
-  if (this[typeSymbol] === "response" || this[noBodySymbol]) {
-    callback();
-    return;
-  }
-
-  const contentLength = this.headers["content-length"];
-  const length = contentLength ? parseInt(contentLength, 10) : 0;
-  if (length === 0) {
-    this[noBodySymbol] = true;
-    callback();
-    return;
-  }
-
-  callback();
-};
-
-async function consumeStream(self, reader: ReadableStreamDefaultReader) {
-  while (true) {
-    var { done, value } = await reader.readMany();
-    if (self[abortedSymbol]) return;
-    if (done) {
-      self.complete = true;
-      self.push(null);
-      break;
-    }
-    for (var v of value) {
-      self.push(v);
-    }
-  }
-}
-
-IncomingMessage.prototype._read = function (size) {
-  if (this[noBodySymbol]) {
-    this.complete = true;
-    this.push(null);
-  } else if (this[bodyStreamSymbol] == null) {
-    const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
-    if (!reader) {
-      this.complete = true;
-      this.push(null);
+IncomingMessage.prototype = {
+  constructor: IncomingMessage,
+  _construct(callback) {
+    // TODO: streaming
+    if (this[typeSymbol] === "response" || this[noBodySymbol]) {
+      callback();
       return;
     }
-    this[bodyStreamSymbol] = reader;
-    consumeStream(this, reader);
-  }
-};
 
-Object.defineProperty(IncomingMessage.prototype, "aborted", {
-  get() {
+    const contentLength = this.headers["content-length"];
+    const length = contentLength ? parseInt(contentLength, 10) : 0;
+    if (length === 0) {
+      this[noBodySymbol] = true;
+      callback();
+      return;
+    }
+
+    callback();
+  },
+  _read(size) {
+    if (this[noBodySymbol]) {
+      this.complete = true;
+      this.push(null);
+    } else if (this[bodyStreamSymbol] == null) {
+      const reader = this[reqSymbol].body?.getReader() as ReadableStreamDefaultReader;
+      if (!reader) {
+        this.complete = true;
+        this.push(null);
+        return;
+      }
+      this[bodyStreamSymbol] = reader;
+      consumeStream(this, reader);
+    }
+  },
+  _destroy(err, cb) {
+    if (!this.readableEnded || !this.complete) {
+      this[abortedSymbol] = true;
+      // IncomingMessage emits 'aborted'.
+      // Client emits 'abort'.
+      this.emit("aborted");
+    }
+
+    // Suppress "AbortError" from fetch() because we emit this in the 'aborted' event
+    if (isAbortError(err)) {
+      err = undefined;
+    }
+
+    const stream = this[bodyStreamSymbol];
+    this[bodyStreamSymbol] = undefined;
+    const streamState = stream?.$state;
+
+    if (streamState === $streamReadable || streamState === $streamWaiting || streamState === $streamWritable) {
+      stream?.cancel?.().catch(nop);
+    }
+
+    const socket = this[fakeSocketSymbol];
+    if (socket) {
+      socket.destroy(err);
+    }
+
+    if (cb) {
+      emitErrorNextTick(this, err, cb);
+    }
+  },
+  get aborted() {
     return this[abortedSymbol];
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "connection", {
-  get() {
+  set aborted(value) {
+    this[abortedSymbol] = value;
+  },
+  get connection() {
     return (this[fakeSocketSymbol] ??= new FakeSocket());
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "statusCode", {
-  get() {
+  get statusCode() {
     return this[reqSymbol].status;
   },
-  set(v) {
-    if (!(v in STATUS_CODES)) return;
-    this[reqSymbol].status = v;
+  set statusCode(value) {
+    if (!(value in STATUS_CODES)) return;
+    this[reqSymbol].status = value;
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "statusMessage", {
-  get() {
+  get statusMessage() {
     return STATUS_CODES[this[reqSymbol].status];
   },
-  set(v) {
-    //noop
+  set statusMessage(value) {
+    // noop
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "httpVersion", {
-  get() {
+  get httpVersion() {
     return "1.1";
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "rawTrailers", {
-  get() {
+  set httpVersion(value) {
+    // noop
+  },
+  get httpVersionMajor() {
+    return 1;
+  },
+  set httpVersionMajor(value) {
+    // noop
+  },
+  get httpVersionMinor() {
+    return 1;
+  },
+  set httpVersionMinor(value) {
+    // noop
+  },
+  get rawTrailers() {
     return [];
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "httpVersionMajor", {
-  get() {
-    return 1;
+  set rawTrailers(value) {
+    // noop
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "httpVersionMinor", {
-  get() {
-    return 1;
-  },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "trailers", {
-  get() {
+  get trailers() {
     return kEmptyObject;
   },
-});
-
-Object.defineProperty(IncomingMessage.prototype, "socket", {
-  get() {
+  set trailers(value) {
+    // noop
+  },
+  setTimeout(msecs, callback) {
+    // noop
+    return this;
+  },
+  get socket() {
     return (this[fakeSocketSymbol] ??= new FakeSocket());
   },
-  set(val) {
-    this[fakeSocketSymbol] = val;
+  set socket(value) {
+    this[fakeSocketSymbol] = value;
   },
-});
-
-IncomingMessage.prototype.setTimeout = function (msecs, callback) {
-  // TODO:
-  return this;
 };
+$setPrototypeDirect.$call(IncomingMessage.prototype, Readable.prototype);
+$setPrototypeDirect.$call(IncomingMessage, Readable);
+
+async function consumeStream(self, reader: ReadableStreamDefaultReader) {
+  var done = false,
+    value,
+    aborted = false;
+  try {
+    while (true) {
+      const result = reader.readMany();
+      if ($isPromise(result)) {
+        ({ done, value } = await result);
+      } else {
+        ({ done, value } = result);
+      }
+
+      if (self.destroyed || (aborted = self[abortedSymbol])) {
+        break;
+      }
+      for (var v of value) {
+        self.push(v);
+      }
+
+      if (self.destroyed || (aborted = self[abortedSymbol]) || done) {
+        break;
+      }
+    }
+  } catch (err) {
+    if (aborted || self.destroyed) return;
+    self.destroy(err);
+  } finally {
+    reader?.cancel?.().catch?.(nop);
+  }
+
+  if (!self.complete) {
+    self.complete = true;
+    self.push(null);
+  }
+}
 
 const headersSymbol = Symbol("headers");
 const finishedSymbol = Symbol("finished");
@@ -974,9 +953,9 @@ function OutgoingMessage(options) {
   this[kAbortController] = null;
 }
 
-Object.setPrototypeOf((OutgoingMessage.prototype = {}), Writable.prototype);
+$setPrototypeDirect.$call((OutgoingMessage.prototype = {}), Writable.prototype);
 OutgoingMessage.prototype.constructor = OutgoingMessage; // Re-add constructor which got lost when setting prototype
-Object.setPrototypeOf(OutgoingMessage, Writable);
+$setPrototypeDirect.$call(OutgoingMessage, Writable);
 
 // Express "compress" package uses this
 OutgoingMessage.prototype._implicitHeader = function () {};
@@ -1178,9 +1157,9 @@ function ServerResponse(req, reply) {
   // https://github.com/nodejs/node/blob/cf8c6994e0f764af02da4fa70bc5962142181bf3/lib/_http_server.js#L192
   if (req.method === "HEAD") this._hasBody = false;
 }
-Object.setPrototypeOf((ServerResponse.prototype = {}), OutgoingMessage.prototype);
+$setPrototypeDirect.$call((ServerResponse.prototype = {}), OutgoingMessage.prototype);
 ServerResponse.prototype.constructor = ServerResponse; // Re-add constructor which got lost when setting prototype
-Object.setPrototypeOf(ServerResponse, OutgoingMessage);
+$setPrototypeDirect.$call(ServerResponse, OutgoingMessage);
 
 // Express "compress" package uses this
 ServerResponse.prototype._implicitHeader = function () {
@@ -1472,11 +1451,7 @@ class ClientRequest extends OutgoingMessage {
     this.destroyed = true;
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
-    if (err) {
-      this.emit("error", err);
-    }
-    this.socket.destroy();
-    callback();
+    emitErrorNextTick(this, err, callback);
   }
 
   _ensureTls() {
@@ -1487,11 +1462,16 @@ class ClientRequest extends OutgoingMessage {
   _final(callback) {
     this.#finished = true;
     this[kAbortController] = new AbortController();
-    this[kAbortController].signal.addEventListener("abort", () => {
-      this.emit("abort");
-      this[kClearTimeout]();
-      this.destroy();
-    });
+    this[kAbortController].signal.addEventListener(
+      "abort",
+      () => {
+        this[kClearTimeout]?.();
+        if (this.destroyed) return;
+        this.emit("abort");
+        this.destroy();
+      },
+      { once: true },
+    );
     if (this.#signal?.aborted) {
       this[kAbortController].abort();
     }
@@ -1548,6 +1528,10 @@ class ClientRequest extends OutgoingMessage {
       //@ts-ignore
       this.#fetchRequest = fetch(url, fetchOptions)
         .then(response => {
+          if (this.aborted) {
+            return;
+          }
+
           const prevIsHTTPS = isNextIncomingMessageHTTPS;
           isNextIncomingMessageHTTPS = response.url.startsWith("https:");
           var res = (this.#res = new IncomingMessage(response, {
@@ -1560,7 +1544,7 @@ class ClientRequest extends OutgoingMessage {
         .catch(err => {
           // Node treats AbortError separately.
           // The "abort" listener on the abort controller should have called this
-          if (err?.name === "AbortError") {
+          if (isAbortError(err)) {
             return;
           }
 
@@ -1582,13 +1566,19 @@ class ClientRequest extends OutgoingMessage {
   }
 
   get aborted() {
-    return this.#signal?.aborted || !!this[kAbortController]?.signal.aborted;
+    return this[abortedSymbol] || this.#signal?.aborted || !!this[kAbortController]?.signal.aborted;
+  }
+
+  set aborted(value) {
+    this[abortedSymbol] = value;
   }
 
   abort() {
     if (this.aborted) return;
+    this[abortedSymbol] = true;
+    process.nextTick(emitAbortNextTick, this);
     this[kAbortController]?.abort?.();
-    // TODO: Close stream if body streaming
+    this.destroy();
   }
 
   constructor(input, options, cb) {
@@ -2193,6 +2183,22 @@ function get(url, options, cb) {
   const req = request(url, options, cb);
   req.end();
   return req;
+}
+
+function onError(self, error, cb) {
+  if (error) {
+    cb(error);
+  } else {
+    cb();
+  }
+}
+
+function emitErrorNextTick(self, err, cb) {
+  process.nextTick(onError, self, err, cb);
+}
+
+function emitAbortNextTick(self) {
+  self.emit("abort");
 }
 
 var globalAgent = new Agent();

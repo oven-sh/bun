@@ -1075,7 +1075,7 @@ fn expectPrintedJSON(_contents: string, expected: string) !void {
     const expr = try ParseJSON(&source, &log, default_allocator);
 
     if (log.msgs.items.len > 0) {
-        Global.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
+        Output.panic("--FAIL--\nExpr {s}\nLog: {s}\n--FAIL--", .{ expr, log.msgs.items[0].data.text });
     }
 
     const buffer_writer = try js_printer.BufferWriter.init(default_allocator);

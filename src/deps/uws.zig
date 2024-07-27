@@ -1086,7 +1086,7 @@ pub const Timer = opaque {
 
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
-        return us_socket_context_get_native_handle(comptime @as(i32, @intFromBool(ssl)), this).?;
+        return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
     }
 
     fn _deinit_ssl(this: *SocketContext) void {
@@ -1143,10 +1143,7 @@ pub const SocketContext = opaque {
     }
 
     fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
-        if (ssl) {
-            return us_socket_context_loop(@as(i32, 1), this);
-        }
-        return us_socket_context_loop(@as(i32, 0), this);
+        return us_socket_context_loop(@intFromBool(ssl), this);
     }
 
     /// closes and deinit the SocketContexts

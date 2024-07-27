@@ -448,12 +448,12 @@ pub fn match(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFrame
     defer arguments.deinit();
     const str_arg = arguments.nextEat() orelse {
         globalThis.throw("Glob.matchString: expected 1 arguments, got 0", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     };
 
     if (!str_arg.isString()) {
         globalThis.throw("Glob.matchString: first argument is not a string", .{});
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     var str = str_arg.toSlice(globalThis, arena.allocator());

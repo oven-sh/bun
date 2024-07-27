@@ -2059,7 +2059,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         } else {
                             body = request.body.value.useAsAnyBlob();
@@ -2372,7 +2372,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         }
 

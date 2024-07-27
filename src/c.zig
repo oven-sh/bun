@@ -104,7 +104,6 @@ pub fn lstat_absolute(path: [:0]const u8) !Stat {
 
 // renameatZ fails when renaming across mount points
 // we assume that this is relatively uncommon
-// TODO: change types to use `bun.FileDescriptor`
 pub fn moveFileZ(from_dir: bun.FileDescriptor, filename: [:0]const u8, to_dir: bun.FileDescriptor, destination: [:0]const u8) !void {
     switch (bun.sys.renameatConcurrentlyWithoutFallback(from_dir, filename, to_dir, destination)) {
         .err => |err| {

@@ -1,9 +1,7 @@
 // Hardcoded module "node:cluster"
 
-const ObjectPrototypeHasOwnProperty = Object.prototype.hasOwnProperty;
-
-const childOrPrimary = ObjectPrototypeHasOwnProperty.$call(process.env, "NODE_UNIQUE_ID");
-const cluster = childOrPrimary ? require("internal/cluster/child") : require("internal/cluster/primary");
+const { isPrimary } = require("internal/cluster/isPrimary");
+const cluster = isPrimary ? require("internal/cluster/primary") : require("internal/cluster/child");
 export default cluster;
 
 //

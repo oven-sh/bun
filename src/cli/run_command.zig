@@ -578,8 +578,7 @@ pub const RunCommand = struct {
                             });
                         }
 
-                        Output.flush();
-                        Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
+                        Global.raiseIgnoringPanicHandler(signal);
                     },
 
                     .exited => |exit_code| {
@@ -592,8 +591,7 @@ pub const RunCommand = struct {
                                 });
                             }
 
-                            Output.flush();
-                            Global.raiseIgnoringPanicHandler(@intFromEnum(exit_code.signal));
+                            Global.raiseIgnoringPanicHandler(exit_code.signal);
                         }
 
                         const code = exit_code.code;

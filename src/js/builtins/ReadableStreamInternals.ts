@@ -1821,6 +1821,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 }
 
 export function readableStreamIntoArray(stream) {
+  $assert($isReadableStream(stream));
+
   var reader = stream.getReader();
   var manyResult = reader.readMany();
 
@@ -1858,6 +1860,8 @@ export function withoutUTF8BOM(result) {
 }
 
 export function readableStreamIntoText(stream) {
+  $assert($isReadableStream(stream));
+
   const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
   const prom = $readStreamIntoSink(stream, textStream, false);
 

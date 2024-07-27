@@ -1,8 +1,7 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
-const { Duplex, Readable, Writable } = require("node:stream");
-const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
 
 const {
   getHeader,
@@ -100,7 +99,9 @@ const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
-const kRealListen = Symbol("kRealListen");
+
+const kCorked = Symbol.for("kCorked");
+const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
 
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
@@ -116,7 +117,6 @@ const NODE_HTTP_WARNING =
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
-const serverSymbol = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
@@ -134,16 +134,23 @@ function isValidTLSArray(obj) {
   return false;
 }
 
+class ERR_INVALID_ARG_TYPE extends TypeError {
+  constructor(name, expected, actual) {
+    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
+    this.code = "ERR_INVALID_ARG_TYPE";
+  }
+}
+
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
 }
 function validateFunction(callable: any, field: string) {
   if (typeof callable !== "function") {
-    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
+    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
   }
 
   return callable;
@@ -151,7 +158,7 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
+  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -162,8 +169,7 @@ var FakeSocket = class Socket extends Duplex {
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
-    return (this.#address ??=
-      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
+    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -174,12 +180,7 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _destroy(err, callback) {
-    if (!this[kInternalSocketData]) return; // sometimes 'this' is Socket not FakeSocket
-    this[kInternalSocketData][0][connectionsSymbol]--;
-    this[kInternalSocketData][1].end();
-    this[kInternalSocketData][0]._emitCloseIfDrained();
-  }
+  _destroy(err, callback) {}
 
   _final(callback) {}
 
@@ -356,22 +357,17 @@ function emitListeningNextTick(self, hostname, port) {
   }
 }
 
-function emitErrorNextTick(self, error) {
-  self.emit("error", error);
-}
-
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
-const connectionsSymbol = Symbol("connections");
+var serverSymbol = Symbol("server");
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
 
   this.listening = false;
   this._unref = false;
-  this[kInternalSocketData] = undefined;
-  this[connectionsSymbol] = 0;
+  this[serverSymbol] = undefined;
 
   if (typeof options === "function") {
     callback = options;
@@ -1446,7 +1442,6 @@ class ClientRequest extends OutgoingMessage {
     this.#bodyChunks.push(...chunks);
     callback();
   }
-
   _destroy(err, callback) {
     this.destroyed = true;
     // If request is destroyed we abort the current response

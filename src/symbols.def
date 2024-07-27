@@ -567,3 +567,32 @@ EXPORTS
   napi_is_detached_arraybuffer
   napi_create_external_buffer
   napi_fatal_exception
+  ?TryGetCurrent@Isolate@v8@@SAPEAV12@XZ
+  ?GetCurrent@Isolate@v8@@SAPEAV12@XZ
+  ?GetCurrentContext@Isolate@v8@@QEAA?AV?$Local@VContext@v8@@@2@XZ
+  ?AddEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
+  ?RemoveEnvironmentCleanupHook@node@@YAXPEAVIsolate@v8@@P6AXPEAX@Z1@Z
+  ?New@Number@v8@@SA?AV?$Local@VNumber@v8@@@2@PEAVIsolate@2@N@Z
+  ?Value@Number@v8@@QEBANXZ
+  ?NewFromUtf8@String@v8@@SA?AV?$MaybeLocal@VString@v8@@@2@PEAVIsolate@2@PEBDW4NewStringType@2@H@Z
+  ?WriteUtf8@String@v8@@QEBAHPEAVIsolate@2@PEADHPEAHH@Z
+  ?ToLocalEmpty@api_internal@v8@@YAXXZ
+  ?Length@String@v8@@QEBAHXZ
+  ?New@External@v8@@SA?AV?$MaybeLocal@VExternal@v8@@@2@PEAVIsolate@2@PEAX@Z
+  ?Value@External@v8@@QEBAPEAXXZ
+  ?New@Object@v8@@SA?AV?$Local@VObject@v8@@@2@PEAVIsolate@2@@Z
+  ?Set@Object@v8@@QEAA?AV?$Maybe@_N@2@V?$Local@VContext@v8@@@2@V?$Local@VValue@v8@@@2@1@Z
+  ?SetInternalField@Object@v8@@QEAAXHV?$Local@VData@v8@@@2@@Z
+  ?SlowGetInternalField@Object@v8@@AEAA?AV?$Local@VData@v8@@@2@H@Z
+  ?CreateHandle@HandleScope@v8@@QEAAPEA_KPEAVIsolate@internal@2@_K@Z
+  ??0HandleScope@v8@@QEAA@PEAVIsolate@1@@Z
+  ??1HandleScope@v8@@QEAA@XZ
+  ?GetFunction@FunctionTemplate@v8@@AEAA?AV?$MaybeLocal@VFunction@v8@@@2@V?$Local@VContext@v8@@@2@@Z
+  ?New@FunctionTemplate@v8@@CA?AV?$Local@VFunctionTemplate@v8@@@2@PEAVIsolate@2@P6AXAEBV?$FunctionCallbackInfo@VValue@v8@@@2@@ZV?$Local@VValue@v8@@@2@V?$Local@VSignature@v8@@@2@HW4ConstructorBehavior@2@W4SideEffectType@2@PEBVCFunction@2@GGG@Z
+  ?NewInstance@ObjectTemplate@v8@@QEAA?AV?$MaybeLocal@VObject@v8@@@2@V?$Local@VContext@v8@@@2@@Z
+  ?SetInternalFieldCount@ObjectTemplate@v8@@QEAAXH@Z
+  ?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z
+  ?EscapeSlot@EscapableHandleScopeBase@v8@@QEAAPEA_KPEA_K@Z
+  ??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z
+  ?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z
+  ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z

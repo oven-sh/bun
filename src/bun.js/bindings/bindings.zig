@@ -3246,8 +3246,9 @@ pub const JSGlobalObject = extern struct {
         return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
     }
 
+    extern fn Bun__ERR_IPC_CHANNEL_CLOSED(*JSGlobalObject) JSValue;
     pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
-        return this.createErrorInstanceWithCode(.ERR_IPC_CHANNEL_CLOSED, "Channel closed", .{});
+        return Bun__ERR_IPC_CHANNEL_CLOSED(this);
     }
 
     pub const Extern = [_][]const u8{

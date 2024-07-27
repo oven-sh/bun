@@ -31,6 +31,14 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
 {
+    // TODO handle constructor
+    // TODO handle interceptors?
+
+    // get a structure
+    // create object from it
+    // apply properties
+    // apply internal field count
+
     V8_UNIMPLEMENTED();
     return MaybeLocal<Object>();
 }

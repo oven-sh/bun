@@ -11,6 +11,7 @@
 
 namespace v8 {
 
+// TODO subclass template then data
 class ObjectTemplate : public JSC::InternalFunction {
 public:
     DECLARE_INFO;

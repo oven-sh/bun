@@ -457,7 +457,7 @@ it("DCE annotations are respected", () => {
   expect(stdout.toString()).toBe("");
 });
 
-it("--ignore-annotations ignores DCE annotations", () => {
+it("--ignore-dce-annotations ignores DCE annotations", () => {
   const dir = tempDirWithFiles("test", {
     "index.ts": `
       /* @__PURE__ */ console.log("Hello, world!");
@@ -465,7 +465,7 @@ it("--ignore-annotations ignores DCE annotations", () => {
   });
 
   const { stdout, stderr, exitCode } = spawnSync({
-    cmd: [bunExe(), "--ignore-annotations", "run", "index.ts"],
+    cmd: [bunExe(), "--ignore-dce-annotations", "run", "index.ts"],
     cwd: dir,
     env: bunEnv,
   });

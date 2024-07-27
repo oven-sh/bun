@@ -185,7 +185,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
-        clap.parseParam("--ignore-annotations             Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
+        clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
@@ -252,7 +252,7 @@ pub const Arguments = struct {
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
-        clap.parseParam("--emit-annotations               Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
+        clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
@@ -699,7 +699,7 @@ pub const Arguments = struct {
         const output_dir: ?string = null;
         const output_file: ?string = null;
 
-        ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-annotations");
+        ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-dce-annotations");
 
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
@@ -713,7 +713,7 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
 
-            ctx.bundler_options.emit_dce_annotations = args.flag("--emit-annotations") or
+            ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
                 !ctx.bundler_options.minify_whitespace;
 
             if (args.options("--external").len > 0) {

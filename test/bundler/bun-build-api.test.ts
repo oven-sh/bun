@@ -16,23 +16,23 @@ describe("Bun.build", () => {
 
   // https://github.com/oven-sh/bun/issues/12818
   test("sourcemap + build error crash case", async () => {
-    const dir = tempDirWithFiles('build', {
-      '/src/file1.ts': `
+    const dir = tempDirWithFiles("build", {
+      "/src/file1.ts": `
         import { A } from './dir';
         console.log(A);
       `,
-      '/src/dir/index.ts': `
+      "/src/dir/index.ts": `
         import { B } from "./file3";
         export const A = [B]
       `,
-      '/src/dir/file3.ts': `
+      "/src/dir/file3.ts": `
         import { C } from "../file1"; // error
         export const B = C;
       `,
-      '/src/package.json': `
+      "/src/package.json": `
         { "type": "module" }
       `,
-      '/src/tsconfig.json': `
+      "/src/tsconfig.json": `
         {
           "extends": "../tsconfig.json",
           "compilerOptions": {
@@ -44,9 +44,9 @@ describe("Bun.build", () => {
       `,
     });
     const y = await Bun.build({
-      entrypoints: [join(dir, 'src/file1.ts')],
-      outdir: join(dir, 'out'),
-      sourcemap: 'external',
+      entrypoints: [join(dir, "src/file1.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
       external: ["@minecraft"],
     });
   });

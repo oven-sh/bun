@@ -28,7 +28,9 @@ public:
         }
     };
 
-    WTF::Vector<InternalField>* internalFields() { return &fields; }
+    using FieldContainer = WTF::Vector<InternalField, 2>;
+
+    FieldContainer* internalFields() { return &fields; }
     static InternalFieldObject* create();
 
 protected:
@@ -38,7 +40,8 @@ protected:
     }
 
 private:
-    WTF::Vector<InternalField> fields;
+    // TODO(@190n) use template with fixed size array for small counts
+    FieldContainer fields;
 };
 
 }

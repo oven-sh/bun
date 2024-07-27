@@ -12,14 +12,15 @@ using JSC::PutPropertySlot;
 
 namespace v8 {
 
-static WTF::Vector<InternalFieldObject::InternalField>* getInternalFieldsContainer(Object* object)
+using FieldContainer = InternalFieldObject::FieldContainer;
+
+static FieldContainer* getInternalFieldsContainer(Object* object)
 {
     JSObject* js_object = object->toJSValue().getObject();
-    const JSC::ClassInfo* class_info = js_object->classInfo();
 
     // TODO(@190n): do we need to unwrap proxies like node-jsc did?
 
-    if (class_info->isSubClassOf(InternalFieldObject::info())) {
+    if (js_object->inherits<InternalFieldObject>()) {
         return static_cast<InternalFieldObject*>(js_object)->internalFields();
     }
 

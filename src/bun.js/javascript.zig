@@ -487,7 +487,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
     _ = jsc_vm.uncaughtException(globalObject, value, false);
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 /// This function is called on another thread
@@ -2928,7 +2928,7 @@ pub const VirtualMachine = struct {
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
         _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -3246,6 +3246,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
 
+        // The ZigException structure stores substrings of the source code, in
+        // which we need the lifetime of this data to outlive the inner call to
+        // remapZigException, but still get freed.
         var source_code_slice: ?ZigString.Slice = null;
         defer if (source_code_slice) |slice| slice.deinit();
 
@@ -3683,7 +3686,7 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        context: if (Environment.isPosix) *uws.SocketContext else u0,
+        context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
 
         pub usingnamespace bun.New(@This());
@@ -3692,10 +3695,7 @@ pub const VirtualMachine = struct {
             return &this.data;
         }
 
-        pub fn handleIPCMessage(
-            this: *IPCInstance,
-            message: IPC.DecodedIPCMessage,
-        ) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
@@ -3730,9 +3730,7 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        this.ipc = .{
-            .waiting = .{ .info = info, .mode = mode },
-        };
+        this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3770,7 +3768,7 @@ pub const VirtualMachine = struct {
             .windows => instance: {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
-                    .context = 0,
+                    .context = {},
                     .data = .{ .mode = opts.mode },
                 });
 

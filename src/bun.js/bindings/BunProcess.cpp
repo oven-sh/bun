@@ -1616,7 +1616,7 @@ static JSValue constructReportObjectComplete(VM& vm, Zig::GlobalObject* globalOb
     auto constructJavaScriptStack = [&]() -> JSC::JSValue {
         JSC::JSObject* javascriptStack = JSC::constructEmptyObject(globalObject, globalObject->objectPrototype(), 3);
 
-        javascriptStack->putDirect(vm, JSC::Identifier::fromString(vm, "message"_s), JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
+        javascriptStack->putDirect(vm, vm.propertyNames->message, JSC::jsString(vm, String("Error [ERR_SYNTHETIC]: JavaScript Callstack"_s)), 0);
 
         // TODO: allow errors as an argument
         {
@@ -2725,6 +2725,11 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
+    if (callFrame->argumentCount() < 2) {
+        throwVMError(globalObject, scope, "Not enough arguments"_s);
+        return {};
+    }
+
     int pid = callFrame->argument(0).toInt32(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
@@ -2733,16 +2738,15 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
 
 #if !OS(WINDOWS)
     int result = kill(pid, signal);
+    if (result < 0)
+        result = errno;
 #else
     int result = uv_kill(pid, signal);
 #endif
 
-    if (result < 0) {
-        throwSystemError(scope, globalObject, "kill"_s, errno);
-    }
-
-    RELEASE_AND_RETURN(scope, JSValue::encode(jsUndefined()));
+    RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));
 }
+
 JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
@@ -2776,15 +2780,33 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
         return JSValue::encode(jsUndefined());
     }
 
-#if OS(WINDOWS)
-    int result = uv_kill(pid, signal);
-#else
-    int result = kill(pid, signal);
-#endif
+    auto global = jsCast<Zig::GlobalObject*>(globalObject);
+    auto& vm = global->vm();
+    JSValue _killFn = global->processObject()->get(globalObject, Identifier::fromString(vm, "_kill"_s));
+    RETURN_IF_EXCEPTION(scope, {});
+    if (!_killFn.isCallable()) {
+        throwTypeError(globalObject, scope, "process._kill is not a function"_s);
+        return JSValue::encode({});
+    }
 
-    if (result < 0) {
-        throwSystemError(scope, globalObject, "kill"_s, errno);
-        return JSValue::encode(jsUndefined());
+    JSC::MarkedArgumentBuffer args;
+    args.append(jsNumber(pid));
+    args.append(jsNumber(signal));
+    JSC::CallData callData = JSC::getCallData(_killFn);
+
+    NakedPtr<JSC::Exception> returnedException = nullptr;
+    auto result = JSC::call(globalObject, _killFn, callData, globalObject->globalThis(), args, returnedException);
+    RETURN_IF_EXCEPTION(scope, {});
+
+    if (auto* exception = returnedException.get()) {
+        scope.throwException(globalObject, exception->value());
+        returnedException.clear();
+        return {};
+    }
+    auto err = result.toInt32(globalObject);
+    if (err) {
+        throwSystemError(scope, globalObject, "kill"_s, err);
+        return {};
     }
 
     return JSValue::encode(jsBoolean(true));
@@ -2795,7 +2817,7 @@ extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSVa
     auto* process = static_cast<Process*>(global->processObject());
     auto& vm = global->vm();
 
-    auto ident = Identifier::fromString(vm, "message"_s);
+    auto ident = vm.propertyNames->message;
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         args.append(JSValue::decode(value));

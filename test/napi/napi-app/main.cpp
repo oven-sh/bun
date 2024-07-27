@@ -3,6 +3,8 @@
 #include <inttypes.h>
 #include <iostream>
 #include <napi.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include <cassert>
 

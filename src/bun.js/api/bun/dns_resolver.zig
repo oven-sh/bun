@@ -2130,13 +2130,13 @@ pub const DNSResolver = struct {
         vm.eventLoop().enter();
         defer vm.eventLoop().exit();
         var channel = this.channel orelse {
-            _ = this.polls.orderedRemove(poll.fd.int());
+            _ = this.polls.orderedRemove(poll.fd.cast());
             poll.deinit();
             return;
         };
 
         channel.process(
-            poll.fd.int(),
+            poll.fd.cast(),
             poll.isReadable(),
             poll.isWritable(),
         );

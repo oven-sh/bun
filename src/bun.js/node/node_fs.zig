@@ -4272,8 +4272,8 @@ pub const NodeFS = struct {
                         .err => |err| return Maybe(Return.CopyFile){ .err = err.withPath(args.dest.slice()) },
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = std.c.ftruncate(dest_fd.cast(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd.cast(), stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 
@@ -4493,7 +4493,7 @@ pub const NodeFS = struct {
             return Syscall.fchown(args.fd, args.uid, args.gid);
         }
 
-        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd.int(), args.uid, args.gid), .fchown) orelse
+        return Maybe(Return.Fchown).errnoSys(C.fchown(args.fd.cast(), args.uid, args.gid), .fchown) orelse
             Maybe(Return.Fchown).success;
     }
 
@@ -4501,7 +4501,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fdatasync(args.fd);
         }
-        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.int()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
+        return Maybe(Return.Fdatasync).errnoSysFd(system.fdatasync(args.fd.cast()), .fdatasync, args.fd) orelse Maybe(Return.Fdatasync).success;
     }
 
     pub fn fstat(_: *NodeFS, args: Arguments.Fstat, comptime _: Flavor) Maybe(Return.Fstat) {
@@ -4515,7 +4515,7 @@ pub const NodeFS = struct {
         if (Environment.isWindows) {
             return Syscall.fsync(args.fd);
         }
-        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.int()), .fsync) orelse
+        return Maybe(Return.Fsync).errnoSys(system.fsync(args.fd.cast()), .fsync) orelse
             Maybe(Return.Fsync).success;
     }
 
@@ -4544,7 +4544,7 @@ pub const NodeFS = struct {
             args.atime,
         };
 
-        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd.int(), &times), .futimens)) |err|
+        return if (Maybe(Return.Futimes).errnoSys(system.futimens(args.fd.cast(), &times), .futimens)) |err|
             err
         else
             Maybe(Return.Futimes).success;
@@ -6607,8 +6607,8 @@ pub const NodeFS = struct {
                         }
                     };
                     defer {
-                        _ = std.c.ftruncate(dest_fd.int(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
-                        _ = C.fchmod(dest_fd.int(), stat_.mode);
+                        _ = std.c.ftruncate(dest_fd.cast(), @as(std.c.off_t, @intCast(@as(u63, @truncate(wrote)))));
+                        _ = C.fchmod(dest_fd.cast(), stat_.mode);
                         _ = Syscall.close(dest_fd);
                     }
 

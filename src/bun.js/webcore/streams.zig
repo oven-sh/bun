@@ -3136,7 +3136,7 @@ pub const FileSink = struct {
                 .result => |stat| {
                     this.pollable = bun.sys.isPollable(stat.mode);
                     if (!this.pollable and isatty == null) {
-                        isatty = std.posix.isatty(fd.int());
+                        isatty = std.posix.isatty(fd.cast());
                     }
 
                     if (isatty) |is| {
@@ -3497,7 +3497,7 @@ pub const FileReader = struct {
             const fd = if (file.pathlike == .fd)
                 if (file.pathlike.fd.isStdio()) brk: {
                     if (comptime Environment.isPosix) {
-                        const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.int(), bun.O.RDONLY);
+                        const rc = bun.C.open_as_nonblocking_tty(file.pathlike.fd.cast(), bun.O.RDONLY);
                         if (rc > -1) {
                             is_nonblocking_tty = true;
                             file.is_atty = true;
@@ -3533,7 +3533,7 @@ pub const FileReader = struct {
 
             if (comptime Environment.isPosix) {
                 if ((file.is_atty orelse false) or
-                    (fd.int() < 3 and std.posix.isatty(fd.cast())) or
+                    (fd.cast() < 3 and std.posix.isatty(fd.cast())) or
                     (file.pathlike == .fd and
                     bun.FDTag.get(file.pathlike.fd) != .none and
                     std.posix.isatty(file.pathlike.fd.cast())))

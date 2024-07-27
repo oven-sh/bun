@@ -99,18 +99,6 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     // invalid = @intFromEnum(invalid_fd),
     _,
 
-    /// Do not use this function in new code.
-    ///
-    /// Interpreting a FD as an integer is almost certainly a mistake.
-    /// On Windows, it is always a mistake, as the integer is bitcast of a tagged packed struct.
-    ///
-    /// TODO(@paperdave): remove this API.
-    pub inline fn int(self: FileDescriptor) std.posix.fd_t {
-        if (Environment.isWindows)
-            @compileError("FileDescriptor.int() is not allowed on Windows.");
-        return @intFromEnum(self);
-    }
-
     pub inline fn writeTo(fd: FileDescriptor, writer: anytype, endian: std.builtin.Endian) !void {
         try writer.writeInt(FileDescriptorInt, @intFromEnum(fd), endian);
     }
@@ -126,7 +114,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     ///
     /// This may be needed in places where a FileDescriptor is given to `std` or `kernel32` apis
     pub inline fn cast(fd: FileDescriptor) std.posix.fd_t {
-        if (!Environment.isWindows) return fd.int();
+        if (!Environment.isWindows) return @intFromEnum(fd);
         // if not having this check, the cast may crash zig compiler?
         if (@inComptime() and fd == invalid_fd) return FDImpl.invalid.system();
         return FDImpl.decode(fd).system();
@@ -161,7 +149,7 @@ pub const FileDescriptor = enum(FileDescriptorInt) {
     }
 
     pub fn eq(this: FileDescriptor, that: FileDescriptor) bool {
-        if (Environment.isPosix) return this.int() == that.int();
+        if (Environment.isPosix) return this.cast() == that.cast();
 
         const this_ = FDImpl.decode(this);
         const that_ = FDImpl.decode(that);
@@ -858,7 +846,7 @@ pub const FDHashMapContext = struct {
         // the goal here is to do zero work and widen the 32 bit type to 64
         // this should compile error if FileDescriptor somehow is larger than 64 bits.
         comptime assert(@bitSizeOf(FileDescriptor) <= 64);
-        return @intCast(fd.int());
+        return @bitCast(@as(i64, @intFromEnum(fd)));
     }
     pub fn eql(_: @This(), a: FileDescriptor, b: FileDescriptor) bool {
         return a == b;

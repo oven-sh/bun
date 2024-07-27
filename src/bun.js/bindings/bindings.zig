@@ -3241,28 +3241,9 @@ pub const JSGlobalObject = extern struct {
         return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
     }
 
-    pub fn ERR_MISSING_ARGS_1(this: *JSGlobalObject, arg1: JSValue) JSValue {
-        const s1 = arg1.toString(this);
-        if (this.hasException()) return .zero;
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{s1});
-    }
-
-    pub fn ERR_MISSING_ARGS_2(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue) JSValue {
-        const s1 = arg1.toString(this);
-        if (this.hasException()) return .zero;
-        const s2 = arg2.toString(this);
-        if (this.hasException()) return .zero;
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\" and \"{}\" arguments must be specified", .{ s1, s2 });
-    }
-
-    pub fn ERR_MISSING_ARGS_3(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
-        const s1 = arg1.toString(this);
-        if (this.hasException()) return .zero;
-        const s2 = arg2.toString(this);
-        if (this.hasException()) return .zero;
-        const s3 = arg3.toString(this);
-        if (this.hasException()) return .zero;
-        return this.createTypeErrorInstanceWithCode(.ERR_MISSING_ARGS, "The \"{}\", \"{}\", and \"{}\" arguments must be specified", .{ s1, s2, s3 });
+    extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
+    pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
+        return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
     }
 
     pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {

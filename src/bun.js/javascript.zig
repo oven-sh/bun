@@ -477,9 +477,7 @@ pub export fn Bun__Process__send(
     };
 
     if (message.isUndefined()) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(
-            ZigString.static("message").toJS(globalObject),
-        ));
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS(ZigString.static("message").toJS(globalObject), .zero, .zero));
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
         return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(

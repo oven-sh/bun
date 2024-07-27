@@ -29,24 +29,3 @@ fn createSimpleError(comptime createFn: anytype, comptime code: JSC.Node.ErrorCo
     };
     return R.cbb;
 }
-
-pub fn ERR_MISSING_ARGS(global: *JSC.JSGlobalObject) callconv(JSC.conv) JSC.JSValue {
-    const S = struct {
-        fn cb(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
-            const arguments = callframe.arguments(3);
-            bun.debugAssert(arguments.len > 0); // At least one arg needs to be specified
-            const args = arguments.slice();
-
-            if (!args[0].isArray()) {
-                return createTypeError(globalThis, .ERR_MISSING_ARGS, "The \"{}\" argument must be specified", .{args[0].toString(globalThis)});
-            }
-            return switch (args.len) {
-                1 => globalThis.ERR_MISSING_ARGS_1(args[0]),
-                2 => globalThis.ERR_MISSING_ARGS_2(args[0], args[1]),
-                3 => globalThis.ERR_MISSING_ARGS_3(args[0], args[1], args[2]),
-                else => unreachable,
-            };
-        }
-    };
-    return JSC.JSFunction.create(global, "ERR_MISSING_ARGS", S.cb, 0, .{});
-}

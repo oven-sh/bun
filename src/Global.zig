@@ -157,7 +157,7 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
 
 pub fn notimpl() noreturn {
     @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
+    Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover

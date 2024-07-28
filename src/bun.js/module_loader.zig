@@ -266,9 +266,9 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
-    pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
+    pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(allocator),
+            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
         };
     }
 

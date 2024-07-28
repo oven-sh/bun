@@ -646,6 +646,10 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
+const body_value_pool_size: u16 = 256;
+pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
+const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -781,9 +785,17 @@ pub const VirtualMachine = struct {
 
     debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
+    body_value_hive_allocator: BodyValueHiveAllocator = undefined,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
+
+    pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
+        const result = try this.body_value_hive_allocator.tryGet();
+        result.value = body;
+        return result;
+    }
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
@@ -1485,7 +1497,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1555,6 +1567,7 @@ pub const VirtualMachine = struct {
         }
 
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1600,7 +1613,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1674,6 +1687,7 @@ pub const VirtualMachine = struct {
         }
 
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1748,7 +1762,7 @@ pub const VirtualMachine = struct {
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
             .console = console,
@@ -1816,6 +1830,7 @@ pub const VirtualMachine = struct {
             source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
             source_code_printer.?.ctx.append_null_byte = false;
         }
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }

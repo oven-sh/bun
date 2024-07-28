@@ -43,6 +43,13 @@ pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
 
+pub fn typedAllocator(comptime T: type) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.allocator(comptime T);
+
+    return default_allocator;
+}
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");

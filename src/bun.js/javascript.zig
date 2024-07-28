@@ -646,7 +646,7 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
-const body_value_pool_size: u16 = 256;
+const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
 pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
 const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
 

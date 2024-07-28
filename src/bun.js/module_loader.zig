@@ -411,12 +411,12 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
-            if (!vm.transpiler_store.store.hive.in(this)) {
+            if (!vm.transpiler_store.store.in(this)) {
                 this.promise.deinit();
             }
             this.deinit();
 
-            _ = vm.transpiler_store.store.hive.put(this);
+            _ = vm.transpiler_store.store.put(this);
 
             ModuleLoader.AsyncModule.fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
         }

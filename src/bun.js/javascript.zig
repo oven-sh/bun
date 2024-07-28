@@ -792,9 +792,7 @@ pub const VirtualMachine = struct {
     pub const OnException = fn (*ZigException) void;
 
     pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
-        const result = try this.body_value_hive_allocator.tryGet();
-        result.value = body;
-        return result;
+        return BodyValueRef.init(body, &this.body_value_hive_allocator);
     }
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {

@@ -558,9 +558,10 @@ public:
     }
 
     /* Attach handler for writable HTTP response */
-    HttpResponse *onWritable(void* userContext, HttpResponseData<SSL>::OnWritableCallback handler) {
+    HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
+        httpResponseData->userData = userData;
         httpResponseData->onWritable = handler;
         return this;
     }
@@ -574,9 +575,10 @@ public:
     }
 
     /* Attach handler for aborted HTTP request */
-    HttpResponse *onAborted(void* userContext,  HttpResponseData<SSL>::OnAbortedCallback handler) {
+    HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
+        
+        httpResponseData->userData = userData;
         httpResponseData->onAborted = handler;
         return this;
     }
@@ -594,8 +596,9 @@ public:
         return this;
     }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(void* userContext, HttpResponseData<SSL>::OnDataCallback handler) { 
+    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) { 
         HttpResponseData<SSL> *data = getHttpResponseData();
+        data->userData = userData;
         data->inStream = handler;
 
         /* Always reset this counter here */

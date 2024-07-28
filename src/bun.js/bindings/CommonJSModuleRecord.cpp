@@ -299,20 +299,22 @@ void RequireFunctionPrototype::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);
     ASSERT(inherits(info()));
+    auto* globalObject = this->globalObject();
 
     reifyStaticProperties(vm, info(), RequireFunctionPrototypeValues, *this);
     JSC::JSFunction* requireDotMainFunction = JSFunction::create(
         vm,
+        globalObject,
         moduleMainCodeGenerator(vm),
-        globalObject()->globalScope());
+        globalObject->globalScope());
 
     this->putDirectAccessor(
-        globalObject(),
+        globalObject,
         JSC::Identifier::fromString(vm, "main"_s),
-        JSC::GetterSetter::create(vm, globalObject(), requireDotMainFunction, requireDotMainFunction),
+        JSC::GetterSetter::create(vm, globalObject, requireDotMainFunction, requireDotMainFunction),
         PropertyAttribute::Accessor | PropertyAttribute::ReadOnly | 0);
 
-    auto extensions = constructEmptyObject(globalObject());
+    auto extensions = constructEmptyObject(globalObject);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".js"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".json"_s), jsBoolean(true), 0);
     extensions->putDirect(vm, JSC::Identifier::fromString(vm, ".node"_s), jsBoolean(true), 0);

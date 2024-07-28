@@ -2573,7 +2573,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSMap* inMap = jsCast<JSMap*>(inValue);
             if (!startMap(inMap))
                 break;
-            JSMapIterator* iterator = JSMapIterator::create(vm, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
+            JSMapIterator* iterator = JSMapIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->mapIteratorStructure(), inMap, IterationKind::Entries);
             if (UNLIKELY(scope.exception()))
                 return SerializationReturnCode::ExistingExceptionError;
             m_gcBuffer.appendWithCrashOnOverflow(inMap);
@@ -2621,7 +2621,7 @@ SerializationReturnCode CloneSerializer::serialize(JSValue in)
             JSSet* inSet = jsCast<JSSet*>(inValue);
             if (!startSet(inSet))
                 break;
-            JSSetIterator* iterator = JSSetIterator::create(vm, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
+            JSSetIterator* iterator = JSSetIterator::create(m_lexicalGlobalObject, m_lexicalGlobalObject->setIteratorStructure(), inSet, IterationKind::Keys);
             if (UNLIKELY(scope.exception()))
                 return SerializationReturnCode::ExistingExceptionError;
             m_gcBuffer.appendWithCrashOnOverflow(inSet);
@@ -4766,10 +4766,10 @@ private:
                     fail();
                     return JSValue();
                 }
-                memory = Wasm::Memory::create(contents.releaseNonNull(), WTFMove(handler));
+                memory = Wasm::Memory::create(vm, contents.releaseNonNull(), WTFMove(handler));
             } else {
                 // zero size & max-size.
-                memory = Wasm::Memory::createZeroSized(JSC::MemorySharingMode::Shared, WTFMove(handler));
+                memory = Wasm::Memory::createZeroSized(vm, JSC::MemorySharingMode::Shared, WTFMove(handler));
             }
 
             result->adopt(memory.releaseNonNull());

@@ -171,13 +171,10 @@ function create_release() {
     bun-windows-x64-baseline-profile.zip
   )
 
-  for artifact in "${artifacts[@]}"; do
-    download_buildkite_artifact "$artifact"
-  done
-
-  upload_github_assets "$tag" "${artifacts[@]}"
+  download_buildkite_artifacts "." "${artifacts[@]}"
   upload_s3_files "releases/$BUILDKITE_COMMIT" "${artifacts[@]}"
   upload_s3_files "releases/$tag" "${artifacts[@]}"
+  upload_github_assets "$tag" "${artifacts[@]}"
   create_sentry_release "$tag"
 }
 

@@ -78,8 +78,8 @@ pub const Zone = opaque {
         return false;
     }
 
-    fn rawFree(zone: *anyopaque, buf: [*]u8, _: u8, _: usize) void {
-        malloc_zone_free(@ptrCast(zone), @ptrCast(buf));
+    fn rawFree(zone: *anyopaque, buf: []u8, _: u8, _: usize) void {
+        malloc_zone_free(@ptrCast(zone), @ptrCast(buf.ptr));
     }
 
     pub const vtable = std.mem.Allocator.VTable{

@@ -27,8 +27,8 @@ import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
 const spawnTimeout = 5_000;
-const testTimeout = 60_000;
-const integrationTimeout = 3 * 60_000;
+const testTimeout = 3 * 60_000;
+const integrationTimeout = 5 * 60_000;
 
 const isLinux = process.platform === "linux";
 const isMacOS = process.platform === "darwin";

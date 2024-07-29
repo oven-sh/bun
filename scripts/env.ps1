@@ -66,7 +66,7 @@ $CXXFLAGS += " -march=${CPU_NAME}"
 
 $Canary = If ($env:CANARY) {
   $env:CANARY
-} Else If ($env:BUILDKITE -eq "true") {
+} ElseIf ($env:BUILDKITE -eq "true") {
   (buildkite-agent meta-data get canary)
 } Else {
   "1"

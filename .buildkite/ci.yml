@@ -647,7 +647,7 @@ steps:
           # - "build\\bun-cpp-objects.a"
           - "build\\bun-cpp-objects.a.*"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1 -Fast $$True"
+          - ".\\scripts\\build-bun-cpp.ps1"
 
       - key: "windows-x64-build-bun"
         label: ":windows: x64 - build-bun"

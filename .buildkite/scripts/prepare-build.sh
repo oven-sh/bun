@@ -48,6 +48,12 @@ function assert_command() {
   fi
 }
 
+function assert_release() {
+  if [ "$RELEASE" == "1" ]; then
+    run_command buildkite-agent meta-data set canary "0"
+  fi
+}
+
 function assert_canary() {
   local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
   if [ -z "$canary" ]; then
@@ -63,8 +69,8 @@ function assert_canary() {
         canary="$revision"
       fi
     fi
+    run_command buildkite-agent meta-data set canary "$canary"
   fi
-  run_command buildkite-agent meta-data set canary "$canary"
 }
 
 function upload_buildkite_pipeline() {
@@ -86,5 +92,6 @@ assert_build
 assert_buildkite_agent
 assert_jq
 assert_curl
+assert_release
 assert_canary
 upload_buildkite_pipeline ".buildkite/ci.yml"

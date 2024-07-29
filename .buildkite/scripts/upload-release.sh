@@ -3,7 +3,15 @@
 set -eo pipefail
 
 function assert_main() {
-  if [[ "$BUILDKITE_PULL_REQUEST_REPO" && "$BUILDKITE_REPO" != "$BUILDKITE_PULL_REQUEST_REPO" ]]; then
+  if [ -z "$BUILDKITE_REPO" ]; then
+    echo "error: Cannot find repository for this build"
+    exit 1
+  fi
+  if [ -z "$BUILDKITE_COMMIT" ]; then
+    echo "error: Cannot find commit for this build"
+    exit 1
+  fi
+  if [ -n "$BUILDKITE_PULL_REQUEST_REPO" ] && [ "$BUILDKITE_REPO" != "$BUILDKITE_PULL_REQUEST_REPO" ]; then
     echo "error: Cannot upload release from a fork"
     exit 1
   fi
@@ -25,70 +33,152 @@ function assert_buildkite_agent() {
   fi
 }
 
-function assert_gh() {
-  if ! command -v gh &> /dev/null; then
-    echo "warning: gh is not installed, installing..."
+function assert_github() {
+  assert_command "gh" "gh" "https://github.com/cli/cli#installation"
+  assert_buildkite_secret "GITHUB_TOKEN"
+  # gh expects the token in $GH_TOKEN
+  export GH_TOKEN="$GITHUB_TOKEN"
+}
+
+function assert_aws() {
+  assert_command "aws" "awscli" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
+  for secret in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_ENDPOINT AWS_BUCKET; do
+    assert_buildkite_secret "$secret"
+  done
+}
+
+function assert_sentry() {
+  assert_command "sentry-cli" "getsentry/tools/sentry-cli" "https://docs.sentry.io/cli/installation/"
+  for secret in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT; do
+    assert_buildkite_secret "$secret"
+  done
+}
+
+function run_command() {
+  set -x
+  "$@"
+  { set +x; } 2>/dev/null
+}
+
+function assert_command() {
+  local command="$1"
+  local package="$2"
+  local help_url="$3"
+  if ! command -v "$command" &> /dev/null; then
+    echo "warning: $command is not installed, installing..."
     if command -v brew &> /dev/null; then
-      brew install gh
+      HOMEBREW_NO_AUTO_UPDATE=1 run_command brew install "$package"
     else
-      echo "error: Cannot install gh, please install it:"
-      echo "https://github.com/cli/cli#installation"
+      echo "error: Cannot install $command, please install it"
+      if [ -n "$help_url" ]; then
+        echo ""
+        echo "hint: See $help_url for help"
+      fi
       exit 1
     fi
   fi
 }
 
-function assert_gh_token() {
-  local token=$(buildkite-agent secret get GITHUB_TOKEN)
-  if [ -z "$token" ]; then
-    echo "error: Cannot find GITHUB_TOKEN secret"
+function assert_buildkite_secret() {
+  local key="$1"
+  local value=$(buildkite-agent secret get "$key")
+  if [ -z "$value" ]; then
+    echo "error: Cannot find $key secret"
     echo ""
-    echo "hint: Create a secret named GITHUB_TOKEN with a GitHub access token:"
+    echo "hint: Create a secret named $key with a value:"
     echo "https://buildkite.com/docs/pipelines/buildkite-secrets"
     exit 1
   fi
-  export GH_TOKEN="$token"
+  export "$key"="$value"
 }
 
-function download_artifact() {
-  local name=$1
-  buildkite-agent artifact download "$name" .
-  if [ ! -f "$name" ]; then
-    echo "error: Cannot find Buildkite artifact: $name"
-    exit 1
+function release_tag() {
+  local version="$1"
+  if [ "$version" == "canary" ]; then
+    echo "canary"
+  else
+    echo "bun-v$version"
   fi
 }
 
-function upload_assets() {
-  local tag=$1
-  local files=${@:2}
-  gh release upload "$tag" $files --clobber --repo "$BUILDKITE_REPO"
+function create_sentry_release() {
+  local version="$1"
+  local release="$version"
+  if [ "$version" == "canary" ]; then
+    release="$BUILDKITE_COMMIT-canary"
+  fi
+  run_command sentry-cli releases new "$release" --finalize
+  run_command sentry-cli releases set-commits "$release" --auto --ignore-missing
+  if [ "$version" == "canary" ]; then
+    run_command sentry-cli deploys new --env="canary" --release="$release"
+  fi
 }
 
-assert_main
-assert_buildkite_agent
-assert_gh
-assert_gh_token
+function download_buildkite_artifacts() {
+  local dir="$1"
+  local names="${@:2}"
+  for name in "${names[@]}"; do
+    run_command buildkite-agent artifact download "$name" "$dir"
+    if [ ! -f "$dir/$name" ]; then
+      echo "error: Cannot find Buildkite artifact: $name"
+      exit 1
+    fi
+  done
+}
 
-declare artifacts=(
-  bun-darwin-aarch64.zip
-  bun-darwin-aarch64-profile.zip
-  bun-darwin-x64.zip
-  bun-darwin-x64-profile.zip
-  bun-linux-aarch64.zip
-  bun-linux-aarch64-profile.zip
-  bun-linux-x64.zip
-  bun-linux-x64-profile.zip
-  bun-linux-x64-baseline.zip
-  bun-linux-x64-baseline-profile.zip
-  bun-windows-x64.zip
-  bun-windows-x64-profile.zip
-  bun-windows-x64-baseline.zip
-  bun-windows-x64-baseline-profile.zip
-)
+function upload_github_assets() {
+  local version="$1"
+  local tag="$(release_tag "$version")"
+  local files="${@:2}"
+  for file in "${files[@]}"; do
+    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
+  done
+  if [ "$version" == "canary" ]; then
+    run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
+      --notes "This canary release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
+  fi
+}
 
-for artifact in "${artifacts[@]}"; do
-  download_artifact $artifact
-done
+function upload_s3_files() {
+  local folder="$1"
+  local files="${@:2}"
+  for file in "${files[@]}"; do
+    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
+  done
+}
 
-upload_assets "canary" "${artifacts[@]}"
+function create_release() {
+  assert_main
+  assert_buildkite_agent
+  assert_github
+  assert_sentry
+
+  local tag="$1" # 'canary' or 'x.y.z'
+  local artifacts=(
+    bun-darwin-aarch64.zip
+    bun-darwin-aarch64-profile.zip
+    bun-darwin-x64.zip
+    bun-darwin-x64-profile.zip
+    bun-linux-aarch64.zip
+    bun-linux-aarch64-profile.zip
+    bun-linux-x64.zip
+    bun-linux-x64-profile.zip
+    bun-linux-x64-baseline.zip
+    bun-linux-x64-baseline-profile.zip
+    bun-windows-x64.zip
+    bun-windows-x64-profile.zip
+    bun-windows-x64-baseline.zip
+    bun-windows-x64-baseline-profile.zip
+  )
+
+  for artifact in "${artifacts[@]}"; do
+    download_buildkite_artifact "$artifact"
+  done
+
+  upload_github_assets "$tag" "${artifacts[@]}"
+  upload_s3_files "releases/$BUILDKITE_COMMIT" "${artifacts[@]}"
+  upload_s3_files "releases/$tag" "${artifacts[@]}"
+  create_sentry_release "$tag"
+}
+
+create_release "canary"

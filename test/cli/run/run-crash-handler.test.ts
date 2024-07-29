@@ -13,13 +13,11 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
 
 test("raise ignoring panic handler does not trigger the panic handler", async () => {
   let sent = false;
-  let onresolve = Promise.withResolvers();
 
   using server = Bun.serve({
     port: 0,
     fetch(request, server) {
       sent = true;
-      onresolve.resolve();
       return new Response("OK");
     },
   });
@@ -34,11 +32,8 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
       },
     ]),
   });
-  await proc.exited;
 
-  await Promise.race([onresolve.promise, Bun.sleep(1000)]);
-
-  expect(proc.exitCode).not.toBe(0);
+  expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
 
@@ -46,7 +41,6 @@ describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
-      let onresolve = Promise.withResolvers();
 
       // Self host the crash report backend.
       using server = Bun.serve({
@@ -54,7 +48,6 @@ describe("automatic crash reporter", () => {
         fetch(request, server) {
           expect(request.url).toEndWith("/ack");
           sent = true;
-          onresolve.resolve();
           return new Response("OK");
         },
       });
@@ -72,15 +65,12 @@ describe("automatic crash reporter", () => {
         ]),
         stdio: ["ignore", "pipe", "pipe"],
       });
-      await proc.exited;
-
-      await Promise.race([onresolve.promise, Bun.sleep(1000)]);
-
+      const exitCode = await proc.exited;
       const stderr = await Bun.readableStreamToText(proc.stderr);
 
       console.log(stderr);
 
-      expect(proc.exitCode).not.toBe(0);
+      expect(exitCode).not.toBe(0);
       expect(stderr).toContain(server.url.toString());
       if (approach !== "outOfMemory") {
         expect(stderr).toContain("oh no: Bun has crashed. This indicates a bug in Bun, not your code");

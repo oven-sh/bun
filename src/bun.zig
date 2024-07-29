@@ -50,6 +50,13 @@ pub fn typedAllocator(comptime T: type) std.mem.Allocator {
     return default_allocator;
 }
 
+pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.namedAllocator(name);
+
+    return default_allocator;
+}
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -2945,7 +2952,7 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const ptr = if (heap_breakdown.enabled)
-        heap_breakdown.getZone(T).create(T, init)
+        heap_breakdown.getZoneT(T).create(T, init)
     else ptr: {
         const ptr = default_allocator.create(T) catch outOfMemory();
         ptr.* = init;
@@ -2971,7 +2978,7 @@ pub inline fn destroy(ptr: anytype) void {
     }
 
     if (comptime heap_breakdown.enabled) {
-        heap_breakdown.getZone(T).destroy(T, ptr);
+        heap_breakdown.getZoneT(T).destroy(T, ptr);
     } else {
         default_allocator.destroy(ptr);
     }

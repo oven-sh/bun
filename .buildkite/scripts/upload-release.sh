@@ -155,9 +155,10 @@ function upload_s3_file() {
 
 function create_release() {
   assert_main
-  #assert_buildkite_agent
-  #assert_github
-  #assert_sentry
+  assert_buildkite_agent
+  assert_github
+  assert_aws
+  assert_sentry
 
   local tag="$1" # 'canary' or 'x.y.z'
   local artifacts=(

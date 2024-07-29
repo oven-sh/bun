@@ -1400,7 +1400,6 @@ fn NewSocket(comptime ssl: bool) type {
                     // otherwise we will get a segfault
                     // uSockets will defer freeing the TCP socket until the next tick
                     if (!this.socket.isClosed()) {
-                        this.detached = true;
                         this.socket.close(.normal);
                         // onClose will call markInactive again
                         return;
@@ -1485,7 +1484,6 @@ fn NewSocket(comptime ssl: bool) type {
             });
 
             if (result.toError()) |err| {
-                this.detached = true;
                 defer this.markInactive();
                 if (!this.socket.isClosed()) {
                     log("Closing due to error", .{});
@@ -2110,7 +2108,6 @@ fn NewSocket(comptime ssl: bool) type {
             log("finalize() {d}", .{@intFromPtr(this)});
             this.finalizing = true;
             if (!this.detached) {
-                this.detached = true;
                 if (!this.socket.isClosed()) {
                     this.socket.close(.failure);
                 }

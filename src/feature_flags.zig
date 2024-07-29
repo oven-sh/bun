@@ -155,8 +155,7 @@ pub const export_star_redirect = false;
 
 pub const streaming_file_uploads_for_http_client = true;
 
-// TODO: fix concurrent transpiler on Windows
-pub const concurrent_transpiler = !env.isWindows;
+pub const concurrent_transpiler = true;
 
 // https://github.com/oven-sh/bun/issues/5426#issuecomment-1813865316
 pub const disable_auto_js_to_ts_in_node_modules = true;

@@ -1,5 +1,6 @@
 param(
-  [switch]$Baseline = $false
+  [switch]$Baseline = $false,
+  [switch]$Lto = $true,
 )
 
 if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
@@ -52,7 +53,7 @@ $CXX = "clang-cl"
 $CFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
 $CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
 
-if ($env:USE_LTO -eq "1") {
+if ($Lto) {
   $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
   $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
 }
@@ -63,6 +64,14 @@ $env:CPU_TARGET = $CPU_NAME
 $CFLAGS += " -march=${CPU_NAME}"
 $CXXFLAGS += " -march=${CPU_NAME}"
 
+$Canary = If ($env:CANARY) {
+  $env:CANARY
+} Else If ($env:BUILDKITE -eq "true") {
+  (buildkite-agent meta-data get canary)
+} Else {
+  "1"
+}
+
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
@@ -72,7 +81,8 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_CXX_FLAGS=$CXXFLAGS",
   "-DCMAKE_C_FLAGS_RELEASE=$CFLAGS",
   "-DCMAKE_CXX_FLAGS_RELEASE=$CXXFLAGS",
-  "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
+  "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+  "-DCANARY=$Canary"
 )
 
 if (Get-Command llvm-lib -ErrorAction SilentlyContinue) { 
@@ -90,6 +100,10 @@ $env:CPUS = $CPUS
 
 if ($Baseline) {
   $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
+}
+
+if ($Lto) {
+  $CMAKE_FLAGS += "-DUSE_LTO=ON"
 }
 
 if (Get-Command sccache -ErrorAction SilentlyContinue) {

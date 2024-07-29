@@ -1,9 +1,11 @@
 param(
-  [Alias("f")][switch]$Force = $false
+  [Alias("f")][switch]$Force = $false,
+  [switch]$Baseline = $false,
+  [switch]$Lto = $true
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot "env.ps1")
+. (Join-Path $PSScriptRoot "env.ps1") -Baseline $Baseline -Lto $Lto
 
 if ($env:CI) {
   & (Join-Path $PSScriptRoot "update-submodules.ps1")

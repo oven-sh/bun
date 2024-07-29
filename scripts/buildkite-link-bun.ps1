@@ -1,22 +1,14 @@
-param (
-  [switch] $Baseline = $False,
-  [switch] $Fast = $False
+param(
+  [switch]$Baseline = $false,
+  [switch]$Lto = $true,
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 $Target = If ($Baseline) { "windows-x64-baseline" } Else { "windows-x64" }
 $Tag = "bun-$Target"
-$TagSuffix = If ($Baseline) { "-Baseline" } Else { "" }
-$UseBaselineBuild = If ($Baseline) { "ON" } Else { "OFF" }
-$UseLto = If ($Fast) { "OFF" } Else { "ON" }
-$Canary = If ($env:BUILDKITE -eq "true") {
-  (buildkite-agent meta-data get canary)
-} Else {
-  "1"
-}
 
-.\scripts\env.ps1 $TagSuffix
+.\scripts\env.ps1 -Baseline $Baseline -Lto $Lto
 
 mkdir -Force build
 buildkite-agent artifact download "**" build --step "${Target}-build-zig"
@@ -30,24 +22,21 @@ Set-Location build
 # HACK: See scripts/build-bun-cpp.ps1
 Join-File -Path "$(Resolve-Path .)\bun-cpp-objects.a" -Verbose -DeletePartFiles
 
-cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
+cmake .. @CMAKE_FLAGS `
+  -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=1 `
   -DNO_CONFIGURE_DEPENDS=1 `
-  "-DCPU_TARGET=${CPU_TARGET}" `
-  "-DCANARY=${Canary}" `
   -DBUN_LINK_ONLY=1 `
-  "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
-  "-DUSE_LTO=${UseLto}" `
   "-DBUN_DEPS_OUT_DIR=$(Resolve-Path bun-deps)" `
   "-DBUN_CPP_ARCHIVE=$(Resolve-Path bun-cpp-objects.a)" `
-  "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path .)" `
-  "$Flags"
+  "-DBUN_ZIG_OBJ_DIR=$(Resolve-Path .)"
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
 ninja -v -j $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
 
-if ($Fast) {
+if (!$Lto) {
   $Tag = "$Tag-nolto"
 }
 

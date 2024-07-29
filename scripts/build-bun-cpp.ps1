@@ -1,20 +1,11 @@
 param (
   [switch] $Baseline = $False,
-  [switch] $Fast = $False
+  [switch] $Lto = $False
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
-$Tag = If ($Baseline) { "-Baseline" } Else { "" }
-$UseBaselineBuild = If ($Baseline) { "ON" } Else { "OFF" }
-$UseLto = If ($Fast) { "OFF" } Else { "ON" }
-$Canary = If ($env:BUILDKITE -eq "true") {
-  (buildkite-agent meta-data get canary)
-} Else {
-  "1"
-}
-
-.\scripts\env.ps1 $Tag
+.\scripts\env.ps1 -Baseline $Baseline -Lto $Lto
 .\scripts\update-submodules.ps1
 .\scripts\build-libuv.ps1 -CloneOnly $True
 
@@ -22,14 +13,12 @@ $Canary = If ($env:BUILDKITE -eq "true") {
 git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
 
 cd build
-cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
+cmake .. @CMAKE_FLAGS `
+  -G Ninja `
+  -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=0 `
   -DNO_CONFIGURE_DEPENDS=1 `
-  "-DCPU_TARGET=${CPU_TARGET}" `
-  "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
-  "-DUSE_LTO=${UseLto}" `
-  "-DCANARY=${Canary}" `
-  -DBUN_CPP_ONLY=1 $Flags
+  -DBUN_CPP_ONLY=1
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
 .\compile-cpp-only.ps1 -v -j $env:CPUS

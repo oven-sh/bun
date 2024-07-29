@@ -54,9 +54,9 @@ const serviceImpl =
       };
 
 function main() {
-  let options = process.env.GRPC_TEST_OPTIONS || {};
+  let options = JSON.parse(process.env.GRPC_TEST_OPTIONS);
   options = { "grpc-node.max_session_memory": 1024, ...options };
-  const server = options ? new grpc.Server(JSON.parse(options)) : new grpc.Server();
+  const server = options ? new grpc.Server(options) : new grpc.Server();
 
   process.stdin.on("data", data => {
     if (data.toString() === "shutdown") {

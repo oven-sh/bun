@@ -181,4 +181,13 @@ function create_release() {
   create_sentry_release "$tag"
 }
 
+function assert_canary() {
+  local canary="$(buildkite-agent meta-data get canary 2>/dev/null)"
+  if [ -z "$canary" ] || [ "$canary" == "0" ]; then
+    echo "warn: Skipping release because this is not a canary build"
+    exit 0
+  fi
+}
+
+assert_canary
 create_release "canary"

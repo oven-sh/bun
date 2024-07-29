@@ -696,12 +696,12 @@ pub const Subprocess = struct {
 
     pub fn doRef(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.ref();
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn doUnref(this: *Subprocess, _: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         this.unref();
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
@@ -737,7 +737,7 @@ pub const Subprocess = struct {
         const success = ipc_data.serializeAndSend(global, value);
         if (!success) return .zero;
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn disconnect(this: *Subprocess) void {
@@ -1471,9 +1471,9 @@ pub const Subprocess = struct {
                     if (status == .err)
                     status.err.toJSC(globalThis)
                 else
-                    JSC.JSValue.jsUndefined();
+                    .undefined;
 
-                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) JSC.JSValue.jsUndefined() else this_jsvalue;
+                const this_value = if (this_jsvalue.isEmptyOrUndefinedOrNull()) .undefined else this_jsvalue;
                 this_value.ensureStillAlive();
 
                 const args = [_]JSValue{
@@ -1856,7 +1856,7 @@ pub const Subprocess = struct {
                             var i: u32 = 0;
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 if (!stdio[i].extract(globalThis, i, value))
-                                    return JSC.JSValue.jsUndefined();
+                                    return .undefined;
                                 if (i == 2)
                                     break;
                             }
@@ -1865,7 +1865,7 @@ pub const Subprocess = struct {
                             while (stdio_iter.next()) |value| : (i += 1) {
                                 var new_item: Stdio = undefined;
                                 if (!new_item.extract(globalThis, i, value)) {
-                                    return JSC.JSValue.jsUndefined();
+                                    return .undefined;
                                 }
 
                                 const opt = switch (new_item.asSpawnOption(i)) {

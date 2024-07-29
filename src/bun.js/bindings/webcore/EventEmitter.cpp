@@ -249,7 +249,7 @@ void EventEmitter::innerInvokeEventListeners(const Identifier& eventType, Simple
         auto* exception = exceptionPtr.get();
 
         if (UNLIKELY(exception)) {
-            auto errorIdentifier = JSC::Identifier::fromString(vm, eventNames().errorEvent);
+            auto errorIdentifier = vm.propertyNames->error;
             auto hasErrorListener = this->hasActiveEventListeners(errorIdentifier);
             if (!hasErrorListener || eventType == errorIdentifier) {
                 // If the event type is error, report the exception to the console.

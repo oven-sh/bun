@@ -3355,115 +3355,84 @@ pub const JSValue = enum(JSValueReprInt) {
     pub const name = "JSC::JSValue";
     pub const namespace = "JSC";
     pub const JSType = enum(u8) {
-        // The Cell value must come before any JS that is a JSCell.
-        Cell,
-        Structure,
-        String,
-        HeapBigInt,
-        Symbol,
-
-        GetterSetter,
-        CustomGetterSetter,
-        /// For 32-bit architectures, this wraps a 64-bit JSValue
-        APIValueWrapper,
-
-        NativeExecutable,
-
-        ProgramExecutable,
-        ModuleProgramExecutable,
-        EvalExecutable,
-        FunctionExecutable,
-
-        UnlinkedFunctionExecutable,
-
-        UnlinkedProgramCodeBlock,
-        UnlinkedModuleProgramCodeBlock,
-        UnlinkedEvalCodeBlock,
-        UnlinkedFunctionCodeBlock,
-
-        CodeBlock,
-
-        JSImmutableButterfly,
-        JSSourceCode,
-        JSScriptFetcher,
-        JSScriptFetchParameters,
-
-        // The Object value must come before any JS that is a subclass of JSObject.
-        Object,
-        FinalObject,
-        JSCallee,
-        JSFunction,
-        InternalFunction,
-        NullSetterFunction,
-        BooleanObject,
-        NumberObject,
-        ErrorInstance,
-        GlobalProxy,
-        DirectArguments,
-        ScopedArguments,
-        ClonedArguments,
-
-        // Start JSArray s.
-        Array,
-        DerivedArray,
-        // End JSArray s.
-
-        ArrayBuffer,
-
-        // Start JSArrayBufferView s. Keep in sync with the order of FOR_EACH_D_ARRAY__EXCLUDING_DATA_VIEW.
-        Int8Array,
-        Uint8Array,
-        Uint8ClampedArray,
-        Int16Array,
-        Uint16Array,
-        Int32Array,
-        Uint32Array,
-        Float32Array,
-        Float64Array,
-        BigInt64Array,
-        BigUint64Array,
-        DataView,
-        // End JSArrayBufferView s.
-
-        // JSScope <- JSWithScope
-        //         <- StrictEvalActivation
-        //         <- JSSymbolTableObject  <- JSLexicalEnvironment      <- JSModuleEnvironment
-        //                                 <- JSSegmentedVariableObject <- JSGlobalLexicalEnvironment
-        //                                                              <- JSGlobalObject
-        // Start JSScope s.
-        // Start environment record s.
-        GlobalObject,
-        GlobalLexicalEnvironment,
-        LexicalEnvironment,
-        ModuleEnvironment,
-        StrictEvalActivation,
-        // End environment record s.
-        WithScope,
-        // End JSScope s.
-
-        ModuleNamespaceObject,
-        ShadowRealm,
-        RegExpObject,
-        JSDate,
-        ProxyObject,
-        JSGenerator,
-        JSAsyncGenerator,
-        JSArrayIterator,
-        JSMapIterator,
-        JSSetIterator,
-        JSStringIterator,
-        JSPromise,
-        JSMap,
-        JSSet,
-        JSWeakMap,
-        JSWeakSet,
-        WebAssemblyModule,
-        WebAssemblyInstance,
-        WebAssemblyGCObject,
-        // Start StringObject s.
-        StringObject,
-        DerivedStringObject,
-        // End StringObject s.
+        Cell = 0,
+        Structure = 1,
+        String = 2,
+        HeapBigInt = 3,
+        Symbol = 4,
+        GetterSetter = 5,
+        CustomGetterSetter = 6,
+        APIValueWrapper = 7,
+        NativeExecutable = 8,
+        ProgramExecutable = 9,
+        ModuleProgramExecutable = 10,
+        EvalExecutable = 11,
+        FunctionExecutable = 12,
+        UnlinkedFunctionExecutable = 13,
+        UnlinkedProgramCodeBlock = 14,
+        UnlinkedModuleProgramCodeBlock = 15,
+        UnlinkedEvalCodeBlock = 16,
+        UnlinkedFunctionCodeBlock = 17,
+        CodeBlock = 18,
+        JSImmutableButterfly = 19,
+        JSSourceCode = 20,
+        JSScriptFetcher = 21,
+        JSScriptFetchParameters = 22,
+        Object = 23,
+        FinalObject = 24,
+        JSCallee = 25,
+        JSFunction = 26,
+        InternalFunction = 27,
+        NullSetterFunction = 28,
+        BooleanObject = 29,
+        NumberObject = 30,
+        ErrorInstance = 31,
+        GlobalProxy = 32,
+        DirectArguments = 33,
+        ScopedArguments = 34,
+        ClonedArguments = 35,
+        Array = 36,
+        DerivedArray = 37,
+        ArrayBuffer = 38,
+        Int8Array = 39,
+        Uint8Array = 40,
+        Uint8ClampedArray = 41,
+        Int16Array = 42,
+        Uint16Array = 43,
+        Int32Array = 44,
+        Uint32Array = 45,
+        Float32Array = 46,
+        Float64Array = 47,
+        BigInt64Array = 48,
+        BigUint64Array = 49,
+        DataView = 50,
+        GlobalObject = 51,
+        GlobalLexicalEnvironment = 52,
+        LexicalEnvironment = 53,
+        ModuleEnvironment = 54,
+        StrictEvalActivation = 55,
+        WithScope = 56,
+        ModuleNamespaceObject = 57,
+        ShadowRealm = 58,
+        RegExpObject = 59,
+        JSDate = 60,
+        ProxyObject = 61,
+        JSGenerator = 62,
+        JSAsyncGenerator = 63,
+        JSArrayIterator = 64,
+        JSMapIterator = 65,
+        JSSetIterator = 66,
+        JSStringIterator = 67,
+        JSPromise = 68,
+        JSMap = 69,
+        JSSet = 70,
+        JSWeakMap = 71,
+        JSWeakSet = 72,
+        WebAssemblyModule = 73,
+        WebAssemblyInstance = 74,
+        WebAssemblyGCObject = 75,
+        StringObject = 76,
+        DerivedStringObject = 77,
 
         InternalFieldTuple,
 
@@ -3824,10 +3793,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return cppFn("isInstanceOf", .{ this, global, constructor });
     }
 
-    pub fn call(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        return callWithThis(this, globalThis, JSC.JSValue.jsUndefined(), args);
-    }
-
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
@@ -3847,7 +3812,7 @@ pub const JSValue = enum(JSValueReprInt) {
         );
     }
 
-    pub fn callWithThis(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
+    pub fn call(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {
         JSC.markBinding(@src());
         if (comptime bun.Environment.isDebug) {
             const loop = JSC.VirtualMachine.get().eventLoop();
@@ -5234,7 +5199,6 @@ pub const JSValue = enum(JSValueReprInt) {
 
     pub fn toFmt(
         this: JSValue,
-        global: *JSGlobalObject,
         formatter: *Exports.ConsoleObject.Formatter,
     ) Exports.ConsoleObject.Formatter.ZigFormatter {
         formatter.remaining_values = &[_]JSValue{};
@@ -5246,7 +5210,6 @@ pub const JSValue = enum(JSValueReprInt) {
         return Exports.ConsoleObject.Formatter.ZigFormatter{
             .formatter = formatter,
             .value = this,
-            .global = global,
         };
     }
 
@@ -5642,11 +5605,11 @@ pub const JSValue = enum(JSValueReprInt) {
         return AsyncContextFrame__withAsyncContextIfNeeded(global, this);
     }
 
-    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: isize) JSValue;
+    extern "c" fn Bun__JSValue__deserialize(global: *JSGlobalObject, data: [*]const u8, len: usize) JSValue;
 
     /// Deserializes a JSValue from a serialized buffer. Zig version of `import('bun:jsc').deserialize`
     pub inline fn deserialize(bytes: []const u8, global: *JSGlobalObject) JSValue {
-        return Bun__JSValue__deserialize(global, bytes.ptr, @intCast(bytes.len));
+        return Bun__JSValue__deserialize(global, bytes.ptr, bytes.len);
     }
 
     extern fn Bun__serializeJSValue(global: *JSC.JSGlobalObject, value: JSValue) SerializedScriptValue.External;

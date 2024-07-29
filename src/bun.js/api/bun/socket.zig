@@ -220,7 +220,7 @@ const Handlers = struct {
     }
 
     pub fn markInactive(this: *Handlers, ssl: bool, ctx: ?*uws.SocketContext, wrapped: WrappedType) void {
-        Listener.log("markInactive {d} {} {} {}", .{ this.active_connections - 1, this.is_server, wrapped != .tls, ctx != null });
+        Listener.log("markInactive", .{});
         this.active_connections -= 1;
         if (this.active_connections == 0) {
             if (this.is_server) {

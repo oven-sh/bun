@@ -6094,13 +6094,16 @@ pub const CallFrame = opaque {
 
     fn Arguments(comptime max: usize) type {
         return struct {
-            ptr: [max]JSC.JSValue = .{.undefined} ** max,
-            len: usize = 0,
+            ptr: [max]JSC.JSValue,
+            len: usize,
             pub inline fn init(comptime i: usize, ptr: [*]const JSC.JSValue) @This() {
-                var args: @This() = .{};
-                args.ptr[0..comptime i].* = ptr[0..i].*;
-                args.len = i;
-                return args;
+                var args: [max]JSC.JSValue = std.mem.zeroes([max]JSC.JSValue);
+                args[0..i].* = ptr[0..i].*;
+
+                return @This(){
+                    .ptr = args,
+                    .len = i,
+                };
             }
 
             pub inline fn slice(self: *const @This()) []const JSValue {
@@ -6113,7 +6116,7 @@ pub const CallFrame = opaque {
         const len = self.argumentsCount();
         const ptr = self.argumentsPtr();
         return switch (@as(u4, @min(len, max))) {
-            0 => .{},
+            0 => .{ .ptr = undefined, .len = 0 },
             inline 1...9 => |count| Arguments(max).init(comptime @min(count, max), ptr),
             else => unreachable,
         };

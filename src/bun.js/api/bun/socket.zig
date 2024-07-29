@@ -1296,7 +1296,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
-            if (this.detached) return;
+            if (this.detached or this.socket.isShutdown() or this.socket.isClosed()) return;
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;

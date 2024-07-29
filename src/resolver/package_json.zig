@@ -56,6 +56,8 @@ pub const PackageJSON = struct {
         production,
     };
 
+    pub usingnamespace bun.New(@This());
+
     pub fn generateHash(package_json: *PackageJSON) void {
         var hashy: [1024]u8 = undefined;
         @memset(&hashy, 0);

@@ -310,6 +310,8 @@ pub const Body = struct {
         Error: JSValue,
         Null: void,
 
+        pub const heap_breakdown_label = "BodyValue";
+
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* == .WTFStringImpl) {
                 if (this.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {

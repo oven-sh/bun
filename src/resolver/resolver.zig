@@ -2499,7 +2499,7 @@ pub const Resolver = struct {
         const source = logger.Source.initPathString(key_path.text, entry.contents);
         const file_dir = source.path.sourceDir();
 
-        var result = (try TSConfigJSON.parse(bun.fs_allocator, r.log, source, &r.caches.json)) orelse return null;
+        var result = (try TSConfigJSON.parse(bun.default_allocator, r.log, source, &r.caches.json)) orelse return null;
 
         if (result.hasBaseURL()) {
 
@@ -2559,9 +2559,7 @@ pub const Resolver = struct {
             ) orelse return null;
         }
 
-        const _pkg = try bun.default_allocator.create(PackageJSON);
-        _pkg.* = pkg;
-        return _pkg;
+        return PackageJSON.new(pkg);
     }
 
     fn dirInfoCached(

@@ -227,7 +227,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 /// @param s 
 void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(!s->ssl && us_socket_is_shut_down(0, &s->s)) return;
+  if(!s->ssl || us_socket_is_shut_down(0, &s->s)) return;
   
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl) ;
@@ -302,6 +302,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
   // if is a server and we have no pending renegotiation we can check
   // the limits
   s->handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
+
   if (!SSL_renegotiate(s->ssl)) {
     // we failed to renegotiate
     us_internal_trigger_handshake_callback(s, 0);
@@ -385,8 +386,6 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
 struct us_internal_ssl_socket_t *
 ssl_on_end(struct us_internal_ssl_socket_t *s) {
   // whatever state we are in, a TCP FIN is always an answered shutdown
-
-  /* Todo: this should report CLEANLY SHUTDOWN as reason */
   return us_internal_ssl_socket_close(s, 0, NULL);
 }
 
@@ -1671,7 +1670,7 @@ void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
 }
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
-  return us_socket_is_shut_down(0, &s->s) ||
+  return !s->ssl || us_socket_is_shut_down(0, &s->s) ||
          SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN;
 }
 

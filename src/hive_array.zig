@@ -67,7 +67,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
         }
 
         pub const Fallback = struct {
-            hive: HiveArray(T, capacity),
+            hive: if (capacity > 0) HiveArray(T, capacity) else void,
             allocator: std.mem.Allocator,
 
             pub const This = @This();
@@ -75,37 +75,53 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             pub fn init(allocator: std.mem.Allocator) This {
                 return .{
                     .allocator = allocator,
-                    .hive = HiveArray(T, capacity).init(),
+                    .hive = if (capacity > 0) HiveArray(T, capacity).init() else {},
                 };
             }
 
             pub fn get(self: *This) *T {
-                if (self.hive.get()) |value| {
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        return value;
+                    }
                 }
 
                 return self.allocator.create(T) catch unreachable;
             }
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
-                if (self.hive.get()) |value| {
-                    new.* = false;
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        new.* = false;
+                        return value;
+                    }
                 }
 
                 return self.allocator.create(T) catch unreachable;
             }
 
             pub fn tryGet(self: *This) !*T {
-                if (self.hive.get()) |value| {
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        return value;
+                    }
                 }
 
                 return try self.allocator.create(T);
             }
 
+            pub fn in(self: *const This, value: *const T) bool {
+                if (comptime capacity > 0) {
+                    if (self.hive.in(value)) return true;
+                }
+
+                return false;
+            }
+
             pub fn put(self: *This, value: *T) void {
-                if (self.hive.put(value)) return;
+                if (comptime capacity > 0) {
+                    if (self.hive.put(value)) return;
+                }
 
                 self.allocator.destroy(value);
             }

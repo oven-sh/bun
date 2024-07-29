@@ -247,6 +247,9 @@ pub const TransformTask = struct {
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
+        if (this.tsconfig) |tsconfig| {
+            tsconfig.destroy();
+        }
 
         this.destroy();
     }

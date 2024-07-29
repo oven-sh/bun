@@ -549,7 +549,7 @@ pub const Msg = struct {
         }
     }
 
-    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Output.panic)) void {
         formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,

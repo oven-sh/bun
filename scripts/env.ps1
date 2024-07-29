@@ -75,12 +75,11 @@ $CMAKE_FLAGS = @(
   "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded"
 )
 
-if ($env:USE_LTO -eq "1") {
-  if (Get-Command lld-lib -ErrorAction SilentlyContinue) { 
-    $AR = Get-Command lld-lib -ErrorAction SilentlyContinue
-    $env:AR = $AR
-    $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
-  }
+if (Get-Command llvm-lib -ErrorAction SilentlyContinue) { 
+  $AR_CMD = Get-Command llvm-lib -ErrorAction SilentlyContinue
+  $AR = $AR_CMD.Path
+  $env:AR = $AR
+  $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
 }
 
 $env:CC = "clang-cl"

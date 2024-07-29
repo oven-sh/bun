@@ -35,9 +35,9 @@ $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $B
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_BASE_DIR 'build\bun-deps' }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
-$Lto = if ($env:USE_LTO) { $env:USE_LTO } else { "ON" }
+$Lto = if ($env:USE_LTO) { $env:USE_LTO -eq "1" } else { True }
 $Baseline = if ($env:USE_BASELINE_BUILD) {
-  $env:USE_BASELINE_BUILD
+  $env:USE_BASELINE_BUILD -eq "1"
 } elseif ($env:BUILDKITE_STEP_KEY -match "baseline") {
   True
 } else {

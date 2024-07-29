@@ -667,8 +667,9 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          USE_BASELINE_BUILD: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
+          - ".\\scripts\\buildkite-link-bun.ps1"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -711,6 +712,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
@@ -737,6 +739,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\build-bun-cpp.ps1"
 
@@ -758,6 +761,7 @@ steps:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
 

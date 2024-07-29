@@ -1,4 +1,9 @@
+
 #include "root.h"
+
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/Symbol.h"
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include "helpers.h"
@@ -7,6 +12,7 @@
 #include "JavaScriptCore/ExceptionScope.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
+#include "wtf/text/WTFString.h"
 #include <cstdio>
 
 JSC::EncodedJSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigString* arg1, JSC::JSGlobalObject* globalObject);
@@ -19,6 +25,26 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 namespace Bun {
 
 using namespace JSC;
+
+WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
+{
+    if (!arg.isCell())
+        return arg.toString(globalObject)->getString(globalObject);
+
+    auto cell = arg.asCell();
+    const auto jstype = cell->type();
+
+    if (jstype == JSC::JSType::StringType) {
+        return cell->toStringInline(globalObject)->getString(globalObject);
+    }
+    if (jstype == JSC::JSType::SymbolType) {
+        auto symbol = jsCast<Symbol*>(cell);
+        auto result = symbol->tryGetDescriptiveString();
+        if (result.has_value())
+            return result.value();
+    }
+    return arg.toString(globalObject)->getString(globalObject);
+}
 
 JSC::JSValue createErrorWithCode(JSC::JSGlobalObject* globalObject, String message, ASCIILiteral code)
 {
@@ -88,7 +114,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* gl
     auto expected_type = JSValue::decode(val_expected_type).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto actual_value = JSValue::decode(val_actual_value).toWTFString(globalObject);
+    auto actual_value = JSValueToStringSafe(globalObject, JSValue::decode(val_actual_value));
     RETURN_IF_EXCEPTION(scope, {});
 
     auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);

@@ -266,9 +266,9 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
-    pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
+    pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(allocator),
+            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
         };
     }
 
@@ -340,7 +340,7 @@ pub const RuntimeTranspilerStore = struct {
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
 
-        pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
+        pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
 
         pub const Fetcher = union(enum) {
             virtual_module: bun.String,
@@ -411,12 +411,10 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
-            if (!vm.transpiler_store.store.hive.in(this)) {
-                this.promise.deinit();
-            }
+            this.promise.deinit();
             this.deinit();
 
-            _ = vm.transpiler_store.store.hive.put(this);
+            _ = vm.transpiler_store.store.put(this);
 
             ModuleLoader.AsyncModule.fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
         }

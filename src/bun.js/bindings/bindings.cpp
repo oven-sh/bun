@@ -116,6 +116,13 @@
 
 #include "ErrorStackFrame.h"
 
+#if OS(DARWIN)
+#if BUN_DEBUG
+#include <malloc/malloc.h>
+#define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
+#endif
+
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
@@ -4811,6 +4818,12 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected!!");
+    }
+#endif
+
     vm->finalizeSynchronousJSExecution();
     WTF::releaseFastMallocFreeMemory();
 
@@ -4824,6 +4837,12 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
     }
 
     vm->finalizeSynchronousJSExecution();
+
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected after GC!!");
+    }
+#endif
 
     return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
 }

@@ -36,9 +36,11 @@ fi
 dep() {
     local submodule="$1"
     local script="$2"
-    CACHE_KEY=
     if [ "$CACHE" == "1" ]; then
-        CACHE_KEY="$submodule/$(echo "$SUBMODULES" | grep "$submodule" | git hash-object --stdin)"
+        local hash="$(echo "$SUBMODULES" | grep "$submodule" | awk '{print $1}')"
+        local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        local arch="$(uname -m)"
+        CACHE_KEY="$submodule/$hash-$os-$arch-$CPU_TARGET"
     fi
     if [ -z "$FORCE" ]; then
         HAS_ALL_DEPS=1

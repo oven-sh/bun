@@ -537,7 +537,7 @@ pub const FilePoll = struct {
         }
     };
 
-    const HiveArray = bun.HiveArray(FilePoll, 128).Fallback;
+    const HiveArray = bun.HiveArray(FilePoll, if (bun.heap_breakdown.enabled) 0 else 128).Fallback;
 
     // We defer freeing FilePoll until the end of the next event loop iteration
     // This ensures that we don't free a FilePoll before the next callback is called
@@ -548,9 +548,9 @@ pub const FilePoll = struct {
 
         const log = Output.scoped(.FilePoll, false);
 
-        pub fn init(allocator: std.mem.Allocator) Store {
+        pub fn init() Store {
             return .{
-                .hive = HiveArray.init(allocator),
+                .hive = HiveArray.init(bun.typedAllocator(FilePoll)),
             };
         }
 

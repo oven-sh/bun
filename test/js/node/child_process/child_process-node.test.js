@@ -651,13 +651,13 @@ describe("fork", () => {
     });
   });
   describe("args", () => {
-    it("Ensure that first argument `modulePath` must be provided and be of type string", () => {
-      const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
-      invalidModulePath.forEach(modulePath => {
+    const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
+    invalidModulePath.forEach(modulePath => {
+      it(`Ensure that first argument \`modulePath\` must be provided and be of type string :: ${String(modulePath)}`, () => {
         expect(() => fork(modulePath, { env: bunEnv })).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`,
+          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${String(modulePath)}`,
         });
       });
     });
@@ -705,9 +705,9 @@ describe("fork", () => {
         });
       },
     );
-    it("Ensure that the third argument should be type of object if provided", () => {
-      const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
-      invalidThirdArgs.forEach(arg => {
+    const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
+    invalidThirdArgs.forEach(arg => {
+      it(`Ensure that the third argument should be type of object if provided :: ${String(arg)}`, () => {
         expect(() => {
           fork(fixtures.path("child-process-echo-options.js"), [], arg);
         }).toThrow({

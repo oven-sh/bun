@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Hack for Buildkite sometimes not having the right path
+# Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   if [ -f ~/.bashrc ]; then
     source ~/.bashrc

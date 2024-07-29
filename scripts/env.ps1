@@ -1,6 +1,6 @@
 param(
   [switch]$Baseline = $false,
-  [switch]$Lto = $true,
+  [switch]$Lto = $true
 )
 
 if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {

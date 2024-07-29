@@ -1,6 +1,6 @@
 param(
   [switch]$Baseline = $false,
-  [switch]$Lto = $true,
+  [switch]$Lto = $true
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash

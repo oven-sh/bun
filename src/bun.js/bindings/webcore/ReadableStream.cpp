@@ -125,24 +125,27 @@ void ReadableStream::pipeTo(ReadableStreamSink& sink)
     invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
 }
 
-std::optional<std::pair<Ref<ReadableStream>, Ref<ReadableStream>>> ReadableStream::tee()
+std::optional<std::pair<JSValue, JSValue>> ReadableStream::tee(JSC::JSGlobalObject& lexicalGlobalObject, JSValue stream)
 {
-    auto& lexicalGlobalObject = *m_globalObject;
     auto* clientData = static_cast<JSVMClientData*>(lexicalGlobalObject.vm().clientData);
     auto& privateName = clientData->builtinFunctions().readableStreamInternalsBuiltins().readableStreamTeePrivateName();
 
     MarkedArgumentBuffer arguments;
-    arguments.append(readableStream());
+    arguments.append(stream);
     arguments.append(JSC::jsBoolean(true));
     ASSERT(!arguments.hasOverflowed());
-    auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, JSC::jsUndefined(), arguments);
+    auto returnedValue = invokeReadableStreamFunction(lexicalGlobalObject, privateName, stream, arguments);
     if (!returnedValue)
         return {};
 
     auto results = Detail::SequenceConverter<IDLInterface<ReadableStream>>::convert(lexicalGlobalObject, *returnedValue);
+    JSValue array = returnedValue.value();
+    auto* arrayObject = jsCast<JSArray*>(array.getObject());
+    auto first = arrayObject->getDirectIndex(&lexicalGlobalObject, 0);
+    auto second = arrayObject->getDirectIndex(&lexicalGlobalObject, 1);
 
     ASSERT(results.size() == 2);
-    return std::make_pair(results[0].releaseNonNull(), results[1].releaseNonNull());
+    return std::make_pair(first, second);
 }
 
 void ReadableStream::lock()

@@ -541,26 +541,60 @@ export function readableStreamTee(stream, shouldClone) {
 }
 
 export function readableStreamTeePullFunction(teeState, reader, shouldClone) {
-  return function () {
-    Promise.prototype.$then.$call($readableStreamDefaultReaderRead(reader), function (result) {
-      $assert($isObject(result));
-      $assert(typeof result.done === "boolean");
-      if (result.done && !teeState.closedOrErrored) {
-        if (!teeState.canceled1) $readableStreamDefaultControllerClose(teeState.branch1.$readableStreamController);
-        if (!teeState.canceled2) $readableStreamDefaultControllerClose(teeState.branch2.$readableStreamController);
-        teeState.closedOrErrored = true;
-        if (!teeState.canceled1 || !teeState.canceled2) teeState.cancelPromiseCapability.resolve.$call();
-      }
-      if (teeState.closedOrErrored) return;
-      if (!teeState.canceled1)
-        $readableStreamDefaultControllerEnqueue(teeState.branch1.$readableStreamController, result.value);
-      if (!teeState.canceled2)
-        $readableStreamDefaultControllerEnqueue(
-          teeState.branch2.$readableStreamController,
-          shouldClone ? $structuredCloneForStream(result.value) : result.value,
-        );
-    });
+  const pullAlgorithm = function () {
+    if (teeState.reading) {
+      teeState.readAgain = true;
+      return $Promise.$resolve();
+    }
+    teeState.reading = true;
+    $Promise.prototype.$then.$call(
+      $readableStreamDefaultReaderRead(reader),
+      function (result) {
+        $assert($isObject(result));
+        $assert(typeof result.done === "boolean");
+        if (result.done) {
+          // close steps.
+          teeState.reading = false;
+          if (!teeState.canceled1) $readableStreamDefaultControllerClose(teeState.branch1.$readableStreamController);
+          if (!teeState.canceled2) $readableStreamDefaultControllerClose(teeState.branch2.$readableStreamController);
+          if (!teeState.canceled1 || !teeState.canceled2) teeState.cancelPromiseCapability.resolve.$call();
+          return;
+        }
+        // chunk steps.
+        teeState.readAgain = false;
+        let chunk1 = result.value;
+        let chunk2 = chunk1;
+        if (!teeState.canceled2 && shouldClone) {
+          try {
+            chunk2 = $structuredCloneForStream(result.value);
+          } catch (e) {
+            $readableStreamDefaultControllerError(teeState.branch1.$readableStreamController, e);
+            $readableStreamDefaultControllerError(teeState.branch2.$readableStreamController, e);
+            $readableStreamCancel(teeState.stream, e).$then(
+              teeState.cancelPromiseCapability.resolve,
+              teeState.cancelPromiseCapability.reject,
+            );
+            return;
+          }
+        }
+        if (!teeState.canceled1)
+          $readableStreamDefaultControllerEnqueue(teeState.branch1.$readableStreamController, chunk1);
+        if (!teeState.canceled2)
+          $readableStreamDefaultControllerEnqueue(teeState.branch2.$readableStreamController, chunk2);
+        teeState.reading = false;
+
+        $Promise.$resolve().$then(() => {
+          if (teeState.readAgain) pullAlgorithm();
+        });
+      },
+      () => {
+        // error steps.
+        teeState.reading = false;
+      },
+    );
+    return $Promise.$resolve();
   };
+  return pullAlgorithm;
 }
 
 export function readableStreamTeeBranch1CancelFunction(teeState, stream) {

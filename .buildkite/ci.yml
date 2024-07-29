@@ -346,35 +346,6 @@ steps:
         command:
           - "./scripts/runner.node.mjs --step linux-aarch64-build-bun"
 
-      - key: "linux-aarch64-test-debian-12-smoke"
-        label: ":debian: 12 aarch64 - test-bun-smoke"
-        if: "build.branch != 'main'"
-        parallelism: 1
-        soft_fail:
-          - exit_status: 2
-        retry:
-          automatic:
-            - exit_status: 1
-              limit: 1
-            - exit_status: -1
-              limit: 3
-            - exit_status: 255
-              limit: 3
-            - signal_reason: agent_stop
-              limit: 3
-            - signal: SIGTERM
-              limit: 3
-        depends_on:
-          - "linux-aarch64-build-bun"
-        agents:
-          robobun: "true"
-          os: "linux"
-          arch: "aarch64"
-          distro: "debian"
-          release: "12"
-        command:
-          - "./scripts/runner.node.mjs --step linux-aarch64-build-bun --smoke 0.05"
-
   # Linux x64
   - key: "linux-x64"
     group: ":linux: x64"

@@ -10,6 +10,11 @@ $Tag = "bun-$Target"
 $TagSuffix = If ($Baseline) { "-Baseline" } Else { "" }
 $UseBaselineBuild = If ($Baseline) { "ON" } Else { "OFF" }
 $UseLto = If ($Fast) { "OFF" } Else { "ON" }
+$Canary = If ($env:BUILDKITE -eq "true") {
+  (buildkite-agent meta-data get canary)
+} Else {
+  "1"
+}
 
 .\scripts\env.ps1 $TagSuffix
 
@@ -25,12 +30,11 @@ Set-Location build
 # HACK: See scripts/build-bun-cpp.ps1
 Join-File -Path "$(Resolve-Path .)\bun-cpp-objects.a" -Verbose -DeletePartFiles
 
-$CANARY = if ($env:CANARY) { "$env:CANARY" } else { "1" }
 cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=1 `
   -DNO_CONFIGURE_DEPENDS=1 `
   "-DCPU_TARGET=${CPU_TARGET}" `
-  "-DCANARY=${CANARY}" `
+  "-DCANARY=${Canary}" `
   -DBUN_LINK_ONLY=1 `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `

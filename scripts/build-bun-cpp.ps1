@@ -8,8 +8,12 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 $Tag = If ($Baseline) { "-Baseline" } Else { "" }
 $UseBaselineBuild = If ($Baseline) { "ON" } Else { "OFF" }
 $UseLto = If ($Fast) { "OFF" } Else { "ON" }
+$Canary = If ($env:BUILDKITE -eq "true") {
+  (buildkite-agent meta-data get canary)
+} Else {
+  "1"
+}
 
-$CANARY = if ($env:CANARY) { "$env:CANARY" } else { "1" }
 .\scripts\env.ps1 $Tag
 .\scripts\update-submodules.ps1
 .\scripts\build-libuv.ps1 -CloneOnly $True
@@ -21,9 +25,10 @@ cd build
 cmake .. @CMAKE_FLAGS -G Ninja -DCMAKE_BUILD_TYPE=Release `
   -DNO_CODEGEN=0 `
   -DNO_CONFIGURE_DEPENDS=1 `
+  "-DCPU_TARGET=${CPU_TARGET}" `
   "-DUSE_BASELINE_BUILD=${UseBaselineBuild}" `
   "-DUSE_LTO=${UseLto}" `
-  "-DCANARY=${CANARY}" `
+  "-DCANARY=${Canary}" `
   -DBUN_CPP_ONLY=1 $Flags
 if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 

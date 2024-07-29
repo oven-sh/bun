@@ -1,11 +1,6 @@
-param (
-  [switch] $Baseline = $False,
-  [switch] $Lto = $False
-)
-
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
-.\scripts\env.ps1 -Baseline $Baseline -Lto $Lto
+.\scripts\env.ps1
 .\scripts\update-submodules.ps1
 .\scripts\build-libuv.ps1 -CloneOnly $True
 

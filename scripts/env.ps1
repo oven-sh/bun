@@ -1,12 +1,3 @@
-param(
-  [switch]$Baseline = $false,
-  [switch]$Lto = $true
-)
-
-if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
-  $Baseline = $true
-}
-
 $ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
@@ -39,13 +30,19 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
-$ENV:BUN_DEV_ENV_SET = "Baseline=$Baseline";
-
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_BASE_DIR 'build\bun-deps' }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
+$Lto = if ($env:USE_LTO) { $env:USE_LTO } else { "ON" }
+$Baseline = if ($env:USE_BASELINE_BUILD) {
+  $env:USE_BASELINE_BUILD
+} elseif ($env:BUILDKITE_STEP_KEY -match "baseline") {
+  "ON"
+} else {
+  "OFF"
+}
 
 $CC = "clang-cl"
 $CXX = "clang-cl"

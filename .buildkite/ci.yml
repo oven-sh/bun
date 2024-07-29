@@ -668,7 +668,7 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
-          - ".\\scripts\\buildkite-link-bun.ps1"
+          - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"
 
       - key: "windows-x64-test-bun"
         label: ":windows: x64 - test-bun"
@@ -712,7 +712,7 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
-          - ".\\scripts\\all-dependencies.ps1 -Baseline $$True"
+          - ".\\scripts\\all-dependencies.ps1"
 
       - key: "windows-x64-baseline-build-zig"
         label: ":windows: x64-baseline - build-zig"
@@ -738,7 +738,7 @@ steps:
           ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
         command:
-          - ".\\scripts\\build-bun-cpp.ps1 -Baseline $$True"
+          - ".\\scripts\\build-bun-cpp.ps1"
 
       - key: "windows-x64-baseline-build-bun"
         label: ":windows: x64-baseline - build-bun"

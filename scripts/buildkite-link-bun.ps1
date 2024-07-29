@@ -1,6 +1,5 @@
 param(
   [switch]$Baseline = $false,
-  [switch]$Lto = $true
 )
 
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
@@ -8,7 +7,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 $Target = If ($Baseline) { "windows-x64-baseline" } Else { "windows-x64" }
 $Tag = "bun-$Target"
 
-.\scripts\env.ps1 -Baseline $Baseline -Lto $Lto
+.\scripts\env.ps1
 
 mkdir -Force build
 buildkite-agent artifact download "**" build --step "${Target}-build-zig"
@@ -35,10 +34,6 @@ if ($LASTEXITCODE -ne 0) { throw "CMake configuration failed" }
 
 ninja -v -j $env:CPUS
 if ($LASTEXITCODE -ne 0) { throw "Link failed!" }
-
-if (!$Lto) {
-  $Tag = "$Tag-nolto"
-}
 
 Set-Location ..
 $Dist = mkdir -Force "${Tag}"

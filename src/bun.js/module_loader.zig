@@ -266,9 +266,9 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
-    pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
+    pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(allocator),
+            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
         };
     }
 
@@ -340,7 +340,7 @@ pub const RuntimeTranspilerStore = struct {
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
 
-        pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
+        pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
 
         pub const Fetcher = union(enum) {
             virtual_module: bun.String,

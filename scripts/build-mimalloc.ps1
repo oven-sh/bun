@@ -3,6 +3,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 Push-Location (Join-Path $BUN_DEPS_DIR 'mimalloc')
 try {
+  Remove-Item -ErrorAction SilentlyContinue -Recurse -Force build
   Set-Location (mkdir -Force build)
   
   Run cmake .. @CMAKE_FLAGS `

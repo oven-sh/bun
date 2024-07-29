@@ -39,9 +39,9 @@ $Lto = if ($env:USE_LTO) { $env:USE_LTO } else { "ON" }
 $Baseline = if ($env:USE_BASELINE_BUILD) {
   $env:USE_BASELINE_BUILD
 } elseif ($env:BUILDKITE_STEP_KEY -match "baseline") {
-  "ON"
+  True
 } else {
-  "OFF"
+  False
 }
 
 $CC = "clang-cl"

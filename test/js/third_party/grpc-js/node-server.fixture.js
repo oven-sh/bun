@@ -54,7 +54,8 @@ const serviceImpl =
       };
 
 function main() {
-  const options = process.env.GRPC_TEST_OPTIONS;
+  let options = process.env.GRPC_TEST_OPTIONS || {};
+  options = { "grpc-node.max_session_memory": 1024, ...options };
   const server = options ? new grpc.Server(JSON.parse(options)) : new grpc.Server();
 
   process.stdin.on("data", data => {

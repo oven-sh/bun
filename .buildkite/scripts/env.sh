@@ -72,6 +72,7 @@ function assert_buildkite_agent() {
 
 function export_environment() {
   source "$(realpath $(dirname "$0")/../../scripts/env.sh)"
+  source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"

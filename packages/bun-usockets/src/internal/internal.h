@@ -14,6 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
+// clang-format off
 #pragma once
 #ifndef INTERNAL_H
 #define INTERNAL_H
@@ -149,6 +150,10 @@ void us_internal_socket_context_unlink_socket(
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
 void us_internal_socket_after_open(struct us_socket_t *s, int error);
+struct us_internal_ssl_socket_t *
+us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
+                             void *reason);
+                             
 int us_internal_handle_dns_results(struct us_loop_t *loop);
 
 /* Sockets are polls */

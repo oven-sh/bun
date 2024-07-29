@@ -411,7 +411,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         if (us_socket_is_shut_down(0, s)) {
                             /* We got FIN back after sending it */
                             /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
-                            s = us_socket_close(0, s, 0, NULL);
+                            s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                         } else {
                             /* We got FIN, so stop polling for readable */
                             us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
@@ -419,7 +419,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         }
                     } else if (length == LIBUS_SOCKET_ERROR && !bsd_would_block()) {
                         /* Todo: decide also here what kind of reason we should give */
-                        s = us_socket_close(0, s, 0, NULL);
+                        s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
                         return;
                     }
 

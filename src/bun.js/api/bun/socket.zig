@@ -828,7 +828,7 @@ pub const Listener = struct {
             .this_value = .zero,
             .socket = socket,
             .protos = listener.protos,
-            .owned_protos = false,
+            .flags = .{ .owned_protos = false },
         };
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
@@ -1187,21 +1187,16 @@ fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
         socket: Socket,
-        detached: bool = false,
 
-        /// Prevent onClose from calling into JavaScript while we are finalizing
-        finalizing: bool = false,
+        flags: Flags = .{},
 
         wrapped: WrappedType = .none,
         handlers: *Handlers,
         this_value: JSC.JSValue = .zero,
         poll_ref: Async.KeepAlive = Async.KeepAlive.init(),
-        is_active: bool = false,
         last_4: [4]u8 = .{ 0, 0, 0, 0 },
-        authorized: bool = false,
         connection: ?Listener.UnixOrHost = null,
         protos: ?[]const u8,
-        owned_protos: bool = true,
         server_name: ?[]const u8 = null,
 
         // TODO: switch to something that uses `visitAggregate` and have the
@@ -1218,7 +1213,14 @@ fn NewSocket(comptime ssl: bool) type {
                 total: usize = 0,
             },
         };
-
+        const Flags = packed struct {
+            is_active: bool = false,
+            /// Prevent onClose from calling into JavaScript while we are finalizing
+            finalizing: bool = false,
+            detached: bool = true,
+            authorized: bool = false,
+            owned_protos: bool = true,
+        };
         pub usingnamespace if (!ssl)
             JSC.Codegen.JSTCPSocket
         else
@@ -1269,7 +1271,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) void {
             JSC.markBinding(@src());
             log("onWritable", .{});
-            if (this.detached) return;
+            if (this.flags.detached) return;
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1297,11 +1299,11 @@ fn NewSocket(comptime ssl: bool) type {
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
-            if (this.detached) return;
+            if (this.flags.detached) return;
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
-            if (callback == .zero or this.finalizing) return;
+            if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
@@ -1323,8 +1325,8 @@ fn NewSocket(comptime ssl: bool) type {
         }
         fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d})", .{errno});
-            if (this.detached) return;
-            this.detached = true;
+            if (this.flags.detached) return;
+            this.flags.detached = true;
             defer this.markInactive();
 
             const handlers = this.handlers;
@@ -1386,16 +1388,16 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn markActive(this: *This) void {
-            if (!this.is_active) {
+            if (!this.flags.is_active) {
                 this.handlers.markActive();
-                this.is_active = true;
+                this.flags.is_active = true;
                 this.has_pending_activity.store(true, .release);
             }
         }
 
         pub fn markInactive(this: *This) void {
-            if (this.is_active) {
-                if (!this.detached) {
+            if (this.flags.is_active) {
+                if (!this.flags.detached) {
                     // we have to close the socket before the socket context is closed
                     // otherwise we will get a segfault
                     // uSockets will defer freeing the TCP socket until the next tick
@@ -1405,7 +1407,7 @@ fn NewSocket(comptime ssl: bool) type {
                         return;
                     }
                 }
-                this.is_active = false;
+                this.flags.is_active = false;
                 const vm = this.handlers.vm;
                 this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
                 this.poll_ref.unref(vm);
@@ -1451,7 +1453,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            this.detached = false;
+            this.flags.detached = false;
             this.socket = socket;
 
             if (this.wrapped == .none) {
@@ -1510,7 +1512,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onEnd(this: *This, socket: Socket) void {
             JSC.markBinding(@src());
             log("onEnd", .{});
-            if (this.detached) return;
+            if (this.flags.detached) return;
 
             const handlers = this.handlers;
 
@@ -1542,10 +1544,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
-            if (this.detached) return;
+            if (this.flags.detached) return;
             const authorized = if (success == 1) true else false;
 
-            this.authorized = authorized;
+            this.flags.authorized = authorized;
 
             const handlers = this.handlers;
             var callback = handlers.onHandshake;
@@ -1618,10 +1620,10 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
-            this.detached = true;
+            this.flags.detached = true;
             defer this.markInactive();
 
-            if (this.finalizing) {
+            if (this.flags.finalizing) {
                 return;
             }
 
@@ -1658,11 +1660,11 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onData(this: *This, socket: Socket, data: []const u8) void {
             JSC.markBinding(@src());
             log("onData({d})", .{data.len});
-            if (this.detached) return;
+            if (this.flags.detached) return;
 
             const handlers = this.handlers;
             const callback = handlers.onData;
-            if (callback == .zero or this.finalizing) return;
+            if (callback == .zero or this.flags.finalizing) return;
             if (handlers.vm.isShuttingDown()) {
                 return;
             }
@@ -1709,7 +1711,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            if (!this.handlers.is_server or this.detached) {
+            if (!this.handlers.is_server or this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -1723,7 +1725,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             log("getReadyState()", .{});
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNumber(@as(i32, -1));
             } else if (this.socket.isClosed()) {
                 return JSValue.jsNumber(@as(i32, 0));
@@ -1741,7 +1743,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.JSGlobalObject,
         ) JSValue {
             log("getAuthorized()", .{});
-            return JSValue.jsBoolean(this.authorized);
+            return JSValue.jsBoolean(this.flags.authorized);
         }
         pub fn timeout(
             this: *This,
@@ -1750,7 +1752,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments(1);
-            if (this.detached) return JSValue.jsUndefined();
+            if (this.flags.detached) return JSValue.jsUndefined();
             if (args.len == 0) {
                 globalObject.throw("Expected 1 argument, got 0", .{});
                 return .zero;
@@ -1773,7 +1775,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNull();
             }
 
@@ -1803,7 +1805,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
 
@@ -1824,7 +1826,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -1835,7 +1837,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalThis: *JSC.JSGlobalObject,
         ) JSValue {
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -1856,7 +1858,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         fn writeMaybeCorked(this: *This, buffer: []const u8, is_end: bool) i32 {
-            if (this.detached or this.socket.isShutdown() or this.socket.isClosed()) {
+            if (this.flags.detached or this.socket.isShutdown() or this.socket.isClosed()) {
                 return -1;
             }
             // we don't cork yet but we might later
@@ -2026,7 +2028,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.CallFrame,
         ) JSValue {
             JSC.markBinding(@src());
-            if (!this.detached)
+            if (!this.flags.detached)
                 this.socket.flush();
 
             return JSValue.jsUndefined();
@@ -2038,7 +2040,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.CallFrame,
         ) JSValue {
             JSC.markBinding(@src());
-            if (!this.detached) {
+            if (!this.flags.detached) {
                 this.socket.close(.failure);
             }
 
@@ -2052,7 +2054,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments(1);
-            if (!this.detached) {
+            if (!this.flags.detached) {
                 if (args.len > 0 and args.ptr[0].toBoolean()) {
                     this.socket.shutdownRead();
                 } else {
@@ -2074,7 +2076,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             log("end({d} args)", .{args.len});
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
 
@@ -2093,7 +2095,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn ref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
-            if (this.detached) return JSValue.jsUndefined();
+            if (this.flags.detached) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
@@ -2106,8 +2108,8 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn finalize(this: *This) void {
             log("finalize() {d}", .{@intFromPtr(this)});
-            this.finalizing = true;
-            if (!this.detached) {
+            this.flags.finalizing = true;
+            if (!this.flags.detached) {
                 if (!this.socket.isClosed()) {
                     this.socket.close(.failure);
                 }
@@ -2117,7 +2119,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
-            if (this.owned_protos) {
+            if (this.flags.owned_protos) {
                 if (this.protos) |protos| {
                     this.protos = null;
                     default_allocator.free(protos);
@@ -2143,7 +2145,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2181,7 +2183,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2198,7 +2200,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2239,7 +2241,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2260,7 +2262,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2287,7 +2289,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2333,7 +2335,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2361,7 +2363,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsBoolean(false);
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsBoolean(false);
             }
 
@@ -2393,7 +2395,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2481,7 +2483,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsNull();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNull();
             }
 
@@ -2550,7 +2552,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
             var result = JSValue.createEmptyObject(globalObject, 3);
@@ -2597,7 +2599,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2629,7 +2631,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2662,7 +2664,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsNull();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNull();
             }
             const ssl_ptr = @as(*BoringSSL.SSL, @ptrCast(this.socket.getNativeHandle()));
@@ -2753,7 +2755,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsNull();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsNull();
             }
 
@@ -2776,7 +2778,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsBoolean(false);
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsBoolean(false);
             }
 
@@ -2815,7 +2817,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2869,7 +2871,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -2932,7 +2934,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.server_name = slice;
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 // will be attached onOpen
                 return JSValue.jsUndefined();
             }
@@ -2967,7 +2969,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.detached) {
+            if (this.flags.detached) {
                 return JSValue.jsUndefined();
             }
 
@@ -3122,10 +3124,10 @@ fn NewSocket(comptime ssl: bool) type {
             new_socket.startTLS(!this.handlers.is_server);
 
             //detach and invalidate the old instance
-            this.detached = true;
-            if (this.is_active) {
+            this.flags.detached = true;
+            if (this.flags.is_active) {
                 const vm = this.handlers.vm;
-                this.is_active = false;
+                this.flags.is_active = false;
                 // will free handlers and the old_context when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
                 this.handlers.markInactive(ssl, old_context, this.wrapped);

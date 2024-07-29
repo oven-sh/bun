@@ -113,10 +113,13 @@ pub fn isExiting() bool {
 pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
 
-    if (comptime Environment.isMac) {
-        std.c.exit(@bitCast(code));
+    // If we are crashing, allow the crash handler to finish it's work.
+    bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    switch (Environment.os) {
+        .mac => std.c.exit(@bitCast(code)),
+        else => bun.C.quick_exit(@bitCast(code)),
     }
-    bun.C.quick_exit(@bitCast(code));
 }
 
 pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
@@ -152,11 +155,9 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub const panic = Output.panic; // deprecated
-
 pub fn notimpl() noreturn {
     @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
+    Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover

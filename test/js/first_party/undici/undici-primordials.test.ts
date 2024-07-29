@@ -1,7 +1,17 @@
-import { describe, it, expect, beforeAll, afterAll } from "bun:test";
+import { describe, it, expect, beforeAll, afterAll, afterEach } from "bun:test";
+const { Response, Request, Headers, FormData, File, URL, AbortSignal, URLSearchParams } = globalThis;
+afterEach(() => {
+  globalThis.Response = Response;
+  globalThis.Request = Request;
+  globalThis.Headers = Headers;
+  globalThis.FormData = FormData;
+  globalThis.File = File;
+  globalThis.URL = URL;
+  globalThis.AbortSignal = AbortSignal;
+  globalThis.URLSearchParams = URLSearchParams;
+});
 
 it("undici", () => {
-  const { Response, Request, Headers, FormData, File, URL, AbortSignal, URLSearchParams } = globalThis;
   globalThis.Response =
     globalThis.Request =
     globalThis.Headers =

@@ -3,7 +3,7 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.21")
+set(Bun_VERSION "1.1.22")
 set(WEBKIT_TAG f9a0fda2d2b2fd001a00bfcf8e7917a56b382516)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
@@ -1223,7 +1223,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        -fuse-ld=lld
+        -fuse-ld=lld-${LLVM_VERSION}
         -fno-pic
         -static-libstdc++
         -static-libgcc

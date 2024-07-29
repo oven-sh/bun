@@ -419,8 +419,9 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
         if (entry.isObject()) {
-            if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
-                if (isEvaluated.isTrue()) {
+            auto* object = entry.getObject();
+            if (auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName())) {
+                if (state.toInt32(globalObject) > JSC::JSModuleLoader::Status::Fetch) {
                     // it's a race! we lost.
                     // https://github.com/oven-sh/bun/issues/6946
                     // https://github.com/oven-sh/bun/issues/12910

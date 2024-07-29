@@ -1223,7 +1223,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        -fuse-ld=lld
+        -fuse-ld=lld-${LLVM_VERSION}
         -fno-pic
         -static-libstdc++
         -static-libgcc

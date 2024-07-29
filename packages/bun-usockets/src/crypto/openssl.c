@@ -450,7 +450,6 @@ restart:
         } else if (err == SSL_ERROR_ZERO_RETURN) {
           // Remotely-Initiated Shutdown
           // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
-          us_internal_handle_shutdown(s, 0);
 
           if (read) {
             context =

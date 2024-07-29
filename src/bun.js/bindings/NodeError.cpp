@@ -91,7 +91,7 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* gl
     auto actual_value = JSValue::decode(val_actual_value).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
-    auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Recieved "_s, actual_value);
+    auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);
     return JSC::JSValue::encode(createTypeErrorWithCode(globalObject, message, "ERR_INVALID_ARG_TYPE"_s));
 }
 

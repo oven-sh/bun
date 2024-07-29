@@ -418,12 +418,14 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto specifierValue = Bun::toJS(globalObject, *specifier);
 
     if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
-        if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
-            if (isEvaluated.isTrue()) {
-                // it's a race! we lost.
-                // https://github.com/oven-sh/bun/issues/6946
-                // https://github.com/oven-sh/bun/issues/12910
-                return;
+        if (entry.isObject()) {
+            if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
+                if (isEvaluated.isTrue()) {
+                    // it's a race! we lost.
+                    // https://github.com/oven-sh/bun/issues/6946
+                    // https://github.com/oven-sh/bun/issues/12910
+                    return;
+                }
             }
         }
 

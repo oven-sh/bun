@@ -526,6 +526,7 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
@@ -2331,7 +2332,8 @@ fn NewPrinter(
                     }
                 },
                 .e_import_meta_main => |data| {
-                    if (p.options.module_type == .esm) {
+                    if (p.options.module_type == .esm and p.options.target != .node) {
+                        // Node.js doesn't support import.meta.main
                         // Most of the time, leave it in there
                         if (data.inverted) {
                             p.addSourceMapping(expr.loc);
@@ -2355,7 +2357,19 @@ fn NewPrinter(
                         else
                             p.printWhitespacer(ws(".main == "));
 
-                        p.printSymbol(p.options.commonjs_module_ref);
+                        if (p.options.target == .node) {
+                            // "__require.module"
+                            if (p.options.require_ref) |require|
+                                p.printSymbol(require)
+                            else
+                                p.print("require");
+
+                            p.print(".module");
+                        } else if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("");
+                        }
                     }
                 },
                 .e_commonjs_export_identifier => |id| {

@@ -1199,6 +1199,7 @@ pub const Bundler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .target = bundler.options.target,
                     },
                     enable_source_map,
                 ),

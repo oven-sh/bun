@@ -765,6 +765,7 @@ pub const BundleV2 = struct {
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
         generator.linker.options.public_path = bundler.options.public_path;
+        generator.linker.options.target = bundler.options.target;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -2883,6 +2884,8 @@ pub const ParseTask = struct {
         // in which we inline `true`.
         if (bundler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
             opts.import_meta_main_value = task.is_entry_point;
+        } else if (bundler.options.target == .node) {
+            opts.lower_import_meta_main_for_node_js = true;
         }
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
@@ -3866,6 +3869,7 @@ pub const LinkerContext = struct {
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
         source_maps: options.SourceMapOption = .none,
+        target: options.Target = .browser,
 
         mode: Mode = Mode.bundle,
 
@@ -6814,6 +6818,7 @@ pub const LinkerContext = struct {
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
+                .target = c.options.target,
                 // .const_values = c.graph.const_values,
             };
 
@@ -9037,6 +9042,7 @@ pub const LinkerContext = struct {
                 c,
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
+            .target = c.options.target,
         };
 
         writer.buffer.reset();

@@ -3094,6 +3094,7 @@ pub const Parser = struct {
 
         /// Used for inlining the state of import.meta.main during visiting
         import_meta_main_value: ?bool = null,
+        lower_import_meta_main_for_node_js: bool = false,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
@@ -7528,13 +7529,7 @@ fn NewParser_(
                             if (equality.is_require_main_and_module) {
                                 p.ignoreUsageOfRuntimeRequire();
                                 p.ignoreUsage(p.module_ref);
-                                return .{
-                                    .loc = v.loc,
-                                    .data = if (p.options.import_meta_main_value) |known|
-                                        .{ .e_boolean = .{ .value = known } }
-                                    else
-                                        .{ .e_import_meta_main = .{} },
-                                };
+                                return p.valueForImportMetaMain(false, v.loc);
                             }
 
                             return p.newExpr(
@@ -7563,13 +7558,7 @@ fn NewParser_(
                             if (equality.is_require_main_and_module) {
                                 p.ignoreUsage(p.module_ref);
                                 p.ignoreUsageOfRuntimeRequire();
-                                return .{
-                                    .loc = v.loc,
-                                    .data = if (p.options.import_meta_main_value) |known|
-                                        .{ .e_boolean = .{ .value = known } }
-                                    else
-                                        .{ .e_import_meta_main = .{} },
-                                };
+                                return p.valueForImportMetaMain(false, v.loc);
                             }
 
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
@@ -7585,13 +7574,7 @@ fn NewParser_(
                             if (equality.is_require_main_and_module) {
                                 p.ignoreUsage(p.module_ref);
                                 p.ignoreUsageOfRuntimeRequire();
-                                return .{
-                                    .loc = v.loc,
-                                    .data = if (p.options.import_meta_main_value) |known|
-                                        .{ .e_boolean = .{ .value = !known } }
-                                    else
-                                        .{ .e_import_meta_main = .{ .inverted = true } },
-                                };
+                                return p.valueForImportMetaMain(true, v.loc);
                             }
 
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
@@ -7611,13 +7594,7 @@ fn NewParser_(
                             if (equality.is_require_main_and_module) {
                                 p.ignoreUsage(p.module_ref);
                                 p.ignoreUsageOfRuntimeRequire();
-                                return .{
-                                    .loc = v.loc,
-                                    .data = if (p.options.import_meta_main_value) |known|
-                                        .{ .e_boolean = .{ .value = !known } }
-                                    else
-                                        .{ .e_import_meta_main = .{ .inverted = true } },
-                                };
+                                return p.valueForImportMetaMain(true, v.loc);
                             }
 
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
@@ -17937,6 +17914,32 @@ fn NewParser_(
             };
         }
 
+        inline fn valueForImportMetaMain(p: *P, inverted: bool, loc: logger.Loc) Expr {
+            if (p.options.import_meta_main_value) |known| {
+                return .{ .loc = loc, .data = .{ .e_boolean = .{ .value = if (inverted) !known else known } } };
+            } else {
+                // Node.js does not have import.meta.main, so we end up lowering
+                // this to `require.main === module`, but with the ESM format,
+                // both `require` and `module` are not present, so the code
+                // generation we need is:
+                //
+                //     import { createRequire } from "node:module";
+                //     var __require = createRequire(import.meta.url);
+                //     var import_meta_main = __require.main === __require.module;
+                //
+                // The printer can handle this for us, but we need to reference
+                // a handle to the `__require` function.
+                if (p.options.lower_import_meta_main_for_node_js) {
+                    p.recordUsageOfRuntimeRequire();
+                }
+
+                return .{
+                    .loc = loc,
+                    .data = .{ .e_import_meta_main = .{ .inverted = inverted } },
+                };
+            }
+        }
+
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
             const strict_loc = fnBodyContainsUseStrict(opts.body);
             const has_simple_args = isSimpleParameterList(args, opts.has_rest_arg);
@@ -19008,13 +19011,7 @@ fn NewParser_(
                     }
 
                     if (strings.eqlComptime(name, "main")) {
-                        return .{
-                            .loc = target.loc,
-                            .data = if (p.options.import_meta_main_value) |known|
-                                .{ .e_boolean = .{ .value = known } }
-                            else
-                                .{ .e_import_meta_main = .{} },
-                        };
+                        return p.valueForImportMetaMain(false, target.loc);
                     }
                 },
                 .e_require_call_target => {

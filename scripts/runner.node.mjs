@@ -231,18 +231,20 @@ async function runTests() {
  */
 
 /**
- * @param {SpawnOptions} request
+ * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
-async function spawnSafe({
-  command,
-  args,
-  cwd,
-  env,
-  timeout = spawnTimeout,
-  stdout = process.stdout.write.bind(process.stdout),
-  stderr = process.stderr.write.bind(process.stderr),
-}) {
+async function spawnSafe(options) {
+  const {
+    command,
+    args,
+    cwd,
+    env,
+    timeout = spawnTimeout,
+    stdout = process.stdout.write.bind(process.stdout),
+    stderr = process.stderr.write.bind(process.stderr),
+    retries = 0,
+  } = options;
   let exitCode;
   let signalCode;
   let spawnError;
@@ -318,6 +320,16 @@ async function spawnSafe({
       resolve();
     }
   });
+  if (spawnError && retries < 5) {
+    const { code } = spawnError;
+    if (code === "EBUSY" || code === "UNKNOWN") {
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retries + 1)));
+      return spawnSafe({
+        ...options,
+        retries: retries + 1,
+      });
+    }
+  }
   let error;
   if (exitCode === 0) {
     // ...

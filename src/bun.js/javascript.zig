@@ -985,6 +985,10 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+            this.transpiler_store.enabled = false;
+        }
+
         if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
             const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json

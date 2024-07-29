@@ -899,14 +899,13 @@ pub const HTTPThread = struct {
             defer this.queued_shutdowns_lock.unlock();
             for (this.queued_shutdowns.items) |http| {
                 if (socket_async_http_abort_tracker.fetchSwapRemove(http.async_http_id)) |socket_ptr| {
-                    // close will do a fast shutdown on TLS sending a close_notify and imeadiately closing the socket
                     if (http.is_tls) {
                         const socket = uws.SocketTLS.fromAny(socket_ptr.value);
-                        // do a fast shutdown here
+                        // do a fast shutdown here since we are aborting and we dont want to wait for the close_notify from the other side
                         socket.close(.failure);
                     } else {
                         const socket = uws.SocketTCP.fromAny(socket_ptr.value);
-                        socket.close(.normal);
+                        socket.close(.failure);
                     }
                 }
             }

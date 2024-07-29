@@ -1,5 +1,8 @@
 #include "root.h"
 
+#include "JavaScriptCore/JSCast.h"
+#include "JavaScriptCore/TypedArrayType.h"
+
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/JSArrayBufferView.h"
@@ -221,9 +224,121 @@ public:
 
 }
 
+static JSC::JSValue createTypedArrayForType(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC::JSType typedArrayType,
+    Ref<JSC::ArrayBuffer>&& buffer,
+    size_t byteOffset,
+    size_t length)
+{
+    if (typedArrayType == JSC::JSType::ArrayBufferType) {
+        ASSERT(byteOffset == 0);
+        return JSC::JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Default>(), WTFMove(buffer));
+    }
+
+    switch (JSC::typedArrayType(typedArrayType)) {
+    case JSC::TypedArrayType::TypeInt8:
+        return JSC::JSInt8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeUint8:
+        return JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeUint8Clamped:
+        return JSC::JSUint8ClampedArray::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeInt16:
+        return JSC::JSInt16Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeUint16:
+        return JSC::JSUint16Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeInt32:
+        return JSC::JSInt32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeUint32:
+        return JSC::JSUint32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeFloat32:
+        return JSC::JSFloat32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeFloat64:
+        return JSC::JSFloat64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeBigInt64:
+        return JSC::JSBigInt64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    case JSC::TypedArrayType::TypeBigUint64:
+        return JSC::JSBigUint64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), WTFMove(buffer), byteOffset, length);
+        break;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
+
+static JSC::JSValue createEmptyTypedArrayForType(
+    JSC::JSGlobalObject* lexicalGlobalObject,
+    JSC::JSType typedArrayType)
+{
+    if (typedArrayType == JSC::JSType::ArrayBufferType) {
+        return JSC::JSArrayBuffer::create(lexicalGlobalObject->vm(), lexicalGlobalObject->arrayBufferStructureWithSharingMode<ArrayBufferSharingMode::Default>(), nullptr);
+    }
+
+    switch (JSC::typedArrayType(typedArrayType)) {
+    case JSC::TypedArrayType::TypeInt8:
+        return JSC::JSInt8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeUint8:
+        return JSC::JSUint8Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeUint8Clamped:
+        return JSC::JSUint8ClampedArray::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeInt16:
+        return JSC::JSInt16Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeUint16:
+        return JSC::JSUint16Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeInt32:
+        return JSC::JSInt32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeUint32:
+        return JSC::JSUint32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeFloat32:
+        return JSC::JSFloat32Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeFloat64:
+        return JSC::JSFloat64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeBigInt64:
+        return JSC::JSBigInt64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    case JSC::TypedArrayType::TypeBigUint64:
+        return JSC::JSBigUint64Array::create(lexicalGlobalObject, lexicalGlobalObject->typedArrayStructure(JSC::typedArrayType(typedArrayType), false), 0);
+        break;
+    default: {
+        RELEASE_ASSERT_NOT_REACHED();
+    }
+    }
+}
+extern "C" void Bun__ArrayBuffer__deallocate(void* bytes, size_t length, void* allocatorPtr, void* fnTable);
+extern "C" JSC::EncodedJSValue Bun__JSTypedArray__fromAllocator(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t byteOffset, size_t length, JSC::JSType typedArrayType, void* ctx, void* fnTable)
+{
+    if (LIKELY(length > 0)) {
+        auto buffer = ArrayBuffer::createFromBytes({ reinterpret_cast<const uint8_t*>(ptr), length }, createSharedTask<void(void*)>([ctx, fnTable, length](void* p) {
+            Bun__ArrayBuffer__deallocate(p, length, ctx, fnTable);
+        }));
+
+        return JSC::JSValue::encode(createTypedArrayForType(lexicalGlobalObject, typedArrayType, WTFMove(buffer), byteOffset, length));
+    } else {
+        return JSC::JSValue::encode(createEmptyTypedArrayForType(lexicalGlobalObject, typedArrayType));
+    }
+}
+
 JSC::EncodedJSValue JSBuffer__bufferFromPointerAndLengthAndDeinit(JSC::JSGlobalObject* lexicalGlobalObject, char* ptr, size_t length, void* ctx, JSTypedArrayBytesDeallocator bytesDeallocator)
 {
-
     JSC::JSUint8Array* uint8Array = nullptr;
 
     auto* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);

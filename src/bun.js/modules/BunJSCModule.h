@@ -238,7 +238,7 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 #if OS(DARWIN)
   {
     vm_address_t *zones;
-    unsigned count;
+    unsigned count = 0;
 
     // Zero out the structures in case a zone is missing
     malloc_statistics_t zone_stats;

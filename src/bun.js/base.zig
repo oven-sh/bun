@@ -472,6 +472,25 @@ pub const ArrayBuffer = extern struct {
 
     const log = Output.scoped(.ArrayBuffer, false);
 
+    pub export fn Bun__ArrayBuffer__deallocate(bytes: ?[*]u8, byte_length: usize, allocatorPtr: ?*anyopaque, fntable: *const std.mem.Allocator.VTable) void {
+        const allocator = std.mem.Allocator{
+            // We use an "undefined" pointer for default_allocator
+            // So this value can genuinely be anything.
+            .ptr = allocatorPtr orelse undefined,
+            .vtable = fntable,
+        };
+
+        if (bytes) |ptr| {
+            allocator.free(ptr[0..byte_length]);
+        }
+    }
+
+    extern fn Bun__JSTypedArray__fromAllocator(*JSC.JSGlobalObject, bytes: [*]u8, offset: usize, len: usize, typed_array_type: JSC.JSValue.JSType, allocator_ptr: ?*const anyopaque, fntable: ?*const std.mem.Allocator.VTable) JSC.JSValue;
+
+    pub fn toJSWithAllocator(this: ArrayBuffer, allocator: std.mem.Allocator, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
+        return Bun__JSTypedArray__fromAllocator(globalThis, this.ptr, this.offset, this.byte_len, this.typed_array_type, allocator.ptr, allocator.vtable);
+    }
+
     pub fn toJS(this: ArrayBuffer, ctx: JSC.C.JSContextRef, exception: JSC.C.ExceptionRef) JSC.JSValue {
         if (!this.value.isEmpty()) {
             return this.value;
@@ -479,7 +498,7 @@ pub const ArrayBuffer = extern struct {
 
         // If it's not a mimalloc heap buffer, we're not going to call a deallocator
         if (this.len > 0 and !bun.Mimalloc.mi_is_in_heap_region(this.ptr)) {
-            log("toJS but will never free: {d} bytes", .{this.len});
+            Output.debugWarn("toJS but will never free: {d} bytes", .{this.len});
 
             if (this.typed_array_type == .ArrayBuffer) {
                 return JSC.JSValue.fromRef(JSC.C.JSObjectMakeArrayBufferWithBytesNoCopy(

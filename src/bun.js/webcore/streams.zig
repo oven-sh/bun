@@ -1458,34 +1458,57 @@ pub const ArrayBufferSink = struct {
             return value;
         }
 
+        return this.toJSBytes(globalThis, as_uint8array);
+    }
+
+    fn toJSBytes(this: *ArrayBufferSink, globalThis: *JSGlobalObject, as_uint8array: bool) JSValue {
         var list = this.bytes.listManaged(this.allocator);
         this.bytes = bun.ByteList.init("");
-        return ArrayBuffer.fromBytes(
-            try list.toOwnedSlice(),
+
+        const should_shrink_to_fit = brk: {
+            if (list.capacity == list.items.len) {
+                break :brk false;
+            }
+
+            if (VirtualMachine.get().smol) {
+                break :brk true;
+            }
+
+            if (list.capacity - list.items.len > 1024) {
+                break :brk true;
+            }
+
+            break :brk false;
+        };
+
+        if (should_shrink_to_fit) {
+            const value: JSValue = switch (as_uint8array) {
+                true => JSC.ArrayBuffer.create(globalThis, list.items, .Uint8Array),
+                false => JSC.ArrayBuffer.create(globalThis, list.items, .ArrayBuffer),
+            };
+            list.deinit();
+            return value;
+        }
+
+        return JSC.ArrayBuffer.fromBytes(
+            list.items,
             if (as_uint8array)
                 .Uint8Array
             else
                 .ArrayBuffer,
-        ).toJS(globalThis, null);
+        ).toJSWithAllocator(this.allocator, globalThis);
     }
 
-    pub fn endFromJS(this: *ArrayBufferSink, _: *JSGlobalObject) JSC.Maybe(ArrayBuffer) {
+    pub fn endFromJS(this: *ArrayBufferSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {
         if (this.done) {
-            return .{ .result = ArrayBuffer.fromBytes(&[_]u8{}, .ArrayBuffer) };
+            return .{ .result = JSC.ArrayBuffer.empty.toJS(globalThis, null) };
         }
 
         bun.assert(this.next == null);
-        var list = this.bytes.listManaged(this.allocator);
-        this.bytes = bun.ByteList.init("");
         this.done = true;
+        const bytes = this.toJSBytes(globalThis, this.as_uint8array);
         this.signal.close(null);
-        return .{ .result = ArrayBuffer.fromBytes(
-            list.toOwnedSlice() catch @panic("TODO"),
-            if (this.as_uint8array)
-                .Uint8Array
-            else
-                .ArrayBuffer,
-        ) };
+        return .{ .result = bytes };
     }
 
     pub fn sink(this: *ArrayBufferSink) Sink {
@@ -1563,6 +1586,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
         pub const shim = JSC.Shimmer("", name_, @This());
         pub const name = std.fmt.comptimePrint("{s}", .{name_});
+        pub const heap_label = name;
 
         // This attaches it to JS
         pub const SinkSignal = extern struct {
@@ -1636,7 +1660,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 return .undefined;
             }
 
-            var allocator = globalThis.bunVM().allocator;
+            const allocator = bun.typedAllocator(ThisSink);
             var this = allocator.create(ThisSink) catch {
                 globalThis.vm().throwError(globalThis, Syscall.Error.oom.toJSC(
                     globalThis,

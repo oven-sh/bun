@@ -6208,9 +6208,6 @@ pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
 
 const DeinitFunction = *const fn (ctx: *anyopaque, buffer: [*]u8, len: usize) callconv(.C) void;
 
-pub const JS2NativeFunctionType = fn (*JSGlobalObject) callconv(JSC.conv) JSValue;
-pub const JS2NativeFunctionPtr = *const JS2NativeFunctionType;
-
 pub const JSArray = opaque {
     // TODO(@paperdave): this can throw
     extern fn JSArray__constructArray(*JSGlobalObject, [*]const JSValue, usize) JSValue;

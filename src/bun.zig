@@ -43,6 +43,20 @@ pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
 
+pub fn typedAllocator(comptime T: type) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.allocator(comptime T);
+
+    return default_allocator;
+}
+
+pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.namedAllocator(name);
+
+    return default_allocator;
+}
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -1859,8 +1873,9 @@ pub const StringMap = struct {
 };
 
 pub const DotEnv = @import("./env_loader.zig");
-pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
-pub const ParseTask = @import("./bundler/bundle_v2.zig").ParseTask;
+pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const BundleV2 = bundle_v2.BundleV2;
+pub const ParseTask = bundle_v2.ParseTask;
 
 pub const Lock = @import("./lock.zig").Lock;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
@@ -1909,15 +1924,17 @@ pub fn Ref(comptime T: type) type {
 pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     return struct {
         const HiveAllocator = HiveArray(@This(), capacity).Fallback;
-
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
+
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
-            var this = try allocator.tryGet();
-            this.allocator = allocator;
-            this.ref_count = 1;
-            this.value = value;
+            const this = try allocator.tryGet();
+            this.* = .{
+                .ref_count = 1,
+                .allocator = allocator,
+                .value = value,
+            };
             return this;
         }
 
@@ -1927,8 +1944,9 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         }
 
         pub fn unref(this: *@This()) ?*@This() {
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const ref_count = this.ref_count;
+            this.ref_count = ref_count - 1;
+            if (ref_count == 1) {
                 if (@hasDecl(T, "deinit")) {
                     this.value.deinit();
                 }
@@ -2329,7 +2347,7 @@ pub const win32 = struct {
             if (exit_code == watcher_reload_exit) {
                 continue;
             } else {
-                Global.exitWide(exit_code);
+                Global.exit(exit_code);
             }
         }
     }
@@ -2934,7 +2952,7 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const ptr = if (heap_breakdown.enabled)
-        heap_breakdown.getZone(T).create(T, init)
+        heap_breakdown.getZoneT(T).create(T, init)
     else ptr: {
         const ptr = default_allocator.create(T) catch outOfMemory();
         ptr.* = init;
@@ -2959,8 +2977,8 @@ pub inline fn destroy(ptr: anytype) void {
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    if (heap_breakdown.enabled) {
-        heap_breakdown.getZone(T).destroy(T, ptr);
+    if (comptime heap_breakdown.enabled) {
+        heap_breakdown.getZoneT(T).destroy(T, ptr);
     } else {
         default_allocator.destroy(ptr);
     }
@@ -3614,3 +3632,4 @@ pub fn memmove(output: []u8, input: []const u8) void {
 }
 
 pub const hmac = @import("./hmac.zig");
+pub const libdeflate = @import("./deps/libdeflate.zig");

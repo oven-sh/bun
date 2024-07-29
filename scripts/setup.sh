@@ -15,12 +15,35 @@ fail() {
   printf "${C_RED}setup error${C_RESET}: %s\n" "$@"
 }
 
-LLVM_VERSION=16
+if [[ $(uname -s) == 'Darwin' ]]; then
+  export LLVM_VERSION=18
 
-# this compiler detection could be better
-# it is copy pasted from ./env.sh
-CC=${CC:-$(which clang-16 || which clang || which cc)}
-CXX=${CXX:-$(which clang++-16 || which clang++ || which c++)}
+  # Use from brew --prefix if available
+  if has_exec brew; then
+    export PKG_CONFIG_PATH=$(brew --prefix)/lib/pkgconfig:$PKG_CONFIG_PATH
+
+    # if llvm@18/bin/clang exists, use it
+    if [ -x "$(brew --prefix)/opt/llvm@$LLVM_VERSION/bin/clang" ]; then
+      export PATH=$(brew --prefix)/opt/llvm@$LLVM_VERSION/bin:$PATH
+      export CC=$(brew --prefix)/opt/llvm@$LLVM_VERSION/bin/clang
+      export CXX=$(brew --prefix)/opt/llvm@$LLVM_VERSION/bin/clang++
+      export AR=$(brew --prefix)/opt/llvm@$LLVM_VERSION/bin/llvm-ar
+    else
+      export CC=$(which clang-$LLVM_VERSION || which clang || which cc)
+      export CXX=$(which clang++-$LLVM_VERSION || which clang++ || which c++)
+      export AR=$(which llvm-ar-$LLVM_VERSION || which llvm-ar || which ar)
+    fi
+  fi
+
+  test -n "$CC" || fail "missing LLVM $LLVM_VERSION (could not find clang)"
+  test -n "$CXX" || fail "missing LLVM $LLVM_VERSION (could not find clang++)"
+else
+  export LLVM_VERSION=16
+
+  export CC=$(which clang-$LLVM_VERSION || which clang || which cc)
+  export CXX=$(which clang++-$LLVM_VERSION || which clang++ || which c++)
+  export AR=$(which llvm-ar-$LLVM_VERSION || which llvm-ar || which ar)
+fi
 
 test -n "$CC" || fail "missing LLVM $LLVM_VERSION (could not find clang)"
 test -n "$CXX" || fail "missing LLVM $LLVM_VERSION (could not find clang++)"
@@ -36,9 +59,9 @@ has_exec "bun" || fail "you need an existing copy of 'bun' in your path to build
 has_exec "cmake" || fail "'cmake' is missing"
 has_exec "ninja" || fail "'ninja' is missing"
 $(
-  has_exec "rustc" \
-  && (test $(cargo --version | awk '{print $2}' | cut -d. -f2) -gt 57) \
-  && has_exec "cargo"
+  has_exec "rustc" &&
+    (test $(cargo --version | awk '{print $2}' | cut -d. -f2) -gt 57) &&
+    has_exec "cargo"
 ) || fail "Rust and Cargo version must be installed (minimum version 1.57)"
 has_exec "go" || fail "'go' is missing"
 
@@ -59,6 +82,15 @@ printf "C Compiler for dependencies: ${CC}\n"
 printf "C++ Compiler for dependencies: ${CXX}\n"
 
 cd "$(dirname "${BASH_SOURCE[0]}")"
+
+rm -rf env.local
+echo "# Environment variables as of last setup.sh run at $(date)" >env.local
+echo "export CC=\"${CC}\"" >>env.local
+echo "export CXX\"=${CXX}\"" >>env.local
+echo "export AR=\"${AR}\"" >>env.local
+echo "export PATH=\"${PATH}\"" >>env.local
+echo "Saved environment variables to $(pwd)/env.local"
+
 bash ./update-submodules.sh
 bash ./all-dependencies.sh
 
@@ -67,7 +99,9 @@ cd ../
 # Install bun dependencies
 bun i
 # Install test dependencies
-cd test; bun i; cd ..
+cd test
+bun i
+cd ..
 
 # TODO(@paperdave): do not use the Makefile please
 has_exec "make" || fail "'make' is missing"
@@ -81,7 +115,7 @@ cmake -B build -S . \
   -DCMAKE_BUILD_TYPE=Debug \
   -DCMAKE_C_COMPILER="$CC" \
   -DCMAKE_CXX_COMPILER="$CXX" \
-  -UZIG_COMPILER "$*" \
+  -UZIG_COMPILER "$*"
 
 ninja -C build
 

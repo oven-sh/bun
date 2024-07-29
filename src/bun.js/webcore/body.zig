@@ -220,7 +220,7 @@ pub const Body = struct {
 
                                 break :brk globalThis.readableStreamToFormData(readable.value, switch (form_data.?.encoding) {
                                     .Multipart => |multipart| bun.String.init(multipart).toJS(globalThis),
-                                    .URLEncoded => JSC.JSValue.jsUndefined(),
+                                    .URLEncoded => .undefined,
                                 });
                             },
                             else => unreachable,
@@ -309,6 +309,8 @@ pub const Body = struct {
         Empty: void,
         Error: JSValue,
         Null: void,
+
+        pub const heap_breakdown_label = "BodyValue";
 
         pub fn toBlobIfPossible(this: *Value) void {
             if (this.* == .WTFStringImpl) {
@@ -861,7 +863,7 @@ pub const Body = struct {
             error_instance.ensureStillAlive();
             if (this.* == .Locked) {
                 var locked = this.Locked;
-
+                // will be unprotected by body value deinit
                 error_instance.protect();
                 this.* = .{ .Error = error_instance };
 

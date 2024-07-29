@@ -5,6 +5,7 @@ If you are using Windows, please refer to [this guide](/docs/project/building-wi
 {% details summary="For Ubuntu users" %}
 TL;DR: Ubuntu 22.04 is suggested.
 Bun currently requires `glibc >=2.32` in development which means if you're on Ubuntu 20.04 (glibc == 2.31), you may likely meet `error: undefined symbol: __libc_single_threaded `. You need to take extra configurations. Also, according to this [issue](https://github.com/llvm/llvm-project/issues/97314), LLVM 16 is no longer maintained on Ubuntu 24.04 (noble). And instead, you might want `brew` to install LLVM 16 for your Ubuntu 24.04.
+{% /details %}
 
 ## Install Dependencies
 

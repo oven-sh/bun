@@ -880,7 +880,7 @@ fn HandlerCallback(
             @field(zig_element, field_name) = value;
             defer @field(zig_element, field_name) = null;
 
-            var result = @field(this, callback_name).?.callWithThis(
+            var result = @field(this, callback_name).?.call(
                 this.global,
                 if (comptime @hasField(HandlerType, "thisObject"))
                     @field(this, "thisObject")
@@ -1040,7 +1040,7 @@ pub const TextChunk = struct {
 
     fn contentHandler(this: *TextChunk, comptime Callback: (fn (*LOLHTML.TextChunk, []const u8, bool) LOLHTML.Error!void), thisObject: JSValue, globalObject: *JSGlobalObject, content: ZigString, contentOptions: ?ContentOptions) JSValue {
         if (this.text_chunk == null)
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         var content_slice = content.toSlice(bun.default_allocator);
         defer content_slice.deinit();
 

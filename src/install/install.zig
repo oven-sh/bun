@@ -426,7 +426,7 @@ const NetworkTask = struct {
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
@@ -510,7 +510,7 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", 0, this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
+        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
         this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
@@ -6167,19 +6167,21 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
+                    if (!has_network_error and task.http.response == null) {
+                        has_network_error = true;
+                        const min = manager.options.min_simultaneous_requests;
+                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        if (max > min) {
+                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                        }
+                    }
+
+                    // Handle retry-able errors.
+                    if (task.http.response == null or task.http.response.?.status_code > 499) {
                         const err = task.http.err orelse error.HTTPError;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            if (!has_network_error) {
-                                has_network_error = true;
-                                const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-                                if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
-                                }
-                            }
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {
@@ -6187,13 +6189,18 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "{s} downloading package manifest <b>{s}<r>",
-                                    .{ bun.span(@errorName(err)), name.slice() },
+                                    "{s} downloading package manifest <b>{s}<r>. Retry {d}/{d}...",
+                                    .{ bun.span(@errorName(err)), name.slice(), task.retried, manager.options.max_retry_count },
                                 ) catch unreachable;
                             }
 
                             continue;
                         }
+                    }
+
+                    const response = task.http.response orelse {
+                        // Handle non-retry-able errors.
+                        const err = task.http.err orelse error.HTTPError;
 
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
@@ -6336,19 +6343,20 @@ pub const PackageManager = struct {
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
                 .extract => |*extract| {
-                    const response = task.http.response orelse {
+                    if (!has_network_error and task.http.response == null) {
+                        has_network_error = true;
+                        const min = manager.options.min_simultaneous_requests;
+                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        if (max > min) {
+                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                        }
+                    }
+
+                    if (task.http.response == null or task.http.response.?.status_code > 499) {
                         const err = task.http.err orelse error.TarballFailedToDownload;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            if (!has_network_error) {
-                                has_network_error = true;
-                                const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-                                if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
-                                }
-                            }
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {
@@ -6356,17 +6364,23 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>",
+                                    "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>. Retrying {d}/{d}...",
                                     .{
                                         bun.span(@errorName(err)),
                                         extract.name.slice(),
                                         extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                        task.retried,
+                                        manager.options.max_retry_count,
                                     },
                                 ) catch unreachable;
                             }
 
                             continue;
                         }
+                    }
+
+                    const response = task.http.response orelse {
+                        const err = task.http.err orelse error.TarballFailedToDownload;
 
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
@@ -6485,7 +6499,7 @@ pub const PackageManager = struct {
                     if (comptime log_level.isVerbose()) {
                         Output.prettyError("    ", .{});
                         Output.printElapsed(@as(f64, @floatCast(@as(f64, @floatFromInt(task.http.elapsed)) / std.time.ns_per_ms)));
-                        Output.prettyError("<d>Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
+                        Output.prettyError("<d> Downloaded <r><green>{s}<r> tarball\n", .{extract.name.slice()});
                         Output.flush();
                     }
 
@@ -8186,15 +8200,10 @@ pub const PackageManager = struct {
         }
     };
 
-    pub fn init(ctx: Command.Context, comptime subcommand: Subcommand) !*PackageManager {
-        const cli = try CommandLineArguments.parse(ctx.allocator, subcommand);
-        return initWithCLI(ctx, cli, subcommand);
-    }
-
-    fn initWithCLI(
+    pub fn init(
         ctx: Command.Context,
         cli: CommandLineArguments,
-        comptime subcommand: Subcommand,
+        subcommand: Subcommand,
     ) !*PackageManager {
         // assume that spawning a thread will take a lil so we do that asap
         HTTP.HTTPThread.init();
@@ -8286,7 +8295,7 @@ pub const PackageManager = struct {
                     };
                 }
 
-                if (comptime subcommand == .install) {
+                if (subcommand == .install) {
                     if (cli.positionals.len > 1) {
                         // this is `bun add <package>`.
                         //
@@ -8312,7 +8321,7 @@ pub const PackageManager = struct {
 
             // Check if this is a workspace; if so, use root package
             var found = false;
-            if (comptime subcommand != .link) {
+            if (subcommand != .link) {
                 if (!created_package_json) {
                     while (std.fs.path.dirname(this_cwd)) |parent| : (this_cwd = parent) {
                         const parent_without_trailing_slash = strings.withoutTrailingSlash(parent);
@@ -8680,29 +8689,29 @@ pub const PackageManager = struct {
     // parse dependency of positional arg string (may include name@version for example)
     // get the precise version from the lockfile (there may be multiple)
     // copy the contents into a temp folder
-    pub inline fn patch(ctx: Command.Context) !void {
+    pub fn patch(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .patch);
     }
 
-    pub inline fn patchCommit(ctx: Command.Context) !void {
+    pub fn patchCommit(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .@"patch-commit");
     }
 
-    pub inline fn update(ctx: Command.Context) !void {
+    pub fn update(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .update);
     }
 
-    pub inline fn add(ctx: Command.Context) !void {
+    pub fn add(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .add);
     }
 
-    pub inline fn remove(ctx: Command.Context) !void {
+    pub fn remove(ctx: Command.Context) !void {
         try updatePackageJSONAndInstallCatchError(ctx, .remove);
     }
 
     pub fn updatePackageJSONAndInstallCatchError(
         ctx: Command.Context,
-        comptime subcommand: Subcommand,
+        subcommand: Subcommand,
     ) !void {
         updatePackageJSONAndInstall(ctx, subcommand) catch |err| {
             switch (err) {
@@ -8719,11 +8728,12 @@ pub const PackageManager = struct {
         };
     }
 
-    pub inline fn link(ctx: Command.Context) !void {
-        var manager = PackageManager.init(ctx, .link) catch |err| brk: {
+    pub fn link(ctx: Command.Context) !void {
+        const cli = try CommandLineArguments.parse(ctx.allocator, .link);
+        var manager = PackageManager.init(ctx, cli, .link) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
-                break :brk try PackageManager.init(ctx, .link);
+                break :brk try PackageManager.init(ctx, cli, .link);
             }
 
             return err;
@@ -8900,11 +8910,12 @@ pub const PackageManager = struct {
         }
     }
 
-    pub inline fn unlink(ctx: Command.Context) !void {
-        var manager = PackageManager.init(ctx, .unlink) catch |err| brk: {
+    pub fn unlink(ctx: Command.Context) !void {
+        const cli = try PackageManager.CommandLineArguments.parse(ctx.allocator, .unlink);
+        var manager = PackageManager.init(ctx, cli, .unlink) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 try attemptToCreatePackageJSON();
-                break :brk try PackageManager.init(ctx, .unlink);
+                break :brk try PackageManager.init(ctx, cli, .unlink);
             }
 
             return err;
@@ -9056,54 +9067,54 @@ pub const PackageManager = struct {
         clap.parseParam("-h, --help                            Print this help menu") catch unreachable,
     };
 
-    pub const install_params = install_params_ ++ [_]ParamType{
+    pub const install_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
-    };
+    });
 
-    pub const update_params = install_params_ ++ [_]ParamType{
+    pub const update_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("--latest                              Update packages to their latest versions") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" of packages to update") catch unreachable,
-    };
+    });
 
-    pub const pm_params = install_params_ ++ [_]ParamType{
+    pub const pm_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("-a, --all") catch unreachable,
         clap.parseParam("<POS> ...                         ") catch unreachable,
-    };
+    });
 
-    pub const add_params = install_params_ ++ [_]ParamType{
+    pub const add_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("-d, --dev                 Add dependency to \"devDependencies\"") catch unreachable,
         clap.parseParam("-D, --development") catch unreachable,
         clap.parseParam("--optional                        Add dependency to \"optionalDependencies\"") catch unreachable,
         clap.parseParam("-E, --exact                  Add the exact version instead of the ^range") catch unreachable,
         clap.parseParam("<POS> ...                         \"name\" or \"name@version\" of package(s) to install") catch unreachable,
-    };
+    });
 
-    pub const remove_params = install_params_ ++ [_]ParamType{
+    pub const remove_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of package(s) to remove from package.json") catch unreachable,
-    };
+    });
 
-    pub const link_params = install_params_ ++ [_]ParamType{
+    pub const link_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" install package as a link") catch unreachable,
-    };
+    });
 
-    pub const unlink_params = install_params_ ++ [_]ParamType{
+    pub const unlink_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" uninstall package as a link") catch unreachable,
-    };
+    });
 
-    const patch_params = install_params_ ++ [_]ParamType{
+    const patch_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"name\" of the package to patch") catch unreachable,
         clap.parseParam("--commit                         Install a package containing modifications in `dir`") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file in (only if --commit is used)") catch unreachable,
-    };
+    });
 
-    const patch_commit_params = install_params_ ++ [_]ParamType{
+    const patch_commit_params: []const ParamType = &(install_params_ ++ [_]ParamType{
         clap.parseParam("<POS> ...                         \"dir\" containing changes to a package") catch unreachable,
         clap.parseParam("--patches-dir <dir>                    The directory to put the patch file") catch unreachable,
-    };
+    });
 
     pub const CommandLineArguments = struct {
         registry: string = "",
@@ -9169,7 +9180,7 @@ pub const PackageManager = struct {
             }
         };
 
-        pub fn printHelp(comptime subcommand: Subcommand) void {
+        pub fn printHelp(subcommand: Subcommand) void {
             switch (subcommand) {
                 // fall back to HelpCommand.printWithReason
                 Subcommand.install => {
@@ -9192,7 +9203,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.install_params);
+                    clap.simpleHelp(PackageManager.install_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9219,7 +9230,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.update_params);
+                    clap.simpleHelp(PackageManager.update_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9235,7 +9246,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.patch_params);
+                    clap.simpleHelp(PackageManager.patch_params);
                     // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9260,7 +9271,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.patch_params);
+                    clap.simpleHelp(PackageManager.patch_params);
                     // Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9290,7 +9301,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.add_params);
+                    clap.simpleHelp(PackageManager.add_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9312,7 +9323,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.remove_params);
+                    clap.simpleHelp(PackageManager.remove_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9336,7 +9347,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.link_params);
+                    clap.simpleHelp(PackageManager.link_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9357,7 +9368,7 @@ pub const PackageManager = struct {
                     Output.flush();
                     Output.pretty("\n<b>Flags:<r>", .{});
                     Output.flush();
-                    clap.simpleHelp(&PackageManager.unlink_params);
+                    clap.simpleHelp(PackageManager.unlink_params);
                     Output.pretty("\n\n" ++ outro_text ++ "\n", .{});
                     Output.flush();
                 },
@@ -9367,7 +9378,7 @@ pub const PackageManager = struct {
         pub fn parse(allocator: std.mem.Allocator, comptime subcommand: Subcommand) !CommandLineArguments {
             Output.is_verbose = Output.isVerbose();
 
-            const params: []const ParamType = &switch (subcommand) {
+            const params: []const ParamType = switch (subcommand) {
                 .install => install_params,
                 .update => update_params,
                 .pm => pm_params,
@@ -9681,9 +9692,12 @@ pub const PackageManager = struct {
 
     fn updatePackageJSONAndInstall(
         ctx: Command.Context,
-        comptime subcommand: Subcommand,
+        subcommand: Subcommand,
     ) !void {
-        var manager = init(ctx, subcommand) catch |err| brk: {
+        const cli = switch (subcommand) {
+            inline else => |cmd| try PackageManager.CommandLineArguments.parse(ctx.allocator, cmd),
+        };
+        var manager = init(ctx, cli, subcommand) catch |err| brk: {
             if (err == error.MissingPackageJSON) {
                 switch (subcommand) {
                     .update => {
@@ -9700,7 +9714,7 @@ pub const PackageManager = struct {
                     },
                     else => {
                         try attemptToCreatePackageJSON();
-                        break :brk try PackageManager.init(ctx, subcommand);
+                        break :brk try PackageManager.init(ctx, cli, subcommand);
                     },
                 }
             }
@@ -9709,7 +9723,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun " ++ @tagName(subcommand) ++ " <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
             Output.flush();
         }
 
@@ -9882,21 +9896,19 @@ pub const PackageManager = struct {
             &[_]UpdateRequest{}
         else
             UpdateRequest.parse(ctx.allocator, ctx.log, manager.options.positionals[1..], &update_requests, manager.subcommand);
-        switch (manager.subcommand) {
-            inline else => |subcommand| try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
-                ctx,
-                updates,
-                subcommand,
-                log_level,
-            ),
-        }
+        try manager.updatePackageJSONAndInstallWithManagerWithUpdates(
+            ctx,
+            updates,
+            manager.subcommand,
+            log_level,
+        );
     }
 
     fn updatePackageJSONAndInstallWithManagerWithUpdates(
         manager: *PackageManager,
         ctx: Command.Context,
         updates: []UpdateRequest,
-        comptime subcommand: Subcommand,
+        subcommand: Subcommand,
         comptime log_level: Options.LogLevel,
     ) !void {
         if (manager.log.errors > 0) {
@@ -9950,17 +9962,17 @@ pub const PackageManager = struct {
 
         if (subcommand == .remove) {
             if (current_package_json.root.data != .e_object) {
-                Output.errGeneric("package.json is not an Object {{}}, so there's nothing to " ++ @tagName(subcommand) ++ "!", .{});
+                Output.errGeneric("package.json is not an Object {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
                 Global.crash();
             } else if (current_package_json.root.data.e_object.properties.len == 0) {
-                Output.errGeneric("package.json is empty {{}}, so there's nothing to " ++ @tagName(subcommand) ++ "!", .{});
+                Output.errGeneric("package.json is empty {{}}, so there's nothing to {s}!", .{@tagName(subcommand)});
                 Global.crash();
             } else if (current_package_json.root.asProperty("devDependencies") == null and
                 current_package_json.root.asProperty("dependencies") == null and
                 current_package_json.root.asProperty("optionalDependencies") == null and
                 current_package_json.root.asProperty("peerDependencies") == null)
             {
-                Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to " ++ @tagName(subcommand) ++ "!", .{});
+                Output.prettyErrorln("package.json doesn't have dependencies, there's nothing to {s}!", .{@tagName(subcommand)});
                 Global.exit(0);
             }
         }
@@ -11443,8 +11455,9 @@ pub const PackageManager = struct {
     var package_json_cwd_buf: bun.PathBuffer = undefined;
     pub var package_json_cwd: string = "";
 
-    pub inline fn install(ctx: Command.Context) !void {
-        var manager = try init(ctx, .install);
+    pub fn install(ctx: Command.Context) !void {
+        const cli = try CommandLineArguments.parse(ctx.allocator, .install);
+        var manager = try init(ctx, cli, .install);
 
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {

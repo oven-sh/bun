@@ -51,7 +51,12 @@ var panic_mutex = std.Thread.Mutex{};
 threadlocal var panic_stage: usize = 0;
 
 /// This can be set by various parts of the codebase to indicate a broader
-/// action being taken, for example "Crashed while parsing /path/to/file.js"
+/// action being taken. It is printed when a crash happens, which can help
+/// narrow down what the bug is. Example: "Crashed while parsing /path/to/file.js"
+///
+/// Some of these are enabled in release builds, which may encourage users to
+/// attach the affected files to crash report. Others, which may have low crash
+/// rate or only crash due to assertion failures, are debug-only. See `Action`.
 pub threadlocal var current_action: ?Action = null;
 
 const CPUFeatures = @import("./bun.js/bindings/CPUFeatures.zig").CPUFeatures;
@@ -102,11 +107,54 @@ pub const Action = union(enum) {
     visit: []const u8,
     print: []const u8,
 
+    /// bun.bundle_v2.LinkerContext.generateCompileResultForJSChunk
+    bundle_generate_chunk: if (bun.Environment.isDebug) struct {
+        context: *const anyopaque, // unfortunate dependency loop workaround
+        chunk: *const bun.bundle_v2.Chunk,
+        part_range: *const bun.bundle_v2.PartRange,
+
+        pub fn linkerContext(data: *const @This()) *const bun.bundle_v2.LinkerContext {
+            return @ptrCast(@alignCast(data.context));
+        }
+    } else void,
+
+    resolver: if (bun.Environment.isDebug) struct {
+        source_dir: []const u8,
+        import_path: []const u8,
+        kind: bun.ImportKind,
+    } else void,
+
     pub fn format(act: Action, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
         switch (act) {
             .parse => |path| try writer.print("parsing {s}", .{path}),
             .visit => |path| try writer.print("visiting {s}", .{path}),
             .print => |path| try writer.print("printing {s}", .{path}),
+            .bundle_generate_chunk => |data| if (bun.Environment.isDebug) {
+                try writer.print(
+                    \\generating bundler chunk
+                    \\  chunk entry point: {s}
+                    \\  source: {s}
+                    \\  part range: {d}..{d}
+                ,
+                    .{
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.chunk.entry_point.source_index]
+                            .path.text,
+                        data.linkerContext().graph.bundler_graph.input_files
+                            .items(.source)[data.part_range.source_index.get()]
+                            .path.text,
+                        data.part_range.part_index_begin,
+                        data.part_range.part_index_end,
+                    },
+                );
+            },
+            .resolver => |res| if (bun.Environment.isDebug) {
+                try writer.print("resolving {s} from {s} ({s})", .{
+                    res.import_path,
+                    res.source_dir,
+                    res.kind.label(),
+                });
+            },
         }
     }
 };
@@ -119,10 +167,6 @@ pub fn crashHandler(
     begin_addr: ?usize,
 ) noreturn {
     @setCold(true);
-
-    // If a segfault happens while panicking, we want it to actually segfault, not trigger
-    // the handler.
-    resetSegfaultHandler();
 
     if (bun.Environment.isDebug)
         bun.Output.disableScopedDebugWriter();
@@ -149,7 +193,7 @@ pub fn crashHandler(
                 const writer = std.io.getStdErr().writer();
 
                 // The format of the panic trace is slightly different in debug
-                // builds Mainly, we demangle the backtrace immediately instead
+                // builds. Mainly, we demangle the backtrace immediately instead
                 // of using a trace string.
                 //
                 // To make the release-mode behavior easier to demo, debug mode
@@ -160,6 +204,9 @@ pub fn crashHandler(
                             break :check_flag false;
                         }
                     }
+                    // Act like release build when explicitly enabling reporting
+                    if (isReportingEnabled()) break :check_flag false;
+
                     break :check_flag true;
                 };
 
@@ -175,11 +222,10 @@ pub fn crashHandler(
                     }
                     writer.writeAll("oh no") catch std.posix.abort();
                     if (Output.enable_ansi_colors) {
-                        writer.writeAll(Output.prettyFmt("<r><d>: ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt("<r><d>: multiple threads are crashing<r>\n", true)) catch std.posix.abort();
                     } else {
-                        writer.writeAll(Output.prettyFmt(": ", true)) catch std.posix.abort();
+                        writer.writeAll(Output.prettyFmt(": multiple threads are crashing\n", true)) catch std.posix.abort();
                     }
-                    writer.writeAll("multiple threads are crashing") catch std.posix.abort();
                 }
 
                 if (reason != .out_of_memory or debug_trace) {
@@ -234,6 +280,8 @@ pub fn crashHandler(
                 };
 
                 if (debug_trace) {
+                    has_printed_message = true;
+
                     dumpStackTrace(trace.*);
 
                     trace_str_buf.writer().print("{}", .{TraceString{
@@ -294,11 +342,21 @@ pub fn crashHandler(
                     writer.writeAll("\n") catch std.posix.abort();
                 }
             }
+
             // Be aware that this function only lets one thread return from it.
             // This is important so that we do not try to run the following reload logic twice.
             waitForOtherThreadToFinishPanicking();
 
             report(trace_str_buf.slice());
+
+            // At this point, the crash handler has performed it's job. Reset the segfault handler
+            // so that a crash will actually crash. We need this because we want the process to
+            // exit with a signal, and allow tools to be able to gather core dumps.
+            //
+            // This is done so late (in comparison to the Zig Standard Library's panic handler)
+            // because if multiple threads segfault (more often the case on Windows), we don't
+            // want another thread to interrupt the crashing of the first one.
+            resetSegfaultHandler();
 
             if (bun.auto_reload_on_crash and
                 // Do not reload if the panic arose FROM the reload function.
@@ -319,6 +377,8 @@ pub fn crashHandler(
         inline 1, 2 => |t| {
             if (t == 1) {
                 panic_stage = 2;
+
+                resetSegfaultHandler();
                 Output.flush();
             }
             panic_stage = 3;
@@ -332,6 +392,7 @@ pub fn crashHandler(
         },
         3 => {
             // Panicked while printing "Panicked during a panic."
+            panic_stage = 4;
         },
         else => {
             // Panicked or otherwise looped into the panic handler while trying to exit.
@@ -721,6 +782,8 @@ pub fn init() void {
 }
 
 pub fn resetSegfaultHandler() void {
+    if (!enable) return;
+
     if (bun.Environment.os == .windows) {
         if (windows_segfault_handle) |handle| {
             const rc = windows.kernel32.RemoveVectoredExceptionHandler(handle);
@@ -844,6 +907,22 @@ fn waitForOtherThreadToFinishPanicking() void {
         // and call abort()
         if (builtin.single_threaded) unreachable;
 
+        // Sleep forever without hammering the CPU
+        var futex = std.atomic.Value(u32).init(0);
+        while (true) std.Thread.Futex.wait(&futex, 0);
+        comptime unreachable;
+    }
+}
+
+/// This is to be called by any thread that is attempting to exit the process.
+/// If another thread is panicking, this will sleep this thread forever, under
+/// the assumption that the crash handler will terminate the program.
+///
+/// There have been situations in the past where a bundler thread starts
+/// panicking, but the main thread ends up marking a test as passing and then
+/// exiting with code zero before the crash handler can finish the crash.
+pub fn sleepForeverIfAnotherThreadIsCrashing() void {
+    if (panicking.load(.acquire) > 0) {
         // Sleep forever without hammering the CPU
         var futex = std.atomic.Value(u32).init(0);
         while (true) std.Thread.Futex.wait(&futex, 0);
@@ -1511,6 +1590,7 @@ pub const js_bindings = struct {
             .{ "panic", jsPanic },
             .{ "rootError", jsRootError },
             .{ "outOfMemory", jsOutOfMemory },
+            .{ "raiseIgnoringPanicHandler", jsRaiseIgnoringPanicHandler },
         }) |tuple| {
             const name = JSC.ZigString.static(tuple[0]);
             obj.put(global, name, JSC.createCallback(global, name, 1, tuple[1]));
@@ -1548,11 +1628,15 @@ pub const js_bindings = struct {
         bun.outOfMemory();
     }
 
+    pub fn jsRaiseIgnoringPanicHandler(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
+        bun.Global.raiseIgnoringPanicHandler(.SIGSEGV);
+    }
+
     pub fn jsGetFeaturesAsVLQ(global: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         const bits = bun.Analytics.packedFeatures();
         var buf = std.BoundedArray(u8, 16){};
         writeU64AsTwoVLQs(buf.writer(), @bitCast(bits)) catch {
-            // there is definetly enough space in the bounded array
+            // there is definitely enough space in the bounded array
             unreachable;
         };
         return bun.String.createLatin1(buf.slice()).toJS(global);

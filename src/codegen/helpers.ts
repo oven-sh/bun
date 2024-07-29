@@ -18,7 +18,17 @@ export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
       .join(",") +
     (nullTerminated ? ",0" : "") +
     "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
+}
+
+export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
+  const normalized = str.trim() + "\n";
+  return (
+    normalized
+      .split("")
+      .map(a => a.charCodeAt(0))
+      .join(",") + (nullTerminated ? ",0" : "")
+  );
 }
 
 export function declareASCIILiteral(name: string, value: string) {

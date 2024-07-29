@@ -404,10 +404,6 @@ pub const SavedSourceMap = struct {
 };
 const uws = bun.uws;
 
-pub export fn Bun__getDefaultGlobal() *JSGlobalObject {
-    return JSC.VirtualMachine.get().global;
-}
-
 pub export fn Bun__getVM() *JSC.VirtualMachine {
     return JSC.VirtualMachine.get();
 }
@@ -491,7 +487,7 @@ pub export fn Bun__reportUnhandledError(globalObject: *JSGlobalObject, value: JS
     // See the crash in https://github.com/oven-sh/bun/issues/9778
     const jsc_vm = JSC.VirtualMachine.get();
     _ = jsc_vm.uncaughtException(globalObject, value, false);
-    return JSC.JSValue.jsUndefined();
+    return .undefined;
 }
 
 /// This function is called on another thread
@@ -650,6 +646,10 @@ export fn Bun__getVerboseFetchValue() i32 {
     };
 }
 
+const body_value_pool_size = if (bun.heap_breakdown.enabled) 0 else 256;
+pub const BodyValueRef = bun.HiveRef(JSC.WebCore.Body.Value, body_value_pool_size);
+const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
+
 /// TODO: rename this to ScriptExecutionContext
 /// This is the shared global state for a single JS instance execution
 /// Today, Bun is one VM per thread, so the name "VirtualMachine" sort of makes sense
@@ -785,9 +785,15 @@ pub const VirtualMachine = struct {
 
     debug_thread_id: if (Environment.allow_assert) std.Thread.Id else void,
 
+    body_value_hive_allocator: BodyValueHiveAllocator = undefined,
+
     pub const OnUnhandledRejection = fn (*VirtualMachine, globalObject: *JSC.JSGlobalObject, JSC.JSValue) void;
 
     pub const OnException = fn (*ZigException) void;
+
+    pub fn initRequestBodyValue(this: *VirtualMachine, body: JSC.WebCore.Body.Value) !*BodyValueRef {
+        return BodyValueRef.init(body, &this.body_value_hive_allocator);
+    }
 
     pub fn uwsLoop(this: *const VirtualMachine) *uws.Loop {
         if (comptime Environment.isPosix) {
@@ -841,6 +847,23 @@ pub const VirtualMachine = struct {
 
     const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
+        pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
+        pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
+            if (vm) |vm_instance| {
+                vm_instance.global = global;
+            }
+
+            cached_global_object = global;
+        }
+
+        pub export fn Bun__getDefaultGlobalObject() ?*JSGlobalObject {
+            return cached_global_object orelse {
+                if (vm) |vm_instance| {
+                    cached_global_object = vm_instance.global;
+                }
+                return null;
+            };
+        }
     };
 
     pub inline fn get() *VirtualMachine {
@@ -962,6 +985,10 @@ pub const VirtualMachine = struct {
             this.hide_bun_stackframes = false;
         }
 
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_ASYNC_TRANSPILER")) {
+            this.transpiler_store.enabled = false;
+        }
+
         if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
             const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
@@ -1040,7 +1067,7 @@ pub const VirtualMachine = struct {
 
         if (this.is_handling_uncaught_exception) {
             this.runErrorHandler(err, null);
-            Bun__Process__exit(globalObject, 1);
+            Bun__Process__exit(globalObject, 7);
             @panic("Uncaught exception while handling uncaught exception");
         }
         this.is_handling_uncaught_exception = true;
@@ -1214,6 +1241,10 @@ pub const VirtualMachine = struct {
             next.execute();
             hook = next;
         }
+    }
+
+    pub fn globalExit(this: *VirtualMachine) noreturn {
+        bun.Global.exit(this.exit_handler.exit_code);
     }
 
     pub fn nextAsyncTaskID(this: *VirtualMachine) u64 {
@@ -1468,7 +1499,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1538,6 +1569,7 @@ pub const VirtualMachine = struct {
         }
 
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1583,7 +1615,7 @@ pub const VirtualMachine = struct {
 
         vm.* = VirtualMachine{
             .global = undefined,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .allocator = allocator,
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
@@ -1657,6 +1689,7 @@ pub const VirtualMachine = struct {
         }
 
         vm.configureDebugger(opts.debugger);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -1731,7 +1764,7 @@ pub const VirtualMachine = struct {
         vm.* = VirtualMachine{
             .global = undefined,
             .allocator = allocator,
-            .transpiler_store = RuntimeTranspilerStore.init(allocator),
+            .transpiler_store = RuntimeTranspilerStore.init(),
             .entry_point = ServerEntryPoint{},
             .bundler = bundler,
             .console = console,
@@ -1799,6 +1832,7 @@ pub const VirtualMachine = struct {
             source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
             source_code_printer.?.ctx.append_null_byte = false;
         }
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
     }
@@ -2398,6 +2432,9 @@ pub const VirtualMachine = struct {
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
         this.source_mappings.deinit();
+        if (this.rare_data) |rare_data| {
+            rare_data.deinit();
+        }
         this.has_terminated = true;
     }
 
@@ -2908,7 +2945,7 @@ pub const VirtualMachine = struct {
     pub fn reportUncaughtException(globalObject: *JSGlobalObject, exception: *JSC.Exception) JSValue {
         var jsc_vm = globalObject.bunVM();
         _ = jsc_vm.uncaughtException(globalObject, exception.value(), false);
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
     pub fn printStackTrace(comptime Writer: type, writer: Writer, trace: ZigStackTrace, comptime allow_ansi_colors: bool) !void {
@@ -2931,7 +2968,7 @@ pub const VirtualMachine = struct {
 
                 const has_name = std.fmt.count("{}", .{frame.nameFormatter(false)}) > 0;
 
-                if (has_name) {
+                if (has_name and !frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}<d> (<r>{}<d>)<r>\n",
@@ -2949,10 +2986,37 @@ pub const VirtualMachine = struct {
                             ),
                         },
                     );
-                } else {
+                } else if (!frame.position.isInvalid()) {
                     try writer.print(
                         comptime Output.prettyFmt(
                             "<r>      <d>at <r>{}\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.sourceURLFormatter(
+                                dir,
+                                origin,
+                                false,
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else if (has_name) {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
+                            allow_ansi_colors,
+                        ),
+                        .{
+                            frame.nameFormatter(
+                                allow_ansi_colors,
+                            ),
+                        },
+                    );
+                } else {
+                    try writer.print(
+                        comptime Output.prettyFmt(
+                            "<r>      <d>at <r>{}<d>\n",
                             allow_ansi_colors,
                         ),
                         .{
@@ -3122,6 +3186,7 @@ pub const VirtualMachine = struct {
             }
 
             const code = code: {
+                if (bun.getRuntimeFeatureFlag("BUN_DISABLE_SOURCE_CODE_PREVIEW") or bun.getRuntimeFeatureFlag("BUN_DISABLE_TRANSPILED_SOURCE_CODE_PREVIEW")) break :code ZigString.Slice.empty;
                 if (!top.remapped and lookup.source_map != null and lookup.source_map.?.isExternal()) {
                     if (lookup.getSourceCode(top_source_url.slice())) |src| {
                         break :code src;
@@ -3198,6 +3263,9 @@ pub const VirtualMachine = struct {
         var exception = exception_holder.zigException();
         defer exception_holder.deinit(this);
 
+        // The ZigException structure stores substrings of the source code, in
+        // which we need the lifetime of this data to outlive the inner call to
+        // remapZigException, but still get freed.
         var source_code_slice: ?ZigString.Slice = null;
         defer if (source_code_slice) |slice| slice.deinit();
 
@@ -3635,7 +3703,7 @@ pub const VirtualMachine = struct {
 
     pub const IPCInstance = struct {
         globalThis: ?*JSGlobalObject,
-        context: if (Environment.isPosix) *uws.SocketContext else u0,
+        context: if (Environment.isPosix) *uws.SocketContext else void,
         data: IPC.IPCData,
 
         pub usingnamespace bun.New(@This());
@@ -3644,10 +3712,7 @@ pub const VirtualMachine = struct {
             return &this.data;
         }
 
-        pub fn handleIPCMessage(
-            this: *IPCInstance,
-            message: IPC.DecodedIPCMessage,
-        ) void {
+        pub fn handleIPCMessage(this: *IPCInstance, message: IPC.DecodedIPCMessage) void {
             JSC.markBinding(@src());
             switch (message) {
                 // In future versions we can read this in order to detect version mismatches,
@@ -3682,9 +3747,7 @@ pub const VirtualMachine = struct {
     const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
         IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
-        this.ipc = .{
-            .waiting = .{ .info = info, .mode = mode },
-        };
+        this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
     pub fn getIPCInstance(this: *VirtualMachine) ?*IPCInstance {
@@ -3722,7 +3785,7 @@ pub const VirtualMachine = struct {
             .windows => instance: {
                 var instance = IPCInstance.new(.{
                     .globalThis = this.global,
-                    .context = 0,
+                    .context = {},
                     .data = .{ .mode = opts.mode },
                 });
 

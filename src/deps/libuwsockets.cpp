@@ -1224,14 +1224,14 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
-                         { return handler(res, a, opcional_data); });
+      auto onWritable = reinterpret_cast<bool (*)(uWS::HttpResponse<true>*, uint64_t, void*)>(handler);
+      uwsRes->onWritable(opcional_data, onWritable);
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
-      uwsRes->onWritable([handler, res, opcional_data](uint64_t a)
-                         { return handler(res, a, opcional_data); });
+      auto onWritable = reinterpret_cast<bool (*)(uWS::HttpResponse<false>*, uint64_t, void*)>(handler);
+      uwsRes->onWritable(opcional_data, onWritable);
     }
   }
   
@@ -1252,11 +1252,10 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto* onAborted = reinterpret_cast<void (*)(uWS::HttpResponse<true>*, void*)>(handler);
       if (handler)
       {
-        uwsRes->onAborted(
-            [handler, res, opcional_data]
-            { handler(res, opcional_data); });
+        uwsRes->onAborted(opcional_data, onAborted);
       }
       else
       {
@@ -1266,11 +1265,10 @@ extern "C"
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto* onAborted = reinterpret_cast<void (*)(uWS::HttpResponse<false>*, void*)>(handler);
       if (handler)
       {
-        uwsRes->onAborted(
-            [handler, res, opcional_data]
-            { handler(res, opcional_data); });
+        uwsRes->onAborted(opcional_data, onAborted);
       }
       else
       {
@@ -1288,21 +1286,21 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      auto onData = reinterpret_cast<void (*)(uWS::HttpResponse<true>* response, const char* chunk, size_t chunk_length, bool, void*)>(handler);
       if (handler) {
-        uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
-                       { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+        uwsRes->onData(opcional_data, onData);
       } else {
-        uwsRes->onData(nullptr);
+        uwsRes->onData(opcional_data, nullptr);
       }
     }
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      auto onData = reinterpret_cast<void (*)(uWS::HttpResponse<false>* response, const char* chunk, size_t chunk_length, bool, void*)>(handler);
       if (handler) {
-        uwsRes->onData([handler, res, opcional_data](auto chunk, bool is_end)
-                       { handler(res, chunk.data(), chunk.length(), is_end, opcional_data); });
+        uwsRes->onData(opcional_data, onData);
       } else {
-        uwsRes->onData(nullptr);
+        uwsRes->onData(opcional_data, nullptr);
       }
     }
   }
@@ -1631,5 +1629,10 @@ extern "C"
       *is_ipv6 = true;
       return strlen(*dest);
     }
+  }
+
+  // we need to manually call this at thread exit
+  extern "C" void bun_clear_loop_at_thread_exit() {
+      uWS::Loop::clearLoopAtThreadExit();
   }
 }

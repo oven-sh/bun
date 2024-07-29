@@ -156,7 +156,7 @@ pub const HotMap = struct {
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
+        this.file_polls_.?.* = Async.FilePoll.Store.init();
         return this.file_polls_.?;
     };
 }
@@ -391,4 +391,15 @@ pub fn nodeFSStatWatcherScheduler(rare: *RareData, vm: *JSC.VirtualMachine) *Sta
         rare.node_fs_stat_watcher_scheduler = StatWatcherScheduler.init(vm.allocator, vm);
         return rare.node_fs_stat_watcher_scheduler.?;
     };
+}
+
+pub fn deinit(this: *RareData) void {
+    if (this.temp_pipe_read_buffer) |pipe| {
+        this.temp_pipe_read_buffer = null;
+        bun.default_allocator.destroy(pipe);
+    }
+
+    if (this.boring_ssl_engine) |engine| {
+        _ = bun.BoringSSL.ENGINE_free(engine);
+    }
 }

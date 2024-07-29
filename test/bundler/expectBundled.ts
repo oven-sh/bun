@@ -1259,7 +1259,7 @@ for (const [key, blob] of build.outputs) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
         const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
-        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : (cjs2esm.unhandled ?? [])).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {

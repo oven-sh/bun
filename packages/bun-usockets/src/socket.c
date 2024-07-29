@@ -157,6 +157,9 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
 } 
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
+    if(ssl) {
+        return (struct us_socket_t *)us_internal_ssl_socket_close((struct us_internal_ssl_socket_t *) s, code, reason);
+    }
     if (!us_socket_is_closed(0, s)) {
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */

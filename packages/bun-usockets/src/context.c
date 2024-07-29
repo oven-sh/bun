@@ -15,18 +15,18 @@
  * limitations under the License.
  */
 
-#include "libusockets.h"
 #include "internal/internal.h"
+#include "libusockets.h"
+#include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
 
 #define CONCURRENT_CONNECTIONS 2
-
+// clang-format off
 int default_is_low_prio_handler(struct us_socket_t *s) {
     return 0;
 }
@@ -72,7 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     struct us_socket_t *s = context->head_sockets;
     while (s) {
         struct us_socket_t *nextS = s->next;
-        us_socket_close(ssl, s, 0, 0);
+        us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         s = nextS;
     }
 }

@@ -49,6 +49,7 @@
 #define LIBUS_EXT_ALIGNMENT 16
 #define ALLOW_SERVER_RENEGOTIATION 0
 
+#define LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN 0
 #define LIBUS_SOCKET_CLOSE_CODE_CONNECTION_RESET 1
 
 /* Define what a socket descriptor is based on platform */

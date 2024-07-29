@@ -136,6 +136,12 @@ async function runTests() {
   }
   console.log("Bun:", execPath);
 
+  console.log("HACK: Testing the last canary build of Bun");
+  await spawnSafe({
+    command: execPath,
+    args: ["upgrade", "--canary"],
+  });
+
   const revision = getRevision(execPath);
   console.log("Revision:", revision);
 

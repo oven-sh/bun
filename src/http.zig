@@ -2413,6 +2413,12 @@ pub fn doRedirect(
 
     this.state.response_message_buffer.deinit();
 
+    this.connected_url = URL{};
+    const body_out_str = this.state.body_out_str.?;
+    this.remaining_redirect_count -|= 1;
+    this.flags.redirected = true;
+    assert(this.redirect_type == FetchRedirect.follow);
+
     // we need to clean the client reference before closing the socket because we are going to reuse the same ref in a another request
     if (this.isKeepAlivePossible()) {
         assert(this.connected_url.hostname.len > 0);
@@ -2426,11 +2432,6 @@ pub fn doRedirect(
         NewHTTPContext(is_ssl).closeSocket(socket);
     }
 
-    this.connected_url = URL{};
-    const body_out_str = this.state.body_out_str.?;
-    this.remaining_redirect_count -|= 1;
-    this.flags.redirected = true;
-    assert(this.redirect_type == FetchRedirect.follow);
 
     // TODO: should this check be before decrementing the redirect count?
     // the current logic will allow one less redirect than requested
@@ -3247,14 +3248,14 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
     if (this.state.stage != .done and this.state.stage != .fail) {
         const out_str = this.state.body_out_str.?;
         const body = out_str.*;
-        const result = this.toResult();
-        const is_done = !result.has_more;
         if (this.state.flags.is_redirect_pending and this.state.fail == null) {
             if (this.state.isDone()) {
                 this.doRedirect(is_ssl, ctx, socket);
             }
             return;
         }
+        const result = this.toResult();
+        const is_done = !result.has_more;
         if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }

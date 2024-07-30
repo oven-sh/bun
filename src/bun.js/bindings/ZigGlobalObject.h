@@ -239,6 +239,8 @@ public:
 
     JSC::Structure* ObjectTemplateStructure() const { return m_ObjectTemplateStructure.getInitializedOnMainThread(this); }
 
+    JSC::Structure* InternalFieldObjectStructure() const { return m_InternalFieldObjectStructure.getInitializedOnMainThread(this); }
+
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -507,6 +509,7 @@ public:
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
     LazyClassStructure m_ObjectTemplateStructure;
+    LazyClassStructure m_InternalFieldObjectStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.

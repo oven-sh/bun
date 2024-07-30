@@ -905,6 +905,8 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventListener;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventTarget;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForEventEmitter;
+    // todo(@190n) move these up or move these elsewhere
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
 };
 } // namespace WebCore

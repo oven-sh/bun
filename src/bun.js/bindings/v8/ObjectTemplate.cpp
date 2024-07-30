@@ -1,4 +1,5 @@
 #include "v8/ObjectTemplate.h"
+#include "v8/InternalFieldObject.h"
 
 using JSC::JSGlobalObject;
 using JSC::JSValue;
@@ -34,13 +35,26 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
     // TODO handle constructor
     // TODO handle interceptors?
 
-    // get a structure
-    // create object from it
-    // apply properties
-    // apply internal field count
+    auto& vm = (*context)->vm();
 
-    V8_UNIMPLEMENTED();
-    return MaybeLocal<Object>();
+    // get a structure
+    if (!objectStructure) {
+        auto structure = JSC::Structure::create(
+            vm,
+            *context,
+            (*context)->objectPrototype(),
+            JSC::TypeInfo(JSC::ObjectType, InternalFieldObject::StructureFlags),
+            InternalFieldObject::info());
+        objectStructure.set((*context)->vm(), this, structure);
+    }
+    auto structure = objectStructure.get();
+
+    // create object from it
+    auto newInstance = InternalFieldObject::create(vm, structure, this);
+
+    // todo: apply properties
+
+    return MaybeLocal<Object>(Local<Object>(JSValue(newInstance)));
 }
 
 void ObjectTemplate::SetInternalFieldCount(int value)

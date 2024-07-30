@@ -22,6 +22,11 @@ public:
     {
     }
 
+    Local(JSC::EncodedJSValue encoded)
+        : ptr(reinterpret_cast<T*>(encoded))
+    {
+    }
+
     bool IsEmpty() const { return ptr == nullptr; }
 
     T* operator*() const { return ptr; }

@@ -9,7 +9,7 @@ template<class T>
 class MaybeLocal {
 public:
     MaybeLocal()
-        : local_({}) {};
+        : local_(Local<T>(nullptr)) {};
 
     template<class S> MaybeLocal(Local<S> that)
         : local_(that)

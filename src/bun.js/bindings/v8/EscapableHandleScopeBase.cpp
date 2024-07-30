@@ -9,8 +9,8 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
 
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
-    V8_UNIMPLEMENTED();
-    return nullptr;
+    // V8_UNIMPLEMENTED();
+    return escape_value;
 }
 
 }

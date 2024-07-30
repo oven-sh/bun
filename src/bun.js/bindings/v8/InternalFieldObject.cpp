@@ -13,9 +13,11 @@ const JSC::ClassInfo InternalFieldObject::s_info = {
     CREATE_METHOD_TABLE(InternalFieldObject)
 };
 
-InternalFieldObject* InternalFieldObject::create()
+InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate)
 {
-    return nullptr;
+    auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, objectTemplate->getInternalFieldCount());
+    object->finishCreation(vm);
+    return object;
 }
 
 }

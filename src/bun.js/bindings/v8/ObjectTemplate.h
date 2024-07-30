@@ -35,8 +35,11 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForObjectTemplate = std::forward<decltype(space)>(space); });
     }
 
+    int getInternalFieldCount() const { return internalFieldCount; }
+
 private:
     int internalFieldCount = 0;
+    JSC::WriteBarrier<JSC::Structure> objectStructure;
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 

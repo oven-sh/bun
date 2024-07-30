@@ -80,6 +80,9 @@ const templateStringTests: Record<string, TemplateStringTest> = {
   FoldNested6: { expr: "`a\0${5}c\\${{$${`d`}e`", print: true },
   EscapedDollar: { expr: "`\\${'a'}`", captureRaw: "\"${'a'}\"" },
   EscapedDollar2: { expr: "`\\${'a'}\\${'b'}`", captureRaw: "\"${'a'}${'b'}\"" },
+  StringAddition: { expr: "`${1}\u2796` + 'rest'", print: true },
+  StringAddition2: { expr: "`\u2796${1}` + `a${Number(1)}b`", print: true },
+  StringAddition3: { expr: '`0${"\u2796"}` + `a${Number(1)}b`', print: true },
 };
 
 describe("bundler", () => {

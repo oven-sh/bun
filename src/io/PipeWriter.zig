@@ -593,9 +593,7 @@ pub fn PosixStreamingWriter(
                     this.buffer.appendSlice(buf[amt..]) catch {
                         return .{ .err = bun.sys.Error.oom };
                     };
-
                     onWrite(this.parent, amt, .pending);
-
                     registerPoll(this);
                 },
                 .wrote => |amt| {

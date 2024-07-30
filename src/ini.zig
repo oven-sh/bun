@@ -1049,7 +1049,7 @@ pub fn loadNpmrc(
             if (install.default_registry) |dr|
                 break :brk bun.URL.parse(dr.url);
 
-            if (env.isUserProbablyInChina()) {
+            if (env.isUserProbablyInMainlandChina()) {
                 break :brk bun.URL.parse(Registry.default_china_url);
             }
 

@@ -2976,7 +2976,7 @@ pub const PackageManager = struct {
 
         this.env.loadCCachePath(this_bundler.fs);
 
-        if (this.env.isUserProbablyInChina()) {
+        if (this.env.isUserProbablyInMainlandChina()) {
             // When the user is in china, use npmmirror.com as the default registry and provide mirrors for common binary downloads.
             // https://gist.github.com/blackcater/e3ba5ec0f5059f498b76e3157e786442
             // Keep in mind:
@@ -7009,6 +7009,7 @@ pub const PackageManager = struct {
 
             return error.@"Missing global bin directory: try setting $BUN_INSTALL";
         }
+        pub var log_message_for_verbose_install_that_using_base_url_for_china = false;
 
         pub fn load(
             this: *Options,
@@ -7025,14 +7026,13 @@ pub const PackageManager = struct {
                 .password = "",
                 .token = "",
             };
-            var log_message_for_verbose_install_that_using_base_url_for_china = false;
             if (bun_install_) |bun_install| {
                 if (bun_install.default_registry) |registry| {
                     base = registry;
                 }
             }
             if (base.url.len == 0) {
-                if (env.isUserProbablyInChina()) {
+                if (env.isUserProbablyInMainlandChina()) {
                     base.url = Npm.Registry.default_china_url;
                     log_message_for_verbose_install_that_using_base_url_for_china = true;
                 } else {
@@ -7333,12 +7333,6 @@ pub const PackageManager = struct {
             if (this.enable.frozen_lockfile) {
                 this.do.save_lockfile = false;
                 this.enable.force_save_lockfile = false;
-            }
-
-            if (PackageManager.verbose_install and log_message_for_verbose_install_that_using_base_url_for_china) {
-                // "Detected chinese locale. Defaulting to the 'registry.npmmirror.com' npm registry"
-                Output.prettyln("检测到中文区域。默认使用 <b>'registry.npmmirror.com'<r> npm 注册表。", .{});
-                Output.flush();
             }
         }
 
@@ -8777,7 +8771,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun link <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            printCommandName(manager.env, "link");
             Output.flush();
         }
 
@@ -8959,7 +8953,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun unlink <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            printCommandName(manager.env, "unlink");
             Output.flush();
         }
 
@@ -9760,7 +9754,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{@tagName(subcommand)});
+            printCommandName(manager.env, @tagName(subcommand));
             Output.flush();
         }
 
@@ -11492,6 +11486,18 @@ pub const PackageManager = struct {
     var package_json_cwd_buf: bun.PathBuffer = undefined;
     pub var package_json_cwd: string = "";
 
+    fn printCommandName(env: *DotEnv.Loader, name: []const u8) void {
+        if (!env.isUserProbablyInMainlandChina()) {
+            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{name});
+        } else {
+            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ " 大陸<r>\n", .{name});
+
+            if (Options.log_message_for_verbose_install_that_using_base_url_for_china) {
+                Output.prettyErrorln("检测到中文区域。默认使用 'registry.npmmirror.com' npm 注册表。", .{});
+            }
+        }
+    }
+
     pub fn install(ctx: Command.Context) !void {
         const cli = try CommandLineArguments.parse(ctx.allocator, .install);
         var manager = try init(ctx, cli, .install);
@@ -11499,9 +11505,11 @@ pub const PackageManager = struct {
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {
             if (manager.options.shouldPrintCommandName()) {
-                Output.prettyErrorln("<r><b>bun add <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+                printCommandName(manager.env, "add");
+
                 Output.flush();
             }
+
             manager.subcommand = .add;
             return try switch (manager.options.log_level) {
                 inline else => |log_level| manager.updatePackageJSONAndInstallWithManager(ctx, log_level),
@@ -11509,7 +11517,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.shouldPrintCommandName()) {
-            Output.prettyErrorln("<r><b>bun install <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{});
+            printCommandName(manager.env, "install");
             Output.flush();
         }
 

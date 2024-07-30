@@ -26,7 +26,7 @@ if (cluster.isPrimary) {
       worker
         .once("disconnect", function () {
           setTimeout(function () {
-            req.connection.destroy();
+            req.destroy();
             destroyed = true;
           }, 1000);
         })

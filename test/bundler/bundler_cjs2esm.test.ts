@@ -1,7 +1,5 @@
-import assert from "assert";
-import dedent from "dedent";
-import { itBundled, testForFile } from "./expectBundled";
-var { describe, test, expect } = testForFile(import.meta.path);
+import { itBundled } from "./expectBundled";
+import { describe, expect } from "bun:test";
 
 const fakeReactNodeModules = {
   "/node_modules/react/index.js": /* js */ `
@@ -240,19 +238,19 @@ describe("bundler", () => {
       "/entry.js": /* js */ `
         const react = require("react");
         console.log(react.react);
-        
+
         const react1 = (console.log(require("react").react), require("react"));
         console.log(react1.react);
-        
+
         const react2 = (require("react"), console.log(require("react").react));
         console.log(react2);
-        
+
         let x = {};
         x.react = require("react");
         console.log(x.react.react);
-        
+
         console.log(require("react").react);
-        
+
         let y = {};
         y[require("react")] = require("react");
         console.log(y[require("react")].react);
@@ -285,5 +283,28 @@ describe("bundler", () => {
     run: {
       stdout: "react\nreact\nreact\nreact\nundefined\nreact\nreact\nreact\nreact\nreact\nreact\n1 react\nreact\nreact",
     },
+  });
+  itBundled("cjs2esm/ReactSpecificUnwrapping", {
+    files: {
+      "/entry.js": /* js */ `
+        import { renderToReadableStream } from "react";
+        console.log(renderToReadableStream());
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        console.log('side effect');
+        module.exports = require('./main');
+      `,
+      "/node_modules/react/main.js": /* js */ `
+        "use strict";
+        var REACT_ELEMENT_TYPE = Symbol.for("pass");
+        exports.renderToReadableStream = (e, t) => {
+          return REACT_ELEMENT_TYPE;
+        }
+      `,
+    },
+    run: {
+      stdout: "side effect\nSymbol(pass)",
+    },
+    minifySyntax: true,
   });
 });

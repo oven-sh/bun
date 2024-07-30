@@ -114,7 +114,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         errorValue = jsUndefined();
     else {
-        errorValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "error"_s));
+        errorValue = object->get(&lexicalGlobalObject, vm.propertyNames->error);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!errorValue.isUndefined()) {
@@ -150,7 +150,7 @@ template<> ErrorEvent::Init convertDictionary<ErrorEvent::Init>(JSGlobalObject& 
     if (isNullOrUndefined)
         messageValue = jsUndefined();
     else {
-        messageValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "message"_s));
+        messageValue = object->get(&lexicalGlobalObject, vm.propertyNames->message);
         RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!messageValue.isUndefined()) {
@@ -409,7 +409,7 @@ void JSErrorEvent::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSErrorEvent*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -431,18 +431,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     //     if constexpr (std::is_polymorphic_v<ErrorEvent>) {
     // #if ENABLE(BINDING_INTEGRITY)
-    //         const void* actualVTablePointer = getVTablePointer(impl.ptr());
+    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
     // #if PLATFORM(WIN)
     //         void* expectedVTablePointer = __identifier("??_7ErrorEvent@WebCore@@6B@");
     // #else
-    //         void* expectedVTablePointer = &_ZTVN7WebCore10ErrorEventE[2];
+    //         // void* expectedVTablePointer = &_ZTVN7WebCore10ErrorEventE[2];
     // #endif
 
     //         // If you hit this assertion you either have a use after free bug, or
     //         // ErrorEvent has subclasses. If ErrorEvent has subclasses that get passed
     //         // to toJS() we currently require ErrorEvent you to opt out of binding hardening
     //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     return createWrapper<ErrorEvent>(globalObject, WTFMove(impl));
 }

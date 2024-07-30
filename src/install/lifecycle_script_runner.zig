@@ -94,19 +94,19 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (!this.has_incremented_alive_count) {
             this.has_incremented_alive_count = true;
-            _ = alive_count.fetchAdd(1, .Monotonic);
+            _ = alive_count.fetchAdd(1, .monotonic);
         }
 
         errdefer {
             if (this.has_incremented_alive_count) {
                 this.has_incremented_alive_count = false;
-                _ = alive_count.fetchSub(1, .Monotonic);
+                _ = alive_count.fetchSub(1, .monotonic);
             }
         }
 
         const manager = this.manager;
         const original_script = this.scripts.items[next_script_index].?;
-        const cwd = bun.path.z(this.scripts.cwd, &cwd_z_buf);
+        const cwd = this.scripts.cwd;
         const env = manager.env;
         this.stdout.setParent(this);
         this.stderr.setParent(this);
@@ -133,7 +133,7 @@ pub const LifecycleScriptSubprocess = struct {
                 PackageManager.ProgressStrings.script_emoji,
                 true,
             );
-            if (manager.finished_installing.load(.Monotonic)) {
+            if (manager.finished_installing.load(.monotonic)) {
                 scripts_node.activate();
                 manager.progress.refresh();
             }
@@ -293,7 +293,7 @@ pub const LifecycleScriptSubprocess = struct {
 
         if (this.has_incremented_alive_count) {
             this.has_incremented_alive_count = false;
-            _ = alive_count.fetchSub(1, .Monotonic);
+            _ = alive_count.fetchSub(1, .monotonic);
         }
 
         switch (status) {
@@ -313,10 +313,10 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 if (!this.foreground and this.manager.scripts_node != null) {
-                    if (this.manager.finished_installing.load(.Monotonic)) {
+                    if (this.manager.finished_installing.load(.monotonic)) {
                         this.manager.scripts_node.?.completeOne();
                     } else {
-                        _ = @atomicRmw(usize, &this.manager.scripts_node.?.unprotected_completed_items, .Add, 1, .Monotonic);
+                        _ = @atomicRmw(usize, &this.manager.scripts_node.?.unprotected_completed_items, .Add, 1, .monotonic);
                     }
                 }
 
@@ -348,20 +348,20 @@ pub const LifecycleScriptSubprocess = struct {
                 }
 
                 // the last script finished
-                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .Monotonic);
+                _ = this.manager.pending_lifecycle_script_tasks.fetchSub(1, .monotonic);
                 this.deinit();
             },
             .signaled => |signal| {
                 this.printOutput();
+                const signal_code = bun.SignalCode.from(signal);
+
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                     this.scriptName(),
                     this.package_name,
-
-                    bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
+                    signal_code.fmt(Output.enable_ansi_colors_stderr),
                 });
-                Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
 
-                return;
+                Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
@@ -372,7 +372,6 @@ pub const LifecycleScriptSubprocess = struct {
                 this.deinit();
                 Output.flush();
                 Global.exit(1);
-                return;
             },
             else => {
                 Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{
@@ -443,7 +442,7 @@ pub const LifecycleScriptSubprocess = struct {
             });
         }
 
-        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .Monotonic);
+        _ = manager.pending_lifecycle_script_tasks.fetchAdd(1, .monotonic);
 
         lifecycle_subprocess.spawnNextScript(list.first_index) catch |err| {
             Output.prettyErrorln("<r><red>error<r>: Failed to run script <b>{s}<r> due to error <b>{s}<r>", .{

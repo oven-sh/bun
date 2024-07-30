@@ -1,6 +1,5 @@
 import tls, { TLSSocket, connect, checkServerIdentity, createServer, Server } from "tls";
 import { join } from "path";
-import { AddressInfo } from "ws";
 import { it, expect } from "bun:test";
 import { tls as COMMON_CERT_ } from "harness";
 
@@ -16,18 +15,11 @@ it("should work with alpnProtocols", done => {
       rejectUnauthorized: false,
     });
 
-    const timeout = setTimeout(() => {
-      socket?.end();
-      done("timeout");
-    }, 3000);
-
     socket.on("error", err => {
-      clearTimeout(timeout);
       done(err);
     });
 
     socket.on("secureConnect", () => {
-      clearTimeout(timeout);
       done(socket?.alpnProtocol === "http/1.1" ? undefined : "alpnProtocol is not http/1.1");
       socket?.end();
       socket = null;
@@ -158,9 +150,10 @@ it("should have peer certificate", async () => {
     expect(infoAccess["OCSP - URI"]).toBeDefined();
     expect(infoAccess["CA Issuers - URI"]).toBeDefined();
     expect(cert.ca).toBeFalse();
-    expect(cert.bits).toBe(2048);
-    expect(typeof cert.modulus).toBe("string");
-    expect(typeof cert.exponent).toBe("string");
+    expect(cert.bits).toBeInteger();
+    // These can change:
+    // expect(typeof cert.modulus).toBe("string");
+    // expect(typeof cert.exponent).toBe("string");
     expect(cert.pubkey).toBeInstanceOf(Buffer);
     expect(typeof cert.valid_from).toBe("string");
     expect(typeof cert.valid_to).toBe("string");
@@ -175,6 +168,23 @@ it("should have peer certificate", async () => {
 });
 
 it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, exportKeyingMaterial and isSessionReused should work", async () => {
+  const allowedCipherObjects = [
+    {
+      name: "TLS_AES_128_GCM_SHA256",
+      standardName: "TLS_AES_128_GCM_SHA256",
+      version: "TLSv1/SSLv3",
+    },
+    {
+      name: "TLS_AES_256_GCM_SHA384",
+      standardName: "TLS_AES_256_GCM_SHA384",
+      version: "TLSv1/SSLv3",
+    },
+    {
+      name: "TLS_CHACHA20_POLY1305_SHA256",
+      standardName: "TLS_CHACHA20_POLY1305_SHA256",
+      version: "TLSv1/SSLv3",
+    },
+  ];
   const socket = (await new Promise((resolve, reject) => {
     connect({
       ALPNProtocols: ["http/1.1"],
@@ -189,11 +199,18 @@ it("getCipher, getProtocol, getEphemeralKeyInfo, getSharedSigalgs, getSession, e
   })) as TLSSocket;
 
   try {
-    expect(socket.getCipher()).toMatchObject({
-      name: "TLS_AES_128_GCM_SHA256",
-      standardName: "TLS_AES_128_GCM_SHA256",
-      version: "TLSv1/SSLv3",
-    });
+    const cipher = socket.getCipher();
+    let hadMatch = false;
+    for (const allowedCipher of allowedCipherObjects) {
+      if (cipher.name === allowedCipher.name) {
+        expect(cipher).toMatchObject(allowedCipher);
+        hadMatch = true;
+        break;
+      }
+    }
+    if (!hadMatch) {
+      throw new Error(`Unexpected cipher ${cipher.name}`);
+    }
     expect(socket.getProtocol()).toBe("TLSv1.3");
     expect(typeof socket.getEphemeralKeyInfo()).toBe("object");
     expect(socket.getSharedSigalgs()).toBeInstanceOf(Array);

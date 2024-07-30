@@ -200,7 +200,7 @@ pub const Response = struct {
     pub fn getURL(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/url
         return this.url.toJS(globalThis);
     }
@@ -208,18 +208,18 @@ pub const Response = struct {
     pub fn getResponseType(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         if (this.init.status_code < 200) {
-            return ZigString.init("error").toValue(globalThis);
+            return ZigString.init("error").toJS(globalThis);
         }
 
-        return ZigString.init("default").toValue(globalThis);
+        return ZigString.init("default").toJS(globalThis);
     }
 
     pub fn getStatusText(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/statusText
         return this.init.status_text.toJS(globalThis);
     }
@@ -227,7 +227,7 @@ pub const Response = struct {
     pub fn getRedirected(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/redirected
         return JSValue.jsBoolean(this.redirected);
     }
@@ -235,7 +235,7 @@ pub const Response = struct {
     pub fn getOK(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/ok
         return JSValue.jsBoolean(this.isOK());
     }
@@ -258,7 +258,7 @@ pub const Response = struct {
     pub fn getHeaders(
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return this.getOrCreateHeaders(globalThis).toJS(globalThis);
     }
 
@@ -266,7 +266,7 @@ pub const Response = struct {
         this: *Response,
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const cloned = this.clone(globalThis);
         return Response.makeMaybePooled(globalThis, cloned);
     }
@@ -294,7 +294,7 @@ pub const Response = struct {
     pub fn getStatus(
         this: *Response,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         // https://developer.mozilla.org/en-US/docs/Web/API/Response/status
         return JSValue.jsNumber(this.init.status_code);
     }
@@ -346,7 +346,7 @@ pub const Response = struct {
     pub fn constructJSON(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const args_list = callframe.arguments(2);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -403,7 +403,7 @@ pub const Response = struct {
     pub fn constructRedirect(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         var args_list = callframe.arguments(4);
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
@@ -448,7 +448,7 @@ pub const Response = struct {
     pub fn constructError(
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSValue {
+    ) JSValue {
         const response = bun.new(
             Response,
             Response{
@@ -467,7 +467,7 @@ pub const Response = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*Response {
+    ) ?*Response {
         const args_list = brk: {
             var args = callframe.arguments(2);
             if (args.len > 1 and args.ptr[1].isEmptyOrUndefinedOrNull()) {
@@ -717,6 +717,7 @@ pub const Fetch = struct {
     comptime {
         if (!JSC.is_bindgen) {
             _ = Bun__fetch;
+            _ = Bun__fetchPreconnect;
         }
     }
 
@@ -777,12 +778,12 @@ pub const Fetch = struct {
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
         pub fn ref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchAdd(1, .Monotonic);
+            const count = this.ref_count.fetchAdd(1, .monotonic);
             bun.debugAssert(count > 0);
         }
 
         pub fn deref(this: *FetchTasklet) void {
-            const count = this.ref_count.fetchSub(1, .Monotonic);
+            const count = this.ref_count.fetchSub(1, .monotonic);
             bun.debugAssert(count > 0);
 
             if (count == 1) {
@@ -885,7 +886,7 @@ pub const Fetch = struct {
         fn deinit(this: *FetchTasklet) void {
             log("deinit", .{});
 
-            bun.assert(this.ref_count.load(.Monotonic) == 0);
+            bun.assert(this.ref_count.load(.monotonic) == 0);
 
             this.clearData();
 
@@ -1064,7 +1065,7 @@ pub const Fetch = struct {
             log("onProgressUpdate", .{});
             defer this.deref();
             this.mutex.lock();
-            this.has_schedule_callback.store(false, .Monotonic);
+            this.has_schedule_callback.store(false, .monotonic);
 
             if (this.is_waiting_body) {
                 this.onBodyReceived();
@@ -1223,7 +1224,7 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        const check_result = check_server_identity.call(globalObject, .undefined, &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
@@ -1232,7 +1233,7 @@ pub const Fetch = struct {
                             check_result.ensureStillAlive();
                             check_result.protect();
                             this.abort_reason = check_result;
-                            this.signal_store.aborted.store(true, .Monotonic);
+                            this.signal_store.aborted.store(true, .monotonic);
                             this.tracker.didCancel(this.global_this);
 
                             // we need to abort the request
@@ -1391,7 +1392,7 @@ pub const Fetch = struct {
             if (this.http) |http_| {
                 http_.enableBodyStreaming();
             }
-            if (this.signal_store.aborted.load(.Monotonic)) {
+            if (this.signal_store.aborted.load(.monotonic)) {
                 return JSC.WebCore.DrainResult{
                     .aborted = {},
                 };
@@ -1613,7 +1614,7 @@ pub const Fetch = struct {
             }
 
             if (fetch_tasklet.check_server_identity.has() and fetch_tasklet.reject_unauthorized) {
-                fetch_tasklet.signal_store.cert_errors.store(true, .Monotonic);
+                fetch_tasklet.signal_store.cert_errors.store(true, .monotonic);
             } else {
                 fetch_tasklet.signals.cert_errors = null;
             }
@@ -1626,7 +1627,6 @@ pub const Fetch = struct {
                 fetch_options.headers.buf.items,
                 &fetch_tasklet.response_buffer,
                 fetch_tasklet.request_body.slice(),
-                fetch_options.timeout,
                 http.HTTPClientResult.Callback.New(
                     *FetchTasklet,
                     FetchTasklet.callback,
@@ -1653,7 +1653,7 @@ pub const Fetch = struct {
             }
 
             // we want to return after headers are received
-            fetch_tasklet.signal_store.header_progress.store(true, .Monotonic);
+            fetch_tasklet.signal_store.header_progress.store(true, .monotonic);
 
             if (fetch_tasklet.request_body == .Sendfile) {
                 bun.assert(fetch_options.url.isHTTP());
@@ -1672,7 +1672,7 @@ pub const Fetch = struct {
             reason.ensureStillAlive();
             this.abort_reason = reason;
             reason.protect();
-            this.signal_store.aborted.store(true, .Monotonic);
+            this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 
             if (this.http != null) {
@@ -1684,7 +1684,6 @@ pub const Fetch = struct {
             method: Method,
             headers: Headers,
             body: HTTPRequestBody,
-            timeout: usize,
             disable_timeout: bool,
             disable_keepalive: bool,
             disable_decompression: bool,
@@ -1710,7 +1709,7 @@ pub const Fetch = struct {
             fetch_options: FetchOptions,
             promise: JSC.JSPromise.Strong,
         ) !*FetchTasklet {
-            try http.HTTPThread.init();
+            http.HTTPThread.init();
             var node = try get(
                 allocator,
                 global,
@@ -1790,7 +1789,7 @@ pub const Fetch = struct {
                 task.response_buffer.reset();
             }
 
-            if (task.has_schedule_callback.cmpxchgStrong(false, true, .Acquire, .Monotonic)) |has_schedule_callback| {
+            if (task.has_schedule_callback.cmpxchgStrong(false, true, .acquire, .monotonic)) |has_schedule_callback| {
                 if (has_schedule_callback) {
                     task.deref();
                     return;
@@ -1840,10 +1839,61 @@ pub const Fetch = struct {
         return JSPromise.resolvedPromiseValue(globalThis, response.toJS(globalThis));
     }
 
+    pub export fn Bun__fetchPreconnect(
+        globalObject: *JSC.JSGlobalObject,
+        callframe: *JSC.CallFrame,
+    ) callconv(JSC.conv) JSC.JSValue {
+        const arguments = callframe.arguments(1).slice();
+
+        if (arguments.len < 1) {
+            globalObject.throwNotEnoughArguments("fetch.preconnect", 1, arguments.len);
+            return .zero;
+        }
+
+        var url_str = JSC.URL.hrefFromJS(arguments[0], globalObject);
+        defer url_str.deref();
+
+        if (globalObject.hasException()) {
+            return .zero;
+        }
+
+        if (url_str.tag == .Dead) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "Invalid URL", .{}, globalObject));
+            return .zero;
+        }
+
+        if (url_str.isEmpty()) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            return .zero;
+        }
+
+        const url = ZigURL.parse(url_str.toOwnedSlice(bun.default_allocator) catch bun.outOfMemory());
+        if (!url.isHTTP() and !url.isHTTPS()) {
+            globalObject.throwInvalidArguments("URL must be HTTP or HTTPS", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (url.hostname.len == 0) {
+            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        if (!url.hasValidPort()) {
+            globalObject.throwInvalidArguments("Invalid port", .{});
+            bun.default_allocator.free(url.href);
+            return .zero;
+        }
+
+        bun.http.AsyncHTTP.preconnect(url, true);
+        return .undefined;
+    }
+
     pub export fn Bun__fetch(
         ctx: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         JSC.markBinding(@src());
         const globalThis = ctx.ptr();
         const arguments = callframe.arguments(2);
@@ -2013,7 +2063,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         } else {
                             body = request.body.value.useAsAnyBlob();
@@ -2326,7 +2376,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         }
 
@@ -2546,7 +2596,7 @@ pub const Fetch = struct {
                     }
 
                     var cwd_buf: bun.PathBuffer = undefined;
-                    const cwd = if (Environment.isWindows) (std.os.getcwd(&cwd_buf) catch |err| {
+                    const cwd = if (Environment.isWindows) (bun.getcwd(&cwd_buf) catch |err| {
                         globalThis.throwError(err, "Failed to resolve file url");
                         return .zero;
                     }) else globalThis.bunVM().bundler.fs.top_level_dir;
@@ -2632,7 +2682,7 @@ pub const Fetch = struct {
             prepare_body: {
                 const opened_fd_res: JSC.Maybe(bun.FileDescriptor) = switch (body.Blob.store.?.data.file.pathlike) {
                     .fd => |fd| bun.sys.dup(fd),
-                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) std.os.O.RDONLY else std.os.O.RDONLY | std.os.O.NOCTTY, 0),
+                    .path => |path| bun.sys.open(path.sliceZ(&globalThis.bunVM().nodeFS().sync_error_buf), if (Environment.isWindows) bun.O.RDONLY else bun.O.RDONLY | bun.O.NOCTTY, 0),
                 };
 
                 const opened_fd = switch (opened_fd_res) {
@@ -2751,7 +2801,6 @@ pub const Fetch = struct {
                     .allocator = allocator,
                 },
                 .body = http_body,
-                .timeout = std.time.ns_per_hour,
                 .disable_keepalive = disable_keepalive,
                 .disable_timeout = disable_timeout,
                 .disable_decompression = disable_decompression,

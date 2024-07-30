@@ -17,6 +17,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const FeatureFlags = @import("feature_flags.zig");
 const JavascriptString = []const u16;
+const Indentation = bun.js_printer.Options.Indentation;
 
 const unicode = std.unicode;
 
@@ -31,7 +32,7 @@ pub const TypeScriptAccessibilityModifier = tables.TypeScriptAccessibilityModifi
 pub const ChildlessJSXTags = tables.ChildlessJSXTags;
 
 fn notimpl() noreturn {
-    Global.panic("not implemented yet!", .{});
+    Output.panic("not implemented yet!", .{});
 }
 
 pub var emptyJavaScriptString = ([_]u16{0});
@@ -75,6 +76,8 @@ pub const JSONOptions = struct {
     was_originally_macro: bool = false,
 
     always_decode_escape_sequences: bool = false,
+
+    guess_indentation: bool = false,
 };
 
 pub fn decodeStringLiteralEscapeSequencesToUTF16(bytes: string, allocator: std.mem.Allocator) ![]const u16 {
@@ -102,6 +105,7 @@ pub fn NewLexer(
         json_options.json_warn_duplicate_keys,
         json_options.was_originally_macro,
         json_options.always_decode_escape_sequences,
+        json_options.guess_indentation,
     );
 }
 
@@ -114,6 +118,7 @@ fn NewLexer_(
     comptime json_options_json_warn_duplicate_keys: bool,
     comptime json_options_was_originally_macro: bool,
     comptime json_options_always_decode_escape_sequences: bool,
+    comptime json_options_guess_indentation: bool,
 ) type {
     const json_options = JSONOptions{
         .is_json = json_options_is_json,
@@ -124,6 +129,7 @@ fn NewLexer_(
         .json_warn_duplicate_keys = json_options_json_warn_duplicate_keys,
         .was_originally_macro = json_options_was_originally_macro,
         .always_decode_escape_sequences = json_options_always_decode_escape_sequences,
+        .guess_indentation = json_options_guess_indentation,
     };
     return struct {
         const LexerType = @This();
@@ -188,6 +194,16 @@ fn NewLexer_(
         is_ascii_only: JSONBool = JSONBoolDefault,
         track_comments: bool = false,
         all_comments: std.ArrayList(logger.Range),
+
+        indent_info: if (json_options.guess_indentation)
+            struct {
+                guess: Indentation = .{},
+                first_newline: bool = true,
+            }
+        else
+            void = if (json_options.guess_indentation)
+            .{}
+        else {},
 
         pub fn clone(self: *const LexerType) LexerType {
             return LexerType{
@@ -1211,8 +1227,36 @@ fn NewLexer_(
                         }
                     },
                     '\r', '\n', 0x2028, 0x2029 => {
-                        lexer.step();
                         lexer.has_newline_before = true;
+
+                        if (comptime json_options.guess_indentation) {
+                            if (lexer.indent_info.first_newline and lexer.code_point == '\n') {
+                                while (lexer.code_point == '\n' or lexer.code_point == '\r') {
+                                    lexer.step();
+                                }
+
+                                if (lexer.code_point != ' ' and lexer.code_point != '\t') {
+                                    // try to get the next one. this handles cases where the file starts
+                                    // with a newline
+                                    continue;
+                                }
+
+                                lexer.indent_info.first_newline = false;
+
+                                const indent_character = lexer.code_point;
+                                var count: usize = 0;
+                                while (lexer.code_point == indent_character) {
+                                    lexer.step();
+                                    count += 1;
+                                }
+
+                                lexer.indent_info.guess.character = if (indent_character == ' ') .space else .tab;
+                                lexer.indent_info.guess.scalar = count;
+                                continue;
+                            }
+                        }
+
+                        lexer.step();
                         continue;
                     },
                     '\t', ' ' => {

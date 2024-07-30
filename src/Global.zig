@@ -76,7 +76,7 @@ extern "kernel32" fn SetThreadDescription(thread: std.os.windows.HANDLE, name: [
 
 pub fn setThreadName(name: [:0]const u8) void {
     if (Environment.isLinux) {
-        _ = std.os.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch {};
+        _ = std.posix.prctl(.SET_NAME, .{@intFromPtr(name.ptr)}) catch 0;
     } else if (Environment.isMac) {
         _ = std.c.pthread_setname_np(name);
     } else if (Environment.isWindows) {
@@ -101,49 +101,33 @@ pub fn runExitCallbacks() void {
     on_exit_callbacks.items.len = 0;
 }
 
-/// Flushes stdout and stderr and exits with the given code.
-pub fn exit(code: u8) noreturn {
-    exitWide(@as(u32, code));
-}
-
 var is_exiting = std.atomic.Value(bool).init(false);
 export fn bun_is_exiting() c_int {
     return @intFromBool(isExiting());
 }
 pub fn isExiting() bool {
-    return is_exiting.load(.Monotonic);
+    return is_exiting.load(.monotonic);
 }
 
-pub fn exitWide(code: u32) noreturn {
-    is_exiting.store(true, .Monotonic);
+/// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
+pub fn exit(code: u32) noreturn {
+    is_exiting.store(true, .monotonic);
 
-    if (comptime Environment.isMac) {
-        std.c.exit(@bitCast(code));
+    // If we are crashing, allow the crash handler to finish it's work.
+    bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    switch (Environment.os) {
+        .mac => std.c.exit(@bitCast(code)),
+        else => bun.C.quick_exit(@bitCast(code)),
     }
-    bun.C.quick_exit(@bitCast(code));
 }
 
-pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
-    if (comptime @TypeOf(sig) == bun.SignalCode) {
-        return raiseIgnoringPanicHandler(@intFromEnum(sig));
-    }
-
+pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
-
-    if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.os.SIG.STOP and sig != std.os.SIG.KILL) {
-            const act = std.os.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.os.SIG.DFL)) },
-                .mask = std.os.empty_sigset,
-                .flags = 0,
-            };
-            std.os.sigaction(@intCast(sig), &act, null) catch {};
-        }
-    }
-
     Output.Source.Stdio.restore();
 
-    _ = std.c.raise(sig);
+    bun.crash_handler.resetSegfaultHandler();
+    _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
 
@@ -171,22 +155,9 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub fn panic(comptime fmt: string, args: anytype) noreturn {
-    @setCold(true);
-    if (comptime Environment.isWasm) {
-        Output.printErrorln(fmt, args);
-        Output.flush();
-        @panic(fmt);
-    } else {
-        Output.prettyErrorln(fmt, args);
-        Output.flush();
-        std.debug.panic(fmt, args);
-    }
-}
-
 pub fn notimpl() noreturn {
     @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
+    Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover
@@ -223,7 +194,6 @@ pub const BunInfo = struct {
 };
 
 pub const user_agent = "Bun/" ++ Global.package_json_version;
-
 pub export const Bun__userAgent: [*:0]const u8 = Global.user_agent;
 
 comptime {

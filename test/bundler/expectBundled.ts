@@ -3,7 +3,7 @@
  */
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync, readdirSync, realpathSync } from "fs";
 import path from "path";
-import { bunEnv, bunExe, joinP } from "harness";
+import { bunEnv, bunExe, isDebug } from "harness";
 import { tmpdir } from "os";
 import { callerSourceOrigin } from "bun:jsc";
 import { BuildConfig, BunPlugin, fileURLToPath } from "bun";
@@ -13,7 +13,7 @@ import * as esbuild from "esbuild";
 import { SourceMapConsumer } from "source-map";
 
 /** Dedent module does a bit too much with their stuff. we will be much simpler */
-function dedent(str: string | TemplateStringsArray, ...args: any[]) {
+export function dedent(str: string | TemplateStringsArray, ...args: any[]) {
   // https://github.com/tc39/proposal-string-cooked#motivation
   let single_string = String.raw({ raw: str }, ...args);
   single_string = single_string.trim();
@@ -159,6 +159,8 @@ export interface BundlerTestInput {
   extensionOrder?: string[];
   /** Replaces "{{root}}" with the file root */
   external?: string[];
+  /** Defaults to "bundle" */
+  packages?: "bundle" | "external";
   /** Defaults to "esm" */
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
@@ -196,7 +198,7 @@ export interface BundlerTestInput {
   unsupportedJSFeatures?: string[];
   /** if set to true or false, create or edit tsconfig.json to set compilerOptions.useDefineForClassFields */
   useDefineForClassFields?: boolean;
-  sourceMap?: "inline" | "external" | "none";
+  sourceMap?: "inline" | "external" | "linked" | "none";
   plugins?: BunPlugin[] | ((builder: PluginBuilder) => void | Promise<void>);
   install?: string[];
 
@@ -400,6 +402,7 @@ function expectBundled(
     entryPointsRaw,
     env,
     external,
+    packages,
     files,
     format,
     globalName,
@@ -564,7 +567,8 @@ function expectBundled(
         cwd: root,
       });
       if (!installProcess.success) {
-        throw new Error("Failed to install dependencies");
+        const reason = installProcess.signalCode || `code ${installProcess.exitCode}`;
+        throw new Error(`Failed to install dependencies: ${reason}`);
       }
     }
     for (const [file, contents] of Object.entries(files)) {
@@ -620,6 +624,7 @@ function expectBundled(
               `--target=${target}`,
               // `--format=${format}`,
               external && external.map(x => ["--external", x]),
+              packages && ["--packages", packages],
               conditions && conditions.map(x => ["--conditions", x]),
               minifyIdentifiers && `--minify-identifiers`,
               minifySyntax && `--minify-syntax`,
@@ -657,6 +662,7 @@ function expectBundled(
               minifyWhitespace && `--minify-whitespace`,
               globalName && `--global-name=${globalName}`,
               external && external.map(x => `--external:${x}`),
+              packages && ["--packages", packages],
               conditions && `--conditions=${conditions.join(",")}`,
               inject && inject.map(x => `--inject:${path.join(root, x)}`),
               define && Object.entries(define).map(([k, v]) => `--define:${k}=${v}`),
@@ -926,6 +932,7 @@ function expectBundled(
         const buildConfig = {
           entrypoints: [...entryPaths, ...(entryPointsRaw ?? [])],
           external,
+          packages,
           minify: {
             whitespace: minifyWhitespace,
             identifiers: minifyIdentifiers,
@@ -1252,7 +1259,7 @@ for (const [key, blob] of build.outputs) {
         const outfiletext = api.readFile(path.relative(root, outfile ?? outputPaths[0]));
         const regex = /\/\/\s+(.+?)\nvar\s+([a-zA-Z0-9_$]+)\s+=\s+__commonJS/g;
         const matches = [...outfiletext.matchAll(regex)].map(match => ("/" + match[1]).replaceAll("\\", "/"));
-        const expectedMatches = (cjs2esm === true ? [] : cjs2esm.unhandled ?? []).map(a => a.replaceAll("\\", "/"));
+        const expectedMatches = (cjs2esm === true ? [] : (cjs2esm.unhandled ?? [])).map(a => a.replaceAll("\\", "/"));
         try {
           expect(matches.sort()).toEqual(expectedMatches.sort());
         } catch (error) {
@@ -1546,7 +1553,7 @@ export function itBundled(
       id,
       () => expectBundled(id, opts as any),
       // sourcemap code is slow
-      opts.snapshotSourceMap ? 20_000 : undefined,
+      isDebug ? Infinity : opts.snapshotSourceMap ? 30_000 : undefined,
     );
   }
   return ref;

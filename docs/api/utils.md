@@ -200,8 +200,6 @@ Bun.openInEditor(import.meta.url, {
 });
 ```
 
-Bun.ArrayBufferSink;
-
 ## `Bun.deepEquals()`
 
 Recursively checks if two objects are equivalent. This is used internally by `expect().toEqual()` in `bun:test`.

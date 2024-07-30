@@ -69,6 +69,19 @@ using SourceOrigin = JSC::SourceOrigin;
 using JSObject = JSC::JSObject;
 using JSNonFinalObject = JSC::JSNonFinalObject;
 
+JSC_DECLARE_HOST_FUNCTION(KeyObject__AsymmetricKeyType);
+JSC_DECLARE_HOST_FUNCTION(KeyObject_AsymmetricKeyDetails);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__SymmetricKeySize);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__Equals);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__Exports);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__createSecretKey);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__createPublicKey);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__createPrivateKey);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__generateKeySync);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__generateKeyPairSync);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__Sign);
+JSC_DECLARE_HOST_FUNCTION(KeyObject__Verify);
+
 namespace WebCore {
 
 static bool KeyObject__IsASN1Sequence(const unsigned char* data, size_t size,
@@ -304,7 +317,7 @@ AsymmetricKeyValueWithDER KeyObject__ParsePublicKeyPEM(const char* key_pem,
     return result;
 }
 
-JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 
     auto count = callFrame->argumentCount();
@@ -537,7 +550,7 @@ JSC::EncodedJSValue KeyObject__createPrivateKey(JSC::JSGlobalObject* globalObjec
         }
     }
     if (format == "der"_s) {
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         WTF::String type = "pkcs8"_s;
         if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
             if (!typeJSValue.isString()) {
@@ -766,14 +779,14 @@ static JSC::EncodedJSValue KeyObject__createOKPFromPrivate(JSC::JSGlobalObject* 
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    uint8_t public_key[ED25519_PUBLIC_KEY_LEN];
+    Vector<unsigned char> public_key(ED25519_PUBLIC_KEY_LEN);
 
     if (namedCurve == CryptoKeyOKP::NamedCurve::Ed25519) {
-        memcpy(public_key, keyData.data() + ED25519_PRIVATE_KEY_LEN, ED25519_PUBLIC_KEY_LEN);
+        memcpy(public_key.data(), keyData.data() + ED25519_PRIVATE_KEY_LEN, ED25519_PUBLIC_KEY_LEN);
     } else {
-        X25519_public_from_private(public_key, keyData.data());
+        X25519_public_from_private(public_key.data(), keyData.data());
     }
-    auto result = CryptoKeyOKP::create(alg, namedCurve, CryptoKeyType::Public, Vector<uint8_t>(public_key), true, CryptoKeyUsageVerify);
+    auto result = CryptoKeyOKP::create(alg, namedCurve, CryptoKeyType::Public, WTFMove(public_key), true, CryptoKeyUsageVerify);
     if (UNLIKELY(result == nullptr)) {
         JSC::throwTypeError(globalObject, scope, "ERR_CRYPTO_INVALID_KEY_OBJECT_TYPE: Failed to create a public key from private"_s);
         return JSValue::encode(JSC::jsUndefined());
@@ -841,7 +854,7 @@ static JSC::EncodedJSValue KeyObject__createPublicFromPrivate(JSC::JSGlobalObjec
     }
 }
 
-JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 
     auto count = callFrame->argumentCount();
@@ -1125,7 +1138,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
         }
     }
     if (format == "der"_s) {
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         WTF::String type = "spki"_s;
         if (!typeJSValue.isUndefinedOrNull() && !typeJSValue.isEmpty()) {
             if (!typeJSValue.isString()) {
@@ -1234,7 +1247,7 @@ JSC::EncodedJSValue KeyObject__createPublicKey(JSC::JSGlobalObject* globalObject
     return JSValue::encode(JSC::jsUndefined());
 }
 
-JSC::EncodedJSValue KeyObject__createSecretKey(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     JSValue bufferArg = callFrame->uncheckedArgument(0);
     auto& vm = lexicalGlobalObject->vm();
@@ -1347,7 +1360,7 @@ static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
     }
     return Exception { OperationError };
 }
-JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__Sign, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
@@ -1556,7 +1569,7 @@ JSC::EncodedJSValue KeyObject__Sign(JSC::JSGlobalObject* globalObject, JSC::Call
     }
 }
 
-JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__Verify, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     auto count = callFrame->argumentCount();
     auto& vm = globalObject->vm();
@@ -1763,7 +1776,7 @@ JSC::EncodedJSValue KeyObject__Verify(JSC::JSGlobalObject* globalObject, JSC::Ca
     }
 }
 
-JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__Exports, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
 
     auto count = callFrame->argumentCount();
@@ -1787,7 +1800,7 @@ JSC::EncodedJSValue KeyObject__Exports(JSC::JSGlobalObject* globalObject, JSC::C
     auto id = wrapped.keyClass();
     if (auto* options = jsDynamicCast<JSC::JSObject*>(callFrame->argument(1))) {
         JSValue formatJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "format"_s)));
-        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "type"_s)));
+        JSValue typeJSValue = options->getIfPropertyExists(globalObject, PropertyName(vm.propertyNames->type));
         JSValue passphraseJSValue = options->getIfPropertyExists(globalObject, PropertyName(Identifier::fromString(vm, "passphrase"_s)));
         KeyPassphrase passphrase(passphraseJSValue, globalObject, scope);
         RETURN_IF_EXCEPTION(scope, encodedJSValue());
@@ -2348,7 +2361,7 @@ static char* bignum_to_string(const BIGNUM* bn)
     return ret;
 }
 
-JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject_AsymmetricKeyDetails, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
 
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
@@ -2473,7 +2486,7 @@ JSC::EncodedJSValue KeyObject_AsymmetricKeyDetails(JSC::JSGlobalObject* lexicalG
     return JSC::JSValue::encode(JSC::jsUndefined());
 }
 
-JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeyPairSync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto count = callFrame->argumentCount();
     auto& vm = lexicalGlobalObject->vm();
@@ -2695,7 +2708,7 @@ JSC::EncodedJSValue KeyObject__generateKeyPairSync(JSC::JSGlobalObject* lexicalG
     }
     return JSValue::encode(JSC::jsUndefined());
 }
-JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__generateKeySync, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     auto count = callFrame->argumentCount();
     auto& vm = lexicalGlobalObject->vm();
@@ -2757,7 +2770,7 @@ JSC::EncodedJSValue KeyObject__generateKeySync(JSC::JSGlobalObject* lexicalGloba
     }
 }
 
-JSC::EncodedJSValue KeyObject__AsymmetricKeyType(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__AsymmetricKeyType, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     static const NeverDestroyed<String> values[] = {
         MAKE_STATIC_STRING_IMPL("rsa"),
@@ -2842,7 +2855,7 @@ static AsymmetricKeyValue GetInternalAsymmetricKey(WebCore::CryptoKey& key)
     }
 }
 
-JSC::EncodedJSValue KeyObject__Equals(JSC::JSGlobalObject* lexicalGlobalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__Equals, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         if (auto* key2 = jsDynamicCast<JSCryptoKey*>(callFrame->argument(1))) {
@@ -2886,7 +2899,7 @@ JSC::EncodedJSValue KeyObject__Equals(JSC::JSGlobalObject* lexicalGlobalObject, 
     return JSC::JSValue::encode(jsBoolean(false));
 }
 
-JSC::EncodedJSValue KeyObject__SymmetricKeySize(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSC_DEFINE_HOST_FUNCTION(KeyObject__SymmetricKeySize, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     if (auto* key = jsDynamicCast<JSCryptoKey*>(callFrame->argument(0))) {
         auto& wrapped = key->wrapped();

@@ -14,6 +14,7 @@
 #include <JavaScriptCore/VM.h>
 #include <JavaScriptCore/Identifier.h>
 #include <JavaScriptCore/BuiltinUtils.h>
+#include "BunBuiltinNames+extras.h"
 
 namespace WebCore {
 
@@ -89,6 +90,7 @@ using namespace JSC;
     macro(extname) \
     macro(failureKind) \
     macro(fatal) \
+    macro(fd) \
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \
@@ -126,6 +128,7 @@ using namespace JSC;
     macro(kind) \
     macro(lazy) \
     macro(lazyStreamPrototypeMap) \
+    macro(lineText) \
     macro(loadCJS2ESM) \
     macro(Loader) \
     macro(localStreams) \
@@ -141,6 +144,8 @@ using namespace JSC;
     macro(once) \
     macro(options) \
     macro(origin) \
+    macro(originalColumn) \
+    macro(originalLine) \
     macro(overridableRequire) \
     macro(ownerReadableStream) \
     macro(parse) \
@@ -181,16 +186,15 @@ using namespace JSC;
     macro(readRequests) \
     macro(readyPromise) \
     macro(readyPromiseCapability) \
-    macro(removeAbortAlgorithmFromSignal) \
     macro(redirect) \
     macro(relative) \
     macro(releaseLock) \
+    macro(removeAbortAlgorithmFromSignal) \
     macro(removeEventListener) \
     macro(require) \
     macro(requireESM) \
     macro(requireMap) \
     macro(requireNativeModule) \
-    macro(resolve) \
     macro(resolveSync) \
     macro(resume) \
     macro(self) \
@@ -246,6 +250,8 @@ using namespace JSC;
     macro(writeRequests) \
     macro(writing) \
     macro(written) \
+    BUN_ADDITIONAL_BUILTIN_NAMES(macro)
+// --- END of BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME ---
 
 class BunBuiltinNames {
 public:
@@ -263,6 +269,8 @@ public:
     }
 
     BUN_COMMON_PRIVATE_IDENTIFIERS_EACH_PROPERTY_NAME(DECLARE_BUILTIN_IDENTIFIER_ACCESSOR)
+
+    const JSC::Identifier& resolvePublicName() const { return m_vm.propertyNames->resolve;}
 
 private:
     JSC::VM& m_vm;

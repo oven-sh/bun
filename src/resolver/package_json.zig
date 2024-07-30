@@ -37,7 +37,6 @@ const FolderResolver = @import("../install/resolvers/folder_resolver.zig");
 
 const Architecture = @import("../install/npm.zig").Architecture;
 const OperatingSystem = @import("../install/npm.zig").OperatingSystem;
-pub const SideEffectsMap = std.HashMapUnmanaged(bun.StringHashMapUnowned.Key, void, bun.StringHashMapUnowned.Adapter, 80);
 pub const DependencyMap = struct {
     map: HashMap = .{},
     source_buf: []const u8 = "",
@@ -56,6 +55,8 @@ pub const PackageJSON = struct {
         development,
         production,
     };
+
+    pub usingnamespace bun.New(@This());
 
     pub fn generateHash(package_json: *PackageJSON) void {
         var hashy: [1024]u8 = undefined;
@@ -112,11 +113,7 @@ pub const PackageJSON = struct {
     package_manager_package_id: Install.PackageID = Install.invalid_package_id,
     dependencies: DependencyMap = .{},
 
-    side_effects: union(enum) {
-        unspecified: void,
-        false: void,
-        map: SideEffectsMap,
-    } = .{ .unspecified = {} },
+    side_effects: SideEffects = .unspecified,
 
     // Present if the "browser" field is present. This field is intended to be
     // used by bundlers and lets you redirect the paths of certain 3rd-party
@@ -147,6 +144,33 @@ pub const PackageJSON = struct {
 
     exports: ?ExportsMap = null,
     imports: ?ExportsMap = null,
+
+    pub const SideEffects = union(enum) {
+        /// either `package.json` is missing "sideEffects", it is true, or some
+        /// other unsupported value. Treat all files as side effects
+        unspecified: void,
+        /// "sideEffects": false
+        false: void,
+        /// "sideEffects": ["file.js", "other.js"]
+        map: Map,
+        // /// "sideEffects": ["side_effects/*.js"]
+        // glob: TODO,
+
+        pub const Map = std.HashMapUnmanaged(
+            bun.StringHashMapUnowned.Key,
+            void,
+            bun.StringHashMapUnowned.Adapter,
+            80,
+        );
+
+        pub fn hasSideEffects(side_effects: SideEffects, path: []const u8) bool {
+            return switch (side_effects) {
+                .unspecified => true,
+                .false => false,
+                .map => |map| map.contains(bun.StringHashMapUnowned.Key.init(path)),
+            };
+        }
+    };
 
     pub inline fn isAppPackage(this: *const PackageJSON) bool {
         return this.hash == 0xDEADBEEF;
@@ -776,7 +800,7 @@ pub const PackageJSON = struct {
                 } else if (side_effects_field.asArray()) |array_| {
                     var array = array_;
                     // TODO: switch to only storing hashes
-                    var map = SideEffectsMap{};
+                    var map = SideEffects.Map{};
                     map.ensureTotalCapacity(allocator, array.array.items.len) catch unreachable;
                     while (array.next()) |item| {
                         if (item.asString(allocator)) |name| {

@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+#pragma once
 #ifndef INTERNAL_H
 #define INTERNAL_H
 
@@ -22,6 +22,10 @@
 #ifndef __cplusplus
 #define alignas(x) __declspec(align(x))
 #endif
+
+#include <BaseTsd.h>
+typedef SSIZE_T ssize_t;
+
 #else
 #include <stdalign.h>
 #endif
@@ -50,6 +54,17 @@ void us_internal_loop_update_pending_ready_polls(struct us_loop_t *loop,
 
 #ifdef LIBUS_USE_LIBUV
 #include "internal/eventing/libuv.h"
+#endif
+
+#ifndef LIKELY
+#define LIKELY(cond) __builtin_expect((_Bool)(cond), 1)
+#define UNLIKELY(cond) __builtin_expect((_Bool)(cond), 0)
+#endif
+
+#ifdef _WIN32
+#define IS_EINTR(rc) (rc == SOCKET_ERROR && WSAGetLastError() == WSAEINTR)
+#else
+#define IS_EINTR(rc) (rc == -1 && errno == EINTR)
 #endif
 
 /* Poll type and what it polls for */
@@ -118,7 +133,7 @@ void us_internal_async_set(struct us_internal_async *a,
 void us_internal_async_wakeup(struct us_internal_async *a);
 
 /* Eventing related */
-unsigned int us_internal_accept_poll_event(struct us_poll_t *p);
+size_t us_internal_accept_poll_event(struct us_poll_t *p);
 int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 

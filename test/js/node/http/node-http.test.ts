@@ -25,7 +25,7 @@ import { unlinkSync } from "node:fs";
 import { PassThrough } from "node:stream";
 const { describe, expect, it, beforeAll, afterAll, createDoneDotAll, mock } = createTest(import.meta.path);
 import { bunExe } from "bun:harness";
-import { bunEnv, disableAggressiveGCScope, tmpdirSync } from "harness";
+import { bunEnv, disableAggressiveGCScope, tmpdirSync, randomPort } from "harness";
 import * as stream from "node:stream";
 import * as zlib from "node:zlib";
 
@@ -192,6 +192,28 @@ describe("node:http", () => {
       });
       await promise;
       server.close();
+    });
+
+    it("should use the provided port", async () => {
+      const server = http.createServer(() => {});
+      const random_port = randomPort();
+      server.listen(random_port);
+      const { port } = server.address();
+      expect(port).toEqual(random_port);
+      server.close();
+    });
+
+    it("should assign a random port when undefined", async () => {
+      const server1 = http.createServer(() => {});
+      const server2 = http.createServer(() => {});
+      server1.listen(undefined);
+      server2.listen(undefined);
+      const { port: port1 } = server1.address();
+      const { port: port2 } = server2.address();
+      expect(port1).not.toEqual(port2);
+      expect(port1).toBeWithin(1024, 65535);
+      server1.close();
+      server2.close();
     });
 
     it("option method should be uppercase (#7250)", async () => {
@@ -1957,7 +1979,7 @@ it("should emit events in the right order", async () => {
 
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
-  const payload = Buffer.from("X".repeat(16 * 1024));
+  const payload = Buffer.from("X".repeat(128 * 1024));
 
   using server = Bun.serve({
     port: 0,
@@ -1972,24 +1994,33 @@ it("destroy should end download", async () => {
       });
     },
   });
-  {
-    let chunks = 0;
 
-    const { promise, resolve } = Promise.withResolvers();
+  async function run() {
+    let receivedByteLength = 0;
+    let { promise, resolve } = Promise.withResolvers();
     const req = request(server.url, res => {
-      res.on("data", () => {
-        process.nextTick(resolve);
-        chunks++;
+      res.on("data", data => {
+        receivedByteLength += data.length;
+        if (resolve) {
+          resolve();
+          resolve = null;
+        }
       });
     });
     req.end();
-    // wait for the first chunk
     await promise;
-    // should stop the download
     req.destroy();
-    await Bun.sleep(200);
-    expect(chunks).toBeLessThanOrEqual(3);
+    await Bun.sleep(10);
+    const initialByteLength = receivedByteLength;
+    expect(receivedByteLength).toBeLessThanOrEqual(payload.length * 3);
+    await Bun.sleep(10);
+    expect(initialByteLength).toBe(receivedByteLength);
+    await Bun.sleep(10);
   }
+
+  const runCount = 50;
+  const runs = Array.from({ length: runCount }, run);
+  await Promise.all(runs);
 });
 
 it("can send brotli from Server and receive with fetch", async () => {
@@ -2232,4 +2263,28 @@ it("should mark complete true", async () => {
   } finally {
     server.close();
   }
+});
+
+it("should propagate exception in sync data handler", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.1.js")],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toContain("Test passed");
+  expect(exitCode).toBe(0);
+});
+
+it("should propagate exception in async data handler", async () => {
+  const { exitCode, stdout } = Bun.spawnSync({
+    cmd: [bunExe(), "run", path.join(import.meta.dir, "node-http-error-in-data-handler-fixture.2.js")],
+    stdout: "pipe",
+    stderr: "inherit",
+    env: bunEnv,
+  });
+
+  expect(stdout.toString()).toContain("Test passed");
+  expect(exitCode).toBe(0);
 });

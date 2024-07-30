@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
-set -euxo pipefail
+set -exo pipefail
+export FORCE_PIC=1
 source $(dirname -- "${BASH_SOURCE[0]}")/env.sh
 
 mkdir -p $BUN_DEPS_OUT_DIR

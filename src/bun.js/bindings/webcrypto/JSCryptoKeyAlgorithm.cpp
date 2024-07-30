@@ -29,7 +29,6 @@
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/ObjectConstructor.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -43,22 +42,22 @@ template<> CryptoKeyAlgorithm convertDictionary<CryptoKeyAlgorithm>(JSGlobalObje
     auto* object = isNullOrUndefined ? nullptr : value.getObject();
     if (UNLIKELY(!isNullOrUndefined && !object)) {
         throwTypeError(&lexicalGlobalObject, throwScope);
-        return { };
+        return {};
     }
     CryptoKeyAlgorithm result;
     JSValue nameValue;
     if (isNullOrUndefined)
         nameValue = jsUndefined();
     else {
-        nameValue = object->get(&lexicalGlobalObject, Identifier::fromString(vm, "name"_s));
-        RETURN_IF_EXCEPTION(throwScope, { });
+        nameValue = object->get(&lexicalGlobalObject, vm.propertyNames->name);
+        RETURN_IF_EXCEPTION(throwScope, {});
     }
     if (!nameValue.isUndefined()) {
         result.name = convert<IDLDOMString>(lexicalGlobalObject, nameValue);
-        RETURN_IF_EXCEPTION(throwScope, { });
+        RETURN_IF_EXCEPTION(throwScope, {});
     } else {
-        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name", "CryptoKeyAlgorithm", "DOMString");
-        return { };
+        throwRequiredMemberTypeError(lexicalGlobalObject, throwScope, "name"_s, "CryptoKeyAlgorithm"_s, "DOMString"_s);
+        return {};
     }
     return result;
 }
@@ -71,8 +70,8 @@ JSC::JSObject* convertDictionaryToJS(JSC::JSGlobalObject& lexicalGlobalObject, J
     auto result = constructEmptyObject(&lexicalGlobalObject, globalObject.objectPrototype());
 
     auto nameValue = toJS<IDLDOMString>(lexicalGlobalObject, throwScope, dictionary.name);
-    RETURN_IF_EXCEPTION(throwScope, { });
-    result->putDirect(vm, JSC::Identifier::fromString(vm, "name"_s), nameValue);
+    RETURN_IF_EXCEPTION(throwScope, {});
+    result->putDirect(vm, vm.propertyNames->name, nameValue);
     return result;
 }
 

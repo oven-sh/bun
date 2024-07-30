@@ -9,6 +9,7 @@ const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
+const Progress = bun.Progress;
 
 const lex = bun.js_lexer;
 const logger = bun.logger;
@@ -44,8 +45,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 pub const Version = struct {
@@ -132,7 +133,7 @@ pub const UpgradeCheckerThread = struct {
         std.time.sleep(std.time.ns_per_ms * delay);
 
         Output.Source.configureThread();
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         defer {
             js_ast.Expr.Data.Store.deinit();
@@ -162,7 +163,6 @@ pub const UpgradeCheckerThread = struct {
 };
 
 pub const UpgradeCommand = struct {
-    pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -172,8 +172,8 @@ pub const UpgradeCommand = struct {
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
-        refresher: ?*std.Progress,
-        progress: ?*std.Progress.Node,
+        refresher: ?*Progress,
+        progress: ?*Progress.Node,
         use_profile: bool,
         comptime silent: bool,
     ) !?Version {
@@ -244,7 +244,6 @@ pub const UpgradeCommand = struct {
             headers_buf,
             &metadata_body,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
@@ -441,7 +440,7 @@ pub const UpgradeCommand = struct {
     }
 
     fn _exec(ctx: Command.Context) !void {
-        try HTTP.HTTPThread.init();
+        HTTP.HTTPThread.init();
 
         var filesystem = try fs.FileSystem.init(null);
         var env_loader: DotEnv.Loader = brk: {
@@ -465,7 +464,7 @@ pub const UpgradeCommand = struct {
         const use_profile = strings.containsAny(bun.argv, "--profile");
 
         const version: Version = if (!use_canary) v: {
-            var refresher = std.Progress{};
+            var refresher = Progress{};
             var progress = refresher.start("Fetching version tags", 0);
 
             const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
@@ -512,7 +511,7 @@ pub const UpgradeCommand = struct {
         const http_proxy: ?URL = env_loader.getHttpProxy(zip_url);
 
         {
-            var refresher = std.Progress{};
+            var refresher = Progress{};
             var progress = refresher.start("Downloading", version.size);
             refresher.refresh();
             var async_http = try ctx.allocator.create(HTTP.AsyncHTTP);
@@ -527,12 +526,10 @@ pub const UpgradeCommand = struct {
                 "",
                 zip_file_buffer,
                 "",
-                timeout,
                 http_proxy,
                 null,
                 HTTP.FetchRedirect.follow,
             );
-            async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
@@ -634,7 +631,7 @@ pub const UpgradeCommand = struct {
                         tmpname,
                     };
 
-                    var unzip_process = std.ChildProcess.init(&unzip_argv, ctx.allocator);
+                    var unzip_process = std.process.Child.init(&unzip_argv, ctx.allocator);
                     unzip_process.cwd = tmpdir_path;
                     unzip_process.stdin_behavior = .Inherit;
                     unzip_process.stdout_behavior = .Inherit;
@@ -712,7 +709,7 @@ pub const UpgradeCommand = struct {
                     "--version",
                 };
 
-                const result = std.ChildProcess.run(.{
+                const result = std.process.Child.run(.{
                     .allocator = ctx.allocator,
                     .argv = &verify_argv,
                     .cwd = tmpdir_path,
@@ -850,7 +847,7 @@ pub const UpgradeCommand = struct {
                         target_dirname,
                         target_filename,
                     });
-                    std.os.rename(destination_executable, outdated_filename.?) catch |err| {
+                    std.posix.rename(destination_executable, outdated_filename.?) catch |err| {
                         save_dir_.deleteTree(version_name) catch {};
                         Output.prettyErrorln("<r><red>error:<r> Failed to rename current executable {s}", .{@errorName(err)});
                         Global.exit(1);
@@ -863,7 +860,7 @@ pub const UpgradeCommand = struct {
 
                     if (comptime Environment.isWindows) {
                         // Attempt to restore the old executable. If this fails, the user will be left without a working copy of bun.
-                        std.os.rename(outdated_filename.?, destination_executable) catch {
+                        std.posix.rename(outdated_filename.?, destination_executable) catch {
                             Output.errGeneric(
                                 \\Failed to move new version of Bun to {s} due to {s}
                             ,
@@ -912,7 +909,7 @@ pub const UpgradeCommand = struct {
                 env_loader.map.put("IS_BUN_AUTO_UPDATE", "true") catch bun.outOfMemory();
                 var std_map = try env_loader.map.stdEnvMap(ctx.allocator);
                 defer std_map.deinit();
-                _ = std.ChildProcess.run(.{
+                _ = std.process.Child.run(.{
                     .allocator = ctx.allocator,
                     .argv = &completions_argv,
                     .cwd = target_dirname,
@@ -999,7 +996,7 @@ pub const upgrade_js_bindings = struct {
 
     /// For testing upgrades when the temp directory has an open handle without FILE_SHARE_DELETE.
     /// Windows only
-    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
+    pub fn jsOpenTempDirWithoutSharingDelete(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) bun.JSC.JSValue {
         if (comptime !Environment.isWindows) return .undefined;
         const w = std.os.windows;
 
@@ -1053,7 +1050,7 @@ pub const upgrade_js_bindings = struct {
         return .undefined;
     }
 
-    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn jsCloseTempDirHandle(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
         if (comptime !Environment.isWindows) return .undefined;
 
         if (tempdir_fd) |fd| {

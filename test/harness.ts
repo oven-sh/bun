@@ -8,6 +8,8 @@ import { heapStats } from "bun:jsc";
 
 type Awaitable<T> = T | Promise<T>;
 
+export const BREAKING_CHANGES_BUN_1_2 = false;
+
 export const isMacOS = process.platform === "darwin";
 export const isLinux = process.platform === "linux";
 export const isPosix = isMacOS || isLinux;
@@ -15,6 +17,7 @@ export const isWindows = process.platform === "win32";
 export const isIntelMacOS = isMacOS && process.arch === "x64";
 export const isDebug = Bun.version.includes("debug");
 export const isCI = process.env.CI !== undefined;
+export const isBuildKite = process.env.BUILDKITE === "true";
 
 export const bunEnv: NodeJS.ProcessEnv = {
   ...process.env,
@@ -52,6 +55,10 @@ export function bunExe() {
 
 export function nodeExe(): string | null {
   return which("node") || null;
+}
+
+export function shellExe(): string {
+  return isWindows ? "pwsh" : "bash";
 }
 
 export function gc(force = true) {
@@ -135,9 +142,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;
@@ -350,21 +359,21 @@ expect.extend({
       }
     }
   },
-  toRun(cmds: string[], optionalStdout?: string) {
+  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== expectedCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
@@ -376,6 +385,43 @@ expect.extend({
       pass: true,
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
+  },
+  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
   },
 });
 
@@ -1023,7 +1069,8 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string): void;
+  toRun(optionalStdout?: string, expectedCode?: number): void;
+  toThrowWithCode(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {
@@ -1044,4 +1091,79 @@ export function rejectUnauthorizedScope(value: boolean) {
   };
 }
 
-export const BREAKING_CHANGES_BUN_1_2 = false;
+let networkInterfaces: any;
+
+function isIP(type: "IPv4" | "IPv6") {
+  if (!networkInterfaces) {
+    networkInterfaces = os.networkInterfaces();
+  }
+  for (const networkInterface of Object.values(networkInterfaces)) {
+    for (const { family } of networkInterface as any[]) {
+      if (family === type) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+export function isIPv6() {
+  // FIXME: AWS instances on Linux for Buildkite are not setup with IPv6
+  if (isBuildKite && isLinux) {
+    return false;
+  }
+  return isIP("IPv6");
+}
+
+export function isIPv4() {
+  return isIP("IPv4");
+}
+
+let glibcVersion: string | undefined;
+
+export function getGlibcVersion() {
+  if (glibcVersion || !isLinux) {
+    return glibcVersion;
+  }
+  try {
+    const { header } = process.report!.getReport() as any;
+    const { glibcVersionRuntime: version } = header;
+    if (typeof version === "string") {
+      return (glibcVersion = version);
+    }
+  } catch (error) {
+    console.warn("Failed to detect glibc version", error);
+  }
+}
+
+export function isGlibcVersionAtLeast(version: string): boolean {
+  const glibcVersion = getGlibcVersion();
+  if (!glibcVersion) {
+    return false;
+  }
+  return Bun.semver.satisfies(glibcVersion, `>=${version}`);
+}
+
+let macOSVersion: string | undefined;
+
+export function getMacOSVersion(): string | undefined {
+  if (macOSVersion || !isMacOS) {
+    return macOSVersion;
+  }
+  try {
+    const { stdout } = Bun.spawnSync({
+      cmd: ["sw_vers", "-productVersion"],
+    });
+    return (macOSVersion = stdout.toString().trim());
+  } catch (error) {
+    console.warn("Failed to detect macOS version:", error);
+  }
+}
+
+export function isMacOSVersionAtLeast(minVersion: number): boolean {
+  const macOSVersion = getMacOSVersion();
+  if (!macOSVersion) {
+    return false;
+  }
+  return parseFloat(macOSVersion) >= minVersion;
+}

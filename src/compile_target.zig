@@ -12,7 +12,7 @@ const Output = bun.Output;
 const CompileTarget = @This();
 
 os: Environment.OperatingSystem = Environment.os,
-arch: Environment.Archictecture = Environment.arch,
+arch: Environment.Architecture = Environment.arch,
 baseline: bool = !Environment.enableSIMD,
 version: bun.Semver.Version = .{
     .major = @truncate(Environment.version.major),
@@ -137,8 +137,8 @@ const HTTP = bun.http;
 const MutableString = bun.MutableString;
 const Global = bun.Global;
 pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, allocator: std.mem.Allocator, dest_z: [:0]const u8) !void {
-    try HTTP.HTTPThread.init();
-    var refresher = std.Progress{};
+    HTTP.HTTPThread.init();
+    var refresher = bun.Progress{};
 
     {
         refresher.refresh();
@@ -153,7 +153,6 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
         {
             var progress = refresher.start("Downloading", 0);
             defer progress.end();
-            const timeout = 30000;
             const http_proxy: ?bun.URL = env.getHttpProxy(url);
 
             async_http.* = HTTP.AsyncHTTP.initSync(
@@ -164,12 +163,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 "",
                 compressed_archive_bytes,
                 "",
-                timeout,
                 http_proxy,
                 null,
                 HTTP.FetchRedirect.follow,
             );
-            async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             async_http.client.reject_unauthorized = env.getTLSRejectUnauthorized();
 
@@ -294,8 +291,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                             const dirname = bun.path.dirname(dest_z, .loose);
                             if (dirname.len > 0) {
                                 std.fs.cwd().makePath(dirname) catch {};
+                                continue;
                             }
-                            continue;
+
+                            // fallthrough, failed for another reason
                         }
                         node.end();
                         Output.err(err, "Failed to move cross-compiled bun binary into cache directory {}", .{bun.fmt.fmtPath(u8, dest_z, .{})});
@@ -340,7 +339,7 @@ pub fn from(input_: []const u8) CompileTarget {
         const token = splitter.next() orelse break;
         if (token.len == 0) continue;
 
-        if (Environment.Archictecture.names.get(token)) |arch| {
+        if (Environment.Architecture.names.get(token)) |arch| {
             this.arch = arch;
             found_arch = true;
             continue;

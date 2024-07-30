@@ -26,8 +26,11 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 ARCH_NAME = aarch64
 DOCKER_BUILDARCH = arm64
 BREW_PREFIX_PATH = /opt/homebrew
-DEFAULT_MIN_MACOS_VERSION = 11.0
+DEFAULT_MIN_MACOS_VERSION = 13.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+ifeq ($(OS_NAME),linux)
+MARCH_NATIVE = -march=armv8-a+crc -mtune=ampere1
+endif
 else
 ARCH_NAME = x64
 DOCKER_BUILDARCH = amd64
@@ -129,7 +132,7 @@ SED = $(shell which gsed 2>/dev/null || which sed 2>/dev/null)
 
 BUN_DIR ?= $(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))
 BUN_DEPS_DIR ?= $(shell pwd)/src/deps
-BUN_DEPS_OUT_DIR ?= $(BUN_DEPS_DIR)
+BUN_DEPS_OUT_DIR ?= $(shell pwd)/build/bun-deps
 CPU_COUNT = 2
 ifeq ($(OS_NAME),darwin)
 CPU_COUNT = $(shell sysctl -n hw.logicalcpu)
@@ -154,7 +157,12 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
+	-DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
+	-DCMAKE_CXX_STANDARD=20 \
+	-DCMAKE_C_STANDARD=17 \
+	-DCMAKE_CXX_STANDARD_REQUIRED=ON \
+	-DCMAKE_C_STANDARD_REQUIRED=ON \
+	-DCMAKE_CXX_EXTENSIONS=ON 
 
 
 
@@ -181,8 +189,8 @@ endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE) -gdwarf-4
-CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
-BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden  -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 
@@ -449,8 +457,7 @@ MINIMUM_ARCHIVE_FILES = -L$(BUN_DEPS_OUT_DIR) \
 	-ldecrepit \
 	-lssl \
 	-lcrypto \
-	-llolhtml \
-	-lbase64
+	-llolhtml
 
 ARCHIVE_FILES_WITHOUT_LIBCRYPTO = $(MINIMUM_ARCHIVE_FILES) \
 		-larchive \
@@ -1971,11 +1978,6 @@ copy-to-bun-release-dir-bin:
 
 PACKAGE_MAP = --pkg-begin async_io $(BUN_DIR)/src/io/io_darwin.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin javascript_core $(BUN_DIR)/src/jsc.zig --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end --pkg-end --pkg-begin bun $(BUN_DIR)/src/bun_redirect.zig --pkg-end
 
-.PHONY: base64
-base64:
-	cd $(BUN_DEPS_DIR)/base64 && make clean && rm -rf CMakeCache.txt CMakeFiles && cmake $(CMAKE_FLAGS) . && make
-	cp $(BUN_DEPS_DIR)/base64/libbase64.a $(BUN_DEPS_OUT_DIR)/libbase64.a
-
 .PHONY: cold-jsc-start
 cold-jsc-start:
 	$(CXX_WITH_CCACHE) $(CLANG_FLAGS) \
@@ -1993,7 +1995,7 @@ cold-jsc-start:
 		misctools/cold-jsc-start.cpp -o cold-jsc-start
 
 .PHONY: vendor-without-npm
-vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd base64
+vendor-without-npm: node-fallbacks runtime_js fallback_decoder bun_error mimalloc picohttp zlib boringssl libarchive lolhtml sqlite usockets uws lshpack tinycc c-ares zstd
 
 
 .PHONY: vendor-without-check

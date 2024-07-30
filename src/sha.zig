@@ -84,7 +84,7 @@ pub const EVP = struct {
     pub const SHA512 = NewEVP(std.crypto.hash.sha2.Sha512.digest_length, "EVP_sha512");
     pub const SHA384 = NewEVP(std.crypto.hash.sha2.Sha384.digest_length, "EVP_sha384");
     pub const SHA256 = NewEVP(std.crypto.hash.sha2.Sha256.digest_length, "EVP_sha256");
-    pub const SHA512_256 = NewEVP(std.crypto.hash.sha2.Sha512256.digest_length, "EVP_sha512_256");
+    pub const SHA512_256 = NewEVP(std.crypto.hash.sha2.Sha512T256.digest_length, "EVP_sha512_256");
     pub const MD5_SHA1 = NewEVP(std.crypto.hash.Sha1.digest_length, "EVP_md5_sha1");
     pub const Blake2 = NewEVP(256 / 8, "EVP_blake2b256");
 };
@@ -138,7 +138,7 @@ pub const Hashers = struct {
     );
 
     pub const SHA512_256 = NewHasher(
-        std.crypto.hash.sha2.Sha512256.digest_length,
+        std.crypto.hash.sha2.Sha512T256.digest_length,
         BoringSSL.SHA512_CTX,
         BoringSSL.SHA512_256,
         BoringSSL.SHA512_256_Init,
@@ -172,7 +172,7 @@ const zig = [_]type{
     std.crypto.hash.sha2.Sha512,
     std.crypto.hash.sha2.Sha384,
     std.crypto.hash.sha2.Sha256,
-    std.crypto.hash.sha2.Sha512256,
+    std.crypto.hash.sha2.Sha512T256,
     std.crypto.hash.blake2.Blake2b256,
     std.crypto.hash.Blake3,
 };
@@ -196,125 +196,3 @@ const labels = [_][]const u8{
     "Blake2",
     "Blake3",
 };
-pub fn main() anyerror!void {
-    var file = try std.fs.cwd().openFileZ(bun.argv[bun.argv.len - 1], .{});
-    const bytes = try file.readToEndAlloc(std.heap.c_allocator, std.math.maxInt(usize));
-
-    const engine = BoringSSL.ENGINE_new().?;
-
-    std.debug.print(
-        "Hashing {any:3}\n\n",
-        .{bun.fmt.size(bytes.len)},
-    );
-
-    {
-        var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(bun.hash(bytes));
-        const zig_time = clock1.read();
-        std.debug.print(
-            "Wyhash:\n\n     zig: {any}\n\n",
-            .{std.fmt.fmtDuration(zig_time)},
-        );
-    }
-
-    {
-        var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.XxHash64.hash(0, bytes));
-        const zig_time = clock1.read();
-        std.debug.print(
-            "xxhash:\n\n     zig: {any}\n\n",
-            .{std.fmt.fmtDuration(zig_time)},
-        );
-    }
-
-    {
-        var clock1 = try std.time.Timer.start();
-        std.mem.doNotOptimizeAway(std.hash.Murmur2_64.hash(bytes));
-        const zig_time = clock1.read();
-        std.debug.print(
-            "Murmur2_64:\n\n     zig: {any}\n\n",
-            .{std.fmt.fmtDuration(zig_time)},
-        );
-    }
-
-    inline for (evp, 0..) |BoringHasher, i| {
-        const ZigHasher = zig[i];
-        std.debug.print(
-            comptime labels[i] ++ ":\n\n",
-            .{},
-        );
-        const DigestType = if (BoringHasher != void) BoringHasher.Digest else [32]u8;
-        var digest1 = std.mem.zeroes(DigestType);
-        var digest2 = std.mem.zeroes(DigestType);
-        var digest3 = std.mem.zeroes(DigestType);
-        var digest4 = std.mem.zeroes(DigestType);
-        defer {
-            std.mem.doNotOptimizeAway(&digest1);
-            std.mem.doNotOptimizeAway(&digest2);
-            std.mem.doNotOptimizeAway(&digest3);
-            std.mem.doNotOptimizeAway(&digest4);
-        }
-
-        var clock1 = try std.time.Timer.start();
-        ZigHasher.hash(bytes, &digest1, .{});
-        const zig_time = clock1.read();
-
-        const boring_time = brk: {
-            if (BoringHasher != void) {
-                var clock2 = try std.time.Timer.start();
-                BoringHasher.hash(bytes, &digest2, engine);
-                break :brk clock2.read();
-            } else {
-                break :brk 0;
-            }
-        };
-
-        const evp_time: usize = brk: {
-            if (evp[i] != void) {
-                var clock3 = try std.time.Timer.start();
-                evp[i].hash(bytes, &digest3, engine);
-                break :brk clock3.read();
-            }
-
-            break :brk 0;
-        };
-
-        const evp_in_time: usize = brk: {
-            if (evp[i] != void) {
-                var evp_in = evp[i].init();
-                var clock4 = try std.time.Timer.start();
-                evp_in.update(bytes);
-                evp_in.final(&digest4);
-                break :brk clock4.read();
-            }
-
-            break :brk 0;
-        };
-
-        std.debug.print(
-            "     zig: {}\n",
-            .{std.fmt.fmtDuration(zig_time)},
-        );
-
-        if (boring_time > 0)
-            std.debug.print(
-                "  boring: {}\n",
-                .{std.fmt.fmtDuration(boring_time)},
-            );
-        if (evp_time > 0)
-            std.debug.print(
-                "     evp: {}\n",
-                .{std.fmt.fmtDuration(evp_time)},
-            );
-
-        if (evp_in_time > 0)
-            std.debug.print(
-                "  evp in: {}\n\n",
-                .{std.fmt.fmtDuration(evp_in_time)},
-            );
-
-        if (!std.mem.eql(u8, &digest3, &digest2)) {
-            @panic("\ndigests don't match! for " ++ labels[i]);
-        }
-    }
-}

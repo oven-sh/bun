@@ -160,7 +160,13 @@ threadlocal var json_path_buf: bun.PathBuffer = undefined;
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
-    const name = this.name.slice();
+    const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
+        // Not sure where this case hits yet.
+        // BUN-2WQ
+        Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
+        bun.debugAssert(false);
+        break :brk "unnamed-package";
+    };
     const basename = brk: {
         var tmp = name;
         if (tmp[0] == '@') {
@@ -173,10 +179,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             if (strings.lastIndexOfChar(tmp, ':')) |i| {
                 tmp = tmp[i + 1 ..];
             }
-        }
-
-        if (comptime Environment.allow_assert) {
-            bun.assert(tmp.len > 0);
         }
 
         break :brk tmp;
@@ -198,28 +200,70 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
 
         defer extract_destination.close();
 
-        if (PackageManager.verbose_install) {
-            Output.prettyErrorln("[{s}] Start extracting {s}<r>", .{ name, tmpname });
-            Output.flush();
-        }
-
         const Archive = @import("../libarchive/libarchive.zig").Archive;
         const Zlib = @import("../zlib.zig");
         var zlib_pool = Npm.Registry.BodyPool.get(default_allocator);
         zlib_pool.data.reset();
         defer Npm.Registry.BodyPool.release(zlib_pool);
 
-        var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
-        zlib_entry.readAll() catch |err| {
-            this.package_manager.log.addErrorFmt(
-                null,
-                logger.Loc.Empty,
-                this.package_manager.allocator,
-                "{s} decompressing \"{s}\" to \"{}\"",
-                .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
-            ) catch unreachable;
-            return error.InstallFailed;
-        };
+        var esimated_output_size: usize = 0;
+
+        const time_started_for_verbose_logs: u64 = if (PackageManager.verbose_install) bun.getRoughTickCount().ns() else 0;
+
+        {
+            // Last 4 bytes of a gzip-compressed file are the uncompressed size.
+            if (tgz_bytes.len > 16) {
+                // If the file claims to be larger than 16 bytes and smaller than 64 MB, we'll preallocate the buffer.
+                // If it's larger than that, we'll do it incrementally. We want to avoid OOMing.
+                const last_4_bytes: u32 = @bitCast(tgz_bytes[tgz_bytes.len - 4 ..][0..4].*);
+                if (last_4_bytes > 16 and last_4_bytes < 64 * 1024 * 1024) {
+                    // It's okay if this fails. We will just allocate as we go and that will error if we run out of memory.
+                    esimated_output_size = last_4_bytes;
+                    if (zlib_pool.data.list.capacity == 0) {
+                        zlib_pool.data.list.ensureTotalCapacityPrecise(zlib_pool.data.allocator, last_4_bytes) catch {};
+                    } else {
+                        zlib_pool.data.ensureUnusedCapacity(last_4_bytes) catch {};
+                    }
+                }
+            }
+        }
+
+        var needs_to_decompress = true;
+        if (bun.FeatureFlags.isLibdeflateEnabled() and zlib_pool.data.list.capacity > 16 and esimated_output_size > 0) use_libdeflate: {
+            const decompressor = bun.libdeflate.Decompressor.alloc() orelse break :use_libdeflate;
+            defer decompressor.deinit();
+
+            const result = decompressor.gzip(tgz_bytes, zlib_pool.data.list.allocatedSlice());
+
+            if (result.status == .success) {
+                zlib_pool.data.list.items.len = result.written;
+                needs_to_decompress = false;
+            }
+
+            // If libdeflate fails for any reason, fallback to zlib.
+        }
+
+        if (needs_to_decompress) {
+            zlib_pool.data.list.clearRetainingCapacity();
+            var zlib_entry = try Zlib.ZlibReaderArrayList.init(tgz_bytes, &zlib_pool.data.list, default_allocator);
+            zlib_entry.readAll() catch |err| {
+                this.package_manager.log.addErrorFmt(
+                    null,
+                    logger.Loc.Empty,
+                    this.package_manager.allocator,
+                    "{s} decompressing \"{s}\" to \"{}\"",
+                    .{ @errorName(err), name, bun.fmt.fmtPath(u8, std.mem.span(tmpname), .{}) },
+                ) catch unreachable;
+                return error.InstallFailed;
+            };
+        }
+
+        if (PackageManager.verbose_install) {
+            const decompressing_ended_at: u64 = bun.getRoughTickCount().ns();
+            const elapsed = decompressing_ended_at - time_started_for_verbose_logs;
+            Output.prettyErrorln("[{s}] Extract {s}<r> (decompressed {} tgz file in {})", .{ name, tmpname, bun.fmt.size(tgz_bytes.len), bun.fmt.fmtDuration(elapsed) });
+        }
+
         switch (this.resolution.tag) {
             .github => {
                 const DirnameReader = struct {
@@ -278,7 +322,8 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         }
 
         if (PackageManager.verbose_install) {
-            Output.prettyErrorln("[{s}] Extracted<r>", .{name});
+            const elapsed = bun.getRoughTickCount().ns() - time_started_for_verbose_logs;
+            Output.prettyErrorln("[{s}] Extracted to {s} ({})<r>", .{ name, tmpname, bun.fmt.fmtDuration(elapsed) });
             Output.flush();
         }
     }
@@ -289,7 +334,7 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
         else => unreachable,
     };
     if (folder_name.len == 0 or (folder_name.len == 1 and folder_name[0] == '/')) @panic("Tried to delete root and stopped it");
-    var cache_dir = this.cache_dir;
+    const cache_dir = this.cache_dir;
 
     // e.g. @next
     // if it's a namespace package, we need to make sure the @name folder exists
@@ -398,52 +443,21 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             }
         }
 
-        var did_atomically_replace = false;
-        if (did_atomically_replace and PackageManager.using_fallback_temp_dir) tmpdir.deleteTree(src) catch {};
-
-        attempt_atomic_rename_and_fallback_to_racy_delete: {
-            {
-                // Happy path: the folder doesn't exist in the cache dir, so we can
-                // just rename it. We don't need to delete anything.
-                var err = switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
-                    .exclude = true,
-                })) {
-                    .err => |err| err,
-                    .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
-                };
-
-                // Fallback path: the folder exists in the cache dir, it might be in a strange state
-                // let's attempt to atomically replace it with the temporary folder's version
-                if (switch (err.getErrno()) {
-                    .EXIST, .NOTEMPTY, .OPNOTSUPP => true,
-                    else => false,
-                }) {
-                    did_atomically_replace = true;
-                    switch (bun.sys.renameat2(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name, .{
-                        .exchange = true,
-                    })) {
-                        .err => {},
-                        .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
-                    }
-                    did_atomically_replace = false;
-                }
-            }
-
-            //  sad path: let's try to delete the folder and then rename it
-            cache_dir.deleteTree(src) catch {};
-            switch (bun.sys.renameat(bun.toFD(tmpdir.fd), src, bun.toFD(cache_dir.fd), folder_name)) {
-                .err => |err| {
-                    this.package_manager.log.addErrorFmt(
-                        null,
-                        logger.Loc.Empty,
-                        this.package_manager.allocator,
-                        "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
-                        .{ name, err, tmpname, folder_name },
-                    ) catch unreachable;
-                    return error.InstallFailed;
-                },
-                .result => {},
-            }
+        if (bun.sys.renameatConcurrently(
+            bun.toFD(tmpdir.fd),
+            src,
+            bun.toFD(cache_dir.fd),
+            folder_name,
+            .{ .move_fallback = true },
+        ).asErr()) |err| {
+            this.package_manager.log.addErrorFmt(
+                null,
+                logger.Loc.Empty,
+                this.package_manager.allocator,
+                "moving \"{s}\" to cache dir failed: {}\n  From: {s}\n    To: {s}",
+                .{ name, err, tmpname, folder_name },
+            ) catch unreachable;
+            return error.InstallFailed;
         }
     }
 

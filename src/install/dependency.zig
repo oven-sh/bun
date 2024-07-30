@@ -187,6 +187,8 @@ pub inline fn isSCPLikePath(dependency: string) bool {
     return false;
 }
 
+/// `isGitHubShorthand` from npm
+/// https://github.com/npm/cli/blob/22731831e22011e32fa0ca12178e242c2ee2b33d/node_modules/hosted-git-info/lib/from-url.js#L6
 pub inline fn isGitHubRepoPath(dependency: string) bool {
     // Shortest valid expression: u/r
     if (dependency.len < 3) return false;
@@ -257,6 +259,28 @@ pub inline fn isTarball(dependency: string) bool {
 /// the input is assumed to be either a remote or local tarball
 pub inline fn isRemoteTarball(dependency: string) bool {
     return strings.hasPrefixComptime(dependency, "https://") or strings.hasPrefixComptime(dependency, "http://");
+}
+
+/// Turns `foo@1.1.1` into `foo`, `1.1.1`, or `@foo/bar@1.1.1` into `@foo/bar`, `1.1.1`, or `foo` into `foo`, `null`.
+pub fn splitNameAndVersion(str: string) struct { string, ?string } {
+    if (strings.indexOfChar(str, '@')) |at_index| {
+        if (at_index != 0) {
+            return .{ str[0..at_index], if (at_index + 1 < str.len) str[at_index + 1 ..] else null };
+        }
+
+        const second_at_index = (strings.indexOfChar(str[1..], '@') orelse return .{ str, null }) + 1;
+
+        return .{ str[0..second_at_index], if (second_at_index + 1 < str.len) str[second_at_index + 1 ..] else null };
+    }
+
+    return .{ str, null };
+}
+
+pub fn unscopedPackageName(name: []const u8) []const u8 {
+    if (name[0] != '@') return name;
+    var name_ = name;
+    name_ = name[1..];
+    return name_[(strings.indexOfChar(name_, '/') orelse return name) + 1 ..];
 }
 
 pub const Version = struct {
@@ -560,6 +584,10 @@ pub const Version = struct {
                                 if (strings.hasPrefixComptime(url, "://")) {
                                     url = url["://".len..];
                                 }
+                            }
+
+                            if (url.len > 4 and strings.eqlComptime(url[0.."git@".len], "git@")) {
+                                url = url["git@".len..];
                             }
 
                             if (strings.indexOfChar(url, '.')) |dot| {

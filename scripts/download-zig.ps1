@@ -1,11 +1,10 @@
 $ErrorActionPreference = "Stop"
 
-$ZigVersion="0.12.0-dev.1828+225fe6ddb"
-$ZigVersionShort="0.12.0-dev.1828"
+$ZigVersion="0.13.0"
 $Target="windows"
 $Arch="x86_64"
 
-$Url = "https://github.com/oven-sh/zig/releases/download/${ZigVersionShort}/zig-${Target}-${Arch}-${ZigVersion}.zip"
+$Url = "https://ziglang.org/builds/zig-${Target}-${Arch}-${ZigVersion}.zip"
 $CacheDir = (mkdir -Force (Join-Path $PSScriptRoot "../.cache"))
 $TarPath = Join-Path $CacheDir "zig-${ZigVersion}.zip"
 $OutDir = Join-Path $CacheDir "zig"
@@ -24,7 +23,7 @@ try {
   if (!(Test-Path $TarPath)) {
     try {
       Write-Host "-- Downloading Zig"
-      Invoke-WebRequest $Url -OutFile $TarPath
+      Invoke-RestMethod $Url -OutFile $TarPath
     } catch {
       Write-Error "Failed to fetch Zig from: $Url"
       throw $_

@@ -20,6 +20,7 @@ export const SQL = $cpp("JSSQLStatement.cpp", "createJSSQLStatementConstructor")
 export const patchInternals = {
   parse: $newZigFunction("patch.zig", "TestingAPIs.parse", 1),
   apply: $newZigFunction("patch.zig", "TestingAPIs.apply", 2),
+  makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
 export const shellInternals = {
@@ -36,12 +37,27 @@ export const shellInternals = {
   builtinDisabled: $newZigFunction("shell.zig", "TestingAPIs.disabledOnThisPlatform", 1),
 };
 
+export const iniInternals = {
+  parse: $newZigFunction("ini.zig", "IniTestingAPIs.parse", 1),
+  // loadNpmrc: (
+  //   src: string,
+  //   env?: Record<string, string>,
+  // ): {
+  //   default_registry_url: string;
+  //   default_registry_token: string;
+  //   default_registry_username: string;
+  //   default_registry_password: string;
+  // } => $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2)(src, env),
+  loadNpmrc: $newZigFunction("ini.zig", "IniTestingAPIs.loadNpmrcFromJS", 2),
+};
+
 export const crash_handler = $zig("crash_handler.zig", "js_bindings.generate") as {
   getMachOImageZeroOffset: () => number;
   segfault: () => void;
   panic: () => void;
   rootError: () => void;
   outOfMemory: () => void;
+  raiseIgnoringPanicHandler: () => void;
 };
 
 export const upgrade_test_helpers = $zig("upgrade_command.zig", "upgrade_js_bindings.generate") as {

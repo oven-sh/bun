@@ -435,7 +435,7 @@ it("should handle @scoped authentication", async () => {
     }
     expect(await request.text()).toBeEmpty();
     urls.push(request.url);
-    return new Response("Feeling lucky?", { status: 555 });
+    return new Response("Feeling lucky?", { status: 422 });
   });
   // workaround against `writeFile(..., { flag: "a" })`
   await writeFile(
@@ -454,7 +454,7 @@ foo = { token = "bar" }
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: GET ${url} - 555`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET ${url} - 422`);
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([url]);
@@ -4506,6 +4506,42 @@ it("should fail on invalid Git URL", async () => {
   });
   const err = await new Response(stderr).text();
   expect(err.split(/\r?\n/)).toContain('error: "git clone" for "uglify" failed');
+  const out = await new Response(stdout).text();
+  expect(out).toBeEmpty();
+  expect(await exited).toBe(1);
+  expect(urls.sort()).toBeEmpty();
+  expect(requested).toBe(0);
+  try {
+    await access(join(package_dir, "bun.lockb"));
+    expect(() => {}).toThrow();
+  } catch (err: any) {
+    expect(err.code).toBe("ENOENT");
+  }
+});
+
+it("should fail on ssh Git URL if invalid credentials", async () => {
+  const urls: string[] = [];
+  setHandler(dummyRegistry(urls));
+  await writeFile(
+    join(package_dir, "package.json"),
+    JSON.stringify({
+      name: "Foo",
+      version: "0.0.1",
+      dependencies: {
+        "private-install": "git+ssh://git@bitbucket.org/kaizenmedia/private-install-test.git",
+      },
+    }),
+  );
+  const { stdout, stderr, exited } = spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdout: "pipe",
+    stdin: "ignore",
+    stderr: "pipe",
+    env: { ...env, "GIT_ASKPASS": "echo" },
+  });
+  const err = await new Response(stderr).text();
+  expect(err.split(/\r?\n/)).toContain('error: "git clone" for "private-install" failed');
   const out = await new Response(stdout).text();
   expect(out).toBeEmpty();
   expect(await exited).toBe(1);

@@ -1732,7 +1732,7 @@ class ClientRequest extends OutgoingMessage {
     let method = options.method;
     const methodIsString = typeof method === "string";
     if (method !== null && method !== undefined && !methodIsString) {
-      // throw  ERR_INVALID_ARG_TYPE("options.method", "string", method);
+      // throw ERR_INVALID_ARG_TYPE("options.method", "string", method);
       throw new Error("ERR_INVALID_ARG_TYPE: options.method");
     }
 
@@ -1981,7 +1981,7 @@ function urlToHttpOptions(url) {
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    // throw  ERR_INVALID_ARG_TYPE(
+    // throw ERR_INVALID_ARG_TYPE(
     //   `options.${name}`,
     //   ["string", "undefined", "null"],
     //   host,

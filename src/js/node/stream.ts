@@ -3575,7 +3575,7 @@ var require_readable = __commonJS({
           const wState = stream._writableState;
           const autoDestroy = !wState || (wState.autoDestroy && (wState.finished || wState.writable === false));
           if (autoDestroy) {
-            stream[kAutoDestroyed] = true;
+            stream[kAutoDestroyed] = true; // workaround for node:http Server not using node:net Server
             stream.destroy();
           }
         }

@@ -438,6 +438,11 @@ pub export fn Bun__Process__send(
     var options_ = arguments[2];
     var callback = arguments[3];
 
+    if (message == .zero) message = .undefined;
+    if (handle == .zero) handle = .undefined;
+    if (options_ == .zero) options_ = .undefined;
+    if (callback == .zero) callback = .undefined;
+
     if (handle.isFunction()) {
         callback = handle;
         handle = .undefined;

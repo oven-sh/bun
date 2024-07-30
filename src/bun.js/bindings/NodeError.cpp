@@ -1,15 +1,13 @@
-
 #include "root.h"
-
-#include "JavaScriptCore/JSString.h"
-#include "JavaScriptCore/JSType.h"
-#include "JavaScriptCore/Symbol.h"
 #include "headers-handwritten.h"
 #include "BunClientData.h"
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
 #include "JavaScriptCore/ExceptionScope.h"
+#include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSType.h"
+#include "JavaScriptCore/Symbol.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
@@ -28,11 +26,12 @@ using namespace JSC;
 
 WTF::String JSValueToStringSafe(JSC::JSGlobalObject* globalObject, JSValue arg)
 {
+    ASSERT(!arg.isEmpty());
     if (!arg.isCell())
         return arg.toString(globalObject)->getString(globalObject);
 
     auto cell = arg.asCell();
-    const auto jstype = cell->type();
+    auto jstype = cell->type();
 
     if (jstype == JSC::JSType::StringType) {
         return cell->toStringInline(globalObject)->getString(globalObject);

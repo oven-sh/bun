@@ -1,14 +1,11 @@
 #include "ProcessBindingUV.h"
 #include "JavaScriptCore/ArrayAllocationProfile.h"
 #include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSGlobalObject.h"
-#include "JavaScriptCore/Operations.h"
 #include "JavaScriptCore/ThrowScope.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSMapInlines.h"
-#include "wtf/text/ASCIILiteral.h"
 
 // clang-format off
 

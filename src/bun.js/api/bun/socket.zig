@@ -1149,6 +1149,7 @@ fn NewSocket(comptime ssl: bool) type {
         socket: Socket,
 
         flags: Flags = .{},
+        ref_count: u32 = 1,
 
         wrapped: WrappedType = .none,
         handlers: *Handlers,
@@ -1286,6 +1287,7 @@ fn NewSocket(comptime ssl: bool) type {
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             this.flags.detached = true;
+            defer this.decRef();
 
             defer this.markInactive(socket_ctx);
 
@@ -1415,6 +1417,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             this.flags.detached = false;
             this.socket = socket;
+            this.incRef();
 
             if (this.wrapped == .none) {
                 socket.ext(**anyopaque).* = bun.cast(**anyopaque, this);
@@ -1580,6 +1583,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
+            defer this.decRef();
             this.flags.detached = true;
             defer this.markInactive(socket.context());
 
@@ -2066,6 +2070,21 @@ fn NewSocket(comptime ssl: bool) type {
             return JSValue.jsUndefined();
         }
 
+        pub fn incRef(this: *This) void {
+            bun.assert(this.ref_count > 0);
+            this.ref_count += 1;
+        }
+
+        pub fn decRef(this: *This) void {
+            const ref_count = this.ref_count;
+            bun.assert(ref_count > 0);
+            this.ref_count -= 1;
+            if (ref_count == 1) {
+                log("destroy", .{});
+                bun.default_allocator.destroy(this);
+            }
+        }
+
         pub fn finalize(this: *This) void {
             log("finalize() {d}", .{@intFromPtr(this)});
             this.flags.finalizing = true;
@@ -2095,6 +2114,8 @@ fn NewSocket(comptime ssl: bool) type {
                 this.connection = null;
                 connection.deinit();
             }
+
+            this.decRef();
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {

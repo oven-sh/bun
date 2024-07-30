@@ -114,43 +114,50 @@ function create_sentry_release() {
   fi
 }
 
-function download_buildkite_artifacts() {
-  local dir="$1"
-  local names="${@:2}"
-  for name in "${names[@]}"; do
-    run_command buildkite-agent artifact download "$name" "$dir"
-    if [ ! -f "$dir/$name" ]; then
-      echo "error: Cannot find Buildkite artifact: $name"
-      exit 1
-    fi
-  done
+function download_buildkite_artifact() {
+  local name="$1"
+  local dir="$2"
+  if [ -z "$dir" ]; then
+    dir="."
+  fi
+  run_command buildkite-agent artifact download "$name" "$dir"
+  if [ ! -f "$dir/$name" ]; then
+    echo "error: Cannot find Buildkite artifact: $name"
+    exit 1
+  fi
 }
 
-function upload_github_assets() {
+function upload_github_asset() {
   local version="$1"
   local tag="$(release_tag "$version")"
-  local files="${@:2}"
-  for file in "${files[@]}"; do
-    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-  done
-  if [ "$version" == "canary" ]; then
+  local file="$2"
+  run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
+  if [ "$tag" == "canary" ]; then
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This canary release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
   fi
 }
 
-function upload_s3_files() {
+function update_github_release() {
+  local version="$1"
+  local tag="$(release_tag "$version")"
+  if [ "$tag" == "canary" ]; then
+    run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
+      --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
+  fi
+}
+
+function upload_s3_file() {
   local folder="$1"
-  local files="${@:2}"
-  for file in "${files[@]}"; do
-    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
-  done
+  local file="$2"
+  run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
 }
 
 function create_release() {
   assert_main
   assert_buildkite_agent
   assert_github
+  assert_aws
   assert_sentry
 
   local tag="$1" # 'canary' or 'x.y.z'
@@ -171,10 +178,13 @@ function create_release() {
     bun-windows-x64-baseline-profile.zip
   )
 
-  download_buildkite_artifacts "." "${artifacts[@]}"
-  upload_s3_files "releases/$BUILDKITE_COMMIT" "${artifacts[@]}"
-  upload_s3_files "releases/$tag" "${artifacts[@]}"
-  upload_github_assets "$tag" "${artifacts[@]}"
+  for name in "${artifacts[@]}"; do
+    download_buildkite_artifact "$name"
+    upload_s3_file "releases/$BUILDKITE_COMMIT" "$name"
+    upload_s3_file "releases/$tag" "$name"
+    upload_github_asset "$tag" "$name"
+  done
+  update_github_release "$tag"
   create_sentry_release "$tag"
 }
 

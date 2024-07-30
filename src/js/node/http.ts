@@ -584,11 +584,6 @@ Server.prototype = {
     return this;
   },
 
-  setTimeout(msecs, callback) {
-    // TODO:
-    return this;
-  },
-
   [kRealListen](tls, port, host, socketPath, reusePort, onListen) {
     {
       const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
@@ -702,6 +697,11 @@ Server.prototype = {
 
       setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
     }
+  },
+
+  setTimeout(msecs, callback) {
+    // TODO:
+    return this;
   },
 
   constructor: Server,

@@ -66,6 +66,11 @@ brew install bun
 # with Docker
 docker pull oven/bun
 docker run --rm --init --ulimit memlock=-1:-1 oven/bun
+
+# with Flox
+flox init
+flox install bun
+flox activate
 ```
 
 ### Upgrade

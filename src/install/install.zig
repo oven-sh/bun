@@ -2976,6 +2976,29 @@ pub const PackageManager = struct {
 
         this.env.loadCCachePath(this_bundler.fs);
 
+        if (this.env.isUserProbablyInChina()) {
+            // When the user is in china, use npmmirror.com as the default registry and provide mirrors for common binary downloads.
+            // https://gist.github.com/blackcater/e3ba5ec0f5059f498b76e3157e786442
+            // Keep in mind:
+            // - Windows limits environment variable length to 32,767 characters.
+            try this.env.map.putDefault("npm_config_disturl", "https://npmmirror.com/dist");
+            try this.env.map.putDefault("npm_config_sharp_binary_host", "https://npmmirror.com/mirrors/sharp/");
+            try this.env.map.putDefault("npm_config_sharp_libvips_binary_host", "https://npmmirror.com/mirrors/sharp-libvips");
+            try this.env.map.putDefault("npm_config_profiler_binary_host_mirror", "https://npmmirror.com/mirrors/node-inspector/");
+            try this.env.map.putDefault("npm_config_fse_binary_host_mirror", "https://npmmirror.com/mirrors/fsevents");
+            try this.env.map.putDefault("npm_config_node_sqlite3_binary_host_mirror", "https://npmmirror.com/mirrors");
+            try this.env.map.putDefault("npm_config_sqlite3_binary_host_mirror", "https://npmmirror.com/mirrors");
+            try this.env.map.putDefault("npm_config_sqlite3_binary_site", "https://npmmirror.com/mirrors/sqlite3");
+            // https://github.com/electron-userland/electron-builder/issues/6445#issuecomment-1113991036
+            try this.env.map.putDefault("npm_config_electron_mirror", "https://npmmirror.com/mirrors/electron/v");
+            try this.env.map.putDefault("PUPPETEER_DOWNLOAD_BASE_URL", "https://npmmirror.com/mirrors");
+            try this.env.map.putDefault("npm_config_chromedriver_cdnurl", "https://npmmirror.com/mirrors/chromedriver");
+            try this.env.map.putDefault("npm_config_operadriver_cdnurl", "https://npmmirror.com/mirrors/operadriver");
+            try this.env.map.putDefault("npm_config_phantomjs_cdnurl", "https://npmmirror.com/mirrors/phantomjs");
+            try this.env.map.putDefault("npm_config_python_mirror", "https://npmmirror.com/mirrors/python");
+            try this.env.map.putDefault("npm_config_sass_binary_site", "https://npmmirror.com/mirrors/node-sass");
+        }
+
         {
             var node_path: bun.PathBuffer = undefined;
             if (this.env.getNodePath(this_bundler.fs, &node_path)) |node_pathZ| {
@@ -7002,12 +7025,20 @@ pub const PackageManager = struct {
                 .password = "",
                 .token = "",
             };
+            var log_message_for_verbose_install_that_using_base_url_for_china = false;
             if (bun_install_) |bun_install| {
                 if (bun_install.default_registry) |registry| {
                     base = registry;
                 }
             }
-            if (base.url.len == 0) base.url = Npm.Registry.default_url;
+            if (base.url.len == 0) {
+                if (env.isUserProbablyInChina()) {
+                    base.url = Npm.Registry.default_china_url;
+                    log_message_for_verbose_install_that_using_base_url_for_china = true;
+                } else {
+                    base.url = Npm.Registry.default_url;
+                }
+            }
             this.scope = try Npm.Registry.Scope.fromAPI("", base, allocator, env);
             defer {
                 this.did_override_default_scope = this.scope.url_hash != Npm.Registry.default_url_hash;
@@ -7302,6 +7333,12 @@ pub const PackageManager = struct {
             if (this.enable.frozen_lockfile) {
                 this.do.save_lockfile = false;
                 this.enable.force_save_lockfile = false;
+            }
+
+            if (PackageManager.verbose_install and log_message_for_verbose_install_that_using_base_url_for_china) {
+                // "Detected chinese locale. Defaulting to the 'registry.npmmirror.com' npm registry"
+                Output.prettyln("检测到中文区域。默认使用 <b>'registry.npmmirror.com'<r> npm 注册表。", .{});
+                Output.flush();
             }
         }
 

@@ -45,8 +45,38 @@ pub const Loader = struct {
     did_load_process: bool = false,
     reject_unauthorized: ?bool = null,
 
+    is_user_probably_in_china: ?bool = null,
+
     pub fn iterator(this: *const Loader) Map.HashTable.Iterator {
         return this.map.iterator();
+    }
+
+    fn isUserProbablyInChinaImpl(this: *Loader) bool {
+        if (this.get("LANG") orelse this.get("LC_ALL") orelse this.get("LC_CTYPE")) |lang| {
+            // LANG=zh_CN
+            // LANG=zh-CN
+            if (strings.indexOfChar(lang, '_') orelse strings.indexOf(lang, "-")) |i| {
+                var after = lang[@min(i + 1, lang.len)..];
+                if (after.len > 0) {
+                    // LANG=zh_CN.UTF-8
+                    // LANG=zh-CN.UTF-8
+                    if (strings.indexOfChar(after, '.')) |separator| {
+                        after = after[0..separator];
+                    }
+
+                    return strings.eqlComptime(after, "CN") or strings.eqlComptime(after, "cn");
+                }
+            }
+        }
+
+        return false;
+    }
+
+    pub fn isUserProbablyInChina(this: *Loader) bool {
+        return this.is_user_probably_in_china orelse {
+            this.is_user_probably_in_china = this.isUserProbablyInChinaImpl();
+            return this.is_user_probably_in_china.?;
+        };
     }
 
     pub fn has(this: *const Loader, input: []const u8) bool {

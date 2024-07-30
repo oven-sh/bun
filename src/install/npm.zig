@@ -37,6 +37,13 @@ const Npm = @This();
 pub const Registry = struct {
     pub const default_url = "https://registry.npmjs.org/";
     pub const default_url_hash = bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_url));
+
+    // Users have reported bun install being slow in China.
+    // https://npmmirror.com/
+    // https://cnpmjs.org
+    pub const default_china_url = "https://registry.npmmirror.com/";
+    pub const default_china_url_hash = bun.Wyhash11.hash(0, strings.withoutTrailingSlash(default_china_url));
+
     pub const BodyPool = ObjectPool(MutableString, MutableString.init2048, true, 8);
 
     pub const Scope = struct {
@@ -879,6 +886,7 @@ pub const PackageManifest = struct {
 
         fn manifestFileName(buf: []u8, file_id: u64, scope: *const Registry.Scope) ![:0]const u8 {
             const file_id_hex_fmt = bun.fmt.hexIntLower(file_id);
+            // For compatibility & complexity reasons, we prefix even if the default registry is the china mirror.
             return if (scope.url_hash == Registry.default_url_hash)
                 try std.fmt.bufPrintZ(buf, "{any}.npm", .{file_id_hex_fmt})
             else

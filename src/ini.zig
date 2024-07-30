@@ -1049,6 +1049,10 @@ pub fn loadNpmrc(
             if (install.default_registry) |dr|
                 break :brk bun.URL.parse(dr.url);
 
+            if (env.isUserProbablyInChina()) {
+                break :brk bun.URL.parse(Registry.default_china_url);
+            }
+
             break :brk bun.URL.parse(Registry.default_url);
         };
 
@@ -1128,7 +1132,7 @@ pub fn loadNpmrc(
                             .password = "",
                             .token = "",
                             .username = "",
-                            .url = Registry.default_url,
+                            .url = default_registry_url.href,
                         };
                         break :brk &install.default_registry.?;
                     };

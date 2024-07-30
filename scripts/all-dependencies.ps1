@@ -5,7 +5,7 @@ param(
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot "env.ps1")
 
-if ($env:CI) {
+if ($env:CI -eq "true") {
   & (Join-Path $PSScriptRoot "update-submodules.ps1")
 }
 

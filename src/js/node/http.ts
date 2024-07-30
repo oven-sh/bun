@@ -1,7 +1,8 @@
 // Hardcoded module "node:http"
 const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
-const { Duplex, Readable, Writable, ERR_STREAM_WRITE_AFTER_END, ERR_STREAM_ALREADY_FINISHED } = require("node:stream");
+const { Duplex, Readable, Writable } = require("node:stream");
+const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 
 const {
   getHeader,
@@ -64,27 +65,6 @@ function ERR_HTTP_SOCKET_ASSIGNED() {
   return new Error(`ServerResponse has an already assigned socket`);
 }
 
-// Cheaper to duplicate this than to import it from node:net
-function isIPv6(input) {
-  const v4Seg = "(?:[0-9]|[1-9][0-9]|1[0-9][0-9]|2[0-4][0-9]|25[0-5])";
-  const v4Str = `(${v4Seg}[.]){3}${v4Seg}`;
-  const v6Seg = "(?:[0-9a-fA-F]{1,4})";
-  const IPv6Reg = new RegExp(
-    "^(" +
-      `(?:${v6Seg}:){7}(?:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){6}(?:${v4Str}|:${v6Seg}|:)|` +
-      `(?:${v6Seg}:){5}(?::${v4Str}|(:${v6Seg}){1,2}|:)|` +
-      `(?:${v6Seg}:){4}(?:(:${v6Seg}){0,1}:${v4Str}|(:${v6Seg}){1,3}|:)|` +
-      `(?:${v6Seg}:){3}(?:(:${v6Seg}){0,2}:${v4Str}|(:${v6Seg}){1,4}|:)|` +
-      `(?:${v6Seg}:){2}(?:(:${v6Seg}){0,3}:${v4Str}|(:${v6Seg}){1,5}|:)|` +
-      `(?:${v6Seg}:){1}(?:(:${v6Seg}){0,4}:${v4Str}|(:${v6Seg}){1,6}|:)|` +
-      `(?::((?::${v6Seg}){0,5}:${v4Str}|(?::${v6Seg}){1,7}|:))` +
-      ")(%[0-9a-zA-Z-.:]{1,})?$",
-  );
-
-  return IPv6Reg.test(input);
-}
-
 // TODO: add primordial for URL
 // Importing from node:url is unnecessary
 const { URL } = globalThis;
@@ -95,13 +75,9 @@ const fetch = Bun.fetch;
 const nop = () => {};
 
 const kEmptyObject = Object.freeze(Object.create(null));
-const kOutHeaders = Symbol.for("kOutHeaders");
 const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
-
-const kCorked = Symbol.for("kCorked");
-const searchParamsSymbol = Symbol.for("query"); // This is the symbol used in Node
 
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
@@ -134,23 +110,16 @@ function isValidTLSArray(obj) {
   return false;
 }
 
-class ERR_INVALID_ARG_TYPE extends TypeError {
-  constructor(name, expected, actual) {
-    super(`The ${name} argument must be of type ${expected}. Received type ${typeof actual}`);
-    this.code = "ERR_INVALID_ARG_TYPE";
-  }
-}
-
 function validateMsecs(numberlike: any, field: string) {
   if (typeof numberlike !== "number" || numberlike < 0) {
-    throw new ERR_INVALID_ARG_TYPE(field, "number", numberlike);
+    throw ERR_INVALID_ARG_TYPE(field, "number", numberlike);
   }
 
   return numberlike;
 }
 function validateFunction(callable: any, field: string) {
   if (typeof callable !== "function") {
-    throw new ERR_INVALID_ARG_TYPE(field, "Function", callable);
+    throw ERR_INVALID_ARG_TYPE(field, "Function", callable);
   }
 
   return callable;
@@ -1676,7 +1645,7 @@ class ClientRequest extends OutgoingMessage {
     let method = options.method;
     const methodIsString = typeof method === "string";
     if (method !== null && method !== undefined && !methodIsString) {
-      // throw new ERR_INVALID_ARG_TYPE("options.method", "string", method);
+      // throw ERR_INVALID_ARG_TYPE("options.method", "string", method);
       throw new Error("ERR_INVALID_ARG_TYPE: options.method");
     }
 
@@ -1925,7 +1894,7 @@ function urlToHttpOptions(url) {
 
 function validateHost(host, name) {
   if (host !== null && host !== undefined && typeof host !== "string") {
-    // throw new ERR_INVALID_ARG_TYPE(
+    // throw ERR_INVALID_ARG_TYPE(
     //   `options.${name}`,
     //   ["string", "undefined", "null"],
     //   host,

@@ -97,6 +97,21 @@ pub const JSObject = extern struct {
         });
     }
 
+    extern fn Bun__ERR_INVALID_ARG_TYPE(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
+    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
+        return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
+    }
+
+    extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
+    pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
+        return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
+    }
+
+    extern fn Bun__ERR_IPC_CHANNEL_CLOSED(*JSGlobalObject) JSValue;
+    pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
+        return Bun__ERR_IPC_CHANNEL_CLOSED(this);
+    }
+
     pub const Extern = [_][]const u8{
         "putRecord",
         "create",

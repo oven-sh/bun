@@ -3390,6 +3390,7 @@ pub fn toResult(this: *HTTPClient) HTTPClientResult {
     return HTTPClientResult{
         .body = this.state.body_out_str,
         .metadata = null,
+        .redirected = this.flags.redirected,
         .fail = this.state.fail,
         // check if we are reporting cert errors, do not have a fail state and we are not done
         .has_more = certificate_info != null or (this.state.fail == null and !this.state.isDone()),

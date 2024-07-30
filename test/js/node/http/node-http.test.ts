@@ -1944,7 +1944,7 @@ it("should emit events in the right order", async () => {
 it("destroy should end download", async () => {
   // just simulate some file that will take forever to download
   const payload = Buffer.from("X".repeat(128 * 1024));
-
+  let sendedByteLength = 0;
   using server = Bun.serve({
     port: 0,
     async fetch(req) {
@@ -1952,6 +1952,7 @@ it("destroy should end download", async () => {
       req.signal.onabort = () => (running = false);
       return new Response(async function* () {
         while (running) {
+          sendedByteLength += payload.byteLength;
           yield payload;
           await Bun.sleep(10);
         }
@@ -1976,8 +1977,10 @@ it("destroy should end download", async () => {
     req.destroy();
     await Bun.sleep(10);
     const initialByteLength = receivedByteLength;
-    expect(receivedByteLength).toBeLessThanOrEqual(payload.length * 3);
+    // we should receive the same amount of data we sent
+    expect(initialByteLength).toBeLessThanOrEqual(sendedByteLength);
     await Bun.sleep(10);
+    // we should not receive more data after destroy
     expect(initialByteLength).toBe(receivedByteLength);
     await Bun.sleep(10);
   }

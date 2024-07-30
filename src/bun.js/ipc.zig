@@ -422,6 +422,7 @@ const NamedPipeIPCData = struct {
 
     pub fn configureClient(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, named_pipe: []const u8) !void {
         log("configureClient", .{});
+        const vm = JSC.VirtualMachine.get();
         const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         ipc_pipe.init(uv.Loop.get(), true).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
@@ -437,6 +438,12 @@ const NamedPipeIPCData = struct {
             .context = @ptrCast(instance),
         };
         try ipc_pipe.connect(&this.connect_req, named_pipe, instance, NewNamedPipeIPCHandler(Context).onConnect).unwrap();
+
+        ipc_pipe.ref();
+        const event_loop = vm.eventLoop();
+        while (!this.connected) {
+            event_loop.autoTick();
+        }
     }
 
     fn deinit(this: *NamedPipeIPCData) void {

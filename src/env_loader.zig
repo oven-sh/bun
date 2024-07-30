@@ -64,6 +64,7 @@ pub const Loader = struct {
                         after = after[0..separator];
                     }
 
+                    // We specifically want mainland china.
                     return strings.eqlComptime(after, "CN") or strings.eqlComptime(after, "cn");
                 }
             }

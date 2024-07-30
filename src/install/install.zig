@@ -11492,7 +11492,7 @@ pub const PackageManager = struct {
         } else {
             Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ " 大陸<r>\n", .{name});
 
-            if (Options.log_message_for_verbose_install_that_using_base_url_for_china) {
+            if (verbose_install and Options.log_message_for_verbose_install_that_using_base_url_for_china) {
                 Output.prettyErrorln("检测到中文区域。默认使用 'registry.npmmirror.com' npm 注册表。", .{});
             }
         }

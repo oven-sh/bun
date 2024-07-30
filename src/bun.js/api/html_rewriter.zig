@@ -885,7 +885,7 @@ fn HandlerCallback(
                 if (comptime @hasField(HandlerType, "thisObject"))
                     @field(this, "thisObject")
                 else
-                    JSValue.undefined,
+                    JSValue.zero,
                 &.{zig_element.toJS(this.global)},
             );
 

@@ -7009,7 +7009,7 @@ pub const PackageManager = struct {
 
             return error.@"Missing global bin directory: try setting $BUN_INSTALL";
         }
-        pub var log_message_for_verbose_install_that_using_base_url_for_china = false;
+        pub var is_using_mainland_china_mirror_source = false;
 
         pub fn load(
             this: *Options,
@@ -7034,7 +7034,7 @@ pub const PackageManager = struct {
             if (base.url.len == 0) {
                 if (env.isUserProbablyInMainlandChina()) {
                     base.url = Npm.Registry.default_china_url;
-                    log_message_for_verbose_install_that_using_base_url_for_china = true;
+                    is_using_mainland_china_mirror_source = true;
                 } else {
                     base.url = Npm.Registry.default_url;
                 }
@@ -8771,7 +8771,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            printCommandName(manager.env, "link");
+            printCommandName("link");
             Output.flush();
         }
 
@@ -8953,7 +8953,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            printCommandName(manager.env, "unlink");
+            printCommandName("unlink");
             Output.flush();
         }
 
@@ -9754,7 +9754,7 @@ pub const PackageManager = struct {
         };
 
         if (manager.options.shouldPrintCommandName()) {
-            printCommandName(manager.env, @tagName(subcommand));
+            printCommandName(@tagName(subcommand));
             Output.flush();
         }
 
@@ -11486,15 +11486,11 @@ pub const PackageManager = struct {
     var package_json_cwd_buf: bun.PathBuffer = undefined;
     pub var package_json_cwd: string = "";
 
-    fn printCommandName(env: *DotEnv.Loader, name: []const u8) void {
-        if (!env.isUserProbablyInMainlandChina()) {
-            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{name});
+    fn printCommandName(name: []const u8) void {
+        if (Options.is_using_mainland_china_mirror_source) {
+            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ " (using registry.npmmirror.com)<r>\n", .{name});
         } else {
-            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ " 大陸<r>\n", .{name});
-
-            if (verbose_install and Options.log_message_for_verbose_install_that_using_base_url_for_china) {
-                Output.prettyErrorln("检测到中文区域。默认使用 'registry.npmmirror.com' npm 注册表。", .{});
-            }
+            Output.prettyErrorln("<r><b>bun {s} <r><d>v" ++ Global.package_json_version_with_sha ++ "<r>\n", .{name});
         }
     }
 
@@ -11505,7 +11501,7 @@ pub const PackageManager = struct {
         // switch to `bun add <package>`
         if (manager.options.positionals.len > 1) {
             if (manager.options.shouldPrintCommandName()) {
-                printCommandName(manager.env, "add");
+                printCommandName("add");
 
                 Output.flush();
             }
@@ -11517,7 +11513,7 @@ pub const PackageManager = struct {
         }
 
         if (manager.options.shouldPrintCommandName()) {
-            printCommandName(manager.env, "install");
+            printCommandName("install");
             Output.flush();
         }
 

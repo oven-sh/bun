@@ -2413,7 +2413,6 @@ pub fn doRedirect(
 
     this.state.response_message_buffer.deinit();
 
-    this.connected_url = URL{};
     const body_out_str = this.state.body_out_str.?;
     this.remaining_redirect_count -|= 1;
     this.flags.redirected = true;
@@ -2431,7 +2430,7 @@ pub fn doRedirect(
     } else {
         NewHTTPContext(is_ssl).closeSocket(socket);
     }
-
+    this.connected_url = URL{};
 
     // TODO: should this check be before decrementing the redirect count?
     // the current logic will allow one less redirect than requested

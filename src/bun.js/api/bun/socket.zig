@@ -228,7 +228,6 @@ const Handlers = struct {
                 // allow it to be GC'd once the last connection is closed and it's not listening anymore
                 if (listen_socket.listener == null) {
                     listen_socket.strong_self.clear();
-                    listen_socket.strong_data.clear();
                 }
             } else {
                 this.unprotect();

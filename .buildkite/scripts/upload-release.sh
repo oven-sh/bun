@@ -132,10 +132,6 @@ function upload_github_asset() {
   local tag="$(release_tag "$version")"
   local file="$2"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-  if [ "$tag" == "canary" ]; then
-    run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
-      --notes "This canary release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
-  fi
 }
 
 function update_github_release() {
@@ -178,12 +174,19 @@ function create_release() {
     bun-windows-x64-baseline-profile.zip
   )
 
-  for name in "${artifacts[@]}"; do
-    download_buildkite_artifact "$name"
-    upload_s3_file "releases/$BUILDKITE_COMMIT" "$name"
-    upload_s3_file "releases/$tag" "$name"
-    upload_github_asset "$tag" "$name"
+  function upload_artifact() {
+    local artifact="$1"
+    download_buildkite_artifact "$artifact"
+    upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    upload_s3_file "releases/$tag" "$artifact" &
+    upload_github_asset "$tag" "$artifact" &
+  }
+
+  for artifact in "${artifacts[@]}"; do
+    upload_artifact "$artifact" &
   done
+  wait
+
   update_github_release "$tag"
   create_sentry_release "$tag"
 }

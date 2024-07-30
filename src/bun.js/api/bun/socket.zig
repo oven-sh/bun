@@ -19,46 +19,6 @@ const BoringSSL = bun.BoringSSL;
 const X509 = @import("./x509.zig");
 const Async = bun.Async;
 
-// const Corker = struct {
-//     ptr: ?*[16384]u8 = null,
-//     holder: ?*anyopaque = null,
-//     list: bun.ByteList = .{},
-
-//     pub fn write(this: *Corker, owner: *anyopaque, bytes: []const u8) usize {
-//         if (this.holder != null and this.holder.? != owner) {
-//             return 0;
-//         }
-
-//         this.holder = owner;
-//         if (this.ptr == null) {
-//             this.ptr = bun.default_allocator.alloc(u8, 16384) catch @panic("Out of memory allocating corker");
-//             bun.assert(this.list.cap == 0);
-//             bun.assert(this.list.len == 0);
-//             this.list.cap = 16384;
-//             this.list.ptr = this.ptr.?;
-//             this.list.len = 0;
-//         }
-//     }
-
-//     pub fn flushIfNecessary(this: *Corker, comptime ssl: bool, socket: uws.NewSocketHandler(ssl), owner: *anyopaque) void {
-//         if (this.holder == null or this.holder.? != owner) {
-//             return;
-//         }
-
-//         if (this.ptr == null) {
-//             return;
-//         }
-
-//         if (this.list.len == 0) {
-//             return;
-//         }
-
-//         const bytes = ths.list.slice();
-
-//         this.list.len = 0;
-//     }
-// };
-
 noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []const u8) JSValue {
     var zig_str: ZigString = ZigString.init("");
     var output_buf: [4096]u8 = undefined;

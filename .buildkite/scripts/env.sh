@@ -1,139 +1,119 @@
-#!/usr/bin/env bash
+#!/bin/bash
 
-# Hack for buildkite sometimes not having the right path
-if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
-  if [ -f ~/.bashrc ]; then
-    source ~/.bashrc
+set -eo pipefail
+
+function assert_os() {
+  local os="$(uname -s)"
+  case "$os" in
+    Linux)
+      echo "linux" ;;
+    Darwin)
+      echo "darwin" ;;
+    *)
+      echo "error: Unsupported operating system: $os" 1>&2
+      exit 1
+      ;;
+  esac
+}
+
+function assert_arch() {
+  local arch="$(uname -m)"
+  case "$arch" in
+    aarch64 | arm64)
+      echo "aarch64" ;;
+    x86_64 | amd64)
+      echo "x64" ;;
+    *)
+      echo "error: Unknown architecture: $arch" 1>&2
+      exit 1
+      ;;
+  esac
+}
+
+function assert_build() {
+  if [ -z "$BUILDKITE_REPO" ]; then
+    echo "error: Cannot find repository for this build"
+    exit 1
   fi
-fi
-
-if [[ $(uname -s) == 'Darwin' ]]; then
-  export LLVM_VERSION=18
-else
-  export LLVM_VERSION=16
-fi
-
-# this is the environment script for building bun's dependencies
-# it sets c compiler and flags
-export SCRIPT_DIR=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" &>/dev/null && pwd)
-export BUN_BASE_DIR=${BUN_BASE_DIR:-$(cd $SCRIPT_DIR && cd .. && pwd)}
-export BUN_DEPS_DIR=${BUN_DEPS_DIR:-$BUN_BASE_DIR/src/deps}
-export BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR:-$BUN_BASE_DIR/build/bun-deps}
-
-# Silence a perl script warning
-export LC_CTYPE="en_US.UTF-8"
-export LC_ALL="en_US.UTF-8"
-
-if [[ $(uname -s) == 'Darwin' ]]; then
-  export CXX="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang++"
-  export CC="$(brew --prefix llvm)@$LLVM_VERSION/bin/clang"
-  export AR="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ar"
-  export RANLIB="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-ranlib"
-  export LIBTOOL="$(brew --prefix llvm)@$LLVM_VERSION/bin/llvm-libtool-darwin"
-  export PATH="$(brew --prefix llvm)@$LLVM_VERSION/bin:$PATH"
-  ln -sf $LIBTOOL "$(brew --prefix llvm)@$LLVM_VERSION/bin/libtool" || true
-elif [[ "$CI" != "1" && "$CI" != "true" ]]; then
-  if [[ -f $SCRIPT_DIR/env.local ]]; then
-    echo "Sourcing $SCRIPT_DIR/env.local"
-    source $SCRIPT_DIR/env.local
+  if [ -z "$BUILDKITE_COMMIT" ]; then
+    echo "error: Cannot find commit for this build"
+    exit 1
   fi
-fi
-
-# this compiler detection could be better
-export CC=${CC:-$(which clang-$LLVM_VERSION || which clang || which cc)}
-export CXX=${CXX:-$(which clang++-$LLVM_VERSION || which clang++ || which c++)}
-export AR=${AR:-$(which llvm-ar || which ar)}
-export CPUS=${CPUS:-$(nproc || sysctl -n hw.ncpu || echo 1)}
-export RANLIB=${RANLIB:-$(which llvm-ranlib-$LLVM_VERSION || which llvm-ranlib || which ranlib)}
-
-# on Linux, force using lld as the linker
-if [[ $(uname -s) == 'Linux' ]]; then
-  export LD=${LD:-$(which ld.lld-$LLVM_VERSION || which ld.lld || which ld)}
-  export LDFLAGS="${LDFLAGS} -fuse-ld=lld "
-fi
-
-export CMAKE_CXX_COMPILER=${CXX}
-export CMAKE_C_COMPILER=${CC}
-
-export CFLAGS='-O3 -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables  '
-export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-c++-static-destructors '
-
-# Add flags for LTO
-# We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)
-if [ "$BUN_ENABLE_LTO" == "1" ]; then
-  export CFLAGS="$CFLAGS -flto=full "
-  export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
-  export LDFLAGS="$LDFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
-fi
-
-if [[ $(uname -s) == 'Linux' ]]; then
-  export CFLAGS="$CFLAGS -ffunction-sections -fdata-sections -faddrsig "
-  export CXXFLAGS="$CXXFLAGS -ffunction-sections -fdata-sections -faddrsig "
-  export LDFLAGS="${LDFLAGS} -Wl,-z,norelro"
-fi
-
-# Clang 18 on macOS needs to have -fno-define-target-os-macros to fix a zlib build issue
-# https://gitlab.kitware.com/cmake/cmake/-/issues/25755
-if [[ $(uname -s) == 'Darwin' && $LLVM_VERSION == '18' ]]; then
-  export CFLAGS="$CFLAGS -fno-define-target-os-macros "
-  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE "
-fi
-
-# libarchive needs position-independent executables to compile successfully
-if [ -n "$FORCE_PIC" ]; then
-  export CFLAGS="$CFLAGS -fPIC "
-  export CXXFLAGS="$CXXFLAGS -fPIC "
-elif [[ $(uname -s) == 'Linux' ]]; then
-  export CFLAGS="$CFLAGS -fno-pie -fno-pic "
-  export CXXFLAGS="$CXXFLAGS -fno-pie -fno-pic "
-fi
-
-if [[ $(uname -s) == 'Linux' && ($(uname -m) == 'aarch64' || $(uname -m) == 'arm64') ]]; then
-  export CFLAGS="$CFLAGS -march=armv8-a+crc -mtune=ampere1 "
-  export CXXFLAGS="$CXXFLAGS -march=armv8-a+crc -mtune=ampere1 "
-fi
-
-export CMAKE_FLAGS=(
-  -DCMAKE_C_COMPILER="${CC}"
-  -DCMAKE_CXX_COMPILER="${CXX}"
-  -DCMAKE_C_FLAGS="$CFLAGS"
-  -DCMAKE_CXX_FLAGS="$CXXFLAGS"
-  -DCMAKE_BUILD_TYPE=Release
-  -DCMAKE_CXX_STANDARD=20
-  -DCMAKE_C_STANDARD=17
-  -DCMAKE_CXX_STANDARD_REQUIRED=ON
-  -DCMAKE_C_STANDARD_REQUIRED=ON
-)
-
-CCACHE=$(which ccache || which sccache || echo "")
-if [ -f "$CCACHE" ]; then
-  CMAKE_FLAGS+=(
-    -DCMAKE_C_COMPILER_LAUNCHER="$CCACHE"
-    -DCMAKE_CXX_COMPILER_LAUNCHER="$CCACHE"
-  )
-fi
-
-if [[ $(uname -s) == 'Linux' ]]; then
-  # Ensure we always use -std=gnu++20 on Linux
-  CMAKE_FLAGS+=(-DCMAKE_CXX_EXTENSIONS=ON)
-fi
-
-if [[ $(uname -s) == 'Darwin' ]]; then
-  export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-13.0}
-  CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
-  export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
-  export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
-fi
-
-mkdir -p $BUN_DEPS_OUT_DIR
-
-if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
-  echo "C Compiler: ${CC}"
-  echo "C++ Compiler: ${CXX}"
-  if [ -n "$CCACHE" ]; then
-    echo "Ccache: ${CCACHE}"
+  if [ -z "$BUILDKITE_STEP_KEY" ]; then
+    echo "error: Cannot find step key for this build"
+    exit 1
   fi
-  if [[ $(uname -s) == 'Darwin' ]]; then
-    echo "OSX Deployment Target: ${CMAKE_OSX_DEPLOYMENT_TARGET}"
+  if [ -n "$BUILDKITE_GROUP_KEY" ] && [[ "$BUILDKITE_STEP_KEY" != "$BUILDKITE_GROUP_KEY"* ]]; then
+    echo "error: Build step '$BUILDKITE_STEP_KEY' does not start with group key '$BUILDKITE_GROUP_KEY'"
+    exit 1
   fi
-fi
+  # Skip os and arch checks for Zig, since it's cross-compiled on macOS
+  if [[ "$BUILDKITE_STEP_KEY" != *"zig"* ]]; then
+    local os="$(assert_os)"
+    if [[ "$BUILDKITE_STEP_KEY" != *"$os"* ]]; then
+      echo "error: Build step '$BUILDKITE_STEP_KEY' does not match operating system '$os'"
+      exit 1
+    fi
+    local arch="$(assert_arch)"
+    if [[ "$BUILDKITE_STEP_KEY" != *"$arch"* ]]; then
+      echo "error: Build step '$BUILDKITE_STEP_KEY' does not match architecture '$arch'"
+      exit 1
+    fi
+  fi
+}
+
+function assert_buildkite_agent() {
+  if ! command -v buildkite-agent &> /dev/null; then
+    echo "error: Cannot find buildkite-agent, please install it:"
+    echo "https://buildkite.com/docs/agent/v3/install"
+    exit 1
+  fi
+}
+
+function export_environment() {
+  source "$(realpath $(dirname "$0")/../../scripts/env.sh)"
+  source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
+  { set +x; } 2>/dev/null
+  export GIT_SHA="$BUILDKITE_COMMIT"
+  export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
+  export SCCACHE_DIR="$HOME/.cache/sccache/$BUILDKITE_STEP_KEY"
+  export ZIG_LOCAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
+  export BUN_DEPS_CACHE_DIR="$HOME/.cache/bun-deps/$BUILDKITE_STEP_KEY"
+  if [ "$(assert_arch)" == "aarch64" ]; then
+    export CPU_TARGET="native"
+  elif [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
+    export CPU_TARGET="nehalem"
+  else
+    export CPU_TARGET="haswell"
+  fi
+  if [[ "$BUILDKITE_STEP_KEY" == *"nolto"* ]]; then
+    export USE_LTO="OFF"
+  else
+    export USE_LTO="ON"
+  fi
+  if $(buildkite-agent meta-data exists release &> /dev/null); then
+    export CMAKE_BUILD_TYPE="$(buildkite-agent meta-data get release)"
+  else
+    export CMAKE_BUILD_TYPE="Release"
+  fi
+  if $(buildkite-agent meta-data exists canary &> /dev/null); then
+    export CANARY="$(buildkite-agent meta-data get canary)"
+  else
+    export CANARY="1"
+  fi
+  if $(buildkite-agent meta-data exists assertions &> /dev/null); then
+    export USE_DEBUG_JSC="$(buildkite-agent meta-data get assertions)"
+  else
+    export USE_DEBUG_JSC="OFF"
+  fi
+  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ]; then
+    rm -rf "$CCACHE_DIR"
+    rm -rf "$SCCACHE_DIR"
+    rm -rf "$ZIG_LOCAL_CACHE_DIR"
+    rm -rf "$BUN_DEPS_CACHE_DIR"
+  fi
+}
+
+assert_build
+assert_buildkite_agent
+export_environment

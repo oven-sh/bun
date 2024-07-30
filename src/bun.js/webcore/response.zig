@@ -1475,7 +1475,7 @@ pub const Fetch = struct {
             this.is_waiting_body = this.result.has_more;
             return Response{
                 .url = bun.String.createAtomIfPossible(metadata.url),
-                .redirected = this.result.redirected,
+                .redirected = this.result.redirected or if (this.http) |http_| http_.redirected else false,
                 .init = .{
                     .headers = FetchHeaders.createFromPicoHeaders(http_response.headers),
                     .status_code = @as(u16, @truncate(http_response.status_code)),

@@ -3952,15 +3952,6 @@ JSC::JSValue GlobalObject::moduleLoaderEvaluate(JSGlobalObject* lexicalGlobalObj
     return result;
 }
 
-inline JSC::JSValue GlobalObject__createErrorWithCode(JSGlobalObject* globalObject, ASCIILiteral code, ASCIILiteral message)
-{
-    auto& vm = globalObject->vm();
-    auto string = toZigString(message);
-    auto error = JSC::JSValue::decode(ZigString__toErrorInstance(&string, globalObject)).getObject();
-    error->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
-    return error;
-}
-
 extern "C" bool Bun__VM__specifierIsEvalEntryPoint(void*, EncodedJSValue);
 extern "C" void Bun__VM__setEntryPointEvalResultESM(void*, EncodedJSValue);
 

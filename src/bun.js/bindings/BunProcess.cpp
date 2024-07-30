@@ -30,6 +30,8 @@
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
 
+#include "AsyncContextFrame.h"
+
 #ifndef WIN32
 #include <errno.h>
 #include <dlfcn.h>

@@ -28,6 +28,7 @@ const kPaused = Symbol("kPaused");
 
 const StringDecoder = require("node:string_decoder").StringDecoder;
 const transferToNativeReadable = $newCppFunction("ReadableStream.cpp", "jsFunctionTransferToNativeReadableStream", 1);
+const { kAutoDestroyed } = require("internal/shared");
 
 const ObjectSetPrototypeOf = Object.setPrototypeOf;
 
@@ -3574,6 +3575,7 @@ var require_readable = __commonJS({
           const wState = stream._writableState;
           const autoDestroy = !wState || (wState.autoDestroy && (wState.finished || wState.writable === false));
           if (autoDestroy) {
+            stream[kAutoDestroyed] = true;
             stream.destroy();
           }
         }

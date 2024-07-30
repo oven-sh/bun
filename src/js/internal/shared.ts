@@ -88,4 +88,5 @@ export default {
   fileSinkSymbol,
   ExceptionWithHostPort,
   kHandle: Symbol("kHandle"),
+  kAutoDestroyed: Symbol("kAutoDestroyed"),
 };

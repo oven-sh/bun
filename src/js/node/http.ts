@@ -4,6 +4,7 @@ const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
 const { isPrimary } = require("internal/cluster/isPrimary");
+const { kAutoDestroyed } = require("internal/shared");
 
 const {
   getHeader,
@@ -159,7 +160,7 @@ var FakeSocket = class Socket extends Duplex {
   _destroy(err, callback) {
     if (!this[kInternalSocketData]) return; // sometimes 'this' is Socket not FakeSocket
     this[kInternalSocketData][0][connectionsSymbol]--;
-    this[kInternalSocketData][1].end();
+    if (!this[kInternalSocketData][1]["req"][kAutoDestroyed]) this[kInternalSocketData][1].end();
     this[kInternalSocketData][0]._emitCloseIfDrained();
   }
 

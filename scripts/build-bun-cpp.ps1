@@ -1,11 +1,10 @@
 $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pipefail' in bash
 
-.\scripts\env.ps1
-.\scripts\update-submodules.ps1
-.\scripts\build-libuv.ps1 -CloneOnly $True
-
-# libdeflate.h is needed otherwise the build fails
-git submodule update --init --recursive --progress --depth=1 --checkout src/deps/libdeflate
+. (Join-Path $PSScriptRoot "env.ps1")
+if ($env:CI -eq "true") {
+  & (Join-Path $PSScriptRoot "update-submodules.ps1")
+  & (Join-Path $PSScriptRoot "build-libuv.ps1") -CloneOnly $True
+}
 
 cd build
 cmake .. @CMAKE_FLAGS `

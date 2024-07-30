@@ -25,11 +25,9 @@
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include "wtf-bindings.h"
-
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
-
 #include "AsyncContextFrame.h"
 
 #ifndef WIN32

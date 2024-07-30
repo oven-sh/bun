@@ -1285,7 +1285,6 @@ fn NewSocket(comptime ssl: bool) type {
         }
         fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d})", .{errno});
-            if (this.flags.detached) return;
             this.flags.detached = true;
             defer this.markInactive();
 

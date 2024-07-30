@@ -134,16 +134,13 @@ fi
 curl --fail --location --progress-bar --output "$exe.zip" "$bun_uri" ||
     error "Failed to download bun from \"$bun_uri\""
 
-unzip -oqd "$bin_dir" "$exe.zip" ||
+unzip -oqjd "$bin_dir" "$exe.zip" ||
     error 'Failed to extract bun'
-
-mv "$bin_dir/bun-$target/$exe_name" "$exe" ||
-    error 'Failed to move extracted bun to destination'
 
 chmod +x "$exe" ||
     error 'Failed to set permissions on bun executable'
 
-rm -r "$bin_dir/bun-$target" "$exe.zip"
+rm "$exe.zip"
 
 tildify() {
     if [[ $1 = $HOME/* ]]; then

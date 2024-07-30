@@ -2368,7 +2368,7 @@ fn NewPrinter(
                         } else if (p.options.commonjs_module_ref.isValid()) {
                             p.printSymbol(p.options.commonjs_module_ref);
                         } else {
-                            p.print("");
+                            p.print("module");
                         }
                     }
                 },

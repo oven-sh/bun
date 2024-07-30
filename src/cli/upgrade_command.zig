@@ -169,6 +169,196 @@ pub const UpgradeCommand = struct {
     var unzip_path_buf: bun.PathBuffer = undefined;
     var tmpdir_path_buf: bun.PathBuffer = undefined;
 
+    const npmmirror_api_url_base = "https://registry.npmmirror.com/-/binary/bun";
+
+    pub fn getLatestVersionFromMainlandChinaMirror(
+        allocator: std.mem.Allocator,
+        env_loader: *DotEnv.Loader,
+        refresher: ?*Progress,
+        progress: ?*Progress.Node,
+        use_profile: bool,
+        comptime silent: bool,
+    ) !?Version {
+        const npmmirror_api_url = URL.parse(npmmirror_api_url_base);
+
+        const http_proxy: ?URL = env_loader.getHttpProxy(npmmirror_api_url);
+
+        var metadata_body = try MutableString.init(allocator, 2048);
+
+        // ensure very stable memory address
+        var async_http: *HTTP.AsyncHTTP = try allocator.create(HTTP.AsyncHTTP);
+        async_http.* = HTTP.AsyncHTTP.initSync(
+            allocator,
+            .GET,
+            npmmirror_api_url,
+            .{},
+            "",
+            &metadata_body,
+            "",
+            http_proxy,
+            null,
+            HTTP.FetchRedirect.follow,
+        );
+        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+
+        if (!silent) async_http.client.progress_node = progress.?;
+        const response = try async_http.sendSync(true);
+
+        switch (response.status_code) {
+            404 => return error.HTTP404,
+            403 => return error.HTTPForbidden,
+            429 => return error.HTTPTooManyRequests,
+            499...599 => return error.GitHubIsDown,
+            200 => {},
+            else => return error.HTTPError,
+        }
+
+        var log = logger.Log.init(allocator);
+        defer if (comptime silent) log.deinit();
+        var source = logger.Source.initPathString("releases.json", metadata_body.list.items);
+        initializeStore();
+        var expr = ParseJSON(&source, &log, allocator) catch |err| {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+
+                if (log.errors > 0) {
+                    if (Output.enable_ansi_colors) {
+                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                    } else {
+                        try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                    }
+
+                    Global.exit(1);
+                } else {
+                    Output.prettyErrorln("Error parsing releases from GitHub: <r><red>{s}<r>", .{@errorName(err)});
+                    Global.exit(1);
+                }
+            }
+
+            return null;
+        };
+
+        if (log.errors > 0) {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+
+                if (Output.enable_ansi_colors) {
+                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), true);
+                } else {
+                    try log.printForLogLevelWithEnableAnsiColors(Output.errorWriter(), false);
+                }
+                Global.exit(1);
+            }
+
+            return null;
+        }
+
+        var version = Version{ .zip_url = "", .tag = "", .buf = metadata_body, .size = 0 };
+
+        if (expr.data != .e_array) {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+
+                const json_type: js_ast.Expr.Tag = @as(js_ast.Expr.Tag, expr.data);
+                Output.prettyErrorln("JSON error - expected an array but received {s}", .{@tagName(json_type)});
+                Global.exit(1);
+            }
+
+            return null;
+        }
+
+        var highest_version_object: ?*js_ast.E.Object = null;
+        var highest_semver_version: ?bun.Semver.Version = .{};
+
+        for (expr.data.e_array.slice()) |item| {
+            if (item.data == .e_object) {
+                if (item.get("name")) |name_str| {
+                    if (name_str.data == .e_string and !name_str.data.e_string.eqlComptime("canary")) {
+                        // name: "bun-v1.1.7/",
+                        var name = name_str.data.e_string.slice(bun.default_allocator);
+                        name = strings.withoutTrailingSlash(name);
+                        const name_for_tag = name;
+                        if (strings.hasPrefixComptime(name, "bun-v")) {
+                            name = name["bun-v".len..];
+                        } else if (strings.hasPrefixComptime(name, "bun-")) {
+                            // just being cautious.
+                            name = name["bun-".len..];
+                        }
+
+                        const semver_version = bun.Semver.Version.parse(bun.Semver.SlicedString.init(name, name));
+                        if (semver_version.valid) {
+                            if (highest_semver_version == null or highest_semver_version.?.orderWithoutBuild(semver_version.version.min(), name, name).compare(.lt)) {
+                                highest_semver_version = semver_version.version.min();
+                                highest_version_object = item.data.e_object;
+                                version.tag = name_for_tag;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (highest_version_object == null) {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+                Output.prettyErrorln("JSON Error parsing releases from https://registry.npmmirror.com/-/binary/bun: {s}\n", .{metadata_body.list.items});
+                Global.exit(1);
+            }
+
+            return null;
+        }
+
+        const base_url_expr: js_ast.Expr = highest_version_object.?.get("url") orelse {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+                Output.prettyErrorln("JSON Error parsing releases from https://registry.npmmirror.com/-/binary/bun: {s}\n", .{metadata_body.list.items});
+                Global.exit(1);
+            }
+
+            return null;
+        };
+        const base_url = base_url_expr.asString(allocator) orelse {
+            if (!silent) {
+                progress.?.end();
+                refresher.?.refresh();
+                Output.prettyErrorln("JSON Error parsing releases from https://registry.npmmirror.com/-/binary/bun: {s}\n", .{metadata_body.list.items});
+                Global.exit(1);
+            }
+
+            return null;
+        };
+
+        if (use_profile) {
+            version.zip_url = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ strings.withoutTrailingSlash(base_url), Version.profile_zip_filename });
+        } else {
+            version.zip_url = try std.fmt.allocPrint(allocator, "{s}/{s}", .{ strings.withoutTrailingSlash(base_url), Version.zip_filename });
+        }
+
+        version.buf = metadata_body;
+
+        return version;
+    }
+
+    pub fn getLatestVersionMaybeMirror(
+        allocator: std.mem.Allocator,
+        env_loader: *DotEnv.Loader,
+        refresher: ?*Progress,
+        progress: ?*Progress.Node,
+        use_profile: bool,
+        comptime silent: bool,
+    ) !?Version {
+        if (env_loader.isUserProbablyInMainlandChina()) {
+            return getLatestVersionFromMainlandChinaMirror(allocator, env_loader, refresher, progress, use_profile, silent);
+        }
+
+        return getLatestVersion(allocator, env_loader, refresher, progress, use_profile, silent);
+    }
+
     pub fn getLatestVersion(
         allocator: std.mem.Allocator,
         env_loader: *DotEnv.Loader,
@@ -465,9 +655,10 @@ pub const UpgradeCommand = struct {
 
         const version: Version = if (!use_canary) v: {
             var refresher = Progress{};
-            var progress = refresher.start("Fetching version tags", 0);
 
-            const version = (try getLatestVersion(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
+            var progress = if (!env_loader.isUserProbablyInMainlandChina()) refresher.start("Fetching version tags", 0) else refresher.start("Fetching via registry.npmmirror.com", 0);
+
+            const version = (try getLatestVersionMaybeMirror(ctx.allocator, &env_loader, &refresher, progress, use_profile, false)) orelse return;
 
             progress.end();
             refresher.refresh();

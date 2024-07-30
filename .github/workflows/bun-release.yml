@@ -253,14 +253,14 @@ jobs:
     if: ${{ github.event_name == 'release' || github.event.inputs.use-winget == 'true' }}
     steps:
       - name: Publish main build
-        uses: vedantmgoyal2009/winget-releaser@v2
+        uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: Oven-sh.Bun
           release-tag: ${{ env.BUN_VERSION }}
           installers-regex: '-windows-\w+\.zip$'
           token: ${{ secrets.ROBOBUN_TOKEN }}
       - name: Publish baseline build
-        uses: vedantmgoyal2009/winget-releaser@v2
+        uses: vedantmgoyal9/winget-releaser@main
         with:
           identifier: Oven-sh.Bun.Baseline
           release-tag: ${{ env.BUN_VERSON }}

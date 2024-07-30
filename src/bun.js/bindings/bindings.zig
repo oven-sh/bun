@@ -97,21 +97,6 @@ pub const JSObject = extern struct {
         });
     }
 
-    extern fn Bun__ERR_INVALID_ARG_TYPE(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
-    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
-        return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
-    }
-
-    extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
-    pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
-        return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
-    }
-
-    extern fn Bun__ERR_IPC_CHANNEL_CLOSED(*JSGlobalObject) JSValue;
-    pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
-        return Bun__ERR_IPC_CHANNEL_CLOSED(this);
-    }
-
     pub const Extern = [_][]const u8{
         "putRecord",
         "create",
@@ -3250,6 +3235,21 @@ pub const JSGlobalObject = extern struct {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
+    extern fn Bun__ERR_INVALID_ARG_TYPE(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
+    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
+        return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
+    }
+
+    extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
+    pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
+        return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
+    }
+
+    extern fn Bun__ERR_IPC_CHANNEL_CLOSED(*JSGlobalObject) JSValue;
+    pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
+        return Bun__ERR_IPC_CHANNEL_CLOSED(this);
+    }
+
     pub const Extern = [_][]const u8{
         "reload",
         "bunVM",
@@ -3268,6 +3268,31 @@ pub const JSGlobalObject = extern struct {
         // "createError",
         // "throwError",
     };
+
+    // returns false if it throws
+    pub fn validateObject(
+        this: *JSGlobalObject,
+        comptime arg_name: []const u8,
+        value: JSValue,
+        opts: struct {
+            allowArray: bool = false,
+            allowFunction: bool = false,
+            nullable: bool = false,
+        },
+    ) bool {
+        if ((!opts.nullable and value.isNull()) or
+            (!opts.allowArray and value.isArray()) or
+            (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
+        {
+            this.throwValue(this.ERR_INVALID_ARG_TYPE(
+                ZigString.static(arg_name).toJS(this),
+                ZigString.static("object").toJS(this),
+                value,
+            ));
+            return false;
+        }
+        return true;
+    }
 };
 
 pub const JSNativeFn = JSHostFunctionPtr;
@@ -4593,6 +4618,12 @@ pub const JSValue = enum(JSValueReprInt) {
     }
     pub inline fn isObject(this: JSValue) bool {
         return this.isCell() and this.jsType().isObject();
+    }
+    pub inline fn isArray(this: JSValue) bool {
+        return this.isCell() and this.jsType().isArray();
+    }
+    pub inline fn isFunction(this: JSValue) bool {
+        return this.isCell() and this.jsType().isFunction();
     }
     pub fn isObjectEmpty(this: JSValue, globalObject: *JSGlobalObject) bool {
         const type_of_value = this.jsType();

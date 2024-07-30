@@ -116,6 +116,8 @@ extern "C" const char* Bun__githubURL;
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__send);
 BUN_DECLARE_HOST_FUNCTION(Bun__Process__disconnect);
 
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value);
+
 static JSValue constructArch(VM& vm, JSObject* processObject)
 {
 #if CPU(X86_64)
@@ -2170,6 +2172,7 @@ void Process::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
     visitor.append(thisObject->m_uncaughtExceptionCaptureCallback);
+    visitor.append(thisObject->m_nextTickFunction);
     thisObject->m_cpuUsageStructure.visit(visitor);
     thisObject->m_memoryUsageStructure.visit(visitor);
     thisObject->m_bindingUV.visit(visitor);
@@ -2571,10 +2574,52 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionDrainMicrotaskQueue, (JSC::JSGlobalObject * g
     return JSValue::encode(jsUndefined());
 }
 
-static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args)
 {
-    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
-    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    if (!this->m_nextTickFunction) {
+        this->get(globalObject, Identifier::fromString(vm, "nextTick"_s));
+        RETURN_IF_EXCEPTION(scope, void());
+    }
+
+    ASSERT(!args.isEmpty());
+    JSObject* nextTickFn = this->m_nextTickFunction.get();
+    AsyncContextFrame::call(globalObject, nextTickFn, jsUndefined(), args);
+    RELEASE_AND_RETURN(scope, void());
+}
+
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value)
+{
+    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer args;
+    if (value != 0)
+        args.append(value);
+    this->queueNextTick(vm, globalObject, args);
+}
+
+void Process::queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue value, JSValue arg1)
+{
+    ASSERT_WITH_MESSAGE(value.isCallable(), "Must be a function for us to call");
+    MarkedArgumentBuffer args;
+    if (value != 0) {
+        args.append(value);
+        if (arg1 != 0) {
+            args.append(arg1);
+        }
+    }
+    this->queueNextTick(vm, globalObject, args);
+}
+
+extern "C" void Bun__Process__queueNextTick1(GlobalObject* globalObject, EncodedJSValue value, EncodedJSValue arg1)
+{
+    auto process = jsCast<Process*>(globalObject->processObject());
+    auto& vm = globalObject->vm();
+    process->queueNextTick(vm, globalObject, JSValue::decode(value), JSValue::decode(arg1));
+}
+JSC_DECLARE_HOST_FUNCTION(Bun__Process__queueNextTick1);
+
+JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject)
+{
     JSValue nextTickQueueObject;
     if (!globalObject->m_nextTickQueue) {
         nextTickQueueObject = Bun::JSNextTickQueue::create(globalObject);
@@ -2583,15 +2628,27 @@ static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
     }
 
-    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
 
     JSC::MarkedArgumentBuffer args;
-    args.append(processObject);
+    args.append(this);
     args.append(nextTickQueueObject);
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionDrainMicrotaskQueue, ImplementationVisibility::Private));
     args.append(JSC::JSFunction::create(vm, globalObject, 1, String(), jsFunctionReportUncaughtException, ImplementationVisibility::Private));
 
-    return JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    JSValue nextTickFunction = JSC::call(globalObject, initializer, JSC::getCallData(initializer), globalObject->globalThis(), args);
+    if (nextTickFunction && nextTickFunction.isObject()) {
+        this->m_nextTickFunction.set(vm, this, nextTickFunction.getObject());
+    }
+
+    return nextTickFunction;
+}
+
+static JSValue constructProcessNextTickFn(VM& vm, JSObject* processObject)
+{
+    JSGlobalObject* lexicalGlobalObject = processObject->globalObject();
+    Zig::GlobalObject* globalObject = jsCast<Zig::GlobalObject*>(lexicalGlobalObject);
+    return jsCast<Process*>(processObject)->constructNextTickFn(globalObject->vm(), globalObject);
 }
 
 static JSValue constructFeatures(VM& vm, JSObject* processObject)
@@ -2833,6 +2890,17 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
     if (process->wrapped().hasEventListeners(ident)) {
         JSC::MarkedArgumentBuffer args;
         process->wrapped().emit(ident, args);
+    }
+}
+
+extern "C" void Process__emitErrorEvent(Zig::GlobalObject* global, EncodedJSValue value)
+{
+    auto* process = static_cast<Process*>(global->processObject());
+    auto& vm = global->vm();
+    if (process->wrapped().hasEventListeners(vm.propertyNames->error)) {
+        JSC::MarkedArgumentBuffer args;
+        args.append(JSValue::decode(value));
+        process->wrapped().emit(vm.propertyNames->error, args);
     }
 }
 

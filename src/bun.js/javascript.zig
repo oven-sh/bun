@@ -425,23 +425,93 @@ pub export fn Bun__GlobalObject__hasIPC(global: *JSC.JSGlobalObject) bool {
     return global.bunVM().ipc != null;
 }
 
+extern fn Bun__Process__queueNextTick1(*JSC.ZigGlobalObject, JSC.JSValue, JSC.JSValue) void;
+
 pub export fn Bun__Process__send(
     globalObject: *JSGlobalObject,
     callFrame: *JSC.CallFrame,
 ) callconv(JSC.conv) JSValue {
     JSC.markBinding(@src());
-    if (callFrame.argumentsCount() < 1) {
-        globalObject.throwInvalidArguments("process.send requires at least one argument", .{});
-        return .zero;
+    const arguments = callFrame.arguments(4).ptr;
+    var message = arguments[0];
+    var handle = arguments[1];
+    var options_ = arguments[2];
+    var callback = arguments[3];
+
+    if (message == .zero) message = .undefined;
+    if (handle == .zero) handle = .undefined;
+    if (options_ == .zero) options_ = .undefined;
+    if (callback == .zero) callback = .undefined;
+
+    if (handle.isFunction()) {
+        callback = handle;
+        handle = .undefined;
+        options_ = .undefined;
+    } else if (options_.isFunction()) {
+        callback = options_;
+        options_ = .undefined;
+    } else if (!options_.isUndefined()) {
+        if (!globalObject.validateObject("options", options_, .{})) return .zero;
     }
+
+    const S = struct {
+        fn impl(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+            const arguments_ = callframe.arguments(1).slice();
+            const ex = arguments_[0];
+            VirtualMachine.Process__emitErrorEvent(globalThis, ex);
+            return .undefined;
+        }
+        var value: ?JSC.JSValue = null;
+    };
+
+    const process_queueNextTick1 = Bun__Process__queueNextTick1;
+
     const vm = globalObject.bunVM();
-    if (vm.getIPCInstance()) |ipc_instance| {
-        const success = ipc_instance.data.serializeAndSend(globalObject, callFrame.argument(0));
-        return if (success) .undefined else .zero;
-    } else {
-        globalObject.throw("IPC Socket is no longer open.", .{});
-        return .zero;
+    const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
+    const ipc_instance = vm.getIPCInstance() orelse {
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED();
+        if (callback.isFunction()) {
+            process_queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            if (S.value == null) {
+                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            }
+            process_queueNextTick1(zigGlobal, S.value.?, ex);
+        }
+        return .false;
+    };
+
+    if (message.isUndefined()) {
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS(ZigString.static("message").toJS(globalObject), .zero, .zero));
     }
+    if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
+            ZigString.static("message").toJS(globalObject),
+            ZigString.static("string, object, number, or boolean").toJS(globalObject),
+            message,
+        ));
+    }
+
+    const good = ipc_instance.data.serializeAndSend(globalObject, message);
+
+    if (good) {
+        if (callback.isFunction()) {
+            process_queueNextTick1(zigGlobal, callback, .zero);
+        }
+    } else {
+        const ex = globalObject.createTypeErrorInstance("process.send() failed", .{});
+        ex.put(globalObject, ZigString.static("syscall"), ZigString.static("write").toJS(globalObject));
+        if (callback.isFunction()) {
+            process_queueNextTick1(zigGlobal, callback, ex);
+        } else {
+            if (S.value == null) {
+                S.value = JSC.JSFunction.create(globalObject, "", S.impl, 1, .{});
+            }
+            process_queueNextTick1(zigGlobal, S.value.?, ex);
+        }
+    }
+
+    return .true;
 }
 
 pub export fn Bun__isBunMain(globalObject: *JSGlobalObject, str: *const bun.String) bool {
@@ -3692,6 +3762,7 @@ pub const VirtualMachine = struct {
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;
     extern fn Process__emitDisconnectEvent(global: *JSGlobalObject) void;
+    extern fn Process__emitErrorEvent(global: *JSGlobalObject, value: JSValue) void;
 
     pub const IPCInstanceUnion = union(enum) {
         /// IPC is put in this "enabled but not started" state when IPC is detected

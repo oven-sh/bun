@@ -1075,7 +1075,7 @@ pub const Listener = struct {
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
             tls.doConnect(connection, socket_context) catch {
-                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                tls.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
             tls.poll_ref.ref(handlers.vm);
@@ -1096,7 +1096,7 @@ pub const Listener = struct {
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
             tcp.doConnect(connection, socket_context) catch {
-                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+                tcp.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
@@ -1283,10 +1283,11 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
-        fn handleConnectError(this: *This, errno: c_int) void {
+        fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             this.flags.detached = true;
-            defer this.markInactive();
+
+            defer this.markInactive(socket_ctx);
 
             const handlers = this.handlers;
             const vm = handlers.vm;
@@ -1341,9 +1342,9 @@ fn NewSocket(comptime ssl: bool) type {
                 this.has_pending_activity.store(false, .release);
             }
         }
-        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
+        pub fn onConnectError(this: *This, socket: Socket, errno: c_int) void {
             JSC.markBinding(@src());
-            this.handleConnectError(errno);
+            this.handleConnectError(socket.context(), errno);
         }
 
         pub fn markActive(this: *This) void {
@@ -1354,7 +1355,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn markInactive(this: *This) void {
+        pub fn markInactive(this: *This, socket_ctx: ?*uws.SocketContext) void {
             if (this.flags.is_active) {
                 if (!this.flags.detached) {
                     // we have to close the socket before the socket context is closed
@@ -1368,7 +1369,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
                 this.flags.is_active = false;
                 const vm = this.handlers.vm;
-                this.handlers.markInactive(ssl, this.socket.context(), this.wrapped);
+                this.handlers.markInactive(ssl, socket_ctx, this.wrapped);
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .release);
             }
@@ -1445,7 +1446,7 @@ fn NewSocket(comptime ssl: bool) type {
             });
 
             if (result.toError()) |err| {
-                defer this.markInactive();
+                defer this.markInactive(socket.context());
                 if (!this.socket.isClosed()) {
                     log("Closing due to error", .{});
                 } else {
@@ -1480,7 +1481,7 @@ fn NewSocket(comptime ssl: bool) type {
                 this.poll_ref.unref(handlers.vm);
 
                 // If you don't handle TCP fin, we assume you're done.
-                this.markInactive();
+                this.markInactive(this.socket.context());
                 return;
             }
 
@@ -1580,7 +1581,7 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onClose", .{});
             this.flags.detached = true;
-            defer this.markInactive();
+            defer this.markInactive(socket.context());
 
             if (this.flags.finalizing) {
                 return;
@@ -2045,7 +2046,7 @@ fn NewSocket(comptime ssl: bool) type {
                     if (result.wrote == result.total) {
                         this.socket.flush();
                         // markInactive does .detached = true
-                        this.markInactive();
+                        this.markInactive(this.socket.context());
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },
@@ -2074,7 +2075,7 @@ fn NewSocket(comptime ssl: bool) type {
                 }
             }
 
-            this.markInactive();
+            this.markInactive(null);
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached

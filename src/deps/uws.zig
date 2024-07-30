@@ -965,8 +965,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
                     // We close immediately in this case
                     // uSockets doesn't know if this is a TLS socket or not.
-                    // So we have to do that logic in here.
-                    ThisSocket.from(socket).close(.failure);
+                    // So we need to close it like a TCP socket.
+                    NewSocketHandler(false).from(socket).close(.failure);
 
                     Fields.onConnectError(
                         val,

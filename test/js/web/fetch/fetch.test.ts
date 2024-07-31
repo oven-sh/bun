@@ -504,7 +504,7 @@ describe("fetch", () => {
     });
     expect(response.status).toBe(302);
     expect(response.headers.get("location")).toBe("https://example.com");
-    expect(response.redirected).toBe(true);
+    expect(response.redirected).toBe(false); // not redirected
   });
 
   it('redirect: "follow"', async () => {

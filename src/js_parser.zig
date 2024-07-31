@@ -3786,10 +3786,12 @@ pub const Parser = struct {
                 var remaining_stmts = all_stmts;
 
                 for (p.imports_to_convert_from_require.items) |deferred_import| {
-                    var stmts_ = remaining_stmts[0..1];
+                    var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    stmts_[0] = Stmt.alloc(
+                    p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?) catch bun.outOfMemory();
+
+                    import_part_stmts[0] = Stmt.alloc(
                         S.Import,
                         S.Import{
                             .star_name_loc = deferred_import.namespace.loc,
@@ -3801,10 +3803,11 @@ pub const Parser = struct {
                     var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
                     declared_symbols.appendAssumeCapacity(.{ .ref = deferred_import.namespace.ref.?, .is_top_level = true });
                     before.appendAssumeCapacity(.{
-                        .stmts = stmts_,
+                        .stmts = import_part_stmts,
                         .declared_symbols = declared_symbols,
                         .tag = .import_to_convert_from_require,
-                        .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
+                        // This part has a single symbol, so it may be removed if unused.
+                        .can_be_removed_if_unused = true,
                     });
                 }
                 bun.assert(remaining_stmts.len == 0);

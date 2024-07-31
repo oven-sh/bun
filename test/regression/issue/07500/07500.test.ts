@@ -10,7 +10,7 @@ test("7500 - Bun.stdin.text() doesn't read all data", async () => {
     .split(" ")
     .join("\n");
   await Bun.write(filename, text);
-  const cat = "cat";
+  const cat = isWindows ? "Get-Content" : "cat";
   const bunCommand = `${bunExe()} ${join(import.meta.dir, "07500.fixture.js")}`;
   const shellCommand = `${cat} ${filename} | ${bunCommand}`.replace(/\\/g, "\\\\");
 

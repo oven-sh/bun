@@ -14,18 +14,20 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
+
+
+#include "internal/internal.h"
+#include "libusockets.h"
+#include <string.h>
+
 /* These are in sni_tree.cpp */
 void *sni_new();
 void sni_free(void *sni, void (*cb)(void *));
 int sni_add(void *sni, const char *hostname, void *user);
 void *sni_remove(void *sni, const char *hostname);
 void *sni_find(void *sni, const char *hostname);
-
-#include "internal/internal.h"
-#include "libusockets.h"
-#include <string.h>
 
 /* This module contains the entire OpenSSL implementation
  * of the SSL socket and socket context interfaces. */
@@ -71,10 +73,6 @@ struct us_internal_ssl_socket_context_t {
   // socket context
   SSL_CTX *ssl_context;
   int is_parent;
-#if ALLOW_SERVER_RENEGOTIATION
-  unsigned int client_renegotiation_limit;
-  unsigned int client_renegotiation_window;
-#endif
   /* These decorate the base implementation */
   struct us_internal_ssl_socket_t *(*on_open)(struct us_internal_ssl_socket_t *,
                                               int is_client, char *ip,
@@ -108,15 +106,9 @@ enum {
 struct us_internal_ssl_socket_t {
   struct us_socket_t s;
   SSL *ssl; // this _must_ be the first member after s
-#if ALLOW_SERVER_RENEGOTIATION
-  unsigned int client_pending_renegotiations;
-  uint64_t last_ssl_renegotiation;
-  unsigned int is_client : 1;
-#endif
   unsigned int ssl_write_wants_read : 1; // we use this for now
   unsigned int ssl_read_wants_write : 1;
   unsigned int handshake_state : 2;
-  unsigned int received_ssl_shutdown : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -194,16 +186,9 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
       (struct loop_ssl_data *)loop->data.ssl_data;
 
   s->ssl = SSL_new(context->ssl_context);
-#if ALLOW_SERVER_RENEGOTIATION
-  s->client_pending_renegotiations = context->client_renegotiation_limit;
-  s->last_ssl_renegotiation = 0;
-  s->is_client = is_client ? 1 : 0;
-
-#endif
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->handshake_state = HANDSHAKE_PENDING;
-  s->received_ssl_shutdown = 0;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 // if we allow renegotiation, we need to set the mode here
@@ -213,24 +198,18 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 // this can be a DoS vector for servers, so we enable it using a limit
 // we do not use ssl_renegotiate_freely, since ssl_renegotiate_explicit is
 // more performant when using BoringSSL
-#if ALLOW_SERVER_RENEGOTIATION
-  if (context->client_renegotiation_limit) {
-    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
-  } else {
-    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
-  }
-#endif
+
 
   BIO_up_ref(loop_ssl_data->shared_rbio);
   BIO_up_ref(loop_ssl_data->shared_wbio);
 
   if (is_client) {
-#if ALLOW_SERVER_RENEGOTIATION == 0
     SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_explicit);
-#endif
     SSL_set_connect_state(s->ssl);
   } else {
     SSL_set_accept_state(s->ssl);
+    // we do not allow renegotiation on the server side (should be the default for BoringSSL, but we set to make openssl compatible)
+    SSL_set_renegotiate_mode(s->ssl, ssl_renegotiate_never);
   }
 
   struct us_internal_ssl_socket_t *result =
@@ -246,6 +225,36 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   return result;
 }
 
+/// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
+/// @param s 
+void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
+  // if we are already shutdown or in the middle of a handshake we dont need to do anything
+  if(!s->ssl || us_socket_is_shut_down(0, &s->s)) return;
+  
+  // we are closing the socket but did not sent a shutdown yet
+  int state = SSL_get_shutdown(s->ssl);
+  int sent_shutdown = state & SSL_SENT_SHUTDOWN;
+  int received_shutdown = state & SSL_RECEIVED_SHUTDOWN;
+  // if we are missing a shutdown call, we need to do a fast shutdown here
+  if(!sent_shutdown || !received_shutdown) {
+    // Zero means that we should wait for the peer to close the connection
+    // but we are already closing the connection so we do a fast shutdown here
+    int ret = SSL_shutdown(s->ssl);
+    if(ret == 0 && force_fast_shutdown) { 
+      // do a fast shutdown (dont wait for peer)
+      ret = SSL_shutdown(s->ssl);
+    } 
+    if(ret < 0) {
+      // we got some error here, but we dont care about it, we are closing the socket
+      int err = SSL_get_error(s->ssl, ret);
+      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
+        // clear
+        ERR_clear_error();
+      }
+    }
+  }
+}
+
 void us_internal_on_ssl_handshake(
     struct us_internal_ssl_socket_context_t *context,
     void (*on_handshake)(struct us_internal_ssl_socket_t *, int success,
@@ -259,6 +268,8 @@ void us_internal_on_ssl_handshake(
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
+
+
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the
     // latest handshake error this way we will always call on_handshake with the
@@ -269,8 +280,14 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
     us_internal_trigger_handshake_callback(s, 0);
   }
 
-  return (struct us_internal_ssl_socket_t *)us_socket_close(
-      0, (struct us_socket_t *)s, code, reason);
+  // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
+  us_internal_handle_shutdown(s, code != 0);
+
+  // only close the socket if we are not in the middle of a handshake
+  if(!s->ssl || SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+    return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
+  }
+  return s;
 }
 
 void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
@@ -292,26 +309,7 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
   // if is a server and we have no pending renegotiation we can check
   // the limits
   s->handshake_state = HANDSHAKE_RENEGOTIATION_PENDING;
-#if ALLOW_SERVER_RENEGOTIATION
-  if (!s->is_client && !SSL_renegotiate_pending(s->ssl)) {
-    uint64_t now = time(NULL);
-    struct us_internal_ssl_socket_context_t *context =
-        (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
-    // if is not the first time we negotiate and we are outside the time
-    // window, reset the limits
-    if (s->last_ssl_renegotiation && (now - s->last_ssl_renegotiation) >=
-                                         context->client_renegotiation_window) {
-      // reset the limits
-      s->client_pending_renegotiations = context->client_renegotiation_limit;
-    }
-    // if we have no more renegotiations, we should close the connection
-    if (s->client_pending_renegotiations == 0) {
-      return 0;
-    }
-    s->last_ssl_renegotiation = now;
-    s->client_pending_renegotiations--;
-  }
-#endif
+
   if (!SSL_renegotiate(s->ssl)) {
     // we failed to renegotiate
     us_internal_trigger_handshake_callback(s, 0);
@@ -347,7 +345,6 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   int result = SSL_do_handshake(s->ssl);
 
   if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-    s->received_ssl_shutdown = 1;
     us_internal_ssl_socket_close(s, 0, NULL);
     return;
   }
@@ -387,16 +384,15 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
-  SSL_free(s->ssl);
-
-  return context->on_close(s, code, reason);
+  struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
+  SSL_free(s->ssl); // free SSL after on_close
+  s->ssl = NULL; // set to NULL
+  return ret;
 }
 
 struct us_internal_ssl_socket_t *
 ssl_on_end(struct us_internal_ssl_socket_t *s) {
   // whatever state we are in, a TCP FIN is always an answered shutdown
-
-  /* Todo: this should report CLEANLY SHUTDOWN as reason */
   return us_internal_ssl_socket_close(s, 0, NULL);
 }
 
@@ -420,31 +416,13 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || s->received_ssl_shutdown) {
+  if (us_socket_is_closed(0, &s->s)) {
     return NULL;
   }
 
   if (us_internal_ssl_socket_is_shut_down(s)) {
-
-    int ret = 0;
-    if ((ret = SSL_shutdown(s->ssl)) == 1) {
-      // two phase shutdown is complete here
-
-      /* Todo: this should also report some kind of clean shutdown */
-      return us_internal_ssl_socket_close(s, 0, NULL);
-    } else if (ret < 0) {
-
-      int err = SSL_get_error(s->ssl, ret);
-
-      if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
-        // we need to clear the error queue in case these added to the thread
-        // local queue
-        ERR_clear_error();
-      }
-    }
-
-    // no further processing of data when in shutdown state
-    return s;
+      us_internal_ssl_socket_close(s, 0, NULL);
+      return NULL;
   }
 
   // bug checking: this loop needs a lot of attention and clean-ups and
@@ -452,17 +430,12 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   int read = 0;
 restart:
   // read until shutdown
-  while (!s->received_ssl_shutdown) {
+  while (1) {
     int just_read = SSL_read(s->ssl,
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-    // we need to check if we received a shutdown here
-    if (SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
-      s->received_ssl_shutdown = 1;
-      // we will only close after we handle the data and errors
-    }
-
+   
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
       // as far as I know these are the only errors we want to handle
@@ -477,8 +450,9 @@ restart:
           // clean and close renegotiation failed
           err = SSL_ERROR_SSL;
         } else if (err == SSL_ERROR_ZERO_RETURN) {
-          // zero return can be EOF/FIN, if we have data just signal on_data and
-          // close
+          // Remotely-Initiated Shutdown
+          // See: https://www.openssl.org/docs/manmaster/man3/SSL_shutdown.html
+
           if (read) {
             context =
                 (struct us_internal_ssl_socket_context_t *)us_socket_context(
@@ -488,11 +462,12 @@ restart:
                 s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
                 read);
             if (!s || us_socket_is_closed(0, &s->s)) {
-              return s;
+              return NULL;  // stop processing data
             }
           }
           // terminate connection here
-          return us_internal_ssl_socket_close(s, 0, NULL);
+          us_internal_ssl_socket_close(s, 0, NULL);
+          return NULL;  // stop processing data
         }
 
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
@@ -501,7 +476,8 @@ restart:
         }
 
         // terminate connection here
-        return us_internal_ssl_socket_close(s, 0, NULL);
+        us_internal_ssl_socket_close(s, 0, NULL);
+        return NULL; // stop processing data
       } else {
         // emit the data we have and exit
 
@@ -527,7 +503,7 @@ restart:
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
         if (!s || us_socket_is_closed(0, &s->s)) {
-          return s;
+          return NULL; // stop processing data
         }
 
         break;
@@ -550,18 +526,12 @@ restart:
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
       if (!s || us_socket_is_closed(0, &s->s)) {
-        return s;
+        return NULL;
       }
 
       read = 0;
       goto restart;
     }
-  }
-
-  // we received the shutdown after reading so we close
-  if (s->received_ssl_shutdown) {
-    us_internal_ssl_socket_close(s, 0, NULL);
-    return NULL;
   }
   // trigger writable if we failed last write with want read
   if (s->ssl_write_wants_read) {
@@ -576,7 +546,7 @@ restart:
         &s->s); // cast here!
     // if we are closed here, then exit
     if (!s || us_socket_is_closed(0, &s->s)) {
-      return s;
+      return NULL;
     }
   }
 
@@ -1032,7 +1002,7 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return (struct us_bun_verify_error_t){
         .error = 0, .code = NULL, .reason = NULL};
   }
@@ -1317,10 +1287,6 @@ void us_bun_internal_ssl_socket_context_add_server_name(
 
   /* We do not want to hold any nullptr's in our SNI tree */
   if (ssl_context) {
-#if ALLOW_SERVER_RENEGOTIATION
-    context->client_renegotiation_limit = options.client_renegotiation_limit;
-    context->client_renegotiation_window = options.client_renegotiation_window;
-#endif
     if (sni_add(context->sni, hostname_pattern, ssl_context)) {
       /* If we already had that name, ignore */
       free_ssl_context(ssl_context);
@@ -1469,10 +1435,6 @@ us_internal_bun_create_ssl_socket_context(
 
   context->on_handshake = NULL;
   context->handshake_data = NULL;
-#if ALLOW_SERVER_RENEGOTIATION
-  context->client_renegotiation_limit = options.client_renegotiation_limit;
-  context->client_renegotiation_window = options.client_renegotiation_window;
-#endif
   /* We, as parent context, may ignore data */
   context->sc.is_low_prio = (int (*)(struct us_socket_t *))ssl_is_low_prio;
 
@@ -1503,7 +1465,7 @@ void us_internal_ssl_socket_context_free(
     sni_free(context->sni, sni_hostname_destructor);
   }
 
-  us_socket_context_free(0, &context->sc);
+  us_internal_socket_context_free(0, &context->sc);
 }
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
@@ -1714,7 +1676,7 @@ void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
 }
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
-  return us_socket_is_shut_down(0, &s->s) ||
+  return !s->ssl || us_socket_is_shut_down(0, &s->s) ||
          SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN;
 }
 
@@ -1740,11 +1702,8 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
     loop_ssl_data->ssl_socket = &s->s;
 
     loop_ssl_data->msg_more = 0;
-    // sets SSL_SENT_SHUTDOWN no matter what (not actually true if error!)
+    // sets SSL_SENT_SHUTDOWN and waits for the other side to do the same
     int ret = SSL_shutdown(s->ssl);
-    if (ret == 0) {
-      ret = SSL_shutdown(s->ssl);
-    }
 
     if (SSL_in_init(s->ssl) || SSL_get_quiet_shutdown(s->ssl)) {
       // when SSL_in_init or quiet shutdown in BoringSSL, we call shutdown
@@ -2049,7 +2008,6 @@ us_socket_context_on_socket_connect_error(
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;
   socket->handshake_state = HANDSHAKE_PENDING;
-  socket->received_ssl_shutdown = 0;
   return socket;
 }
 

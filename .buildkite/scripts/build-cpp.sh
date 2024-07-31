@@ -2,6 +2,7 @@
 
 set -eo pipefail
 source "$(dirname "$0")/env.sh"
+export FORCE_UPDATE_SUBMODULES=1
 source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
 { set +x; } 2>/dev/null
 

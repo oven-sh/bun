@@ -23,7 +23,7 @@ pub const WebWorker = struct {
     /// Already resolved.
     specifier: []const u8 = "",
     store_fd: bool = false,
-    arena: bun.MimallocArena = undefined,
+    arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -177,7 +177,7 @@ pub const WebWorker = struct {
         }
 
         if (this.hasRequestedTerminate()) {
-            this.deinit();
+            this.exitAndDeinit();
             return;
         }
 
@@ -186,13 +186,13 @@ pub const WebWorker = struct {
 
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
-            .allocator = this.arena.allocator(),
+            .allocator = this.arena.?.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = this.arena.?.allocator();
+        vm.arena = &this.arena.?;
 
         var b = &vm.bundler;
 
@@ -427,8 +427,9 @@ pub const WebWorker = struct {
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
-
-        arena.deinit();
+        if (arena) |*arena_| {
+            arena_.deinit();
+        }
         bun.exitThread();
     }
 

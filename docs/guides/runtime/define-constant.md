@@ -5,8 +5,8 @@ name: Define and replace static globals & constants
 The `--define` flag lets you declare statically-analyzable constants and globals. It replace all usages of an identifier or property in a JavaScript or TypeScript file with a constant value. This feature is supported at runtime and also in `bun build`. This is sort of similar to `#define` in C/C++, except for JavaScript.
 
 ```ts
-bun --define:process.env.NODE_ENV="'production'" src/index.ts # Runtime
-bun build --define:process.env.NODE_ENV="'production'" src/index.ts # Build
+bun --define process.env.NODE_ENV="'production'" src/index.ts # Runtime
+bun build --define process.env.NODE_ENV="'production'" src/index.ts # Build
 ```
 
 ---
@@ -95,7 +95,7 @@ To replace all usages of `AWS` with the JSON object `{"ACCESS_KEY":"abc","SECRET
 
 ```sh
 # JSON
-bun --define:AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
+bun --define AWS='{"ACCESS_KEY":"abc","SECRET_KEY":"def"}' src/index.ts
 ```
 
 Those will be transformed into the equivalent JavaScript code.
@@ -119,7 +119,7 @@ You can also pass properties to the `--define` flag.
 For example, to replace all usages of `console.write` with `console.log`, you can use the following command (requires Bun v1.1.5 or later)
 
 ```sh
-bun --define:console.write=console.log src/index.ts
+bun --define console.write=console.log src/index.ts
 ```
 
 That transforms the following input:

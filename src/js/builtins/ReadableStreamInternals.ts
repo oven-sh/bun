@@ -2008,12 +2008,16 @@ export function readableStreamDefineLazyIterators(prototype) {
       reader.releaseLock();
 
       if (!preventCancel && !$isReadableStreamLocked(stream)) {
-        stream.cancel(deferredError);
+        const promise = stream.cancel(deferredError);
+        if (Bun.peek.status(promise) === "rejected") {
+          $markPromiseAsHandled(promise);
+        }
       }
 
       if (deferredError) {
         throw deferredError;
       }
+
     }
   };
   var createAsyncIterator = function asyncIterator() {

@@ -1109,12 +1109,10 @@ pub const Blob = struct {
                     => {
                         break :brk response.body.use();
                     },
-                    .Error => {
+                    .Error => |*err_ref| {
                         destination_blob.detach();
-                        const err = response.body.value.Error;
-                        err.unprotect();
                         _ = response.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => {
                         var task = bun.new(WriteFileWaitFromLockedValueTask, .{
@@ -1142,12 +1140,10 @@ pub const Blob = struct {
                     => {
                         break :brk request.body.value.use();
                     },
-                    .Error => {
+                    .Error => |*err_ref| {
                         destination_blob.detach();
-                        const err = request.body.value.Error;
-                        err.unprotect();
                         _ = request.body.value.use();
-                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err);
+                        return JSC.JSPromise.rejectedPromiseValue(globalThis, err_ref.toJS(globalThis));
                     },
                     .Locked => {
                         var task = bun.new(WriteFileWaitFromLockedValueTask, .{

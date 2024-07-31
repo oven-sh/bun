@@ -687,12 +687,12 @@ pub const WriteFileWaitFromLockedValueTask = struct {
         var globalThis = this.globalThis;
         var file_blob = this.file_blob;
         switch (value.*) {
-            .Error => |err| {
+            .Error => |*err_ref| {
                 file_blob.detach();
                 _ = value.use();
                 this.promise.strong.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, err);
+                promise.reject(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();

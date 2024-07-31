@@ -2048,11 +2048,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+        pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
             if (this.resp) |resp| {
-                resp.overrideWriteOffset(this.sendfile.offset);
-                this.endWithoutBody(this.shouldCloseConnection());
+                this.detachResponse();
+                resp.endSendFile(writeOffSet, closeConnection);
             }
+        }
+
+        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+            this.endSendFile(this.sendfile.offset, this.shouldCloseConnection());
+
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = bun.sys.close(this.sendfile.fd);

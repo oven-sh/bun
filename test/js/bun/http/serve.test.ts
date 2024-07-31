@@ -1749,3 +1749,56 @@ it("should not send extra bytes when using sendfile", async () => {
   expect(await promise).toEqual(Buffer.from(payload));
   expect(content_length).toBe(payload.byteLength);
 });
+
+it("we should always send date", async () => {
+  const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  const tmpFile = join(tmpdirSync(), "test.bin");
+  await Bun.write(tmpFile, payload);
+  using serve = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      if (pathname === "/file") {
+        return new Response(Bun.file(tmpFile), {
+          headers: {
+            "Content-Type": "plain/text",
+          },
+        });
+      }
+      if (pathname === "/file2") {
+        return new Response(Bun.file(tmpFile));
+      }
+      if (pathname === "/stream") {
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(10);
+              controller.enqueue(payload);
+              await Bun.sleep(10);
+              controller.close();
+            },
+          }),
+        );
+      }
+      return new Response("Hello, World!");
+    },
+  });
+
+  {
+    const res = await fetch(new URL("/file", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+  {
+    const res = await fetch(new URL("/file2", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+
+  {
+    const res = await fetch(new URL("/", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+  {
+    const res = await fetch(new URL("/stream", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+});

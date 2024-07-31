@@ -145,6 +145,9 @@ public:
         } else {
             /* Write content-length on first call */
             if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_END_CALLED)) {
+                /* Write mark, this propagates to WebSockets too */
+                writeMark();
+
                 /* WebSocket upgrades does not allow content-length */
                 if (allowContentLength) {
                     /* Even zero is a valid content-length */
@@ -383,7 +386,6 @@ public:
         Super::write("HTTP/1.1 ", 9);
         Super::write(status.data(), (int) status.length());
         Super::write("\r\n", 2);
-        writeMark();
         return this;
     }
 
@@ -434,6 +436,9 @@ public:
         writeStatus(HTTP_200_OK);
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
         if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* Write mark on first call to write */
+            writeMark();
+
             writeHeader("Transfer-Encoding", "chunked");
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
         }
@@ -457,6 +462,9 @@ public:
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         if (!(httpResponseData->state & HttpResponseData<SSL>::HTTP_WRITE_CALLED)) {
+            /* Write mark on first call to write */
+            writeMark();
+
             writeHeader("Transfer-Encoding", "chunked");
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED;
         }

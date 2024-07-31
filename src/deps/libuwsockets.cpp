@@ -1550,6 +1550,7 @@ extern "C"
     if (ssl)
     {
       uWS::HttpResponse<true> *uwsRes = (uWS::HttpResponse<true> *)res;
+      uwsRes->writeMark();
       auto pair = uwsRes->getSendBuffer(2);
       char *ptr = pair.first;
       ptr[0] = '\r';
@@ -1559,6 +1560,7 @@ extern "C"
     else
     {
       uWS::HttpResponse<false> *uwsRes = (uWS::HttpResponse<false> *)res;
+      uwsRes->writeMark();
       auto pair = uwsRes->getSendBuffer(2);
       char *ptr = pair.first;
       ptr[0] = '\r';

@@ -89,7 +89,7 @@ pub const BunObject = struct {
     fn toJSGetter(comptime getter: anytype) LazyPropertyCallback {
         return struct {
             pub fn callback(this: *JSC.JSGlobalObject, object: *JSC.JSObject) callconv(JSC.conv) JSC.JSValue {
-                return @call(.always_inline, getter, .{ this, object });
+                return @call(bun.callmod_inline, getter, .{ this, object });
             }
         }.callback;
     }

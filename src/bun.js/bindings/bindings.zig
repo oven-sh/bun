@@ -6137,7 +6137,7 @@ pub fn toJSHostFunction(comptime Function: anytype) JSC.JSHostFunctionType {
                 }
             }
 
-            return @call(.always_inline, Function, .{ globalThis, callframe });
+            return @call(bun.callmod_inline, Function, .{ globalThis, callframe });
         }
     }.function;
 }

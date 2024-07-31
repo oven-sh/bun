@@ -544,8 +544,9 @@ test("should be able to async upgrade using custom protocol", async () => {
   expect(await promise).toBe(true);
 });
 
-test("should be able to abrubtly close a upload request", async () => {
+test.only("should be able to abrubtly close a upload request", async () => {
   const { promise, resolve } = Promise.withResolvers();
+  const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
   using server = Bun.serve({
     port: 0,
     hostname: "localhost",
@@ -562,8 +563,10 @@ test("should be able to abrubtly close a upload request", async () => {
         }
       } catch (e) {
         expect((e as Error)?.name).toBe("AbortError");
-      } 
-     
+      } finally {
+        resolve2();
+      }
+            
       return new Response("Received " + total_size);
     },
   });
@@ -623,6 +626,6 @@ test("should be able to abrubtly close a upload request", async () => {
       data(socket, data) {},
     },
   });
-  await promise;
+  await Promise.all([promise, promise2]);
   expect().pass();
 });

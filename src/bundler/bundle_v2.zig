@@ -92,7 +92,7 @@ const DebugLogs = _resolver.DebugLogs;
 const Router = @import("../router.zig");
 const isPackagePath = _resolver.isPackagePath;
 const Lock = @import("../lock.zig").Lock;
-const NodeFallbackModules = @import("../node_fallbacks.zig");
+const node_fallbacks = @import("../node_fallbacks.zig");
 const CacheEntry = @import("../cache.zig").Fs.Entry;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const URL = @import("../url.zig").URL;
@@ -2777,7 +2777,7 @@ pub const ParseTask = struct {
 
                 if (strings.eqlComptime(file_path.namespace, "node"))
                     break :brk CacheEntry{
-                        .contents = NodeFallbackModules.contentsFromPath(file_path.text) orelse "",
+                        .contents = node_fallbacks.contentsFromPath(file_path.text) orelse "",
                     };
 
                 break :brk resolver.caches.fs.readFileWithAllocator(
@@ -10430,19 +10430,27 @@ pub const LinkerContext = struct {
                                 },
                             ) catch unreachable;
                         }
-                    } else if (c.resolver.opts.target == .browser and JSC.HardcodedModule.Aliases.has(next_source.path.pretty, .browser)) {
+                    } else if (c.resolver.opts.target == .browser and bun.strings.hasPrefixComptime(next_source.path.text, node_fallbacks.prefix)) {
+                        // Remove the "browser polyfill" text which is appended to all of these
+                        const path_len = std.mem.indexOfScalar(u8, next_source.path.pretty, ' ') orelse
+                            next_source.path.pretty.len;
+                        const path = next_source.path.pretty[0..path_len];
+
                         c.log.addRangeErrorFmtWithNote(
                             source,
                             r,
                             c.allocator,
+
                             "Browser polyfill for module \"{s}\" doesn't have a matching export named \"{s}\"",
-                            .{
-                                next_source.path.pretty,
-                                named_import.alias.?,
-                            },
-                            "Bun's bundler defaults to browser builds instead of node or bun builds. If you want to use node or bun builds, you can set the target to \"node\" or \"bun\" in the bundler options.",
-                            .{},
-                            r,
+                            .{ path, named_import.alias.? },
+
+                            "Bun's bundler defaults to browser builds. To bundle for Bun or Node.js, pass {s}",
+                            .{switch (bun.CLI.Cli.cmd == .BuildCommand) {
+                                true => "'--target=bun' or '--target=node'",
+                                false => "'target: \"bun\"' or 'target: \"node\"",
+                            }},
+
+                            Logger.Range.None,
                         ) catch unreachable;
                     } else {
                         c.log.addRangeErrorFmt(
@@ -10463,7 +10471,6 @@ pub const LinkerContext = struct {
                     result = .{ .kind = .probably_typescript_type };
                 },
                 .found => {
-
                     // If there are multiple ambiguous results due to use of "export * from"
                     // statements, trace them all to see if they point to different things.
                     for (potentially_ambiguous_export_star_refs) |*ambiguous_tracker| {

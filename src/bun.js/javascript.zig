@@ -31,7 +31,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../node_fallbacks.zig");
+const node_fallbacks = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
@@ -2082,7 +2082,7 @@ pub const VirtualMachine = struct {
             ret.result = null;
             ret.path = specifier;
             return;
-        } else if (strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/")) {
+        } else if (strings.hasPrefixComptime(specifier, node_fallbacks.prefix)) {
             ret.result = null;
             ret.path = specifier;
             return;

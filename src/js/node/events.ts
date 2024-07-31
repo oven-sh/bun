@@ -1,6 +1,7 @@
 // Reimplementation of https://nodejs.org/api/events.html
-
 // Reference: https://github.com/nodejs/node/blob/main/lib/events.js
+// @ts-nocheck TODO: fix type checking of this
+
 const { throwNotImplemented } = require("internal/shared");
 
 const SymbolFor = Symbol.for;
@@ -519,7 +520,7 @@ function validateBoolean(value, name) {
   if (typeof value !== "boolean") throw ERR_INVALID_ARG_TYPE(name, "boolean", value);
 }
 
-let AsyncResource = null;
+let AsyncResource: null | typeof import("node:async_hooks").AsyncResource = null;
 
 function getMaxListeners(emitterOrTarget) {
   // TODO: apparently EventTarget in Node can have a max number of listeners?
@@ -565,7 +566,7 @@ class EventEmitterAsyncResource extends EventEmitter {
     var { captureRejections = false, triggerAsyncId, name = new.target.name, requireManualDestroy } = options || {};
     super({ captureRejections });
     this.triggerAsyncId = triggerAsyncId ?? 0;
-    this.asyncResource = new AsyncResource(name, { triggerAsyncId, requireManualDestroy });
+    this.asyncResource = new AsyncResource!(name, { triggerAsyncId, requireManualDestroy });
   }
 
   emit(...args) {

@@ -30,7 +30,7 @@ const ServerEntryPoint = bun.bundler.ServerEntryPoint;
 const js_printer = bun.js_printer;
 const js_parser = bun.js_parser;
 const js_ast = bun.JSAst;
-const NodeFallbackModules = @import("../node_fallbacks.zig");
+const node_fallbacks = @import("../node_fallbacks.zig");
 const ImportKind = ast.ImportKind;
 const Analytics = @import("../analytics/analytics_thread.zig");
 const ZigString = bun.JSC.ZigString;
@@ -485,8 +485,7 @@ pub const RuntimeTranspilerStore = struct {
                 else => {},
             }
 
-            // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-            const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+            const is_node_override = strings.hasPrefixComptime(specifier, node_fallbacks.prefix);
 
             const macro_remappings = if (vm.macro_mode or !vm.has_any_macro_remappings or is_node_override)
                 MacroRemap{}
@@ -539,7 +538,7 @@ pub const RuntimeTranspilerStore = struct {
             }
 
             if (is_node_override) {
-                if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
+                if (node_fallbacks.contentsFromPath(specifier)) |code| {
                     const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
                     fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
                     parse_options.virtual_source = &fallback_source;
@@ -1659,7 +1658,7 @@ pub const ModuleLoader = struct {
                 }
 
                 // this should be a cheap lookup because 24 bytes == 8 * 3 so it's read 3 machine words
-                const is_node_override = strings.hasPrefixComptime(specifier, "/bun-vfs/node_modules/");
+                const is_node_override = strings.hasPrefixComptime(specifier, node_fallbacks.prefix);
 
                 const macro_remappings = if (jsc_vm.macro_mode or !jsc_vm.has_any_macro_remappings or is_node_override)
                     MacroRemap{}
@@ -1707,7 +1706,7 @@ pub const ModuleLoader = struct {
                 }
 
                 if (is_node_override) {
-                    if (NodeFallbackModules.contentsFromPath(specifier)) |code| {
+                    if (node_fallbacks.contentsFromPath(specifier)) |code| {
                         const fallback_path = Fs.Path.initWithNamespace(specifier, "node");
                         fallback_source = logger.Source{ .path = fallback_path, .contents = code, .key_path = fallback_path };
                         parse_options.virtual_source = &fallback_source;

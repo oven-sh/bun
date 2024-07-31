@@ -76,7 +76,6 @@ pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -501,6 +500,10 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
     }
 }
 const ExportsStringName = "exports";
+
+const rewrite_default_to_star_map = bun.ComptimeStringMap(void, .{
+    .{ "node:path", {} },
+});
 
 const TransposeState = struct {
     is_await_target: bool = false,
@@ -9137,6 +9140,21 @@ fn NewParser_(
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
 
+            // If this is one of a few specific built-ins, make the default value refer to
+            // the namespace instead of the default export. This allows for visiting to
+            // note property accesses on this, and in turn better tree shaking. We can
+            // only enable it on built-in modules that re-export everything as the
+            // default.
+            //
+            // Bun's browser polyfills take special advantage of this optimization to
+            // make bundles smaller.
+            //
+            //     import path from 'node:path'
+            //    -->
+            //     import * as path from 'node:path'
+            //
+            const should_rewrite_default_to_star = p.options.bundle and rewrite_default_to_star_map.has(path.text);
+
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
 
@@ -9148,11 +9166,34 @@ fn NewParser_(
                         .import_record_index = stmt.import_record_index,
                     }) catch unreachable;
                 }
-            } else {
+
+                if (should_rewrite_default_to_star) {
+                    if (stmt.default_name) |default| {
+                        // Alias the namespace and the default import using a new symbol
+                        const default_name = p.loadNameFromRef(default.ref.?);
+                        const ref = try p.declareSymbol(.import, default.loc, default_name);
+                        p.symbols.items[ref.inner_index].link = stmt.namespace_ref;
+                        try p.current_scope.generated.push(p.allocator, ref);
+                        stmt.default_name = null;
+                    }
+                }
+            } else init_namespace_ref: {
+                if (should_rewrite_default_to_star) {
+                    if (stmt.default_name) |default| {
+                        // Create a namespace ref as the default
+                        const default_name = p.loadNameFromRef(default.ref.?);
+                        const ref = try p.declareSymbol(.import, default.loc, default_name);
+                        stmt.namespace_ref = ref;
+                        stmt.star_name_loc = default.loc;
+                        stmt.default_name = null;
+                        break :init_namespace_ref;
+                    }
+                }
+
                 var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
-                var scope: *Scope = p.current_scope;
+                const scope: *Scope = p.current_scope;
                 try scope.generated.push(p.allocator, stmt.namespace_ref);
             }
 
@@ -20755,7 +20796,7 @@ fn NewParser_(
             {
                 p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}) catch bun.outOfMemory();
 
-                var decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                const decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
                 decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
 
                 if (p.enclosing_namespace_arg_ref == null) {

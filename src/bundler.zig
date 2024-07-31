@@ -42,7 +42,7 @@ const isPackagePath = _resolver.isPackagePath;
 const Css = @import("css_scanner.zig");
 const DotEnv = @import("./env_loader.zig");
 const Lock = @import("./lock.zig").Lock;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
+const node_fallbacks = @import("./node_fallbacks.zig");
 const CacheEntry = @import("./cache.zig").FsCacheEntry;
 const Analytics = @import("./analytics/analytics_thread.zig");
 const URL = @import("./url.zig").URL;
@@ -1326,7 +1326,7 @@ pub const Bundler = struct {
             }
 
             if (strings.eqlComptime(path.namespace, "node")) {
-                if (NodeFallbackModules.contentsFromPath(path.text)) |code| {
+                if (node_fallbacks.contentsFromPath(path.text)) |code| {
                     break :brk logger.Source.initPathString(path.text, code);
                 }
 

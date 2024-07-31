@@ -27,7 +27,7 @@ const CacheSet = cache.Set;
 const DataURL = @import("./data_url.zig").DataURL;
 pub const DirInfo = @import("./dir_info.zig");
 const ResolvePath = @import("./resolve_path.zig");
-const NodeFallbackModules = @import("../node_fallbacks.zig");
+const node_fallbacks = @import("../node_fallbacks.zig");
 const Mutex = @import("../lock.zig").Lock;
 const StringBoolMap = bun.StringHashMap(bool);
 const FileDescriptorType = bun.FileDescriptor;
@@ -1348,7 +1348,7 @@ pub const Resolver = struct {
                 const had_node_prefix = strings.hasPrefixComptime(import_path, "node:");
                 const import_path_without_node_prefix = if (had_node_prefix) import_path["node:".len..] else import_path;
 
-                if (NodeFallbackModules.Map.get(import_path_without_node_prefix)) |*fallback_module| {
+                if (node_fallbacks.Map.get(import_path_without_node_prefix)) |*fallback_module| {
                     result.path_pair.primary = fallback_module.path;
                     result.module_type = .cjs;
                     result.package_json = @as(*PackageJSON, @ptrFromInt(@intFromPtr(fallback_module.package_json)));

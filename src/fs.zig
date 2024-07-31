@@ -1851,16 +1851,6 @@ pub const Path = struct {
         };
     }
 
-    pub fn initWithNamespaceVirtual(comptime text: string, comptime namespace: string, comptime package: string) Path {
-        return Path{
-            .pretty = comptime "node:" ++ package,
-            .is_symlink = true,
-            .text = text,
-            .namespace = namespace,
-            .name = PathName.init(text),
-        };
-    }
-
     pub fn isBefore(a: *Path, b: Path) bool {
         return a.namespace > b.namespace ||
             (a.namespace == b.namespace and (a.text < b.text ||

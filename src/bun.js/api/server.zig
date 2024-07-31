@@ -2328,7 +2328,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             defer this.deref();
 
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
 

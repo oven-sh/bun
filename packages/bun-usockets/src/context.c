@@ -20,7 +20,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
@@ -63,8 +62,10 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     /* Begin by closing all listen sockets */
     struct us_listen_socket_t *ls = context->head_listen_sockets;
     while (ls) {
-        struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
-        us_listen_socket_close(ssl, ls);
+        struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;\
+        if(!us_socket_is_closed(ssl, ls)) {
+            us_listen_socket_close(ssl, ls);
+        }
         ls = nextLS;
     }
 
@@ -72,7 +73,9 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     struct us_socket_t *s = context->head_sockets;
     while (s) {
         struct us_socket_t *nextS = s->next;
-        us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        if(!us_socket_is_closed(ssl, ls)) {
+            us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
+        }
         s = nextS;
     }
 }

@@ -109,6 +109,7 @@ struct us_internal_ssl_socket_t {
   unsigned int ssl_write_wants_read : 1; // we use this for now
   unsigned int ssl_read_wants_write : 1;
   unsigned int handshake_state : 2;
+  unsigned int fatal_error : 1;
 };
 
 int passphrase_cb(char *buf, int size, int rwflag, void *u) {
@@ -229,7 +230,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 /// @param s 
 void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(!s->ssl || us_socket_is_shut_down(0, &s->s)) return;
+  if(!s->ssl || us_socket_is_shut_down(0, &s->s) || s->fatal_error) return;
   
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
@@ -250,6 +251,7 @@ void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_f
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         // clear
         ERR_clear_error();
+        s->fatal_error = 1;
       }
     }
   }
@@ -269,7 +271,9 @@ struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
 
-
+  // check if we are already closed
+  if (us_socket_is_closed(0, &s->s)) return s;
+  
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the
     // latest handshake error this way we will always call on_handshake with the
@@ -284,7 +288,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   us_internal_handle_shutdown(s, code != 0);
 
   // only close the socket if we are not in the middle of a handshake
-  if(!s->ssl || SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+  if(!s->ssl || s->fatal_error || SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
     return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
   }
   return s;
@@ -358,6 +362,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ERR_clear_error();
+        s->fatal_error = 1;
       }
       return;
     }
@@ -473,6 +478,7 @@ restart:
         if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
           // clear per thread error queue if it may contain something
           ERR_clear_error();
+          s->fatal_error = 1;
         }
 
         // terminate connection here
@@ -1659,6 +1665,7 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
     // these two errors may add to the error queue, which is per thread and
     // must be cleared
     ERR_clear_error();
+    s->fatal_error = 1;
 
     // all errors here except for want write are critical and should not
     // happen
@@ -1682,7 +1689,7 @@ int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
 
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
   if (!us_socket_is_closed(0, &s->s) &&
-      !us_internal_ssl_socket_is_shut_down(s)) {
+      !us_internal_ssl_socket_is_shut_down(s) && !s->fatal_error) {
     struct us_internal_ssl_socket_context_t *context =
         (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
     struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
@@ -1717,6 +1724,7 @@ void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         // clear
         ERR_clear_error();
+        s->fatal_error = 1;
       }
 
       // we get here if we are shutting down while still in init

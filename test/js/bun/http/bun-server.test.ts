@@ -544,7 +544,7 @@ test("should be able to async upgrade using custom protocol", async () => {
   expect(await promise).toBe(true);
 });
 
-test.only("should be able to abrubtly close a upload request", async () => {
+test("should be able to abrubtly close a upload request", async () => {
   const { promise, resolve } = Promise.withResolvers();
   const { promise: promise2, resolve: resolve2 } = Promise.withResolvers();
   using server = Bun.serve({

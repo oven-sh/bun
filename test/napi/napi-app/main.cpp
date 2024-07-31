@@ -284,6 +284,23 @@ napi_value test_v8_object_template(const Napi::CallbackInfo &info) {
   if (obj_template.IsEmpty()) {
     return fail(env, "ObjectTemplate::NewInstance failed");
   }
+  obj_template->SetInternalFieldCount(2);
+
+  v8::Local<v8::Object> obj1 =
+      obj_template->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
+
+  obj1->SetInternalField(0, v8::Number::New(isolate, 3.0));
+  obj1->SetInternalField(1, v8::Number::New(isolate, 4.0));
+
+  if (v8::Value::Cast(*obj1->GetInternalField(0))
+          ->NumberValue(isolate->GetCurrentContext())
+          .ToChecked() != 3.0) {
+    return fail_fmt(
+        env, "obj1 internal field 0 has wrong value: expected 3.0, got %f",
+        v8::Value::Cast(*obj1->GetInternalField(0))
+            ->NumberValue(isolate->GetCurrentContext())
+            .ToChecked());
+  }
 
   return ok(env);
 }

@@ -949,11 +949,10 @@ pub const Body = struct {
         }
 
         pub fn toError(this: *Value, err: anyerror, global: *JSGlobalObject) void {
-            return this.toErrorInstance(.{ .Message = bun.String.init(std.fmt.allocPrint(
-                bun.default_allocator,
+            return this.toErrorInstance(.{ .Message = bun.String.createFormat(
                 "Error reading file {s}",
                 .{@errorName(err)},
-            ) catch bun.outOfMemory()) }, global);
+            ) catch bun.outOfMemory() }, global);
         }
 
         pub fn deinit(this: *Value) void {

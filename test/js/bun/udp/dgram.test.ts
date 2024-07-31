@@ -6,10 +6,11 @@ import { disableAggressiveGCScope } from "harness";
 import path from "path";
 
 describe("createSocket()", () => {
-  test("connect", done => {
+  test("connect", async () => {
     const PORT = 12345;
+    const { promise, resolve } = Promise.withResolvers();
     const client = createSocket("udp4");
-    client.on("close", done);
+    client.on("close", resolve);
 
     client.connect(PORT, () => {
       const remoteAddr = client.remoteAddress();
@@ -24,6 +25,8 @@ describe("createSocket()", () => {
       client.once("connect", () => client.close());
       client.connect(PORT);
     });
+
+    await promise;
   });
 
   test("IPv4 address", done => {
@@ -86,106 +89,116 @@ describe("createSocket()", () => {
   };
 
   for (const { label, data, bytes } of nodeDataCases) {
-    test(`send ${label}`, done => {
+    test(`send ${label}`, async () => {
       const client = createSocket("udp4");
       const closed = { closed: false };
+      const { promise, resolve, reject } = Promise.withResolvers();
       client.on("close", () => {
         closed.closed = true;
       });
       const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
       server.on("message", (data, rinfo) => {
         validateRecv(server, data, rinfo, bytes);
-
-        server.close();
-        client.close();
-        done();
+        resolve();
       });
       function sendRec() {
         if (!closed.closed) {
-          client.send(data, server.address().port, "127.0.0.1", () => {
-            setTimeout(sendRec, 100);
+          const port = server.address().port;
+          client.send(data, 0, data.length, port, "127.0.0.1", () => {
+            if (!closed.closed) {
+              setTimeout(sendRec, 10);
+            }
           });
         }
       }
-      server.on("listening", () => {
-        sendRec();
-      });
-      server.bind();
-    });
 
-    test(`send connected ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, bytes);
-
-        server.close();
-        client.close();
-        done();
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send(data, () => {
-            setTimeout(sendRec, 100);
-          });
-        }
-      }
-      server.on("listening", () => {
-        const addr = server.address();
-        client.connect(addr.port, "127.0.0.1", () => {
+      try {
+        server.on("listening", () => {
           sendRec();
         });
-      });
-      server.bind();
-    });
-
-    test(`send array ${label}`, done => {
-      const client = createSocket("udp4");
-      const closed = { closed: false };
-      client.on("close", () => {
-        closed.closed = true;
-      });
-      const server = createSocket("udp4");
-      client.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("error", err => {
-        expect(err).toBeNull();
-      });
-      server.on("message", (data, rinfo) => {
-        validateRecv(server, data, rinfo, Buffer.from([...bytes, ...bytes, ...bytes].flat()));
-
+        server.bind();
+        await promise;
+      } finally {
         server.close();
         client.close();
-        done();
-      });
-      function sendRec() {
-        if (!closed.closed) {
-          client.send([data, data, data], server.address().port, "127.0.0.1", () => {
-            setTimeout(sendRec, 100);
-          });
-        }
       }
-      server.on("listening", () => {
-        sendRec();
-      });
-      server.bind();
+    });
+
+    test(`send connected ${label}`, async () => {
+      const client = createSocket("udp4");
+      const server = createSocket("udp4");
+      const closed = { closed: false };
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      try {
+        client.on("close", () => {
+          closed.closed = true;
+        });
+        server.on("message", (data, rinfo) => {
+          validateRecv(server, data, rinfo, bytes);
+          resolve();
+        });
+        function sendRec() {
+          if (!closed.closed) {
+            client.send(data, () => {
+              setTimeout(sendRec, 10);
+            });
+          }
+        }
+        server.on("listening", () => {
+          const addr = server.address();
+          client.connect(addr.port, "127.0.0.1", () => {
+            sendRec();
+          });
+        });
+        server.bind();
+
+        await promise;
+      } finally {
+        server.close();
+        client.close();
+      }
+    });
+
+    test(`send array ${label}`, async () => {
+      const client = createSocket("udp4");
+      const server = createSocket("udp4");
+      const closed = { closed: false };
+      const { promise, resolve, reject } = Promise.withResolvers();
+
+      try {
+        client.on("close", () => {
+          closed.closed = true;
+        });
+
+        client.on("error", err => {
+          expect(err).toBeNull();
+        });
+        server.on("error", err => {
+          expect(err).toBeNull();
+        });
+        server.on("message", (data, rinfo) => {
+          validateRecv(server, data, rinfo, Buffer.from([...bytes, ...bytes, ...bytes].flat()));
+
+          resolve();
+        });
+        function sendRec() {
+          if (!closed.closed) {
+            client.send([data, data, data], server.address().port, "127.0.0.1", () => {
+              setTimeout(sendRec, 10);
+            });
+          }
+        }
+        server.on("listening", () => {
+          sendRec();
+        });
+        server.bind();
+
+        await promise;
+      } finally {
+        server.close();
+        client.close();
+      }
     });
   }
 });

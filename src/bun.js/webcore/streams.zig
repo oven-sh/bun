@@ -673,6 +673,11 @@ pub const StreamResult = union(Tag) {
         switch (this.*) {
             .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .err => |err| {
+                if (err == .JSValue) {
+                    err.JSValue.unprotect();
+                }
+            },
             else => {},
         }
     }
@@ -907,6 +912,32 @@ pub const StreamResult = union(Tag) {
             used,
         };
 
+        pub fn abort(this: *Pending) void {
+            if (this.state != .pending) return;
+            this.state = .used;
+            switch (this.future) {
+                .promise => |p| {
+                    this.result.deinit();
+                    var err = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, p.globalThis);
+                    err.ensureStillAlive();
+                    this.result = .{ .err = .{ .JSValue = err } };
+                    StreamResult.fulfillPromise(&this.result, p.promise, p.globalThis);
+                },
+                .handler => |h| {
+                    this.result.deinit();
+                    this.result = .{
+                        .err = .{
+                            .Error = .{
+                                .errno = @intFromEnum(bun.C.E.CANCELED),
+                                .syscall = .pipe,
+                            },
+                        },
+                    };
+                    h.handler(h.ctx, this.result);
+                },
+            }
+        }
+
         pub fn run(this: *Pending) void {
             if (this.state != .pending) return;
             this.state = .used;
@@ -956,6 +987,8 @@ pub const StreamResult = union(Tag) {
             },
             else => {
                 const value = result.toJS(globalThis);
+                value.ensureStillAlive();
+
                 result.* = .{ .temporary = .{} };
                 promise.resolve(globalThis, value);
             },
@@ -4480,8 +4513,7 @@ pub const ByteStream = struct {
 
         if (view != .zero) {
             this.pending_buffer = &.{};
-            this.pending.result = .{ .done = {} };
-            this.pending.run();
+            this.pending.abort();
         }
     }
 
@@ -4494,8 +4526,7 @@ pub const ByteStream = struct {
             this.done = true;
 
             this.pending_buffer = &.{};
-            this.pending.result = .{ .done = {} };
-            this.pending.run();
+            this.pending.abort();
         }
 
         this.parent().destroy();

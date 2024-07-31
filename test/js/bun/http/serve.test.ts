@@ -1562,7 +1562,7 @@ it("should resolve pending promise if requested ended with pending read", async 
     {
       fetch(req) {
         // @ts-ignore
-        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
+        req.body?.getReader().read().then(shouldMarkDone).catch(shouldError)
         return new Response("OK");
       },
     },
@@ -1573,8 +1573,9 @@ it("should resolve pending promise if requested ended with pending read", async 
       });
       const text = await response.text();
       expect(text).toContain("OK");
-      expect(is_done).toBe(true);
-      expect(error).toBeUndefined();
+      expect(is_done).toBe(false);
+      expect(error).toBeDefined();
+      expect(error.name).toContain("AbortError");
     },
   );
 });

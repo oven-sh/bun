@@ -510,7 +510,7 @@ pub const HTMLRewriter = struct {
                     sink.response.body.value.Locked.task = null;
                 }
                 if (is_async) {
-                    sink.response.body.value.toErrorInstance(err.ref(sink.global), sink.global);
+                    sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global);
                 } else {
                     var ret_err = throwLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();

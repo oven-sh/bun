@@ -334,7 +334,7 @@ pub const Body = struct {
                 return js_value;
             }
 
-            pub fn ref(this: *const @This(), globalObject: *JSC.JSGlobalObject) @This() {
+            pub fn dupe(this: *const @This(), globalObject: *JSC.JSGlobalObject) @This() {
                 var value = this.*;
                 switch (this.*) {
                     .SystemError => value.SystemError.ref(),
@@ -935,8 +935,9 @@ pub const Body = struct {
                             },
                             bun.default_allocator,
                         );
+                    } else {
+                        readable.abort(global);
                     }
-                    readable.abort(global);
                 }
 
                 if (locked.onReceiveValue) |onReceiveValue| {

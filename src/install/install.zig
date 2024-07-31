@@ -38,7 +38,6 @@ const FileSystem = Fs.FileSystem;
 const Lock = @import("../lock.zig").Lock;
 const URL = @import("../url.zig").URL;
 const HTTP = bun.http;
-const AsyncHTTP = HTTP.AsyncHTTP;
 const HTTPChannel = HTTP.HTTPChannel;
 
 const HeaderBuilder = HTTP.HeaderBuilder;
@@ -232,7 +231,8 @@ pub const Aligner = struct {
 };
 
 const NetworkTask = struct {
-    http: AsyncHTTP = undefined,
+    http: *HTTP.PendingHTTPRequest,
+    http_task: ?*ThreadPool.Task = null,
     task_id: u64,
     url_buf: []const u8 = &[_]u8{},
     retried: u16 = 0,
@@ -259,10 +259,11 @@ const NetworkTask = struct {
     };
     pub const DedupeMap = std.HashMap(u64, DedupeMapEntry, IdentityContext(u64), 80);
 
-    pub fn notify(this: *NetworkTask, async_http: *AsyncHTTP, _: anytype) void {
+    pub fn notify(this: *NetworkTask, pending_http_request: *HTTP.PendingHTTPRequest, _: anytype) void {
         defer this.package_manager.wake();
-        async_http.real.?.* = async_http.*;
-        async_http.real.?.response_buffer = async_http.response_buffer;
+        this.http = pending_http_request;
+        bun.debugAssert(this.http == pending_http_request);
+        this.response_buffer = pending_http_request.response_body;
         this.package_manager.async_network_task_queue.push(this);
     }
 
@@ -422,18 +423,24 @@ const NetworkTask = struct {
             header_builder.content = GlobalStringBuilder{ .ptr = @as([*]u8, @ptrFromInt(@intFromPtr(bun.span(default_headers_buf).ptr))), .len = default_headers_buf.len, .cap = default_headers_buf.len };
         }
 
-        this.response_buffer = try MutableString.init(allocator, 0);
         this.allocator = allocator;
 
         const url = URL.parse(this.url_buf);
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
-            .http_proxy = this.package_manager.httpProxy(url),
-        });
-        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
-
-        if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
-        }
+        const verbose: HTTP.HTTPVerboseLevel = if (PackageManager.verbose_install) .headers else .none;
+        this.http = bun.http.fetchBatched(
+            &.{
+                .allocator = allocator,
+                .method = .GET,
+                .url = url,
+                .headers = header_builder.entries,
+                .headers_buf = header_builder.content.ptr.?[0..header_builder.content.len],
+                .reject_unauthorized = this.package_manager.tlsRejectUnauthorized(),
+                .http_proxy = this.package_manager.httpProxy(url),
+                .verbose = verbose,
+            },
+            this.getCompletionCallback(),
+            &this.http_task,
+        );
 
         this.callback = .{
             .package_manifest = .{
@@ -441,17 +448,6 @@ const NetworkTask = struct {
                 .loaded_manifest = if (loaded_manifest) |manifest| manifest.* else null,
             },
         };
-
-        if (PackageManager.verbose_install) {
-            this.http.verbose = .headers;
-            this.http.client.verbose = .headers;
-        }
-
-        // Incase the ETag causes invalidation, we fallback to the last modified date.
-        if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
-            this.http.client.force_last_modified = true;
-            this.http.client.if_modified_since = last_modified;
-        }
     }
 
     pub fn getCompletionCallback(this: *NetworkTask) HTTP.HTTPClientResult.Callback {
@@ -459,7 +455,11 @@ const NetworkTask = struct {
     }
 
     pub fn schedule(this: *NetworkTask, batch: *ThreadPool.Batch) void {
-        this.http.schedule(this.allocator, batch);
+        batch.push(.{
+            .head = this.http_task.?,
+            .tail = this.http_task.?,
+            .len = 1,
+        });
     }
 
     pub fn forTarball(
@@ -510,13 +510,21 @@ const NetworkTask = struct {
 
         const url = URL.parse(this.url_buf);
 
-        this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
-            .http_proxy = this.package_manager.httpProxy(url),
-        });
-        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
-        if (PackageManager.verbose_install) {
-            this.http.client.verbose = .headers;
-        }
+        const verbose: HTTP.HTTPVerboseLevel = if (PackageManager.verbose_install) .headers else .none;
+        this.http = bun.http.fetchBatched(
+            &.{
+                .allocator = allocator,
+                .method = .GET,
+                .url = url,
+                .headers = header_builder.entries,
+                .headers_buf = header_buf,
+                .reject_unauthorized = this.package_manager.tlsRejectUnauthorized(),
+                .http_proxy = this.package_manager.httpProxy(url),
+                .verbose = verbose,
+            },
+            this.getCompletionCallback(),
+            &this.http_task,
+        );
     }
 };
 
@@ -699,7 +707,7 @@ pub const Task = struct {
                 const package_manifest = Npm.Registry.getPackageMetadata(
                     allocator,
                     manager.scopeForPackageName(manifest.name.slice()),
-                    manifest.network.http.response.?,
+                    manifest.network.http.response().?,
                     body,
                     &this.log,
                     manifest.name.slice(),
@@ -4275,6 +4283,7 @@ pub const PackageManager = struct {
             .task_id = task_id,
             .callback = undefined,
             .allocator = this.allocator,
+            .http = undefined,
             .package_manager = this,
             .apply_patch_task = if (patch_name_and_version_hash) |h| brk: {
                 const patch_hash = this.lockfile.patched_dependencies.get(h).?.patchfileHash().?;
@@ -5229,6 +5238,7 @@ pub const PackageManager = struct {
 
                                     var network_task = this.getNetworkTask();
                                     network_task.* = .{
+                                        .http = undefined,
                                         .package_manager = &PackageManager.instance, // https://github.com/ziglang/zig/issues/14005
                                         .callback = undefined,
                                         .task_id = task_id,
@@ -6167,18 +6177,18 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.http.response() == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
-                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        const max = HTTP.max_simultaneous_requests.load(.monotonic);
                         if (max > min) {
-                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                            HTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
                         }
                     }
 
                     // Handle retry-able errors.
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.HTTPError;
+                    if (task.http.response() == null or task.http.response().?.status_code > 499) {
+                        const err = task.http.err() orelse error.HTTPError;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6198,9 +6208,9 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
+                    const response = task.http.response() orelse {
                         // Handle non-retry-able errors.
-                        const err = task.http.err orelse error.HTTPError;
+                        const err = task.http.err() orelse error.HTTPError;
 
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
@@ -6272,7 +6282,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ task.url_buf, response.status_code },
                             ) catch bun.outOfMemory();
                         } else {
                             manager.log.addWarningFmt(
@@ -6280,7 +6290,7 @@ pub const PackageManager = struct {
                                 logger.Loc.Empty,
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
-                                .{ task.http.client.url.href, response.status_code },
+                                .{ task.url_buf, response.status_code },
                             ) catch bun.outOfMemory();
                         }
                         if (manager.subcommand != .remove) {
@@ -6343,17 +6353,17 @@ pub const PackageManager = struct {
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
                 .extract => |*extract| {
-                    if (!has_network_error and task.http.response == null) {
+                    if (!has_network_error and task.http.response() == null) {
                         has_network_error = true;
                         const min = manager.options.min_simultaneous_requests;
-                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        const max = HTTP.max_simultaneous_requests.load(.monotonic);
                         if (max > min) {
-                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                            HTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
                         }
                     }
 
-                    if (task.http.response == null or task.http.response.?.status_code > 499) {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    if (task.http.response() == null or task.http.response().?.status_code > 499) {
+                        const err = task.http.err() orelse error.TarballFailedToDownload;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
@@ -6379,8 +6389,8 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
-                        const err = task.http.err orelse error.TarballFailedToDownload;
+                    const response = task.http.response() orelse {
+                        const err = task.http.err() orelse error.TarballFailedToDownload;
 
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];
@@ -6466,7 +6476,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><red><b>GET<r><red> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    task.url_buf,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -6477,7 +6487,7 @@ pub const PackageManager = struct {
                                 manager.allocator,
                                 "<r><yellow><b>GET<r><yellow> {s}<d> - {d}<r>",
                                 .{
-                                    task.http.client.url.href,
+                                    task.url_buf,
                                     response.status_code,
                                 },
                             ) catch bun.outOfMemory();
@@ -7170,7 +7180,7 @@ pub const PackageManager = struct {
                 if (std.fmt.parseInt(u16, retry_count, 10)) |int| this.max_retry_count = int else |_| {}
             }
 
-            AsyncHTTP.loadEnv(allocator, log, env);
+            bun.http.loadEnv(allocator, log, env);
 
             if (env.get("BUN_CONFIG_SKIP_SAVE_LOCKFILE")) |check_bool| {
                 this.do.save_lockfile = strings.eqlComptime(check_bool, "0");

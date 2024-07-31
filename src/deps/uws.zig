@@ -138,6 +138,17 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         socket: InternalSocket,
         const ThisSocket = @This();
 
+        pub fn isSSL() bool {
+            return is_ssl;
+        }
+
+        pub fn toAnySocket(this: ThisSocket) uws.AnySocket {
+            return switch (is_ssl) {
+                true => uws.AnySocket{ .SocketTLS = this },
+                false => uws.AnySocket{ .SocketTCP = this },
+            };
+        }
+
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             const socket = this.socket.get() orelse return std.mem.zeroes(us_bun_verify_error_t);
             const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, socket);

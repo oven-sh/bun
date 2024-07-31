@@ -1650,3 +1650,24 @@ it("should be able to abrupt stop the server", async () => {
     }
   }
 });
+
+it("should not instanciate error instances in each request", async () => {
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req, server) {
+      return new Response("bun");
+    },
+  });
+  const batchSize = 100;
+  const batch = new Array(batchSize);
+  for(let i = 0; i < 1000; i++) {
+    batch[i % batchSize] = await fetch(server.url, {
+      method: "POST",
+      body: "bun",
+    });
+    if (i % batchSize === batchSize - 1) {
+      await Promise.all(batch);
+    }
+  }
+  expect(heapStats().objectTypeCounts.Error || 0).toBe(0);
+});

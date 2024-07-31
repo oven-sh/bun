@@ -908,5 +908,6 @@ public:
     // todo(@190n) move these up or move these elsewhere
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForObjectTemplate;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalFieldObject;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForV8GlobalInternals;
 };
 } // namespace WebCore

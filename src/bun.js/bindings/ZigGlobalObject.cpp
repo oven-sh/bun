@@ -147,8 +147,7 @@
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
-#include "v8/ObjectTemplate.h"
-#include "v8/InternalFieldObject.h"
+#include "v8/GlobalInternals.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2632,6 +2631,14 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
         });
 
+    m_V8GlobalInternals.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, v8::GlobalInternals>::Initializer& init) {
+            init.set(
+                v8::GlobalInternals::create(
+                    init.vm,
+                    v8::GlobalInternals::createStructure(init.vm, init.owner)));
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3069,14 +3076,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.setStructure(structure);
             init.setConstructor(constructor);
         });
-
-    m_ObjectTemplateStructure.initLater([](LazyClassStructure::Initializer& init) {
-        init.setStructure(v8::ObjectTemplate::createStructure(init.vm, init.global, init.global->m_functionPrototype.get()));
-    });
-
-    m_InternalFieldObjectStructure.initLater([](LazyClassStructure::Initializer& init) {
-        init.setStructure(v8::InternalFieldObject::createStructure(init.vm, init.global, init.global->m_objectPrototype.get()));
-    });
 
 #if ENABLE(REMOTE_INSPECTOR)
     setInspectable(false);
@@ -3516,6 +3515,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
+    thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);
@@ -3529,8 +3529,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_nativeMicrotaskTrampoline.visit(visitor);
     thisObject->m_navigatorObject.visit(visitor);
     thisObject->m_NodeVMScriptClassStructure.visit(visitor);
-    thisObject->m_ObjectTemplateStructure.visit(visitor);
-    thisObject->m_InternalFieldObjectStructure.visit(visitor);
     thisObject->m_pendingVirtualModuleResultStructure.visit(visitor);
     thisObject->m_performanceObject.visit(visitor);
     thisObject->m_performMicrotaskFunction.visit(visitor);

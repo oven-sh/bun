@@ -1,5 +1,6 @@
 #include "v8/ObjectTemplate.h"
 #include "v8/InternalFieldObject.h"
+#include "v8/GlobalInternals.h"
 
 using JSC::JSGlobalObject;
 using JSC::JSValue;
@@ -23,7 +24,7 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
     RELEASE_ASSERT(constructor.IsEmpty());
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
-    Structure* structure = globalObject->ObjectTemplateStructure();
+    Structure* structure = globalObject->V8GlobalInternals()->objectTemplateStructure(globalObject);
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
     // TODO pass constructor
     objectTemplate->finishCreation(vm);

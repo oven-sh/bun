@@ -31,6 +31,10 @@ namespace Bun {
 class InternalModuleRegistry;
 } // namespace Bun
 
+namespace v8 {
+class GlobalInternals;
+} // namespace v8
+
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
@@ -237,10 +241,6 @@ public:
     JSC::JSObject* NodeVMScript() const { return m_NodeVMScriptClassStructure.constructorInitializedOnMainThread(this); }
     JSC::JSValue NodeVMScriptPrototype() const { return m_NodeVMScriptClassStructure.prototypeInitializedOnMainThread(this); }
 
-    JSC::Structure* ObjectTemplateStructure() const { return m_ObjectTemplateStructure.getInitializedOnMainThread(this); }
-
-    JSC::Structure* InternalFieldObjectStructure() const { return m_InternalFieldObjectStructure.getInitializedOnMainThread(this); }
-
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
@@ -283,6 +283,8 @@ public:
     Structure* NAPIFunctionStructure() const { return m_NAPIFunctionStructure.getInitializedOnMainThread(this); }
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
+
+    v8::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
 
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
@@ -508,8 +510,6 @@ public:
     LazyClassStructure m_callSiteStructure;
     LazyClassStructure m_JSBufferClassStructure;
     LazyClassStructure m_NodeVMScriptClassStructure;
-    LazyClassStructure m_ObjectTemplateStructure;
-    LazyClassStructure m_InternalFieldObjectStructure;
 
     /**
      * WARNING: You must update visitChildrenImpl() if you add a new field.
@@ -561,6 +561,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
+    LazyProperty<JSGlobalObject, v8::GlobalInternals> m_V8GlobalInternals;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

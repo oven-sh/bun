@@ -3245,16 +3245,17 @@ pub fn setTimeout(this: *HTTPClient, socket: anytype, minutes: c_uint) void {
 
 pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPContext(is_ssl), socket: NewHTTPContext(is_ssl).HTTPSocket) void {
     if (this.state.stage != .done and this.state.stage != .fail) {
-        const out_str = this.state.body_out_str.?;
-        const body = out_str.*;
         if (this.state.flags.is_redirect_pending and this.state.fail == null) {
             if (this.state.isDone()) {
                 this.doRedirect(is_ssl, ctx, socket);
             }
             return;
         }
+        const out_str = this.state.body_out_str.?;
+        const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
+      
         if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }

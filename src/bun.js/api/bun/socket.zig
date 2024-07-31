@@ -782,14 +782,13 @@ pub const Listener = struct {
         const Socket = NewSocket(ssl);
         bun.assert(ssl == listener.ssl);
 
-        var this_socket = listener.handlers.vm.allocator.create(Socket) catch bun.outOfMemory();
-        this_socket.* = Socket{
+        var this_socket = Socket.new(.{
             .handlers = &listener.handlers,
             .this_value = .zero,
             .socket = socket,
             .protos = listener.protos,
             .flags = .{ .owned_protos = false },
-        };
+        });
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
@@ -1061,16 +1060,14 @@ pub const Listener = struct {
         handlers_ptr.promise.set(globalObject, promise_value);
 
         if (ssl_enabled) {
-            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
-
-            tls.* = .{
+            var tls = TLSSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = undefined,
                 .connection = connection,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
                 .server_name = server_name,
-            };
+            });
 
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
@@ -1082,16 +1079,14 @@ pub const Listener = struct {
 
             return promise_value;
         } else {
-            var tcp = handlers.vm.allocator.create(TCPSocket) catch bun.outOfMemory();
-
-            tcp.* = .{
+            var tcp = TCPSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = undefined,
                 .connection = null,
                 .protos = null,
                 .server_name = null,
-            };
+            });
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
 
@@ -1164,6 +1159,7 @@ fn NewSocket(comptime ssl: bool) type {
         // `Listener` keep a list of all the sockets JSValue in there
         // This is wasteful because it means we are keeping a JSC::Weak for every single open socket
         has_pending_activity: std.atomic.Value(bool) = std.atomic.Value(bool).init(true),
+        pub usingnamespace bun.NewRefCounted(@This(), @This().deinit);
 
         const This = @This();
         const log = Output.scoped(.Socket, false);
@@ -1287,7 +1283,7 @@ fn NewSocket(comptime ssl: bool) type {
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             this.flags.detached = true;
-            defer this.decRef();
+            defer this.deref();
 
             defer this.markInactive(socket_ctx);
 
@@ -1417,7 +1413,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             this.flags.detached = false;
             this.socket = socket;
-            this.incRef();
+            this.ref();
 
             if (this.wrapped == .none) {
                 socket.ext(**anyopaque).* = bun.cast(**anyopaque, this);
@@ -1583,7 +1579,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
-            defer this.decRef();
+            defer this.deref();
             this.flags.detached = true;
             defer this.markInactive(socket.context());
 
@@ -2057,43 +2053,20 @@ fn NewSocket(comptime ssl: bool) type {
             };
         }
 
-        pub fn ref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
             if (this.flags.detached) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
-        pub fn unref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        pub fn jsUnref(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
             this.poll_ref.unref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
 
-        pub fn incRef(this: *This) void {
-            bun.assert(this.ref_count > 0);
-            this.ref_count += 1;
-        }
-
-        pub fn decRef(this: *This) void {
-            const ref_count = this.ref_count;
-            bun.assert(ref_count > 0);
-            this.ref_count -= 1;
-            if (ref_count == 1) {
-                log("destroy", .{});
-                bun.default_allocator.destroy(this);
-            }
-        }
-
-        pub fn finalize(this: *This) void {
-            log("finalize() {d}", .{@intFromPtr(this)});
-            this.flags.finalizing = true;
-            if (!this.flags.detached) {
-                if (!this.socket.isClosed()) {
-                    this.socket.close(.failure);
-                }
-            }
-
+        pub fn deinit(this: *This) void {
             this.markInactive(null);
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
@@ -2114,8 +2087,19 @@ fn NewSocket(comptime ssl: bool) type {
                 this.connection = null;
                 connection.deinit();
             }
+            this.destroy();
+        }
 
-            this.decRef();
+        pub fn finalize(this: *This) void {
+            log("finalize() {d}", .{@intFromPtr(this)});
+            this.flags.finalizing = true;
+            if (!this.flags.detached) {
+                if (!this.socket.isClosed()) {
+                    this.socket.close(.failure);
+                }
+            }
+
+            this.deref();
         }
 
         pub fn reload(this: *This, globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
@@ -3016,13 +3000,12 @@ fn NewSocket(comptime ssl: bool) type {
             const ext_size = @sizeOf(WrappedSocket);
 
             const is_server = this.handlers.is_server;
-            var tls = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
+
             var handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             handlers_ptr.* = handlers;
             handlers_ptr.is_server = is_server;
             handlers_ptr.protect();
-
-            tls.* = .{
+            var tls = TLSSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
                 .socket = undefined,
@@ -3030,7 +3013,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tls,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch unreachable) else null,
                 .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch unreachable) else null,
-            };
+            });
 
             const tls_js_value = tls.getThisValue(globalObject);
             TLSSocket.dataSetCached(tls_js_value, globalObject, default_data);
@@ -3056,7 +3039,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             tls.socket = new_socket;
 
-            var raw = handlers.vm.allocator.create(TLSSocket) catch bun.outOfMemory();
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
                 .vm = globalObject.bunVM(),
@@ -3074,15 +3056,16 @@ fn NewSocket(comptime ssl: bool) type {
                 .is_server = is_server,
             };
 
-            raw.* = .{
+            raw_handlers_ptr.protect();
+
+            var raw = TLSSocket.new(.{
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,
                 .socket = new_socket,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
-            };
-            raw_handlers_ptr.protect();
+            });
 
             const raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {

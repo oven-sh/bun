@@ -33,6 +33,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     template <bool> friend struct HttpResponse;
     template <bool> friend struct HttpContext;
     public:
+    using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
+    using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
+    using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
+
     /* When we are done with a response we mark it like so */
     void markDone() {
         onAborted = nullptr;
@@ -46,15 +50,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable(uint64_t offset) {
+    bool callOnWritable( uWS::HttpResponse<SSL>* response, uint64_t offset) {
         /* Borrow real onWritable */
-        MoveOnlyFunction<bool(uint64_t)> borrowedOnWritable = std::move(onWritable);
+        auto* borrowedOnWritable = std::move(onWritable);
 
         /* Set onWritable to placeholder */
-        onWritable = [](uint64_t) {return true;};
+        onWritable = [](uWS::HttpResponse<SSL>*, uint64_t, void*) {return true;};
 
         /* Run borrowed onWritable */
-        bool ret = borrowedOnWritable(offset);
+        bool ret = borrowedOnWritable(response, offset, userData);
 
         /* If we still have onWritable (the placeholder) then move back the real one */
         if (onWritable) {
@@ -74,10 +78,13 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_CLOSE = 16 // used
     };
 
+    /* Shared context pointer */
+    void* userData = nullptr;
+
     /* Per socket event handlers */
-    MoveOnlyFunction<bool(uint64_t)> onWritable;
-    MoveOnlyFunction<void()> onAborted;
-    MoveOnlyFunction<void(std::string_view, bool)> inStream; // onData
+    OnWritableCallback onWritable = nullptr;
+    OnAbortedCallback onAborted = nullptr;
+    OnDataCallback inStream = nullptr;
     /* Outgoing offset */
     uint64_t offset = 0;
 

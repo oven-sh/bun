@@ -8,7 +8,7 @@
 #define BUN_EXPORT JS_EXPORT
 #endif
 
-#define V8_UNIMPLEMENTED() BUN_PANIC("You're using a module which calls a V8 function that Bun does not yet implement. Track progress at issue 4290.")
+#define V8_UNIMPLEMENTED() BUN_PANIC("You're using a module which calls a V8 function that Bun does not yet implement. Track progress at https://github.com/oven-sh/bun/issues/4290.")
 
 extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 

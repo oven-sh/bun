@@ -63,9 +63,8 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     struct us_listen_socket_t *ls = context->head_listen_sockets;
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;\
-        if(!us_socket_is_closed(ssl, ls)) {
-            us_listen_socket_close(ssl, ls);
-        }
+        us_listen_socket_close(ssl, ls);
+        
         ls = nextLS;
     }
 
@@ -73,7 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     struct us_socket_t *s = context->head_sockets;
     while (s) {
         struct us_socket_t *nextS = s->next;
-        if(!us_socket_is_closed(ssl, ls)) {
+        if(!us_socket_is_closed(ssl, s)) {
             us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         }
         s = nextS;

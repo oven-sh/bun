@@ -1533,7 +1533,7 @@ pub const SinkDestructor = struct {
     const Subprocess = JSC.API.Bun.Subprocess;
     pub const Ptr = bun.TaggedPointerUnion(.{
         Detached,
-        Subprocess,
+        Subprocess.Island,
     });
 
     pub export fn Bun__onSinkDestroyed(
@@ -1551,9 +1551,9 @@ pub const SinkDestructor = struct {
             .Detached => {
                 return;
             },
-            .Subprocess => {
-                const subprocess = ptr.as(Subprocess);
-                subprocess.onStdinDestroyed();
+            .Island => {
+                const island = ptr.as(Subprocess.Island);
+                island.onStdinDestroyed();
             },
             else => {
                 Output.debugWarn("Unknown sink type", .{});

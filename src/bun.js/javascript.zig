@@ -990,18 +990,20 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
+            const fd_s = kv.value.value;
             const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
-            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
             if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value, mode);
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+                this.initIPCInstance(fd_s, mode);
             } else {
-                if (std.fmt.parseInt(i32, kv.value.value, 10)) |fd| {
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+                if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
                     this.initIPCInstance(bun.toFD(fd), mode);
                 } else |_| {
-                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value.value});
+                    Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
                 }
             }
         }

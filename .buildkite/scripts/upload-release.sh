@@ -26,7 +26,7 @@ function assert_main() {
 }
 
 function assert_buildkite_agent() {
-  if ! command -v buildkite-agent &> /dev/null; then
+  if ! command -v "buildkite-agent" &> /dev/null; then
     echo "error: Cannot find buildkite-agent, please install it:"
     echo "https://buildkite.com/docs/agent/v3/install"
     exit 1
@@ -42,14 +42,15 @@ function assert_github() {
 
 function assert_aws() {
   assert_command "aws" "awscli" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-  for secret in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_ENDPOINT AWS_BUCKET; do
+  for secret in "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_ENDPOINT"; do
     assert_buildkite_secret "$secret"
   done
+  assert_buildkite_secret "AWS_BUCKET" --skip-redaction
 }
 
 function assert_sentry() {
   assert_command "sentry-cli" "getsentry/tools/sentry-cli" "https://docs.sentry.io/cli/installation/"
-  for secret in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT; do
+  for secret in "SENTRY_AUTH_TOKEN" "SENTRY_ORG" "SENTRY_PROJECT"; do
     assert_buildkite_secret "$secret"
   done
 }
@@ -81,7 +82,7 @@ function assert_command() {
 
 function assert_buildkite_secret() {
   local key="$1"
-  local value=$(buildkite-agent secret get "$key")
+  local value=$(buildkite-agent secret get "$key" ${@:2})
   if [ -z "$value" ]; then
     echo "error: Cannot find $key secret"
     echo ""
@@ -114,43 +115,53 @@ function create_sentry_release() {
   fi
 }
 
-function download_buildkite_artifacts() {
-  local dir="$1"
-  local names="${@:2}"
-  for name in "${names[@]}"; do
-    run_command buildkite-agent artifact download "$name" "$dir"
-    if [ ! -f "$dir/$name" ]; then
-      echo "error: Cannot find Buildkite artifact: $name"
-      exit 1
-    fi
-  done
-}
-
-function upload_github_assets() {
-  local version="$1"
-  local tag="$(release_tag "$version")"
-  local files="${@:2}"
-  for file in "${files[@]}"; do
-    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
-  done
-  if [ "$version" == "canary" ]; then
-    run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
-      --notes "This canary release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
+function download_buildkite_artifact() {
+  local name="$1"
+  local dir="$2"
+  if [ -z "$dir" ]; then
+    dir="."
+  fi
+  run_command buildkite-agent artifact download "$name" "$dir"
+  if [ ! -f "$dir/$name" ]; then
+    echo "error: Cannot find Buildkite artifact: $name"
+    exit 1
   fi
 }
 
-function upload_s3_files() {
-  local folder="$1"
-  local files="${@:2}"
-  for file in "${files[@]}"; do
-    run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
+function upload_github_asset() {
+  local version="$1"
+  local tag="$(release_tag "$version")"
+  local file="$2"
+  run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
+
+  # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
+  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
+    echo "warn: Uploading $file to $tag failed, retrying..."
+    sleep "$((RANDOM % 5 + 1))"
+    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
   done
+}
+
+function update_github_release() {
+  local version="$1"
+  local tag="$(release_tag "$version")"
+  if [ "$tag" == "canary" ]; then
+    run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
+      --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
+  fi
+}
+
+function upload_s3_file() {
+  local folder="$1"
+  local file="$2"
+  run_command aws --endpoint-url="$AWS_ENDPOINT" s3 cp "$file" "s3://$AWS_BUCKET/$folder/$file"
 }
 
 function create_release() {
   assert_main
   assert_buildkite_agent
   assert_github
+  assert_aws
   assert_sentry
 
   local tag="$1" # 'canary' or 'x.y.z'
@@ -171,10 +182,20 @@ function create_release() {
     bun-windows-x64-baseline-profile.zip
   )
 
-  download_buildkite_artifacts "." "${artifacts[@]}"
-  upload_s3_files "releases/$BUILDKITE_COMMIT" "${artifacts[@]}"
-  upload_s3_files "releases/$tag" "${artifacts[@]}"
-  upload_github_assets "$tag" "${artifacts[@]}"
+  function upload_artifact() {
+    local artifact="$1"
+    download_buildkite_artifact "$artifact"
+    upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    upload_s3_file "releases/$tag" "$artifact" &
+    upload_github_asset "$tag" "$artifact" &
+  }
+
+  for artifact in "${artifacts[@]}"; do
+    upload_artifact "$artifact" &
+  done
+  wait
+
+  update_github_release "$tag"
   create_sentry_release "$tag"
 }
 

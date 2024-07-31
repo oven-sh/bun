@@ -356,6 +356,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8()) {
@@ -364,10 +365,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             }
-
-                            return lhs;
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
@@ -391,6 +391,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
                                         ) catch bun.outOfMemory();
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8() and right.head.isUTF8()) {
@@ -400,9 +401,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         r.data == .e_inlined_enum,
                                     ) };
                                     left.parts = right.parts;
+                                    return lhs;
                                 }
                             }
-                            return lhs;
                         }
                     },
                     else => {

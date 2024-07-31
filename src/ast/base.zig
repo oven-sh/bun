@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const unicode = std.unicode;
 
+const js_ast = bun.JSAst;
+
 pub const NodeIndex = u32;
 pub const NodeIndexNone = 4294967293;
 
@@ -143,6 +145,34 @@ pub const Ref = packed struct(u64) {
                 ref.innerIndex(),
                 ref.sourceIndex(),
                 @tagName(ref.tag),
+            },
+        );
+    }
+
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+        return .{ .data = .{
+            .ref = ref,
+            .symbol_table = switch (@TypeOf(symbol_table)) {
+                *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
+                *std.ArrayList(js_ast.Symbol) => symbol_table.items,
+                []const js_ast.Symbol => symbol_table,
+                []js_ast.Symbol => symbol_table,
+                else => |T| @compileError("Unsupported type to Ref.dump: " ++ @typeName(T)),
+            },
+        } };
+    }
+
+    fn dumpImpl(data: struct { ref: Ref, symbol_table: []const js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const symbol = data.symbol_table[data.ref.inner_index];
+        try std.fmt.format(
+            writer,
+            "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
+            .{
+                data.ref.inner_index,
+                data.ref.source_index,
+                @tagName(data.ref.tag),
+                symbol.original_name,
+                symbol.use_count_estimate,
             },
         );
     }

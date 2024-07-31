@@ -383,6 +383,7 @@ pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_as
 
 pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot_to_copy: js_ast.SlotCounts) js_ast.SlotCounts {
     var slot = slot_to_copy;
+
     // Sort member map keys for determinism
     {
         sorted_members.clearRetainingCapacity();

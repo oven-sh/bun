@@ -912,32 +912,6 @@ pub const StreamResult = union(Tag) {
             used,
         };
 
-        pub fn abort(this: *Pending) void {
-            if (this.state != .pending) return;
-            this.state = .used;
-            switch (this.future) {
-                .promise => |p| {
-                    this.result.deinit();
-                    var err = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, p.globalThis);
-                    err.ensureStillAlive();
-                    this.result = .{ .err = .{ .JSValue = err } };
-                    StreamResult.fulfillPromise(&this.result, p.promise, p.globalThis);
-                },
-                .handler => |h| {
-                    this.result.deinit();
-                    this.result = .{
-                        .err = .{
-                            .Error = .{
-                                .errno = @intFromEnum(bun.C.E.CANCELED),
-                                .syscall = .pipe,
-                            },
-                        },
-                    };
-                    h.handler(h.ctx, this.result);
-                },
-            }
-        }
-
         pub fn run(this: *Pending) void {
             if (this.state != .pending) return;
             this.state = .used;
@@ -4513,7 +4487,9 @@ pub const ByteStream = struct {
 
         if (view != .zero) {
             this.pending_buffer = &.{};
-            this.pending.abort();
+            this.pending.result.deinit();
+            this.pending.result = .{ .done = {} };
+            this.pending.run();
         }
     }
 
@@ -4526,6 +4502,8 @@ pub const ByteStream = struct {
             this.done = true;
 
             this.pending_buffer = &.{};
+            this.pending.result.deinit();
+            this.pending.result = .{ .done = {} };
             this.pending.abort();
         }
 

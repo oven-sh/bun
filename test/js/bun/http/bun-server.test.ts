@@ -553,14 +553,17 @@ test("should be able to abrubtly close a upload request", async () => {
     async fetch(req) {
       let total_size = 0;
       req.signal.addEventListener("abort", resolve);
-
-      for await (const chunk of req.body as ReadableStream) {
-        total_size += chunk.length;
-        if (total_size > 1024 * 1024 * 1024) {
-          return new Response("too big", { status: 413 });
+      try{
+        for await (const chunk of req.body as ReadableStream) {
+          total_size += chunk.length;
+          if (total_size > 1024 * 1024 * 1024) {
+            return new Response("too big", { status: 413 });
+          }
         }
-      }
-
+      } catch (e) {
+        expect((e as Error)?.name).toBe("AbortError");
+      } 
+     
       return new Response("Received " + total_size);
     },
   });

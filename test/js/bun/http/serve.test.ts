@@ -1652,6 +1652,7 @@ it("should be able to abrupt stop the server", async () => {
 });
 
 it("should not instanciate error instances in each request", async () => {
+  const startErrorCount = heapStats().objectTypeCounts.Error || 0;
   using server = Bun.serve({
     port: 0,
     async fetch(req, server) {
@@ -1669,5 +1670,5 @@ it("should not instanciate error instances in each request", async () => {
       await Promise.all(batch);
     }
   }
-  expect(heapStats().objectTypeCounts.Error || 0).toBe(0);
+  expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount);
 });

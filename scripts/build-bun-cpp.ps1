@@ -2,6 +2,7 @@ $ErrorActionPreference = 'Stop'  # Setting strict mode, similar to 'set -euo pip
 
 . (Join-Path $PSScriptRoot "env.ps1")
 if ($env:CI -eq "true") {
+  $env:FORCE_UPDATE_SUBMODULES = "1"
   & (Join-Path $PSScriptRoot "update-submodules.ps1")
   & (Join-Path $PSScriptRoot "build-libuv.ps1") -CloneOnly $True
 }

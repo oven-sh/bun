@@ -134,14 +134,10 @@ pub const Batch = struct {
 pub const WaitGroup = struct {
     mutex: std.Thread.Mutex = .{},
     counter: u32 = 0,
-    event: std.Thread.ResetEvent,
+    event: std.Thread.ResetEvent = .{},
 
     pub fn init(self: *WaitGroup) void {
-        self.* = .{
-            .mutex = .{},
-            .counter = 0,
-            .event = undefined,
-        };
+        self.* = .{};
     }
 
     pub fn deinit(self: *WaitGroup) void {

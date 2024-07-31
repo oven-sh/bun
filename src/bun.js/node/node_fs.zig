@@ -39,6 +39,7 @@ const E = C.E;
 const uid_t = if (Environment.isPosix) std.posix.uid_t else bun.windows.libuv.uv_uid_t;
 const gid_t = if (Environment.isPosix) std.posix.gid_t else bun.windows.libuv.uv_gid_t;
 const ReadPosition = i64;
+const StringOrBuffer = JSC.Node.StringOrBuffer;
 
 const Stats = JSC.Node.Stats;
 const Dirent = JSC.Node.Dirent;
@@ -54,7 +55,6 @@ else
     // TODO:
     0;
 
-const StringOrBuffer = JSC.Node.StringOrBuffer;
 const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
@@ -2304,7 +2304,7 @@ pub const Arguments = struct {
     };
 
     const MkdirTemp = struct {
-        prefix: JSC.Node.StringOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
+        prefix: StringOrBuffer = .{ .buffer = .{ .buffer = JSC.ArrayBuffer.empty } },
         encoding: Encoding = Encoding.utf8,
 
         pub fn deinit(this: MkdirTemp) void {
@@ -2322,7 +2322,7 @@ pub const Arguments = struct {
         pub fn fromJS(ctx: JSC.C.JSContextRef, arguments: *ArgumentsSlice, exception: JSC.C.ExceptionRef) ?MkdirTemp {
             const prefix_value = arguments.next() orelse return MkdirTemp{};
 
-            const prefix = JSC.Node.StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
+            const prefix = StringOrBuffer.fromJS(ctx, bun.default_allocator, prefix_value) orelse {
                 if (exception.* == null) {
                     JSC.throwInvalidArguments(
                         "prefix must be a string or TypedArray",
@@ -2680,7 +2680,7 @@ pub const Arguments = struct {
     ///
     pub const Write = struct {
         fd: FileDescriptor,
-        buffer: JSC.Node.StringOrBuffer,
+        buffer: StringOrBuffer,
         // buffer_val: JSC.JSValue = JSC.JSValue.zero,
         offset: u64 = 0,
         length: u64 = std.math.maxInt(u64),
@@ -4019,14 +4019,14 @@ const Return = struct {
             }
         }
     };
-    pub const ReadFile = JSC.Node.StringOrBuffer;
+    pub const ReadFile = StringOrBuffer;
     pub const ReadFileWithOptions = union(enum) {
         string: string,
         buffer: JSC.Node.Buffer,
         null_terminated: [:0]const u8,
     };
-    pub const Readlink = JSC.Node.StringOrBuffer;
-    pub const Realpath = JSC.Node.StringOrBuffer;
+    pub const Readlink = StringOrBuffer;
+    pub const Realpath = StringOrBuffer;
     pub const RealpathNative = Realpath;
     pub const Rename = void;
     pub const Rmdir = void;
@@ -5758,26 +5758,15 @@ pub const NodeFS = struct {
             }
         }
 
-        if (Environment.isWindows) {
-            if (args.flag == .a) {
-                return Maybe(Return.WriteFile).success;
-            }
-
-            const rc = std.os.windows.kernel32.SetEndOfFile(fd.cast());
-            if (rc == 0) {
-                return .{
-                    .err = Syscall.Error{
-                        .errno = @intFromEnum(std.os.windows.kernel32.GetLastError()),
-                        .syscall = .SetEndOfFile,
-                        .fd = fd,
-                    },
-                };
-            }
-        } else {
-            // https://github.com/oven-sh/bun/issues/2931
-            // https://github.com/oven-sh/bun/issues/10222
-            // only truncate if we're not appending and writing to a path
-            if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
+        // https://github.com/oven-sh/bun/issues/2931
+        // https://github.com/oven-sh/bun/issues/10222
+        // Only truncate if we're not appending and writing to a path
+        if ((@intFromEnum(args.flag) & bun.O.APPEND) == 0 and args.file != .fd) {
+            // If this errors, we silently ignore it.
+            // Not all files are seekable (and thus, not all files can be truncated).
+            if (Environment.isWindows) {
+                _ = std.os.windows.kernel32.SetEndOfFile(fd.cast());
+            } else {
                 _ = ftruncateSync(.{ .fd = fd, .len = @as(JSC.WebCore.Blob.SizeType, @truncate(written)) });
             }
         }

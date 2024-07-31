@@ -140,10 +140,9 @@ pub const TransformTask = struct {
             .allocator = allocator,
         };
         ast_memory_allocator.reset();
+
         JSAst.Stmt.Data.Store.memory_allocator = ast_memory_allocator;
         JSAst.Expr.Data.Store.memory_allocator = ast_memory_allocator;
-        JSAst.Stmt.Data.Store.create(bun.default_allocator);
-        JSAst.Expr.Data.Store.create(bun.default_allocator);
 
         defer {
             JSAst.Stmt.Data.Store.reset();
@@ -248,6 +247,9 @@ pub const TransformTask = struct {
         this.log.deinit();
         this.input_code.deinitAndUnprotect();
         this.output_code.deref();
+        if (this.tsconfig) |tsconfig| {
+            tsconfig.destroy();
+        }
 
         this.destroy();
     }
@@ -585,6 +587,10 @@ fn transformOptionsFromJSC(globalObject: JSC.C.JSContextRef, temp_allocator: std
                 return transpiler;
             }
         }
+    }
+
+    if (try object.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+        transpiler.transform.packages = packages.toAPI();
     }
 
     var tree_shaking: ?bool = null;

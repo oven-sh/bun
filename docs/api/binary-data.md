@@ -61,7 +61,7 @@ To do anything interesting we need a construct known as a "view". A view is a cl
 
 The `DataView` class is a lower-level interface for reading and manipulating the data in an `ArrayBuffer`.
 
-Below we create a new `DataView` and set the first byte to 5.
+Below we create a new `DataView` and set the first byte to 3.
 
 ```ts
 const buf = new ArrayBuffer(4);
@@ -395,7 +395,7 @@ Bun implements `Buffer`, a Node.js API for working with binary data that pre-dat
 
 ```ts
 const buf = Buffer.from("hello world");
-// => Buffer(16) [ 116, 104, 105, 115, 32, 105, 115, 32, 97, 32, 115, 116, 114, 105, 110, 103 ]
+// => Buffer(11) [ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 ]
 
 buf.length; // => 11
 buf[0]; // => 104, ascii for 'h'

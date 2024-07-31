@@ -49,8 +49,8 @@ pub const Run = struct {
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
 
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         if (!ctx.debug.loaded_bunfig) {
@@ -118,8 +118,36 @@ pub const Run = struct {
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
+        doPreconnect(ctx.runtime_options.preconnect);
+
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
+    }
+
+    fn doPreconnect(preconnect: []const string) void {
+        if (preconnect.len == 0) return;
+        bun.HTTPThread.init();
+
+        for (preconnect) |url_str| {
+            const url = bun.URL.parse(url_str);
+
+            if (!url.isHTTP() and !url.isHTTPS()) {
+                Output.errGeneric("preconnect URL must be HTTP or HTTPS: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            if (url.hostname.len == 0) {
+                Output.errGeneric("preconnect URL must have a hostname: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            if (!url.hasValidPort()) {
+                Output.errGeneric("preconnect URL must have a valid port: {}", .{bun.fmt.quote(url_str)});
+                Global.exit(1);
+            }
+
+            AsyncHTTP.preconnect(url, false);
+        }
     }
 
     fn bootBunShell(ctx: Command.Context, entry_path: []const u8) !bun.shell.ExitCode {
@@ -145,17 +173,17 @@ pub const Run = struct {
             try bun.CLI.Arguments.loadConfigPath(ctx.allocator, true, "bunfig.toml", ctx, .RunCommand);
         }
 
+        // The shell does not need to initialize JSC.
+        // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(ctx, entry_path);
-            Global.exitWide(exit_code);
+            Global.exit(exit_code);
             return;
         }
 
-        // The shell does not need to initialize JSC.
-        // JSC initialization costs 1-3ms
         bun.JSC.initialize();
-        js_ast.Expr.Data.Store.create(default_allocator);
-        js_ast.Stmt.Data.Store.create(default_allocator);
+        js_ast.Expr.Data.Store.create();
+        js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
 
         run = .{
@@ -242,6 +270,8 @@ pub const Run = struct {
 
         vm.bundler.env.loadTracy();
 
+        doPreconnect(ctx.runtime_options.preconnect);
+
         const callback = OpaqueWrap(Run, Run.start);
         vm.global.vm().holdAPILock(&run, callback);
     }
@@ -291,7 +321,7 @@ pub const Run = struct {
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
-                    Global.exit(1);
+                    vm.globalExit();
                 }
             }
 
@@ -324,7 +354,7 @@ pub const Run = struct {
                         .{Global.unhandled_error_bun_version_string},
                     );
                 }
-                Global.exit(1);
+                vm.globalExit();
             }
         }
 
@@ -428,12 +458,10 @@ pub const Run = struct {
                 .{Global.unhandled_error_bun_version_string},
             );
         }
-        const exit_code = this.vm.exit_handler.exit_code;
 
         vm.onExit();
-
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(exit_code);
+        vm.globalExit();
     }
 };
 

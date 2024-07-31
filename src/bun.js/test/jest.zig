@@ -829,7 +829,6 @@ pub const DescribeScope = struct {
     done: bool = false,
     skip_count: u32 = 0,
     tag: Tag = .pass,
-    has_printed: bool = false,
 
     fn isWithinOnlyScope(this: *const DescribeScope) bool {
         if (this.tag == .only) return true;
@@ -1532,13 +1531,6 @@ pub const TestRunnerTask = struct {
             .skip => Jest.runner.?.reportSkip(test_id, this.source_file_path, test_.label, describe),
             .todo => Jest.runner.?.reportTodo(test_id, this.source_file_path, test_.label, describe),
             .fail_because_todo_passed => |count| {
-                var parent_: ?*DescribeScope = describe;
-                while (parent_) |scope| {
-                    if (describe != scope) {
-                        Output.prettyError("  ", .{});
-                    }
-                    parent_ = scope.parent;
-                }
                 Output.prettyErrorln("  <d>^<r> <red>this test is marked as todo but passes.<r> <d>Remove `.todo` or check that test is correct.<r>", .{});
                 Jest.runner.?.reportFailure(
                     test_id,
@@ -1551,7 +1543,7 @@ pub const TestRunnerTask = struct {
             },
             .pending => @panic("Unexpected pending test"),
         }
-        describe.onTestComplete(globalThis, test_id, result == .skip);
+        describe.onTestComplete(globalThis, test_id, result == .skip or (!Jest.runner.?.test_options.run_todo and result == .todo));
         Jest.runner.?.runNextTest();
     }
 
@@ -1682,7 +1674,7 @@ inline fn createScope(
         Jest.runner.?.setOnly();
         tag_to_use = .only;
     } else if (is_test and Jest.runner.?.only and parent.tag != .only) {
-        return .zero;
+        return .undefined;
     }
 
     var is_skip = tag == .skip or
@@ -1789,9 +1781,9 @@ fn consumeArg(
     if (should_write) {
         const owned_slice = arg.toSliceOrNull(globalThis) orelse return error.Failed;
         defer owned_slice.deinit();
-        try array_list.appendSlice(allocator, owned_slice.slice());
+        array_list.appendSlice(allocator, owned_slice.slice()) catch bun.outOfMemory();
     } else {
-        try array_list.appendSlice(allocator, fallback);
+        array_list.appendSlice(allocator, fallback) catch bun.outOfMemory();
     }
     str_idx.* += 1;
     args_idx.* += 1;
@@ -1802,7 +1794,7 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
     const allocator = getAllocator(globalThis);
     var idx: usize = 0;
     var args_idx: usize = 0;
-    var list = try std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len);
+    var list = std.ArrayListUnmanaged(u8).initCapacity(allocator, label.len) catch bun.outOfMemory();
 
     while (idx < label.len) {
         const char = label[idx];
@@ -1826,9 +1818,9 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                     var str = bun.String.empty;
                     defer str.deref();
                     current_arg.jsonStringify(globalThis, 0, &str);
-                    const owned_slice = try str.toOwnedSlice(allocator);
+                    const owned_slice = str.toOwnedSlice(allocator) catch bun.outOfMemory();
                     defer allocator.free(owned_slice);
-                    try list.appendSlice(allocator, owned_slice);
+                    list.appendSlice(allocator, owned_slice) catch bun.outOfMemory();
                     idx += 1;
                     args_idx += 1;
                 },
@@ -1837,28 +1829,28 @@ fn formatLabel(globalThis: *JSGlobalObject, label: string, function_args: []JSVa
                         .globalThis = globalThis,
                         .quote_strings = true,
                     };
-                    const value_fmt = current_arg.toFmt(globalThis, &formatter);
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{any}", .{value_fmt});
+                    const value_fmt = current_arg.toFmt(&formatter);
+                    const test_index_str = std.fmt.allocPrint(allocator, "{any}", .{value_fmt}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
+                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;
                     args_idx += 1;
                 },
                 '#' => {
-                    const test_index_str = try std.fmt.allocPrint(allocator, "{d}", .{test_idx});
+                    const test_index_str = std.fmt.allocPrint(allocator, "{d}", .{test_idx}) catch bun.outOfMemory();
                     defer allocator.free(test_index_str);
-                    try list.appendSlice(allocator, test_index_str);
+                    list.appendSlice(allocator, test_index_str) catch bun.outOfMemory();
                     idx += 1;
                 },
                 '%' => {
-                    try list.append(allocator, '%');
+                    list.append(allocator, '%') catch bun.outOfMemory();
                     idx += 1;
                 },
                 else => {
                     // ignore unrecognized fmt
                 },
             }
-        } else try list.append(allocator, char);
+        } else list.append(allocator, char) catch bun.outOfMemory();
         idx += 1;
     }
 
@@ -1926,14 +1918,14 @@ fn eachBind(
         const allocator = getAllocator(globalThis);
         const each_data = bun.cast(*EachData, data);
         JSC.setFunctionData(callee, null);
-        const array = each_data.*.strong.get() orelse return .zero;
+        const array = each_data.*.strong.get() orelse return .undefined;
         defer {
             each_data.*.strong.deinit();
             allocator.destroy(each_data);
         }
 
         if (array.isUndefinedOrNull() or !array.jsType().isArray()) {
-            return .zero;
+            return .undefined;
         }
 
         var iter = array.arrayIterator(globalThis);
@@ -2004,7 +1996,7 @@ fn eachBind(
                 function.unprotect();
             } else if (each_data.is_test) {
                 if (Jest.runner.?.only and tag != .only) {
-                    return .zero;
+                    return .undefined;
                 } else {
                     function.protect();
                     parent.tests.append(allocator, TestScope{
@@ -2034,7 +2026,7 @@ fn eachBind(
         }
     }
 
-    return .zero;
+    return .undefined;
 }
 
 inline fn createEach(
@@ -2077,7 +2069,7 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     }
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, args);
+    const result = function.call(globalObject, .undefined, args);
     result.ensureStillAlive();
 
     return result;

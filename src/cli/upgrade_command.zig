@@ -45,8 +45,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 pub const Version = struct {
@@ -163,7 +163,6 @@ pub const UpgradeCheckerThread = struct {
 };
 
 pub const UpgradeCommand = struct {
-    pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -245,7 +244,6 @@ pub const UpgradeCommand = struct {
             headers_buf,
             &metadata_body,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
@@ -528,12 +526,10 @@ pub const UpgradeCommand = struct {
                 "",
                 zip_file_buffer,
                 "",
-                timeout,
                 http_proxy,
                 null,
                 HTTP.FetchRedirect.follow,
             );
-            async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
             async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 

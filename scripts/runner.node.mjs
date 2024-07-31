@@ -26,7 +26,7 @@ import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
-const spawnTimeout = 30_000;
+const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;
 
@@ -104,15 +104,19 @@ async function printInfo() {
     console.log("Glibc:", getGlibcVersion());
   }
   console.log("Hostname:", getHostname());
-  if (isCloud) {
-    console.log("Public IP:", await getPublicIp());
-    console.log("Cloud:", getCloud());
-  }
   if (isCI) {
     console.log("CI:", getCI());
     console.log("Shard:", options["shard"], "/", options["max-shards"]);
     console.log("Build URL:", getBuildUrl());
     console.log("Environment:", process.env);
+    if (isCloud) {
+      console.log("Public IP:", await getPublicIp());
+      console.log("Cloud:", getCloud());
+    }
+    const tailscaleIp = await getTailscaleIp();
+    if (tailscaleIp) {
+      console.log("Tailscale IP:", tailscaleIp);
+    }
   }
   console.log("Cwd:", cwd);
   console.log("Tmpdir:", tmpPath);
@@ -135,6 +139,30 @@ async function runTests() {
     execPath = getExecPath(options["exec-path"]);
   }
   console.log("Bun:", execPath);
+
+  for (let i = 0; i < 10; i++) {
+    try {
+      const { error } = spawnSync(execPath, ["--version"], {
+        encoding: "utf-8",
+        timeout: spawnTimeout,
+        env: {
+          PATH: process.env.PATH,
+          BUN_DEBUG_QUIET_LOGS: 1,
+        },
+      });
+      if (!error) {
+        break;
+      }
+      throw error;
+    } catch (error) {
+      const { code } = error;
+      if (code === "EBUSY" || code === "UNKNOWN") {
+        console.log(`Bun appears to be busy, retrying... [code: ${code}]`);
+        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
+        continue;
+      }
+    }
+  }
 
   const revision = getRevision(execPath);
   console.log("Revision:", revision);
@@ -231,18 +259,20 @@ async function runTests() {
  */
 
 /**
- * @param {SpawnOptions} request
+ * @param {SpawnOptions} options
  * @returns {Promise<SpawnResult>}
  */
-async function spawnSafe({
-  command,
-  args,
-  cwd,
-  env,
-  timeout = spawnTimeout,
-  stdout = process.stdout.write.bind(process.stdout),
-  stderr = process.stderr.write.bind(process.stderr),
-}) {
+async function spawnSafe(options) {
+  const {
+    command,
+    args,
+    cwd,
+    env,
+    timeout = spawnTimeout,
+    stdout = process.stdout.write.bind(process.stdout),
+    stderr = process.stderr.write.bind(process.stderr),
+    retries = 0,
+  } = options;
   let exitCode;
   let signalCode;
   let spawnError;
@@ -318,6 +348,16 @@ async function spawnSafe({
       resolve();
     }
   });
+  if (spawnError && retries < 5) {
+    const { code } = spawnError;
+    if (code === "EBUSY" || code === "UNKNOWN") {
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retries + 1)));
+      return spawnSafe({
+        ...options,
+        retries: retries + 1,
+      });
+    }
+  }
   let error;
   if (exitCode === 0) {
     // ...
@@ -961,7 +1001,7 @@ async function getExecPathFromBuildKite(target) {
   if (isWindows) {
     await spawnSafe({
       command: "powershell",
-      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath}`],
+      args: ["-Command", `Expand-Archive -Path ${zipPath} -DestinationPath ${releasePath} -Force`],
     });
   } else {
     await spawnSafe({
@@ -1287,6 +1327,26 @@ async function getPublicIp() {
 }
 
 /**
+ * @returns {string | undefined}
+ */
+function getTailscaleIp() {
+  try {
+    const { status, stdout } = spawnSync("tailscale", ["ip", "--1"], {
+      encoding: "utf-8",
+      timeout: spawnTimeout,
+      env: {
+        PATH: process.env.PATH,
+      },
+    });
+    if (status === 0) {
+      return stdout.trim();
+    }
+  } catch {
+    // ...
+  }
+}
+
+/**
  * @param  {...string} paths
  * @returns {string}
  */
@@ -1332,7 +1392,7 @@ function formatTestToMarkdown(result, concise) {
 
   let markdown = "";
   for (const { testPath, ok, tests, error, stdoutPreview: stdout } of results) {
-    if (ok) {
+    if (ok || error === "SIGTERM") {
       continue;
     }
 

@@ -26,8 +26,11 @@ ifeq ($(ARCH_NAME_RAW),arm64)
 ARCH_NAME = aarch64
 DOCKER_BUILDARCH = arm64
 BREW_PREFIX_PATH = /opt/homebrew
-DEFAULT_MIN_MACOS_VERSION = 11.0
+DEFAULT_MIN_MACOS_VERSION = 13.0
 MARCH_NATIVE = -mtune=$(CPU_TARGET)
+ifeq ($(OS_NAME),linux)
+MARCH_NATIVE = -march=armv8-a+crc -mtune=ampere1
+endif
 else
 ARCH_NAME = x64
 DOCKER_BUILDARCH = amd64
@@ -154,7 +157,12 @@ CMAKE_FLAGS_WITHOUT_RELEASE = -DCMAKE_C_COMPILER=$(CC) \
 	-DCMAKE_OSX_DEPLOYMENT_TARGET=$(MIN_MACOS_VERSION) \
 	$(CMAKE_CXX_COMPILER_LAUNCHER_FLAG) \
 	-DCMAKE_AR=$(AR) \
-    -DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null)
+	-DCMAKE_RANLIB=$(which llvm-16-ranlib 2>/dev/null || which llvm-ranlib 2>/dev/null) \
+	-DCMAKE_CXX_STANDARD=20 \
+	-DCMAKE_C_STANDARD=17 \
+	-DCMAKE_CXX_STANDARD_REQUIRED=ON \
+	-DCMAKE_C_STANDARD_REQUIRED=ON \
+	-DCMAKE_CXX_EXTENSIONS=ON 
 
 
 
@@ -181,8 +189,8 @@ endif
 
 OPTIMIZATION_LEVEL=-O3 $(MARCH_NATIVE)
 DEBUG_OPTIMIZATION_LEVEL= -O1 $(MARCH_NATIVE) -gdwarf-4
-CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
-BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden
+CFLAGS_WITHOUT_MARCH = $(MACOS_MIN_FLAG) $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
+BUN_CFLAGS = $(MACOS_MIN_FLAG) $(MARCH_NATIVE)  $(OPTIMIZATION_LEVEL) -fno-exceptions -fvisibility=hidden -fvisibility-inlines-hidden  -mno-omit-leaf-frame-pointer -fno-omit-frame-pointer -fno-asynchronous-unwind-tables -fno-unwind-tables -fno-pie -fno-pic
 BUN_TMP_DIR := /tmp/make-bun
 CFLAGS=$(CFLAGS_WITHOUT_MARCH) $(MARCH_NATIVE)
 

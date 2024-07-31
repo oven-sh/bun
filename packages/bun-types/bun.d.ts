@@ -1455,7 +1455,7 @@ declare module "bun" {
      * ```js
      * const {imports, exports} = transpiler.scan(`
      * import {foo} from "baz";
-     * const hello = "hi!";
+     * export const hello = "hi!";
      * `);
      *
      * console.log(imports); // ["baz"]
@@ -1516,6 +1516,7 @@ declare module "bun" {
     plugins?: BunPlugin[];
     // manifest?: boolean; // whether to return manifest
     external?: string[];
+    packages?: "bundle" | "external";
     publicPath?: string;
     define?: Record<string, string>;
     // origin?: string; // e.g. http://mydomain.com
@@ -3099,6 +3100,10 @@ declare module "bun" {
    */
   function openInEditor(path: string, options?: EditorOptions): void;
 
+  const fetch: typeof globalThis.fetch & {
+    preconnect(url: string): void;
+  };
+
   interface EditorOptions {
     editor?: "vscode" | "subl";
     line?: number;
@@ -3476,6 +3481,13 @@ declare module "bun" {
      * Filtered data consists mostly of small values with a somewhat random distribution.
      */
     strategy?: number;
+
+    library?: "zlib";
+  }
+
+  interface LibdeflateCompressionOptions {
+    level?: 0 | 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12;
+    library?: "libdeflate";
   }
 
   /**
@@ -3484,26 +3496,38 @@ declare module "bun" {
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function deflateSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
+  function deflateSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Compresses a chunk of data with `zlib` GZIP algorithm.
    * @param data The buffer of data to compress
    * @param options Compression options to use
    * @returns The output buffer with the compressed data
    */
-  function gzipSync(data: Uint8Array | string | ArrayBuffer, options?: ZlibCompressionOptions): Uint8Array;
+  function gzipSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` INFLATE algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function inflateSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+  function inflateSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
   /**
    * Decompresses a chunk of data with `zlib` GUNZIP algorithm.
    * @param data The buffer of data to decompress
    * @returns The output buffer with the decompressed data
    */
-  function gunzipSync(data: Uint8Array | string | ArrayBuffer): Uint8Array;
+  function gunzipSync(
+    data: Uint8Array | string | ArrayBuffer,
+    options?: ZlibCompressionOptions | LibdeflateCompressionOptions,
+  ): Uint8Array;
 
   type Target =
     /**
@@ -3823,7 +3847,7 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
-  interface Socket<Data = undefined> {
+  interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
      *
@@ -4105,7 +4129,7 @@ declare module "bun" {
     setMaxSendFragment(size: number): boolean;
   }
 
-  interface SocketListener<Data = undefined> {
+  interface SocketListener<Data = undefined> extends Disposable {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;

@@ -67,6 +67,7 @@ pub const JSBundler = struct {
         source_map: options.SourceMapOption = .none,
         public_path: OwnedString = OwnedString.initEmpty(bun.default_allocator),
         conditions: bun.StringSet = bun.StringSet.init(bun.default_allocator),
+        packages: options.PackagesOption = .bundle,
 
         pub const List = bun.StringArrayHashMapUnmanaged(Config);
 
@@ -221,6 +222,10 @@ pub const JSBundler = struct {
                         options.SourceMapOption,
                     );
                 }
+            }
+
+            if (try config.getOptionalEnum(globalThis, "packages", options.PackagesOption)) |packages| {
+                this.packages = packages;
             }
 
             if (try config.getOptionalEnum(globalThis, "format", options.Format)) |format| {
@@ -543,12 +548,12 @@ pub const JSBundler = struct {
     ) JSC.JSValue {
         if (arguments.len == 0 or !arguments[0].isObject()) {
             globalThis.throwInvalidArguments("Expected a config object to be passed to Bun.build", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var plugins: ?*Plugin = null;
         const config = Config.fromJS(globalThis, arguments[0], &plugins, globalThis.allocator()) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
 
         return bun.BundleV2.generateFromJavaScript(
@@ -558,7 +563,7 @@ pub const JSBundler = struct {
             globalThis.bunVM().eventLoop(),
             bun.default_allocator,
         ) catch {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 
@@ -683,16 +688,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
-                completion.deref();
-                this.deinit();
-                return;
-            };
-            concurrent_task.* = JSC.ConcurrentTask{
-                .auto_delete = true,
-                .task = this.js_task.task(),
-            };
-            completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
+            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(this.js_task.task()));
         }
 
         pub fn runOnJSThread(this: *Resolve) void {
@@ -839,15 +835,7 @@ pub const JSBundler = struct {
             completion.ref();
 
             this.js_task = AnyTask.init(this);
-            const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch {
-                completion.deref();
-                this.deinit();
-                return;
-            };
-            concurrent_task.* = JSC.ConcurrentTask{
-                .auto_delete = true,
-                .task = this.js_task.task(),
-            };
+            const concurrent_task = JSC.ConcurrentTask.createFrom(&this.js_task);
             completion.jsc_event_loop.enqueueTaskConcurrent(concurrent_task);
         }
 

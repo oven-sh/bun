@@ -50,8 +50,8 @@ pub var initialized_store = false;
 pub fn initializeStore() void {
     if (initialized_store) return;
     initialized_store = true;
-    js_ast.Expr.Data.Store.create(default_allocator);
-    js_ast.Stmt.Data.Store.create(default_allocator);
+    js_ast.Expr.Data.Store.create();
+    js_ast.Stmt.Data.Store.create();
 }
 
 const skip_dirs = &[_]bun.OSPathSlice{
@@ -1811,7 +1811,6 @@ pub const Example = struct {
 
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
     var url: URL = undefined;
-    pub const timeout: u32 = 6000;
 
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
@@ -1977,7 +1976,6 @@ pub const Example = struct {
             headers_buf,
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
@@ -2055,7 +2053,6 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
@@ -2145,7 +2142,6 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
@@ -2188,7 +2184,6 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,

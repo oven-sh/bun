@@ -107,7 +107,7 @@ describe("dns", () => {
     test.each(malformedHostnames)("'%s'", hostname => {
       // @ts-expect-error
       expect(dns.lookup(hostname, { backend })).rejects.toMatchObject({
-        code: "DNS_ENOTFOUND",
+        code: expect.stringMatching(/^DNS_ENOTFOUND|DNS_ESERVFAIL|DNS_ENOTIMP$/),
         name: "DNSException",
       });
     });

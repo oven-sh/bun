@@ -101,11 +101,6 @@ pub fn runExitCallbacks() void {
     on_exit_callbacks.items.len = 0;
 }
 
-/// Flushes stdout and stderr and exits with the given code.
-pub fn exit(code: u8) noreturn {
-    exitWide(@as(u32, code));
-}
-
 var is_exiting = std.atomic.Value(bool).init(false);
 export fn bun_is_exiting() c_int {
     return @intFromBool(isExiting());
@@ -114,36 +109,25 @@ pub fn isExiting() bool {
     return is_exiting.load(.monotonic);
 }
 
-pub fn exitWide(code: u32) noreturn {
+/// Flushes stdout and stderr (in exit/quick_exit callback) and exits with the given code.
+pub fn exit(code: u32) noreturn {
     is_exiting.store(true, .monotonic);
 
-    if (comptime Environment.isMac) {
-        std.c.exit(@bitCast(code));
+    // If we are crashing, allow the crash handler to finish it's work.
+    bun.crash_handler.sleepForeverIfAnotherThreadIsCrashing();
+
+    switch (Environment.os) {
+        .mac => std.c.exit(@bitCast(code)),
+        else => bun.C.quick_exit(@bitCast(code)),
     }
-    bun.C.quick_exit(@bitCast(code));
 }
 
-pub fn raiseIgnoringPanicHandler(sig: anytype) noreturn {
-    if (comptime @TypeOf(sig) == bun.SignalCode) {
-        return raiseIgnoringPanicHandler(@intFromEnum(sig));
-    }
-
+pub fn raiseIgnoringPanicHandler(sig: bun.SignalCode) noreturn {
     Output.flush();
-
-    if (!Environment.isWindows) {
-        if (sig >= 1 and sig != std.posix.SIG.STOP and sig != std.posix.SIG.KILL) {
-            const act = std.posix.Sigaction{
-                .handler = .{ .sigaction = @ptrCast(@alignCast(std.posix.SIG.DFL)) },
-                .mask = std.posix.empty_sigset,
-                .flags = 0,
-            };
-            std.posix.sigaction(@intCast(sig), &act, null) catch {};
-        }
-    }
-
     Output.Source.Stdio.restore();
 
-    _ = std.c.raise(sig);
+    bun.crash_handler.resetSegfaultHandler();
+    _ = std.c.raise(@intFromEnum(sig));
     std.c.abort();
 }
 
@@ -171,11 +155,9 @@ pub inline fn configureAllocator(_: AllocatorConfiguration) void {
     // if (!config.long_running) Mimalloc.mi_option_set(Mimalloc.mi_option_reset_delay, 0);
 }
 
-pub const panic = Output.panic; // deprecated
-
 pub fn notimpl() noreturn {
     @setCold(true);
-    Global.panic("Not implemented yet!!!!!", .{});
+    Output.panic("Not implemented yet!!!!!", .{});
 }
 
 // Make sure we always print any leftover

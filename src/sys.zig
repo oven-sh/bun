@@ -776,8 +776,37 @@ pub fn normalizePathWindows(
     var path = if (T == u16) path_ else bun.strings.convertUTF8toUTF16InBuffer(&wbuf, path_);
 
     if (std.fs.path.isAbsoluteWindowsWTF16(path)) {
+        // handle the special "nul" device
+        // we technically should handle the other DOS devices too.
+        if (path_.len >= "\\nul".len and
+            (bun.strings.eqlComptimeT(T, path_[path_.len - "\\nul".len ..], "\\nul") or
+            bun.strings.eqlComptimeT(T, path_[path_.len - "\\NUL".len ..], "\\NUL")))
+        {
+            @memcpy(buf[0..bun.strings.w("\\??\\NUL").len], bun.strings.w("\\??\\NUL"));
+            buf[bun.strings.w("\\??\\NUL").len] = 0;
+            return .{ .result = buf[0..bun.strings.w("\\??\\NUL").len :0] };
+        }
+
         const norm = bun.path.normalizeStringGenericTZ(u16, path, buf, .{ .add_nt_prefix = true, .zero_terminate = true });
         return .{ .result = norm };
+    }
+
+    if (bun.strings.indexOfAnyT(T, path_, &.{ '\\', '/', '.' }) == null) {
+        if (buf.len < path.len) {
+            return .{
+                .err = .{
+                    .errno = @intFromEnum(bun.C.E.NOMEM),
+                    .syscall = .open,
+                },
+            };
+        }
+
+        // Skip the system call to get the final path name if it doesn't have any of the above characters.
+        @memcpy(buf[0..path.len], path);
+        buf[path.len] = 0;
+        return .{
+            .result = buf[0..path.len :0],
+        };
     }
 
     const base_fd = if (dir_fd == bun.invalid_fd)
@@ -1839,7 +1868,8 @@ pub fn renameatConcurrentlyWithoutFallback(
             var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
-                .err => |err| err,
+                // if ENOENT don't retry
+                .err => |err| if (err.getErrno() == .NOENT) return .{ .err = err } else err,
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 
@@ -1864,8 +1894,12 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
-        var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(to) catch {};
+        if (to_dir_fd.isValid()) {
+            var to_dir = to_dir_fd.asDir();
+            to_dir.deleteTree(to) catch {};
+        } else {
+            std.fs.deleteTreeAbsolute(to) catch {};
+        }
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };
@@ -3118,6 +3152,52 @@ pub const File = struct {
 
     pub fn stat(self: File) Maybe(bun.Stat) {
         return fstat(self.handle);
+    }
+
+    /// Be careful about using this on Linux or macOS.
+    ///
+    /// This calls stat() internally.
+    pub fn kind(self: File) Maybe(std.fs.File.Kind) {
+        if (Environment.isWindows) {
+            const rt = windows.GetFileType(self.handle.cast());
+            if (rt == windows.FILE_TYPE_UNKNOWN) {
+                switch (bun.windows.GetLastError()) {
+                    .SUCCESS => {},
+                    else => |err| {
+                        return .{ .err = Error.fromCode((bun.C.SystemErrno.init(err) orelse bun.C.SystemErrno.EUNKNOWN).toE(), .fstat) };
+                    },
+                }
+            }
+
+            return .{
+                .result = switch (rt) {
+                    windows.FILE_TYPE_CHAR => .character_device,
+                    windows.FILE_TYPE_REMOTE, windows.FILE_TYPE_DISK => .file,
+                    windows.FILE_TYPE_PIPE => .named_pipe,
+                    windows.FILE_TYPE_UNKNOWN => .unknown,
+                    else => .file,
+                },
+            };
+        }
+
+        const st = switch (self.stat()) {
+            .err => |err| return .{ .err = err },
+            .result => |s| s,
+        };
+
+        const m = st.mode & posix.S.IFMT;
+        switch (m) {
+            posix.S.IFBLK => return .{ .result = .block_device },
+            posix.S.IFCHR => return .{ .result = .character_device },
+            posix.S.IFDIR => return .{ .result = .directory },
+            posix.S.IFIFO => return .{ .result = .named_pipe },
+            posix.S.IFLNK => return .{ .result = .sym_link },
+            posix.S.IFREG => return .{ .result = .file },
+            posix.S.IFSOCK => return .{ .result = .unix_domain_socket },
+            else => {
+                return .{ .result = .file };
+            },
+        }
     }
 
     pub const ReadToEndResult = struct {

@@ -277,7 +277,7 @@ pub const Tag = enum(u8) {
     /// into a WTF::String.
     /// Can be in either `utf8` or `utf16le` encodings.
     ZigString = 2,
-    /// Static memory that is guarenteed to never be freed. When converted to WTF::String,
+    /// Static memory that is guaranteed to never be freed. When converted to WTF::String,
     /// the memory is not cloned, but instead referenced with WTF::ExternalStringImpl.
     /// Can be in either `utf8` or `utf16le` encodings.
     StaticZigString = 3,

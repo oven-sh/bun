@@ -882,7 +882,7 @@ int bsd_connect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd, const char *host, int por
     }
 
     freeaddrinfo(result);
-    return LIBUS_SOCKET_ERROR;
+    return (int)LIBUS_SOCKET_ERROR;
 }
 
 int bsd_disconnect_udp_socket(LIBUS_SOCKET_DESCRIPTOR fd) {

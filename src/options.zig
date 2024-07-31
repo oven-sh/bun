@@ -1240,7 +1240,7 @@ pub fn definesFromTransformOptions(
         }
     }
 
-    const resolved_defines = try defines.DefineData.from_input(user_defines, log, allocator);
+    const resolved_defines = try defines.DefineData.fromInput(user_defines, log, allocator);
 
     return try defines.Define.init(
         allocator,
@@ -1377,6 +1377,31 @@ pub const SourceMapOption = enum {
     });
 };
 
+pub const PackagesOption = enum {
+    bundle,
+    external,
+
+    pub fn fromApi(packages: ?Api.PackagesMode) PackagesOption {
+        return switch (packages orelse .bundle) {
+            .external => .external,
+            .bundle => .bundle,
+            else => .bundle,
+        };
+    }
+
+    pub fn toAPI(packages: ?PackagesOption) Api.PackagesMode {
+        return switch (packages orelse .bundle) {
+            .external => .external,
+            .bundle => .bundle,
+        };
+    }
+
+    pub const Map = bun.ComptimeStringMap(PackagesOption, .{
+        .{ "external", .external },
+        .{ "bundle", .bundle },
+    });
+};
+
 pub const OutputFormat = enum {
     preserve,
 
@@ -1475,6 +1500,7 @@ pub const BundleOptions = struct {
     tree_shaking: bool = false,
     code_splitting: bool = false,
     source_map: SourceMapOption = SourceMapOption.none,
+    packages: PackagesOption = PackagesOption.bundle,
 
     disable_transpilation: bool = false,
 
@@ -1519,7 +1545,6 @@ pub const BundleOptions = struct {
         "react-client",
         "react-server",
         "react-refresh",
-        "__bun-test-unwrap-commonjs__",
     };
 
     pub inline fn cssImportBehavior(this: *const BundleOptions) Api.CssInJsBehavior {
@@ -1737,6 +1762,8 @@ pub const BundleOptions = struct {
 
         opts.source_map = SourceMapOption.fromApi(transform.source_map orelse .none);
 
+        opts.packages = PackagesOption.fromApi(transform.packages orelse .bundle);
+
         opts.tree_shaking = opts.target.isBun() or opts.production;
         opts.inlining = opts.tree_shaking;
         if (opts.inlining)
@@ -1754,7 +1781,6 @@ pub const BundleOptions = struct {
         opts.polyfill_node_globals = opts.target == .browser;
 
         Analytics.Features.filesystem_router += @as(usize, @intFromBool(opts.routes.routes_enabled));
-        Analytics.Features.origin += @as(usize, @intFromBool(opts.origin.href.len > 0));
         Analytics.Features.macros += @as(usize, @intFromBool(opts.target == .bun_macro));
         Analytics.Features.external += @as(usize, @intFromBool(transform.external.len > 0));
         return opts;
@@ -2597,7 +2623,7 @@ pub const PathTemplate = struct {
     placeholder: Placeholder = .{},
 
     pub fn needs(this: *const PathTemplate, comptime field: std.meta.FieldEnum(Placeholder)) bool {
-        return strings.contains(this.data, comptime "[" ++ @tagName(field) ++ "]");
+        return strings.containsComptime(this.data, "[" ++ @tagName(field) ++ "]");
     }
 
     inline fn writeReplacingSlashesOnWindows(w: anytype, slice: []const u8) !void {
@@ -2665,7 +2691,33 @@ pub const PathTemplate = struct {
         try writeReplacingSlashesOnWindows(writer, remain);
     }
 
-    pub const hashFormatter = bun.fmt.hexIntLower;
+    pub fn hashFormatter(int: u64) std.fmt.Formatter(hashFormatterImpl) {
+        return .{ .data = int };
+    }
+
+    fn hashFormatterImpl(int: u64, comptime fmt: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        // esbuild has an 8 character truncation of a base32 encoded bytes. this
+        // is not exactly that, but it will appear as such. the character list
+        // chosen omits similar characters in the unlikely case someone is
+        // trying to memorize a hash.
+        //
+        // reminder: this cannot be base64 or any encoding which is case
+        // sensitive as these hashes are often used in file paths, in which
+        // Windows and some macOS systems treat as case-insensitive.
+        comptime assert(fmt.len == 0);
+        const in_bytes = std.mem.asBytes(&int);
+        const chars = "0123456789abcdefghjkmnpqrstvwxyz";
+        try writer.writeAll(&.{
+            chars[in_bytes[0] & 31],
+            chars[in_bytes[1] & 31],
+            chars[in_bytes[2] & 31],
+            chars[in_bytes[3] & 31],
+            chars[in_bytes[4] & 31],
+            chars[in_bytes[5] & 31],
+            chars[in_bytes[6] & 31],
+            chars[in_bytes[7] & 31],
+        });
+    }
 
     pub const Placeholder = struct {
         dir: []const u8 = "",

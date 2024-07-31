@@ -7,6 +7,8 @@
 // Otherwise, you risk a circular dependency or Zig including multiple copies of this file which leads to strange bugs.
 const builtin = @import("builtin");
 const std = @import("std");
+const bun = @This();
+
 pub const Environment = @import("env.zig");
 
 pub const use_mimalloc = !Environment.isTest;
@@ -40,6 +42,20 @@ pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .
 /// We cannot use a threadlocal memory allocator for FileSystem-related things
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
+
+pub fn typedAllocator(comptime T: type) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.allocator(comptime T);
+
+    return default_allocator;
+}
+
+pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.namedAllocator(name);
+
+    return default_allocator;
+}
 
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
@@ -446,29 +462,10 @@ pub inline fn range(comptime min: anytype, comptime max: anytype) [max - min]usi
 }
 
 pub fn copy(comptime Type: type, dest: []Type, src: []const Type) void {
-    if (comptime Environment.allow_assert) assert(dest.len >= src.len);
-    if (@intFromPtr(src.ptr) == @intFromPtr(dest.ptr) or src.len == 0) return;
-
     const input: []const u8 = std.mem.sliceAsBytes(src);
     const output: []u8 = std.mem.sliceAsBytes(dest);
 
-    assert(input.len > 0);
-    assert(output.len > 0);
-
-    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
-        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
-        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
-        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
-
-    if (!does_input_or_output_overlap) {
-        @memcpy(output[0..input.len], input);
-    } else if (comptime Environment.isNative) {
-        C.memmove(output.ptr, input.ptr, input.len);
-    } else {
-        for (input, output) |input_byte, *out| {
-            out.* = input_byte;
-        }
-    }
+    return memmove(output, input);
 }
 
 pub fn clone(item: anytype, allocator: std.mem.Allocator) !@TypeOf(item) {
@@ -516,7 +513,7 @@ pub fn fastRandom() u64 {
                 // and we only need to do it once per process
                 var value = seed_value.load(.monotonic);
                 while (value == 0) : (value = seed_value.load(.monotonic)) {
-                    if (comptime Environment.isDebug) outer: {
+                    if (comptime Environment.isDebug or Environment.is_canary) outer: {
                         if (getenvZ("BUN_DEBUG_HASH_RANDOM_SEED")) |env| {
                             value = std.fmt.parseInt(u64, env, 10) catch break :outer;
                             seed_value.store(value, .monotonic);
@@ -1670,7 +1667,6 @@ pub fn reloadProcess(
     }
 
     Output.Source.Stdio.restore();
-    const bun = @This();
 
     if (comptime Environment.isWindows) {
         // on windows we assume that we have a parent process that is monitoring us and will restart us if we exit with a magic exit code
@@ -1877,8 +1873,9 @@ pub const StringMap = struct {
 };
 
 pub const DotEnv = @import("./env_loader.zig");
-pub const BundleV2 = @import("./bundler/bundle_v2.zig").BundleV2;
-pub const ParseTask = @import("./bundler/bundle_v2.zig").ParseTask;
+pub const bundle_v2 = @import("./bundler/bundle_v2.zig");
+pub const BundleV2 = bundle_v2.BundleV2;
+pub const ParseTask = bundle_v2.ParseTask;
 
 pub const Lock = @import("./lock.zig").Lock;
 pub const UnboundedQueue = @import("./bun.js/unbounded_queue.zig").UnboundedQueue;
@@ -1927,15 +1924,17 @@ pub fn Ref(comptime T: type) type {
 pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     return struct {
         const HiveAllocator = HiveArray(@This(), capacity).Fallback;
-
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
+
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
-            var this = try allocator.tryGet();
-            this.allocator = allocator;
-            this.ref_count = 1;
-            this.value = value;
+            const this = try allocator.tryGet();
+            this.* = .{
+                .ref_count = 1,
+                .allocator = allocator,
+                .value = value,
+            };
             return this;
         }
 
@@ -1945,8 +1944,9 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         }
 
         pub fn unref(this: *@This()) ?*@This() {
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const ref_count = this.ref_count;
+            this.ref_count = ref_count - 1;
+            if (ref_count == 1) {
                 if (@hasDecl(T, "deinit")) {
                     this.value.deinit();
                 }
@@ -2347,7 +2347,7 @@ pub const win32 = struct {
             if (exit_code == watcher_reload_exit) {
                 continue;
             } else {
-                Global.exitWide(exit_code);
+                Global.exit(exit_code);
             }
         }
     }
@@ -2933,15 +2933,15 @@ pub noinline fn outOfMemory() noreturn {
     crash_handler.crashHandler(.out_of_memory, null, @returnAddress());
 }
 
+/// Wrapper around allocator.create(T) that safely initializes the pointer. Prefer this over
+/// `std.mem.Allocator.create`, but prefer using `bun.new` over `create(default_allocator, T, t)`
 pub fn create(allocator: std.mem.Allocator, comptime T: type, t: T) *T {
     const ptr = allocator.create(T) catch outOfMemory();
     ptr.* = t;
     return ptr;
 }
 
-pub const is_heap_breakdown_enabled = Environment.allow_assert and Environment.isMac;
-
-pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdown.zig") else struct {};
+pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
@@ -2950,71 +2950,54 @@ pub const HeapBreakdown = if (is_heap_breakdown_enabled) @import("./heap_breakdo
 ///
 /// On macOS, you can use `Bun.unsafe.mimallocDump()`
 /// to dump the heap.
-pub inline fn new(comptime T: type, t: T) *T {
-    if (comptime @hasDecl(T, "is_bun.New()")) {
-        // You will get weird memory bugs in debug builds if you use the wrong allocator.
-        @compileError("Use " ++ @typeName(T) ++ ".new() instead of bun.new()");
-    }
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t;
-        return ptr;
+pub inline fn new(comptime T: type, init: T) *T {
+    const ptr = if (heap_breakdown.enabled)
+        heap_breakdown.getZoneT(T).create(T, init)
+    else ptr: {
+        const ptr = default_allocator.create(T) catch outOfMemory();
+        ptr.* = init;
+        break :ptr ptr;
+    };
+
+    if (comptime Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("new({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t;
     return ptr;
 }
 
-pub const newWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
-pub const destroyWithAlloc = @compileError("If you're going to use a global allocator, don't conditionally use it. Use bun.New() instead.");
+/// Free a globally-allocated a value from `bun.new()`. Using this with
+/// pointers allocated from other means may cause crashes.
+pub inline fn destroy(ptr: anytype) void {
+    const T = std.meta.Child(@TypeOf(ptr));
 
-pub inline fn dupe(comptime T: type, t: *T) *T {
-    if (comptime is_heap_breakdown_enabled) {
-        const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-        ptr.* = t.*;
-        return ptr;
+    if (Environment.allow_assert) {
+        const logAlloc = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
+        logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    const ptr = default_allocator.create(T) catch outOfMemory();
-    ptr.* = t.*;
-    return ptr;
+    if (comptime heap_breakdown.enabled) {
+        heap_breakdown.getZoneT(T).destroy(T, ptr);
+    } else {
+        default_allocator.destroy(ptr);
+    }
+}
+
+pub inline fn dupe(comptime T: type, t: *T) *T {
+    return new(T, t.*);
 }
 
 pub fn New(comptime T: type) type {
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-        pub const @"is_bun.New()" = true;
+        pub const ban_standard_library_allocator = true;
 
         pub inline fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
-                allocation_logger("destroy({*})", .{self});
-            }
-
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
-                if (comptime Environment.allow_assert) {
-                    allocation_logger("new() = {*}", .{ptr});
-                }
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                allocation_logger("new() = {*}", .{ptr});
-            }
-            return ptr;
+            return bun.new(T, t);
         }
     };
 }
@@ -3040,28 +3023,23 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     const log = Output.scoped(output_name, true);
 
     return struct {
-        const allocation_logger = Output.scoped(.alloc, @hasDecl(T, "logAllocations"));
-
         pub fn destroy(self: *T) void {
-            if (comptime Environment.allow_assert) {
+            if (Environment.allow_assert) {
                 assert(self.ref_count == 0);
-                allocation_logger("destroy() = {*}", .{self});
             }
 
-            if (comptime is_heap_breakdown_enabled) {
-                HeapBreakdown.allocator(T).destroy(self);
-            } else {
-                default_allocator.destroy(self);
-            }
+            bun.destroy(self);
         }
 
         pub fn ref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count + 1 });
+
             self.ref_count += 1;
         }
 
         pub fn deref(self: *T) void {
-            if (comptime Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), self.ref_count, self.ref_count - 1 });
+
             self.ref_count -= 1;
 
             if (self.ref_count == 0) {
@@ -3074,26 +3052,12 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
         }
 
         pub inline fn new(t: T) *T {
-            if (comptime is_heap_breakdown_enabled) {
-                const ptr = HeapBreakdown.allocator(T).create(T) catch outOfMemory();
-                ptr.* = t;
+            const ptr = bun.new(T, t);
 
-                if (comptime Environment.allow_assert) {
-                    if (ptr.ref_count != 1) {
-                        std.debug.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
-                    }
-                    allocation_logger("new() = {*}", .{ptr});
+            if (Environment.enable_logs) {
+                if (ptr.ref_count != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count});
                 }
-
-                return ptr;
-            }
-
-            const ptr = default_allocator.create(T) catch outOfMemory();
-            ptr.* = t;
-
-            if (comptime Environment.allow_assert) {
-                assert(ptr.ref_count == 1);
-                allocation_logger("new() = {*}", .{ptr});
             }
 
             return ptr;
@@ -3101,18 +3065,63 @@ pub fn NewRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) 
     };
 }
 
-/// Free a globally-allocated a value.
-///
-/// Must have used `new` to allocate the value.
-///
-/// On macOS, you can use `Bun.unsafe.mimallocDump()`
-/// to dump the heap.
-pub inline fn destroy(t: anytype) void {
-    if (comptime is_heap_breakdown_enabled) {
-        HeapBreakdown.allocator(std.meta.Child(@TypeOf(t))).destroy(t);
-    } else {
-        default_allocator.destroy(t);
+pub fn NewThreadSafeRefCounted(comptime T: type, comptime deinit_fn: ?fn (self: *T) void) type {
+    if (!@hasField(T, "ref_count")) {
+        @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
     }
+
+    for (std.meta.fields(T)) |field| {
+        if (strings.eqlComptime(field.name, "ref_count")) {
+            if (field.default_value == null) {
+                @compileError("Expected a field named \"ref_count\" with a default value of 1 on " ++ @typeName(T));
+            }
+        }
+    }
+
+    const output_name: []const u8 = if (@hasDecl(T, "DEBUG_REFCOUNT_NAME")) T.DEBUG_REFCOUNT_NAME else meta.typeBaseName(@typeName(T));
+
+    const log = Output.scoped(output_name, true);
+
+    return struct {
+        pub fn destroy(self: *T) void {
+            if (Environment.allow_assert) {
+                assert(self.ref_count.load(.seq_cst) == 0);
+            }
+
+            bun.destroy(self);
+        }
+
+        pub fn ref(self: *T) void {
+            const ref_count = self.ref_count.fetchAdd(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} ref {d} + 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count - 1 });
+            bun.debugAssert(ref_count > 0);
+        }
+
+        pub fn deref(self: *T) void {
+            const ref_count = self.ref_count.fetchSub(1, .seq_cst);
+            if (Environment.isDebug) log("0x{x} deref {d} - 1 = {d}", .{ @intFromPtr(self), ref_count, ref_count -| 1 });
+
+            if (ref_count == 1) {
+                if (comptime deinit_fn) |deinit| {
+                    deinit(self);
+                } else {
+                    self.destroy();
+                }
+            }
+        }
+
+        pub inline fn new(t: T) *T {
+            const ptr = bun.new(T, t);
+
+            if (Environment.enable_logs) {
+                if (ptr.ref_count.load(.seq_cst) != 1) {
+                    Output.panic("Expected ref_count to be 1, got {d}", .{ptr.ref_count.load(.seq_cst)});
+                }
+            }
+
+            return ptr;
+        }
+    };
 }
 
 pub fn exitThread() noreturn {
@@ -3599,4 +3608,28 @@ pub fn OrdinalT(comptime Int: type) type {
 
 /// ABI-equivalent of WTF::OrdinalNumber
 pub const Ordinal = OrdinalT(c_int);
+
+pub fn memmove(output: []u8, input: []const u8) void {
+    if (@intFromPtr(output.ptr) == @intFromPtr(input.ptr) or output.len == 0) return;
+    if (comptime Environment.allow_assert) {
+        assert(output.len >= input.len and output.len > 0);
+    }
+
+    const does_input_or_output_overlap = (@intFromPtr(input.ptr) < @intFromPtr(output.ptr) and
+        @intFromPtr(input.ptr) + input.len > @intFromPtr(output.ptr)) or
+        (@intFromPtr(output.ptr) < @intFromPtr(input.ptr) and
+        @intFromPtr(output.ptr) + output.len > @intFromPtr(input.ptr));
+
+    if (!does_input_or_output_overlap) {
+        @memcpy(output[0..input.len], input);
+    } else if (comptime Environment.isNative) {
+        C.memmove(output.ptr, input.ptr, input.len);
+    } else {
+        for (input, output) |input_byte, *out| {
+            out.* = input_byte;
+        }
+    }
+}
+
 pub const hmac = @import("./hmac.zig");
+pub const libdeflate = @import("./deps/libdeflate.zig");

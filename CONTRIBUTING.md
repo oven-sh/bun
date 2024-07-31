@@ -2,6 +2,11 @@ Configuring a development environment for Bun can take 10-30 minutes depending o
 
 If you are using Windows, please refer to [this guide](/docs/project/building-windows)
 
+{% details summary="For Ubuntu users" %}
+TL;DR: Ubuntu 22.04 is suggested.
+Bun currently requires `glibc >=2.32` in development which means if you're on Ubuntu 20.04 (glibc == 2.31), you may likely meet `error: undefined symbol: __libc_single_threaded `. You need to take extra configurations. Also, according to this [issue](https://github.com/llvm/llvm-project/issues/97314), LLVM 16 is no longer maintained on Ubuntu 24.04 (noble). And instead, you might want `brew` to install LLVM 16 for your Ubuntu 24.04.
+{% /details %}
+
 ## Install Dependencies
 
 Using your system's package manager, install Bun's dependencies:
@@ -107,7 +112,7 @@ $ export PATH="$PATH:/usr/lib/llvm16/bin"
 
 {% /codetabs %}
 
-> ⚠️ Ubuntu distributions may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
+> ⚠️ Ubuntu distributions (<= 20.04) may require installation of the C++ standard library independently. See the [troubleshooting section](#span-file-not-found-on-ubuntu) for more information.
 
 ## Building Bun
 

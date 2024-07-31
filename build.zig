@@ -33,8 +33,6 @@ comptime {
     }
 }
 
-const default_reported_nodejs_version = "22.3.0";
-
 const zero_sha = "0000000000000000000000000000000000000000";
 
 const BunBuildOptions = struct {
@@ -48,9 +46,10 @@ const BunBuildOptions = struct {
     sha: []const u8,
     enable_logs: bool = false,
     tracy_callstack_depth: u16,
-    reported_nodejs_version: []const u8 = default_reported_nodejs_version,
+    reported_nodejs_version: Version,
 
     generated_code_dir: []const u8,
+    no_llvm: bool,
 
     cached_options_module: ?*Module = null,
     windows_shim: ?WindowsShim = null,
@@ -73,14 +72,7 @@ const BunBuildOptions = struct {
         opts.addOption([:0]const u8, "sha", b.allocator.dupeZ(u8, this.sha) catch @panic("OOM"));
         opts.addOption(bool, "baseline", this.isBaseline());
         opts.addOption(bool, "enable_logs", this.enable_logs);
-        opts.addOption([:0]const u8, "reported_nodejs_version", b.allocator.dupeZ(u8, this.reported_nodejs_version) catch @panic("OOM"));
-        if (this.reported_nodejs_version.len > 0 and this.reported_nodejs_version[0] == 'v') {
-            @panic("Node.js version should not start with 'v'");
-        }
-
-        if (this.reported_nodejs_version.len == 0) {
-            @panic("Node.js version should not be empty");
-        }
+        opts.addOption([]const u8, "reported_nodejs_version", b.fmt("{}", .{this.reported_nodejs_version}));
 
         const mod = opts.createModule();
         this.cached_options_module = mod;
@@ -122,6 +114,23 @@ pub fn getOSGlibCVersion(os: OperatingSystem) ?Version {
     };
 }
 
+pub fn getCpuModel(os: OperatingSystem, arch: Arch) ?Target.Query.CpuModel {
+    // https://github.com/oven-sh/bun/issues/12076
+    if (os == .linux and arch == .aarch64) {
+        return .{ .explicit = &Target.aarch64.cpu.cortex_a35 };
+    }
+
+    // Be explicit and ensure we do not accidentally target a newer M-series chip
+    if (os == .mac and arch == .aarch64) {
+        return .{ .explicit = &Target.aarch64.cpu.apple_m1 };
+    }
+
+    // note: x86_64 is dealt with in the CMake config and passed in.
+    // the reason for the explicit handling on aarch64 is due to troubles
+    // passing the exact target in via flags.
+    return null;
+}
+
 pub fn build(b: *Build) !void {
     std.log.info("zig compiler v{s}", .{builtin.zig_version_string});
 
@@ -147,6 +156,14 @@ pub fn build(b: *Build) !void {
         break :brk .{ os, arch };
     };
 
+    // target must be refined to support older but very popular devices on
+    // aarch64, this means moving the minimum supported CPU to support certain
+    // raspberry PIs. there are also a number of cloud hosts that use virtual
+    // machines with surprisingly out of date versions of glibc.
+    if (getCpuModel(os, arch)) |cpu_model| {
+        target_query.cpu_model = cpu_model;
+    }
+
     target_query.os_version_min = getOSVersionMin(os);
     target_query.glibc_version = getOSGlibCVersion(os);
 
@@ -163,6 +180,10 @@ pub fn build(b: *Build) !void {
         break :ref_trace if (trace == 0) null else trace;
     };
 
+    const obj_format = b.option(ObjectFormat, "obj_format", "Output file for object files") orelse .obj;
+
+    const no_llvm = b.option(bool, "no_llvm", "Experiment with Zig self hosted backends. No stability guaranteed") orelse false;
+
     var build_options = BunBuildOptions{
         .target = target,
         .optimize = optimize,
@@ -171,6 +192,7 @@ pub fn build(b: *Build) !void {
         .arch = arch,
 
         .generated_code_dir = generated_code_dir,
+        .no_llvm = no_llvm,
 
         .version = try Version.parse(bun_version),
         .canary_revision = canary: {
@@ -178,7 +200,10 @@ pub fn build(b: *Build) !void {
             break :canary if (rev == 0) null else rev;
         },
 
-        .reported_nodejs_version = b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse default_reported_nodejs_version,
+        .reported_nodejs_version = try Version.parse(
+            b.option([]const u8, "reported_nodejs_version", "Reported Node.js version") orelse
+                "0.0.0-unset",
+        ),
 
         .sha = sha: {
             const sha = b.option([]const u8, "sha", "Force the git sha") orelse
@@ -224,7 +249,7 @@ pub fn build(b: *Build) !void {
         var step = b.step("obj", "Build Bun's Zig code as a .o file");
         var bun_obj = addBunObject(b, &build_options);
         step.dependOn(&bun_obj.step);
-        step.dependOn(&b.addInstallFile(bun_obj.getEmittedBin(), "bun-zig.o").step);
+        step.dependOn(addInstallObjectFile(b, bun_obj, "bun-zig", obj_format));
     }
 
     // zig build windows-shim
@@ -252,95 +277,60 @@ pub fn build(b: *Build) !void {
 
     // zig build check-all
     {
-        var step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
-        inline for (.{
+        const step = b.step("check-all", "Check for semantic analysis errors on all supported platforms");
+        addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
             .{ .os = .mac, .arch = .x86_64 },
             .{ .os = .mac, .arch = .aarch64 },
             .{ .os = .linux, .arch = .x86_64 },
             .{ .os = .linux, .arch = .aarch64 },
-        }) |check| {
-            inline for (.{ .Debug, .ReleaseFast }) |mode| {
-                const check_target = b.resolveTargetQuery(.{
-                    .os_tag = OperatingSystem.stdOSTag(check.os),
-                    .cpu_arch = check.arch,
-                    .os_version_min = getOSVersionMin(check.os),
-                    .glibc_version = getOSGlibCVersion(check.os),
-                });
-
-                var options = BunBuildOptions{
-                    .target = check_target,
-                    .os = check.os,
-                    .arch = check_target.result.cpu.arch,
-                    .optimize = mode,
-
-                    .canary_revision = build_options.canary_revision,
-                    .sha = build_options.sha,
-                    .tracy_callstack_depth = build_options.tracy_callstack_depth,
-                    .version = build_options.version,
-                    .reported_nodejs_version = build_options.reported_nodejs_version,
-                    .generated_code_dir = build_options.generated_code_dir,
-                };
-                var obj = addBunObject(b, &options);
-                obj.generated_bin = null;
-                step.dependOn(&obj.step);
-            }
-        }
+        });
     }
 
     // zig build check-windows
     {
-        var step = b.step("check-windows", "Check for semantic analysis errors on Windows x64");
-        inline for (.{
+        const step = b.step("check-windows", "Check for semantic analysis errors on Windows");
+        addMultiCheck(b, step, build_options, &.{
             .{ .os = .windows, .arch = .x86_64 },
-        }) |check| {
-            inline for (.{ .Debug, .ReleaseFast }) |mode| {
-                const check_target = b.resolveTargetQuery(.{
-                    .os_tag = OperatingSystem.stdOSTag(check.os),
-                    .cpu_arch = check.arch,
-                    .os_version_min = getOSVersionMin(check.os),
-                    .glibc_version = getOSGlibCVersion(check.os),
-                });
-
-                var options = BunBuildOptions{
-                    .target = check_target,
-                    .os = check.os,
-                    .arch = check_target.result.cpu.arch,
-                    .optimize = mode,
-
-                    .canary_revision = build_options.canary_revision,
-                    .sha = build_options.sha,
-                    .tracy_callstack_depth = build_options.tracy_callstack_depth,
-                    .version = build_options.version,
-                    .reported_nodejs_version = build_options.reported_nodejs_version,
-                    .generated_code_dir = build_options.generated_code_dir,
-                };
-                var obj = addBunObject(b, &options);
-                obj.generated_bin = null;
-                step.dependOn(&obj.step);
-            }
-        }
+        });
     }
+}
 
-    // Running `zig build` with no arguments is almost always a mistake.
-    // TODO: revive this error. cannot right now since ZLS runs zig build without arguments
-    {
-        // const mistake_message = b.addSystemCommand(&.{
-        //     "echo",
-        //     \\
-        //     \\To build Bun from source, please use `bun run setup` instead of `zig build`"
-        //     \\For more info, see https://bun.sh/docs/project/contributing
-        //     \\
-        //     \\If you want to build the zig code in isolation, run:
-        //     \\  'zig build obj -Dgenerated-code=./build/codegen [...opts]'
-        //     \\
-        //     \\If you want to test a compile without emitting an object:
-        //     \\  'zig build check'
-        //     \\  'zig build check-all' (run linux+mac+windows)
-        //     \\
-        // });
+pub inline fn addMultiCheck(
+    b: *Build,
+    parent_step: *Step,
+    root_build_options: BunBuildOptions,
+    to_check: []const struct { os: OperatingSystem, arch: Arch },
+) void {
+    inline for (to_check) |check| {
+        inline for (.{ .Debug, .ReleaseFast }) |mode| {
+            const check_target = b.resolveTargetQuery(.{
+                .os_tag = OperatingSystem.stdOSTag(check.os),
+                .cpu_arch = check.arch,
+                .cpu_model = getCpuModel(check.os, check.arch) orelse .determined_by_cpu_arch,
+                .os_version_min = getOSVersionMin(check.os),
+                .glibc_version = getOSGlibCVersion(check.os),
+            });
 
-        // b.default_step.dependOn(&mistake_message.step);
+            var options: BunBuildOptions = .{
+                .target = check_target,
+                .os = check.os,
+                .arch = check_target.result.cpu.arch,
+                .optimize = mode,
+
+                .canary_revision = root_build_options.canary_revision,
+                .sha = root_build_options.sha,
+                .tracy_callstack_depth = root_build_options.tracy_callstack_depth,
+                .version = root_build_options.version,
+                .reported_nodejs_version = root_build_options.reported_nodejs_version,
+                .generated_code_dir = root_build_options.generated_code_dir,
+                .no_llvm = root_build_options.no_llvm,
+            };
+
+            var obj = addBunObject(b, &options);
+            obj.generated_bin = null;
+            parent_step.dependOn(&obj.step);
+        }
     }
 }
 
@@ -353,10 +343,15 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
         },
         .target = opts.target,
         .optimize = opts.optimize,
+        .use_llvm = !opts.no_llvm,
+        .use_lld = if (opts.os == .mac) false else !opts.no_llvm,
+
+        // https://github.com/ziglang/zig/issues/17430
         .pic = true,
+
+        .omit_frame_pointer = false,
         .strip = false, // stripped at the end
     });
-
     obj.bundle_compiler_rt = false;
     obj.formatted_panics = true;
     obj.root_module.omit_frame_pointer = false;
@@ -374,9 +369,10 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     }
 
     if (opts.os == .linux) {
-        obj.link_emit_relocs = true;
-        obj.link_eh_frame_hdr = true;
+        obj.link_emit_relocs = false;
+        obj.link_eh_frame_hdr = false;
         obj.link_function_sections = true;
+        obj.link_data_sections = true;
 
         if (opts.optimize == .Debug) {
             obj.root_module.valgrind = true;
@@ -385,6 +381,25 @@ pub fn addBunObject(b: *Build, opts: *BunBuildOptions) *Compile {
     addInternalPackages(b, obj, opts);
     obj.root_module.addImport("build_options", opts.buildOptionsModule(b));
     return obj;
+}
+
+const ObjectFormat = enum {
+    bc,
+    obj,
+};
+
+pub fn addInstallObjectFile(
+    b: *Build,
+    compile: *Compile,
+    name: []const u8,
+    out_mode: ObjectFormat,
+) *Step {
+    // bin always needed to be computed or else the compilation will do nothing. zig build system bug?
+    const bin = compile.getEmittedBin();
+    return &b.addInstallFile(switch (out_mode) {
+        .obj => bin,
+        .bc => compile.getEmittedLlvmBc(),
+    }, b.fmt("{s}.o", .{name})).step;
 }
 
 fn exists(path: []const u8) bool {
@@ -447,7 +462,11 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
 
 fn validateGeneratedPath(path: []const u8) void {
     if (!exists(path)) {
-        std.debug.panic("{s} does not exist in generated code directory!", .{std.fs.path.basename(path)});
+        std.debug.panic(
+            \\Generated file '{s}' is missing!
+            \\
+            \\Make sure to use CMake and Ninja, or pass a manual codegen folder with '-Dgenerated-code=...'
+        , .{path});
     }
 }
 

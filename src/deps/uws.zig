@@ -1086,7 +1086,7 @@ pub const Timer = opaque {
 
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
-        return us_socket_context_get_native_handle(comptime @as(i32, @intFromBool(ssl)), this).?;
+        return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
     }
 
     fn _deinit_ssl(this: *SocketContext) void {
@@ -1143,10 +1143,7 @@ pub const SocketContext = opaque {
     }
 
     fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
-        if (ssl) {
-            return us_socket_context_loop(@as(i32, 1), this);
-        }
-        return us_socket_context_loop(@as(i32, 0), this);
+        return us_socket_context_loop(@intFromBool(ssl), this);
     }
 
     /// closes and deinit the SocketContexts
@@ -1164,7 +1161,7 @@ pub const SocketContext = opaque {
 
     pub fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
-        us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
+        us_socket_context_close(@intFromBool(ssl), this);
     }
 
     pub fn ext(this: *SocketContext, ssl: bool, comptime ContextType: type) ?*ContextType {
@@ -3090,3 +3087,8 @@ pub const udp = struct {
     extern fn us_udp_packet_buffer_payload(buf: ?*PacketBuffer, index: c_int) [*]u8;
     extern fn us_udp_packet_buffer_payload_length(buf: ?*PacketBuffer, index: c_int) c_int;
 };
+
+extern fn bun_clear_loop_at_thread_exit() void;
+pub fn onThreadExit() void {
+    bun_clear_loop_at_thread_exit();
+}

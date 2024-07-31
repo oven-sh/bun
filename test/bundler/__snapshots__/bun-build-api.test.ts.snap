@@ -11,7 +11,6 @@ var __export = (target, all) => {
       set: (newValue) => all[name] = () => newValue
     });
 };
-var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
@@ -21,11 +20,9 @@ __export(exports_fn, {
 function fn(a) {
   return a + 42;
 }
-var init_fn = __esm(() => {
-});
 
 // test/bundler/fixtures/trivial/index.js
-var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
+var NS = Promise.resolve().then(() => exports_fn);
 NS.then(({ fn: fn2 }) => {
   console.log(fn2(42));
 });
@@ -43,7 +40,6 @@ var __export = (target, all) => {
       set: (newValue) => all[name] = () => newValue
     });
 };
-var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
@@ -53,24 +49,22 @@ __export(exports_fn, {
 function fn(a) {
   return a + 42;
 }
-var init_fn = __esm(() => {
-});
 
 // test/bundler/fixtures/trivial/index.js
-var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
+var NS = Promise.resolve().then(() => exports_fn);
 NS.then(({ fn: fn2 }) => {
   console.log(fn2(42));
 });
 "
 `;
 
-exports[`Bun.build BuildArtifact properties: hash 1`] = `"3f0ccbb87bbfe04c"`;
+exports[`Bun.build BuildArtifact properties: hash 1`] = `"r6c8x1cc"`;
 
-exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"aba9c75f86b1a251"`;
+exports[`Bun.build BuildArtifact properties + entry.naming: hash 1`] = `"vanwb97w"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"3f0ccbb87bbfe04c"`;
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js 1`] = `"r6c8x1cc"`;
 
-exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"0000000000000000"`;
+exports[`Bun.build BuildArtifact properties sourcemap: hash index.js.map 1`] = `"00000000"`;
 
 exports[`Bun.build new Response(BuildArtifact) sets content type: response text 1`] = `
 "var __defProp = Object.defineProperty;
@@ -83,7 +77,6 @@ var __export = (target, all) => {
       set: (newValue) => all[name] = () => newValue
     });
 };
-var __esm = (fn, res) => () => (fn && (res = fn(fn = 0)), res);
 
 // test/bundler/fixtures/trivial/fn.js
 var exports_fn = {};
@@ -93,11 +86,9 @@ __export(exports_fn, {
 function fn(a) {
   return a + 42;
 }
-var init_fn = __esm(() => {
-});
 
 // test/bundler/fixtures/trivial/index.js
-var NS = Promise.resolve().then(() => (init_fn(), exports_fn));
+var NS = Promise.resolve().then(() => exports_fn);
 NS.then(({ fn: fn2 }) => {
   console.log(fn2(42));
 });

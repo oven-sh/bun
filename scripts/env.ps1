@@ -1,11 +1,3 @@
-param(
-  [switch]$Baseline = $false
-)
-
-if ($ENV:BUN_DEV_ENV_SET -eq "Baseline=True") {
-  $Baseline = $true
-}
-
 $ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipefail' in bash
 
 # this is the environment script for building bun's dependencies
@@ -28,9 +20,6 @@ if ($env:VSINSTALLDIR -eq $null) {
   }
   Push-Location $vsDir
   try {
-    Import-Module 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools\Common7\Tools\Microsoft.VisualStudio.DevShell.dll'
-    Enter-VsDevShell -VsInstallPath 'C:\Program Files (x86)\Microsoft Visual Studio\2022\BuildTools' -DevCmdArguments '-arch=x64 -host_arch=x64'
-  } catch {
     $launchps = (Join-Path -Path $vsDir -ChildPath "Common7\Tools\Launch-VsDevShell.ps1")
     . $launchps -Arch amd64 -HostArch amd64
   } finally { Pop-Location }
@@ -41,25 +30,29 @@ if($Env:VSCMD_ARG_TGT_ARCH -eq "x86") {
   throw "Visual Studio environment is targetting 32 bit. This configuration is definetly a mistake."
 }
 
-$ENV:BUN_DEV_ENV_SET = "Baseline=$Baseline";
-
 $BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $ScriptDir '..' }
 $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_BASE_DIR 'build\bun-deps' }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
+$Lto = if ($env:USE_LTO) { $env:USE_LTO -eq "1" } else { $True }
+$Baseline = if ($env:USE_BASELINE_BUILD) {
+  $env:USE_BASELINE_BUILD -eq "1"
+} elseif ($env:BUILDKITE_STEP_KEY -match "baseline") {
+  $True
+} else {
+  $False
+}
 
 $CC = "clang-cl"
 $CXX = "clang-cl"
 
-$CFLAGS = '/O2 /Zi '
-# $CFLAGS = '/O2 /Z7 /MT'
-$CXXFLAGS = '/O2 /Zi '
-# $CXXFLAGS = '/O2 /Z7 /MT'
+$CFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
+$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
 
-if ($env:USE_LTO -eq "1") {
-  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
-  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc "
+if ($Lto) {
+  $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
+  $CFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"
 }
 
 $CPU_NAME = if ($Baseline) { "nehalem" } else { "haswell" };
@@ -68,21 +61,32 @@ $env:CPU_TARGET = $CPU_NAME
 $CFLAGS += " -march=${CPU_NAME}"
 $CXXFLAGS += " -march=${CPU_NAME}"
 
+$Canary = If ($env:CANARY) {
+  $env:CANARY
+} ElseIf ($env:BUILDKITE -eq "true") {
+  (buildkite-agent meta-data get canary)
+} Else {
+  "1"
+}
+
 $CMAKE_FLAGS = @(
   "-GNinja",
   "-DCMAKE_BUILD_TYPE=Release",
   "-DCMAKE_C_COMPILER=$CC",
   "-DCMAKE_CXX_COMPILER=$CXX",
   "-DCMAKE_C_FLAGS=$CFLAGS",
-  "-DCMAKE_CXX_FLAGS=$CXXFLAGS"
+  "-DCMAKE_CXX_FLAGS=$CXXFLAGS",
+  "-DCMAKE_C_FLAGS_RELEASE=$CFLAGS",
+  "-DCMAKE_CXX_FLAGS_RELEASE=$CXXFLAGS",
+  "-DCMAKE_MSVC_RUNTIME_LIBRARY=MultiThreaded",
+  "-DCANARY=$Canary"
 )
 
-if ($env:USE_LTO -eq "1") {
-  if (Get-Command lld-lib -ErrorAction SilentlyContinue) { 
-    $AR = Get-Command lld-lib -ErrorAction SilentlyContinue
-    $env:AR = $AR
-    $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
-  }
+if (Get-Command llvm-lib -ErrorAction SilentlyContinue) { 
+  $AR_CMD = Get-Command llvm-lib -ErrorAction SilentlyContinue
+  $AR = $AR_CMD.Path
+  $env:AR = $AR
+  $CMAKE_FLAGS += "-DCMAKE_AR=$AR"
 }
 
 $env:CC = "clang-cl"
@@ -93,6 +97,10 @@ $env:CPUS = $CPUS
 
 if ($Baseline) {
   $CMAKE_FLAGS += "-DUSE_BASELINE_BUILD=ON"
+}
+
+if ($Lto) {
+  $CMAKE_FLAGS += "-DUSE_LTO=ON"
 }
 
 if (Get-Command sccache -ErrorAction SilentlyContinue) {

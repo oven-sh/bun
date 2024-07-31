@@ -356,6 +356,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8()) {
@@ -364,10 +365,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             }
-
-                            return lhs;
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
@@ -391,6 +391,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
                                         ) catch bun.outOfMemory();
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8() and right.head.isUTF8()) {
@@ -400,9 +401,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         r.data == .e_inlined_enum,
                                     ) };
                                     left.parts = right.parts;
+                                    return lhs;
                                 }
                             }
-                            return lhs;
                         }
                     },
                     else => {
@@ -451,36 +452,29 @@ const VisitArgsOpts = struct {
     is_unique_formal_parameters: bool = false,
 };
 
-const BunJSX = struct {
-    pub threadlocal var bun_jsx_identifier: E.Identifier = undefined;
-};
 pub fn ExpressionTransposer(
-    comptime Kontext: type,
-    comptime visitor: fn (ptr: *Kontext, arg: Expr, state: anytype) Expr,
+    comptime ContextType: type,
+    comptime StateType: type,
+    comptime visitor: fn (ptr: *ContextType, arg: Expr, state: StateType) Expr,
 ) type {
     return struct {
-        pub const Context = Kontext;
+        pub const Context = ContextType;
         pub const This = @This();
+
         context: *Context,
 
         pub fn init(c: *Context) This {
-            return This{
-                .context = c,
-            };
+            return .{ .context = c };
         }
 
-        pub fn maybeTransposeIf(self: *This, arg: Expr, state: anytype) Expr {
+        pub fn maybeTransposeIf(self: *This, arg: Expr, state: StateType) Expr {
             switch (arg.data) {
                 .e_if => |ex| {
-                    return Expr.init(
-                        E.If,
-                        E.If{
-                            .yes = self.maybeTransposeIf(ex.yes, state),
-                            .no = self.maybeTransposeIf(ex.no, state),
-                            .test_ = ex.test_,
-                        },
-                        arg.loc,
-                    );
+                    return Expr.init(E.If, .{
+                        .yes = self.maybeTransposeIf(ex.yes, state),
+                        .no = self.maybeTransposeIf(ex.no, state),
+                        .test_ = ex.test_,
+                    }, arg.loc);
                 },
                 else => {
                     return visitor(self.context, arg, state);
@@ -488,16 +482,12 @@ pub fn ExpressionTransposer(
             }
         }
 
-        pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: anytype) Expr {
-            return Expr.init(
-                E.If,
-                E.If{
-                    .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
-                    .no = self.maybeTransposeIf(arg.data.e_if.no, state),
-                    .test_ = arg.data.e_if.test_,
-                },
-                arg.loc,
-            );
+        pub fn transposeKnownToBeIf(self: *This, arg: Expr, state: StateType) Expr {
+            return Expr.init(E.If, .{
+                .yes = self.maybeTransposeIf(arg.data.e_if.yes, state),
+                .no = self.maybeTransposeIf(arg.data.e_if.no, state),
+                .test_ = arg.data.e_if.test_,
+            }, arg.loc);
         }
     };
 }
@@ -517,7 +507,8 @@ const TransposeState = struct {
     is_then_catch_target: bool = false,
     is_require_immediately_assigned_to_decl: bool = false,
     loc: logger.Loc = logger.Loc.Empty,
-    type_attribute: E.Import.TypeAttribute = .none,
+    import_record_tag: ?ImportRecord.Tag = null,
+    import_options: Expr = Expr.empty,
 };
 
 var true_args = &[_]Expr{
@@ -2746,7 +2737,7 @@ pub const StmtsKind = enum {
 };
 
 fn notimpl() noreturn {
-    Global.panic("Not implemented yet!!", .{});
+    Output.panic("Not implemented yet!!", .{});
 }
 
 const ExprBindingTuple = struct {
@@ -3373,6 +3364,10 @@ pub const Parser = struct {
     }
 
     fn _parse(self: *Parser, comptime ParserType: type) !js_ast.Result {
+        const prev_action = bun.crash_handler.current_action;
+        defer bun.crash_handler.current_action = prev_action;
+        bun.crash_handler.current_action = .{ .parse = self.source.path.text };
+
         var p: ParserType = undefined;
         const orig_error_count = self.log.errors;
         try ParserType.init(self.allocator, self.log, self.source, self.define, self.lexer, self.options, &p);
@@ -3461,6 +3456,8 @@ pub const Parser = struct {
         if (self.log.errors > orig_error_count) {
             return error.SyntaxError;
         }
+
+        bun.crash_handler.current_action = .{ .visit = self.source.path.text };
 
         const visit_tracer = bun.tracy.traceNamed(@src(), "JSParser.visit");
         try p.prepareForVisitPass();
@@ -5321,9 +5318,9 @@ fn NewParser_(
             return p.options.bundle and p.source.index.isRuntime();
         }
 
-        pub fn transposeImport(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeImport(p: *P, arg: Expr, state: *const TransposeState) Expr {
             // The argument must be a string
-            if (@as(Expr.Tag, arg.data) == .e_string) {
+            if (arg.data.as(.e_string)) |str| {
                 // Ignore calls to import() if the control flow is provably dead here.
                 // We don't want to spend time scanning the required files if they will
                 // never be used.
@@ -5331,18 +5328,19 @@ fn NewParser_(
                     return p.newExpr(E.Null{}, arg.loc);
                 }
 
-                const import_record_index = p.addImportRecord(.dynamic, arg.loc, arg.data.e_string.slice(p.allocator));
+                const import_record_index = p.addImportRecord(.dynamic, arg.loc, str.slice(p.allocator));
 
-                if (state.type_attribute.tag() != .none) {
-                    p.import_records.items[import_record_index].tag = state.type_attribute.tag();
+                if (state.import_record_tag) |tag| {
+                    p.import_records.items[import_record_index].tag = tag;
                 }
+
                 p.import_records.items[import_record_index].handles_import_errors = (state.is_await_target and p.fn_or_arrow_data_visit.try_body_count != 0) or state.is_then_catch_target;
                 p.import_records_for_current_part.append(p.allocator, import_record_index) catch unreachable;
+
                 return p.newExpr(E.Import{
                     .expr = arg,
-                    .import_record_index = Ref.toInt(import_record_index),
-                    .type_attribute = state.type_attribute,
-                    // .leading_interior_comments = arg.getString().
+                    .import_record_index = @intCast(import_record_index),
+                    .options = state.import_options,
                 }, state.loc);
             }
 
@@ -5354,12 +5352,12 @@ fn NewParser_(
 
             return p.newExpr(E.Import{
                 .expr = arg,
+                .options = state.import_options,
                 .import_record_index = std.math.maxInt(u32),
-                .type_attribute = state.type_attribute,
             }, state.loc);
         }
 
-        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: anytype) Expr {
+        pub fn transposeRequireResolve(p: *P, arg: Expr, require_resolve_ref: Expr) Expr {
             // The argument must be a string
             if (arg.data == .e_string) {
                 return p.transposeRequireResolveKnownString(arg);
@@ -5396,14 +5394,14 @@ fn NewParser_(
 
             return p.newExpr(
                 E.RequireResolveString{
-                    .import_record_index = Ref.toInt(import_record_index),
+                    .import_record_index = import_record_index,
                     // .leading_interior_comments = arg.getString().
                 },
                 arg.loc,
             );
         }
 
-        pub fn transposeRequire(p: *P, arg: Expr, state: anytype) Expr {
+        pub fn transposeRequire(p: *P, arg: Expr, state: *const TransposeState) Expr {
             if (!p.options.features.allow_runtime) {
                 const args = p.allocator.alloc(Expr, 1) catch bun.outOfMemory();
                 args[0] = arg;
@@ -5431,11 +5429,12 @@ fn NewParser_(
 
                     const handles_import_errors = p.fn_or_arrow_data_visit.try_body_count != 0;
 
-                    if (
                     // For unwrapping CommonJS into ESM to fully work
                     // we must also unwrap requires into imports.
-                    (p.unwrap_all_requires or p.options.features.shouldUnwrapRequire(path.packageName() orelse "")) and
+                    const should_unwrap_require = p.unwrap_all_requires or
+                        if (path.packageName()) |pkg| p.options.features.shouldUnwrapRequire(pkg) else false;
 
+                    if (should_unwrap_require and
                         // We cannot unwrap a require wrapped in a try/catch because
                         // import statements cannot be wrapped in a try/catch and
                         // require cannot return a promise.
@@ -5719,9 +5718,9 @@ fn NewParser_(
             }
         }
 
-        const ImportTransposer = ExpressionTransposer(P, P.transposeImport);
-        const RequireTransposer = ExpressionTransposer(P, P.transposeRequire);
-        const RequireResolveTransposer = ExpressionTransposer(P, P.transposeRequireResolve);
+        const ImportTransposer = ExpressionTransposer(P, *const TransposeState, P.transposeImport);
+        const RequireTransposer = ExpressionTransposer(P, *const TransposeState, P.transposeRequire);
+        const RequireResolveTransposer = ExpressionTransposer(P, Expr, P.transposeRequireResolve);
 
         const Binding2ExprWrapper = struct {
             pub const Namespace = Binding.ToExpr(P, P.wrapIdentifierNamespace);
@@ -9476,7 +9475,7 @@ fn NewParser_(
 
             return Ref{
                 .inner_index = inner_index,
-                .source_index = Ref.toInt(p.source.index.get()),
+                .source_index = @intCast(p.source.index.get()),
                 .tag = .symbol,
             };
         }
@@ -11066,7 +11065,6 @@ fn NewParser_(
                     inline .s_namespace, .s_enum => |ns| {
                         if (ns.is_export) {
                             if (p.ref_to_ts_namespace_member.get(ns.name.ref.?)) |member_data| {
-                                bun.assert(member_data == .namespace);
                                 try exported_members.put(
                                     p.allocator,
                                     p.symbols.items[ns.name.ref.?.inner_index].original_name,
@@ -11075,11 +11073,11 @@ fn NewParser_(
                                         .loc = ns.name.loc,
                                     },
                                 );
-                                // try p.ref_to_ts_namespace_member.put(
-                                //     p.allocator,
-                                //     id.ref,
-                                //     member_data,
-                                // );
+                                try p.ref_to_ts_namespace_member.put(
+                                    p.allocator,
+                                    ns.name.ref.?,
+                                    member_data,
+                                );
                             }
                         }
                     },
@@ -11102,8 +11100,7 @@ fn NewParser_(
             // them entirely from the output. That can cause the namespace itself
             // to be considered empty and thus be removed.
             var import_equal_count: usize = 0;
-            const _stmts: []Stmt = stmts.items;
-            for (_stmts) |stmt| {
+            for (stmts.items) |stmt| {
                 switch (stmt.data) {
                     .s_local => |local| {
                         if (local.was_ts_import_equals and !local.is_export) {
@@ -12896,13 +12893,19 @@ fn NewParser_(
             }
 
             if (@intFromPtr(p.source.contents.ptr) <= @intFromPtr(name.ptr) and (@intFromPtr(name.ptr) + name.len) <= (@intFromPtr(p.source.contents.ptr) + p.source.contents.len)) {
-                const start = Ref.toInt(@intFromPtr(name.ptr) - @intFromPtr(p.source.contents.ptr));
-                const end = Ref.toInt(name.len);
-                return Ref.initSourceEnd(.{ .source_index = start, .inner_index = end, .tag = .source_contents_slice });
+                return Ref.initSourceEnd(.{
+                    .source_index = @intCast(@intFromPtr(name.ptr) - @intFromPtr(p.source.contents.ptr)),
+                    .inner_index = @intCast(name.len),
+                    .tag = .source_contents_slice,
+                });
             } else {
-                const inner_index = Ref.toInt(p.allocated_names.items.len);
+                const inner_index: u31 = @intCast(p.allocated_names.items.len);
                 try p.allocated_names.append(p.allocator, name);
-                return Ref.init(inner_index, p.source.index.get(), false);
+                return Ref.init(
+                    inner_index,
+                    p.source.index.get(),
+                    false,
+                );
             }
         }
 
@@ -14903,7 +14906,7 @@ fn NewParser_(
             p.log.level = .verbose;
             p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
 
-            Global.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
 
         pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -15639,40 +15642,17 @@ fn NewParser_(
 
             const value = try p.parseExpr(.comma);
 
-            var type_attribute = E.Import.TypeAttribute.none;
-
+            var import_options = Expr.empty;
             if (p.lexer.token == .t_comma) {
                 // "import('./foo.json', )"
                 try p.lexer.next();
 
                 if (p.lexer.token != .t_close_paren) {
-                    // for now, we silently strip import assertions
                     // "import('./foo.json', { assert: { type: 'json' } })"
-                    const import_expr = try p.parseExpr(.comma);
-                    if (import_expr.data == .e_object) {
-                        if (import_expr.data.e_object.get("with") orelse import_expr.data.e_object.get("assert")) |with| {
-                            if (with.data == .e_object) {
-                                const with_object = with.data.e_object;
-                                if (with_object.get("type")) |field| {
-                                    if (field.data == .e_string) {
-                                        const str = field.data.e_string;
-                                        if (str.eqlComptime("json")) {
-                                            type_attribute = .json;
-                                        } else if (str.eqlComptime("toml")) {
-                                            type_attribute = .toml;
-                                        } else if (str.eqlComptime("text")) {
-                                            type_attribute = .text;
-                                        } else if (str.eqlComptime("file")) {
-                                            type_attribute = .file;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
+                    import_options = try p.parseExpr(.comma);
 
                     if (p.lexer.token == .t_comma) {
-                        // "import('./foo.json', { assert: { type: 'json' } }, , )"
+                        // "import('./foo.json', { assert: { type: 'json' } }, )"
                         try p.lexer.next();
                     }
                 }
@@ -15688,18 +15668,20 @@ fn NewParser_(
 
                     return p.newExpr(E.Import{
                         .expr = value,
-                        .leading_interior_comments = comments,
+                        // .leading_interior_comments = comments,
                         .import_record_index = import_record_index,
-                        .type_attribute = type_attribute,
+                        .options = import_options,
                     }, loc);
                 }
             }
 
+            _ = comments; // TODO: leading_interior comments
+
             return p.newExpr(E.Import{
                 .expr = value,
-                .type_attribute = type_attribute,
-                .leading_interior_comments = comments,
+                // .leading_interior_comments = comments,
                 .import_record_index = std.math.maxInt(u32),
+                .options = import_options,
             }, loc);
         }
 
@@ -16210,7 +16192,7 @@ fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Global.panic("Unexpected type in export default: {any}", .{s2});
+                                        Output.panic("Unexpected type in export default: {any}", .{s2});
                                     },
                                 }
                             },
@@ -17505,7 +17487,7 @@ fn NewParser_(
                     var has_proto = false;
                     for (e_.properties.slice()) |*property| {
                         if (property.kind != .spread) {
-                            property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
+                            property.key = p.visitExpr(property.key orelse Output.panic("Expected property key", .{}));
                             const key = property.key.?;
                             // Forbid duplicate "__proto__" properties according to the specification
                             if (!property.flags.contains(.is_computed) and
@@ -17562,20 +17544,6 @@ fn NewParser_(
                     }
                 },
                 .e_import => |e_| {
-                    const state = TransposeState{
-                        // we must check that the await_target is an e_import or it will crash
-                        // example from next.js where not checking causes a panic:
-                        // ```
-                        // const {
-                        //     normalizeLocalePath,
-                        //   } = require('../shared/lib/i18n/normalize-locale-path') as typeof import('../shared/lib/i18n/normalize-locale-path')
-                        // ```
-                        .is_await_target = if (p.await_target != null) p.await_target.? == .e_import and p.await_target.?.e_import == e_ else false,
-                        .is_then_catch_target = p.then_catch_chain.has_catch and std.meta.activeTag(p.then_catch_chain.next_target) == .e_import and expr.data.e_import == p.then_catch_chain.next_target.e_import,
-                        .loc = e_.expr.loc,
-                        .type_attribute = e_.type_attribute,
-                    };
-
                     // We want to forcefully fold constants inside of imports
                     // even when minification is disabled, so that if we have an
                     // import based on a string template, it does not cause a
@@ -17589,7 +17557,32 @@ fn NewParser_(
                     p.should_fold_typescript_constant_expressions = true;
 
                     e_.expr = p.visitExpr(e_.expr);
-                    return p.import_transposer.maybeTransposeIf(e_.expr, state);
+                    e_.options = p.visitExpr(e_.options);
+
+                    // Import transposition is able to duplicate the options structure, so
+                    // only perform it if the expression is side effect free.
+                    //
+                    // TODO: make this more like esbuild by emitting warnings that explain
+                    // why this import was not analyzed. (see esbuild 'unsupported-dynamic-import')
+                    if (p.exprCanBeRemovedIfUnused(&e_.options)) {
+                        const state = TransposeState{
+                            .is_await_target = if (p.await_target) |await_target|
+                                await_target == .e_import and await_target.e_import == e_
+                            else
+                                false,
+
+                            .is_then_catch_target = p.then_catch_chain.has_catch and
+                                p.then_catch_chain.next_target == .e_import and
+                                expr.data.e_import == p.then_catch_chain.next_target.e_import,
+
+                            .import_options = e_.options,
+
+                            .loc = e_.expr.loc,
+                            .import_record_tag = e_.importRecordTag(),
+                        };
+
+                        return p.import_transposer.maybeTransposeIf(e_.expr, &state);
+                    }
                 },
                 .e_call => |e_| {
                     p.call_target = e_.target.data;
@@ -17601,8 +17594,8 @@ fn NewParser_(
                     };
 
                     const target_was_identifier_before_visit = e_.target.data == .e_identifier;
-                    e_.target = p.visitExprInOut(e_.target, ExprIn{
-                        .has_chain_parent = (e_.optional_chain orelse js_ast.OptionalChain.start) == .continuation,
+                    e_.target = p.visitExprInOut(e_.target, .{
+                        .has_chain_parent = e_.optional_chain == .continuation,
                     });
 
                     // Copy the call side effect flag over if this is a known target
@@ -17688,17 +17681,18 @@ fn NewParser_(
                         if (e_.args.len == 1) {
                             const first = e_.args.first_();
                             const state = TransposeState{
-                                .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and first.data == .e_string,
+                                .is_require_immediately_assigned_to_decl = in.is_immediately_assigned_to_decl and
+                                    first.data == .e_string,
                             };
                             switch (first.data) {
                                 .e_string => {
                                     // require(FOO) => require(FOO)
-                                    return p.transposeRequire(first, state);
+                                    return p.transposeRequire(first, &state);
                                 },
                                 .e_if => {
                                     // require(FOO  ? '123' : '456') => FOO ? require('123') : require('456')
                                     // This makes static analysis later easier
-                                    return p.require_transposer.transposeKnownToBeIf(first, state);
+                                    return p.require_transposer.transposeKnownToBeIf(first, &state);
                                 },
                                 else => {},
                             }
@@ -18660,7 +18654,15 @@ fn NewParser_(
                                 name_loc,
                                 E.Identifier{ .ref = ref },
                                 name,
-                                identifier_opts,
+                                .{
+                                    .assign_target = identifier_opts.assign_target,
+                                    .is_call_target = identifier_opts.is_call_target,
+                                    .is_delete_target = identifier_opts.is_delete_target,
+
+                                    // If this expression is used as the target of a call expression, make
+                                    // sure the value of "this" is preserved.
+                                    .was_originally_identifier = false,
+                                },
                             );
                         }
                     }
@@ -18966,7 +18968,7 @@ fn NewParser_(
                     // specially. This lets us do tree shaking for cross-file TypeScript enums.
                     if (p.options.bundle and !p.is_control_flow_dead) {
                         const use = p.symbol_uses.getPtr(id.ref).?;
-                        use.count_estimate -= 1;
+                        use.count_estimate -|= 1;
                         // note: this use is not removed as we assume it exists later
 
                         // Add a special symbol use instead
@@ -20719,7 +20721,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    Global.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
+                    Output.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
                 },
             }
         }
@@ -22076,14 +22078,12 @@ fn NewParser_(
                             },
                             .s_function => |data| {
                                 if (
-                                // Hoist module-level functions when
-                                ((FeatureFlags.unwrap_commonjs_to_esm and p.current_scope == p.module_scope and !data.func.flags.contains(.is_export)) or
-
-                                    // Manually hoist block-level function declarations to preserve semantics.
-                                    // This is only done for function declarations that are not generators
-                                    // or async functions, since this is a backwards-compatibility hack from
-                                    // Annex B of the JavaScript standard.
-                                    !p.current_scope.kindStopsHoisting()) and p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
+                                // Manually hoist block-level function declarations to preserve semantics.
+                                // This is only done for function declarations that are not generators
+                                // or async functions, since this is a backwards-compatibility hack from
+                                // Annex B of the JavaScript standard.
+                                !p.current_scope.kindStopsHoisting() and
+                                    p.symbols.items[data.func.name.?.ref.?.innerIndex()].kind == .hoisted_function)
                                 {
                                     break :list_getter &before;
                                 }
@@ -22132,11 +22132,11 @@ fn NewParser_(
                                         // Merge the two identifiers back into a single one
                                         p.symbols.items[hoisted_ref.innerIndex()].link = name_ref;
                                     }
-                                    non_fn_stmts.append(stmt) catch unreachable;
+                                    non_fn_stmts.append(stmt) catch bun.outOfMemory();
                                     continue;
                                 }
 
-                                const gpe = fn_stmts.getOrPut(name_ref) catch unreachable;
+                                const gpe = fn_stmts.getOrPut(name_ref) catch bun.outOfMemory();
                                 var index = gpe.value_ptr.*;
                                 if (!gpe.found_existing) {
                                     index = @as(u32, @intCast(let_decls.items.len));
@@ -22161,7 +22161,7 @@ fn NewParser_(
                                                 },
                                                 data.func.name.?.loc,
                                             ),
-                                        }) catch unreachable;
+                                        }) catch bun.outOfMemory();
                                     }
                                 }
 
@@ -23850,17 +23850,15 @@ fn NewParser_(
             }
 
             const wrapper_ref: Ref = brk: {
-                if (p.options.bundle) {
+                if (p.options.bundle and p.needsWrapperRef(parts)) {
                     break :brk p.newSymbol(
                         .other,
                         std.fmt.allocPrint(
                             p.allocator,
                             "require_{any}",
-                            .{
-                                p.source.fmtIdentifier(),
-                            },
-                        ) catch unreachable,
-                    ) catch unreachable;
+                            .{p.source.fmtIdentifier()},
+                        ) catch bun.outOfMemory(),
+                    ) catch bun.outOfMemory();
                 }
 
                 break :brk Ref.None;
@@ -23919,6 +23917,53 @@ fn NewParser_(
 
                 .import_meta_ref = p.import_meta_ref,
             };
+        }
+
+        /// The bundler will generate wrappers to contain top-level side effects using
+        /// the '__esm' helper. Example:
+        ///
+        ///     var init_foo = __esm(() => {
+        ///         someExport = Math.random();
+        ///     });
+        ///
+        /// This wrapper can be removed if all of the constructs get moved
+        /// outside of the file. Due to paralleization, we can't retroactively
+        /// delete the `init_foo` symbol, but instead it must be known far in
+        /// advance if the symbol is needed or not.
+        ///
+        /// The logic in this function must be in sync with the hoisting
+        /// logic in `LinkerContext.generateCodeForFileInChunkJS`
+        fn needsWrapperRef(p: *const P, parts: []const js_ast.Part) bool {
+            bun.assert(p.options.bundle);
+            for (parts) |part| {
+                for (part.stmts) |stmt| {
+                    switch (stmt.data) {
+                        .s_function => {},
+                        .s_class => |class| if (!class.class.canBeMoved()) return true,
+                        .s_local => |local| {
+                            if (local.was_commonjs_export or p.commonjs_named_exports.count() == 0) {
+                                for (local.decls.slice()) |decl| {
+                                    if (decl.value) |value|
+                                        if (value.data != .e_missing and !value.canBeMoved())
+                                            return true;
+                                }
+                                continue;
+                            }
+                            return true;
+                        },
+                        .s_export_default => |ed| {
+                            if (!ed.canBeMoved())
+                                return true;
+                        },
+                        .s_export_equals => |e| {
+                            if (!e.value.canBeMoved())
+                                return true;
+                        },
+                        else => return true,
+                    }
+                }
+            }
+            return false;
         }
 
         pub fn init(

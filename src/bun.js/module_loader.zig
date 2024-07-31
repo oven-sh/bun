@@ -166,6 +166,7 @@ fn dumpSourceString(vm: *VirtualMachine, specifier: string, written: []const u8)
 
 fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []const u8) !void {
     if (!Environment.isDebug) return;
+    if (bun.getRuntimeFeatureFlag("BUN_DEBUG_NO_DUMP")) return;
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
@@ -208,6 +209,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
             return;
         };
         if (vm.source_mappings.get(specifier)) |mappings| {
+            defer mappings.deref();
             const map_path = std.mem.concat(bun.default_allocator, u8, &.{ std.fs.path.basename(specifier), ".map" }) catch bun.outOfMemory();
             defer bun.default_allocator.free(map_path);
             const file = try parent.createFile(map_path, .{});
@@ -264,9 +266,9 @@ pub const RuntimeTranspilerStore = struct {
 
     pub const Queue = bun.UnboundedQueue(TranspilerJob, .next);
 
-    pub fn init(allocator: std.mem.Allocator) RuntimeTranspilerStore {
+    pub fn init() RuntimeTranspilerStore {
         return RuntimeTranspilerStore{
-            .store = TranspilerJob.Store.init(allocator),
+            .store = TranspilerJob.Store.init(bun.typedAllocator(TranspilerJob)),
         };
     }
 
@@ -338,7 +340,7 @@ pub const RuntimeTranspilerStore = struct {
         work_task: JSC.WorkPoolTask = .{ .callback = runFromWorkerThread },
         next: ?*TranspilerJob = null,
 
-        pub const Store = bun.HiveArray(TranspilerJob, 64).Fallback;
+        pub const Store = bun.HiveArray(TranspilerJob, if (bun.heap_breakdown.enabled) 0 else 64).Fallback;
 
         pub const Fetcher = union(enum) {
             virtual_module: bun.String,
@@ -409,12 +411,10 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             const parse_error = this.parse_error;
-            if (!vm.transpiler_store.store.hive.in(this)) {
-                this.promise.deinit();
-            }
+            this.promise.deinit();
             this.deinit();
 
-            _ = vm.transpiler_store.store.hive.put(this);
+            _ = vm.transpiler_store.store.put(this);
 
             ModuleLoader.AsyncModule.fulfill(globalThis, promise, resolved_source, parse_error, specifier, referrer, &log);
         }
@@ -807,8 +807,6 @@ pub const ModuleLoader = struct {
 
         // This is all the state used by the printer to print the module
         parse_result: ParseResult,
-        // stmt_blocks: []*js_ast.Stmt.Data.Store.All.Block = &[_]*js_ast.Stmt.Data.Store.All.Block{},
-        // expr_blocks: []*js_ast.Expr.Data.Store.All.Block = &[_]*js_ast.Expr.Data.Store.All.Block{},
         promise: JSC.Strong = .{},
         path: Fs.Path,
         specifier: string = "",
@@ -895,12 +893,7 @@ pub const ModuleLoader = struct {
             pub fn onWakeHandler(ctx: *anyopaque, _: *PackageManager) void {
                 debug("onWake", .{});
                 var this = bun.cast(*Queue, ctx);
-                const concurrent_task = bun.default_allocator.create(JSC.ConcurrentTask) catch bun.outOfMemory();
-                concurrent_task.* = .{
-                    .task = JSC.Task.init(this),
-                    .auto_delete = true,
-                };
-                this.vm().enqueueTaskConcurrent(concurrent_task);
+                this.vm().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
             }
 
             pub fn onPoll(this: *Queue) void {

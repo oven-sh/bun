@@ -4504,7 +4504,7 @@ pub const ByteStream = struct {
             this.pending_buffer = &.{};
             this.pending.result.deinit();
             this.pending.result = .{ .done = {} };
-            this.pending.abort();
+            this.pending.run();
         }
 
         this.parent().destroy();

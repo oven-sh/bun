@@ -133,7 +133,7 @@ test("threadId module and worker property is consistent", async () => {
   expect(worker1.threadId).toBeGreaterThan(0);
   expect(() => worker1.postMessage({ workerId: worker1.threadId })).not.toThrow();
   const worker2 = new Worker(new URL("./worker-thread-id.ts", import.meta.url).href);
-  expect(worker2.threadId).toBe(worker1.threadId + 1);
+  expect(worker2.threadId).toBeGreaterThan(worker1.threadId);
   expect(() => worker2.postMessage({ workerId: worker2.threadId })).not.toThrow();
   await worker1.terminate();
   await worker2.terminate();

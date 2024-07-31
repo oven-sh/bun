@@ -402,4 +402,24 @@ pub fn deinit(this: *RareData) void {
     if (this.boring_ssl_engine) |engine| {
         _ = bun.BoringSSL.ENGINE_free(engine);
     }
+
+    if (this.stderr_store) |store| {
+        this.stderr_store = null;
+        store.deref();
+    }
+
+    if (this.stdout_store) |store| {
+        this.stdout_store = null;
+        store.deref();
+    }
+
+    if (this.stdin_store) |store| {
+        this.stdin_store = null;
+        store.deref();
+    }
+
+    if (this.entropy_cache) |cache| {
+        this.entropy_cache = null;
+        bun.default_allocator.destroy(cache);
+    }
 }

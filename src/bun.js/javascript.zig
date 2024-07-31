@@ -2433,6 +2433,7 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        this.timer.deinit();
         this.source_mappings.deinit();
         if (this.rare_data) |rare_data| {
             rare_data.deinit();

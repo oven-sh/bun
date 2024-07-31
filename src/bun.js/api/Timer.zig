@@ -331,6 +331,16 @@ pub const All = struct {
         return JSValue.jsUndefined();
     }
 
+    pub fn deinit(this: *All) void {
+        if (Environment.isWindows) {
+            this.uv_timer.stop();
+        }
+
+        this.maps.setImmediate.clearAndFree(bun.default_allocator);
+        this.maps.setTimeout.clearAndFree(bun.default_allocator);
+        this.maps.setInterval.clearAndFree(bun.default_allocator);
+    }
+
     const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 
     pub const shim = Shimmer("Bun", "Timer", @This());

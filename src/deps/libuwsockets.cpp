@@ -1137,7 +1137,7 @@ extern "C"
       uwsRes->writeHeader(std::string_view(key, key_length), value);
     }
   }
-  void uws_res_end_sendfile(int ssl, uws_res_t *res, u_int64_t offset, bool close_connection) 
+  void uws_res_end_sendfile(int ssl, uws_res_t *res, uint64_t offset, bool close_connection) 
   {
     if (ssl)
     {

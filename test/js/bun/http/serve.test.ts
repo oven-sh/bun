@@ -16,7 +16,7 @@ import {
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
-import net from "net";
+import net from "node:net";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -1762,7 +1762,7 @@ it("should not instanciate error instances in each request", async () => {
 	);
 });
 
-it.only("should not send extra bytes when using sendfile", async () => {
+it("should not send extra bytes when using sendfile", async () => {
 	const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
 	const tmpFile = join(tmpdirSync(), "test.bin");
 	await Bun.write(tmpFile, payload);

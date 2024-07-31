@@ -31,10 +31,10 @@ describe("udpSocket()", () => {
     for (let i = 0; i < 30; i++) {
       const port = randomPort();
       try {
-        const socket = await udpSocket({ port });
+        using socket = await udpSocket({ port });
         expect(socket.port).toBe(port);
         expect(socket.address).toMatchObject({ port: socket.port });
-        socket.close();
+
         break;
       } catch (e) {
         continue;
@@ -43,23 +43,21 @@ describe("udpSocket()", () => {
   });
 
   test("can create a socket with a random port", async () => {
-    const socket = await udpSocket({ port: 0 });
+    using socket = await udpSocket({ port: 0 });
     expect(socket.port).toBeInteger();
     expect(socket.port).toBeWithin(1, 65535 + 1);
     expect(socket.address).toMatchObject({ port: socket.port });
-    socket.close();
   });
 
   describe.each([{ hostname: "localhost" }, { hostname: "127.0.0.1" }, { hostname: "::1" }])(
     "can create a socket with given hostname",
     ({ hostname }) => {
       test(hostname, async () => {
-        const socket = await udpSocket({ hostname });
+        using socket = await udpSocket({ hostname });
         expect(socket.hostname).toBe(hostname);
         expect(socket.port).toBeInteger();
         expect(socket.port).toBeWithin(1, 65535 + 1);
         expect(socket.address).toMatchObject({ port: socket.port });
-        socket.close();
       });
     },
   );
@@ -102,17 +100,20 @@ describe("udpSocket()", () => {
         bytes = new Uint8Array(bytes).buffer;
       }
 
-      test(`send ${label} (${binaryType || "undefined"})`, async done => {
-        const client = await udpSocket({});
-        const server = await udpSocket({
+      test(`send ${label} (${binaryType || "undefined"})`, async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+
+        using client = await udpSocket({});
+        using server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
-
-              server.close();
-              client.close();
-              done();
+              try {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+                resolve();
+              } catch (e) {
+                reject(e);
+              }
             },
           },
         });
@@ -125,23 +126,26 @@ describe("udpSocket()", () => {
           }
         }
         sendRec();
+
+        await promise;
       });
 
-      test(`send connected ${label} (${binaryType || "undefined"})`, async done => {
-        let client;
-        const server = await udpSocket({
+      test(`send connected ${label} (${binaryType || "undefined"})`, async () => {
+        const { promise, resolve, reject } = Promise.withResolvers();
+        using server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
-
-              server.close();
-              client.close();
-              done();
+              try {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+                resolve();
+              } catch (err) {
+                reject(err);
+              }
             },
           },
         });
-        client = await udpSocket({
+        using client = await udpSocket({
           connect: {
             port: server.port,
             hostname: "127.0.0.1",
@@ -156,22 +160,28 @@ describe("udpSocket()", () => {
           }
         }
         sendRec();
+
+        await promise;
       });
 
-      test(`sendMany ${label} (${binaryType || "undefined"})`, async done => {
-        const client = await udpSocket({});
+      test(`sendMany ${label} (${binaryType || "undefined"})`, async () => {
+        using client = await udpSocket({});
         let count = 0;
-        const server = await udpSocket({
+        let { promise, resolve, reject } = Promise.withResolvers();
+        using server = await udpSocket({
           binaryType: binaryType,
           socket: {
             data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
+              try {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+              } catch (e) {
+                reject(e);
+                return;
+              }
 
               count += 1;
               if (count === 100) {
-                server.close();
-                client.close();
-                done();
+                resolve();
               }
             },
           },
@@ -187,29 +197,34 @@ describe("udpSocket()", () => {
           }
         }
         sendRec();
+
+        await promise;
       });
 
-      test(`sendMany connected ${label} (${binaryType || "undefined"})`, async done => {
-        // const client = await udpSocket({});
-        let client;
+      test(`sendMany connected ${label} (${binaryType || "undefined"})`, async () => {
         let count = 0;
-        const server = await udpSocket({
+        let { promise, resolve, reject } = Promise.withResolvers();
+        using server = await udpSocket({
           binaryType: binaryType,
+          hostname: "127.0.0.1",
           socket: {
             data(socket, data, port, address) {
-              validateRecv(socket, data, port, address, binaryType, bytes);
+              try {
+                validateRecv(socket, data, port, address, binaryType, bytes);
+              } catch (e) {
+                reject(e);
+                return;
+              }
 
               count += 1;
               if (count === 100) {
-                server.close();
-                client.close();
-                done();
+                resolve();
               }
             },
           },
         });
 
-        client = await udpSocket({
+        using client = await udpSocket({
           connect: {
             port: server.port,
             hostname: "127.0.0.1",
@@ -226,6 +241,8 @@ describe("udpSocket()", () => {
           }
         }
         sendRec();
+
+        await promise;
       });
     }
   }

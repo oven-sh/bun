@@ -583,7 +583,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
   }
   // Do not call on_writable if the socket is closed.
   // on close means the socket data is no longer accessible
-  if (!s || us_socket_is_closed(0, &s->s)) {
+  if (!s || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
     return 0;
   }
 

@@ -88,6 +88,7 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -114,7 +115,7 @@ pub const Run = struct {
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -232,6 +233,7 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -257,7 +259,7 @@ pub const Run = struct {
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 

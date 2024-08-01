@@ -356,6 +356,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8()) {
@@ -364,10 +365,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             }
-
-                            return lhs;
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
@@ -391,6 +391,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
                                         ) catch bun.outOfMemory();
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8() and right.head.isUTF8()) {
@@ -400,9 +401,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         r.data == .e_inlined_enum,
                                     ) };
                                     left.parts = right.parts;
+                                    return lhs;
                                 }
                             }
-                            return lhs;
                         }
                     },
                     else => {
@@ -1934,13 +1935,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2070,23 +2072,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -3121,6 +3106,10 @@ pub const Parser = struct {
                 hasher.update("NO_TS");
             }
 
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
+            }
+
             this.features.hashForRuntimeTranspiler(hasher);
         }
 
@@ -3782,10 +3771,12 @@ pub const Parser = struct {
                 var remaining_stmts = all_stmts;
 
                 for (p.imports_to_convert_from_require.items) |deferred_import| {
-                    var stmts_ = remaining_stmts[0..1];
+                    var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    stmts_[0] = Stmt.alloc(
+                    p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?) catch bun.outOfMemory();
+
+                    import_part_stmts[0] = Stmt.alloc(
                         S.Import,
                         S.Import{
                             .star_name_loc = deferred_import.namespace.loc,
@@ -3797,10 +3788,11 @@ pub const Parser = struct {
                     var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
                     declared_symbols.appendAssumeCapacity(.{ .ref = deferred_import.namespace.ref.?, .is_top_level = true });
                     before.appendAssumeCapacity(.{
-                        .stmts = stmts_,
+                        .stmts = import_part_stmts,
                         .declared_symbols = declared_symbols,
                         .tag = .import_to_convert_from_require,
-                        .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
+                        // This part has a single symbol, so it may be removed if unused.
+                        .can_be_removed_if_unused = true,
                     });
                 }
                 bun.assert(remaining_stmts.len == 0);
@@ -5046,7 +5038,7 @@ fn NewParser_(
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
 
         /// Used by commonjs_at_runtime
-        commonjs_export_names: bun.StringArrayHashMapUnmanaged(void) = .{},
+        has_commonjs_export_names: bool = false,
 
         /// When this flag is enabled, we attempt to fold all expressions that
         /// TypeScript would consider to be "constant expressions". This flag is
@@ -13197,12 +13189,6 @@ fn NewParser_(
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
                     },
-
-                    // this is specifically added only to support our implementation
-                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
-                    .e_dot => |ex| {
-                        ex.can_be_removed_if_unused = true;
-                    },
                     else => {},
                 }
             }
@@ -18892,8 +18878,7 @@ fn NewParser_(
                                     name_loc,
                                 );
                             } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
-                                // Record this CommonJS export name for use later.
-                                _ = p.commonjs_export_names.getOrPut(p.allocator, name) catch unreachable;
+                                p.has_commonjs_export_names = true;
                             }
                         }
                     }
@@ -20857,7 +20842,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
-                    .can_be_unwrapped_if_unused = all_values_are_pure,
+                    // TODO: make these fully tree-shakable. this annotation
+                    // as-is is incorrect.  This would be done by changing all
+                    // enum wrappers into `var Enum = ...` instead of two
+                    // separate statements. This way, the @__PURE__ annotation
+                    // is attached to the variable binding.
+                    //
+                    // .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );
@@ -23906,7 +23897,7 @@ fn NewParser_(
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
-                .commonjs_export_names = p.commonjs_export_names.keys(),
+                .has_commonjs_export_names = p.has_commonjs_export_names,
 
                 .hashbang = hashbang,
 

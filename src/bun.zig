@@ -2945,6 +2945,11 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
+/// **Prefer `bun.New`, `bun.NewRefCounted`, or `bun.NewThreadSafeRefCounted` instead.**
+/// Use this when the struct is a third-party struct you cannot modify, like a
+/// Zig stdlib struct. Choosing the wrong allocator is an easy way to introduce
+/// bugs.
+///
 /// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///

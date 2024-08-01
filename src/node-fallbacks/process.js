@@ -1,6 +1,4 @@
 // shim for using process in browser
-var process = (module.exports = {});
-
 var queue = [];
 var draining = false;
 var currentQueue;
@@ -45,7 +43,7 @@ function drainQueue() {
   clearTimeout(timeout, 0);
 }
 
-process.nextTick = function (fun) {
+export function nextTick(fun) {
   var args = new Array(arguments.length - 1);
   if (arguments.length > 1) {
     for (var i = 1; i < arguments.length; i++) {
@@ -56,7 +54,7 @@ process.nextTick = function (fun) {
   if (queue.length === 1 && !draining) {
     setTimeout(drainQueue, 0);
   }
-};
+}
 
 export const title = "browser";
 export const browser = true;

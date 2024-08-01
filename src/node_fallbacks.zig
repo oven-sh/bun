@@ -55,12 +55,14 @@ pub const Map = bun.ComptimeStringMap(Module, .{
     .{ "querystring", nodeFallback("querystring", @embedFile("./node-fallbacks/out/querystring.js")) },
     .{ "stream", nodeFallback("stream", @embedFile("./node-fallbacks/out/stream.js")) },
     .{ "string_decoder", nodeFallback("string", @embedFile("./node-fallbacks/out/string_decoder.js")) },
-    .{ "sys", nodeFallback("sys", @embedFile("./node-fallbacks/out/sys.js")) },
     .{ "timers", nodeFallback("timers", @embedFile("./node-fallbacks/out/timers.js")) },
     .{ "tty", nodeFallback("tty", @embedFile("./node-fallbacks/out/tty.js")) },
     .{ "url", nodeFallback("url", @embedFile("./node-fallbacks/out/url.js")) },
     .{ "util", nodeFallback("util", @embedFile("./node-fallbacks/out/util.js")) },
     .{ "zlib", nodeFallback("zlib", @embedFile("./node-fallbacks/out/zlib.js")) },
+
+    // sys is an alias of util
+    .{ "sys", nodeFallback("util", @embedFile("./node-fallbacks/out/util.js")) },
 });
 
 fn nodeFallback(comptime name: []const u8, comptime code: []const u8) Module {

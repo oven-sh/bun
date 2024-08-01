@@ -501,8 +501,14 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
 }
 const ExportsStringName = "exports";
 
+/// All files in this list are specifically designed in src/node_fallbacks to
+/// not have a default export, so the bundler rewrites default to the namespace.
 const rewrite_default_to_star_map = bun.ComptimeStringMap(void, .{
+    .{ "node:buffer", {} },
     .{ "node:path", {} },
+    .{ "node:util", {} },
+    .{ "node:sys", {} },
+    .{ "node:constants", {} },
 });
 
 const TransposeState = struct {
@@ -9172,11 +9178,15 @@ fn NewParser_(
 
                 if (should_rewrite_default_to_star) {
                     if (stmt.default_name) |default| {
-                        // Alias the namespace and the default import using a new symbol
+                        // Alias the namespace and the default import without using a new symbol
                         const default_name = p.loadNameFromRef(default.ref.?);
-                        const ref = try p.declareSymbol(.import, default.loc, default_name);
-                        p.symbols.items[ref.inner_index].link = stmt.namespace_ref;
-                        try p.current_scope.generated.push(p.allocator, ref);
+                        _ = try p.insertSymbolIntoCurrentScope(
+                            .import,
+                            default.loc,
+                            stmt.namespace_ref,
+                            default_name,
+                            false,
+                        );
                         stmt.default_name = null;
                     }
                 }
@@ -12713,7 +12723,6 @@ fn NewParser_(
             // p.checkForNonBMPCodePoint(loc, name)
 
             if (comptime !is_generated) {
-
                 // Forbid declaring a symbol with a reserved word in strict mode
                 if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
                     try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
@@ -12721,8 +12730,12 @@ fn NewParser_(
             }
 
             // Allocate a new symbol
-            var ref = try p.newSymbol(kind, name);
+            const ref = try p.newSymbol(kind, name);
+            return p.insertSymbolIntoCurrentScope(kind, loc, ref, name, is_generated);
+        }
 
+        fn insertSymbolIntoCurrentScope(p: *P, kind: Symbol.Kind, loc: logger.Loc, ref: Ref, name: string, comptime is_generated: bool) !Ref {
+            var ref_to_use = ref;
             const scope = p.current_scope;
             const entry = try scope.members.getOrPut(p.allocator, name);
             if (entry.found_existing) {
@@ -12737,7 +12750,7 @@ fn NewParser_(
                         },
 
                         .keep_existing => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                         },
 
                         .replace_with_new => {
@@ -12750,12 +12763,12 @@ fn NewParser_(
                         },
 
                         .become_private_get_set_pair => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                             symbol.kind = .private_get_set_pair;
                         },
 
                         .become_private_static_get_set_pair => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                             symbol.kind = .private_static_get_set_pair;
                         },
 
@@ -12766,9 +12779,9 @@ fn NewParser_(
                 }
             }
             entry.key_ptr.* = name;
-            entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
+            entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref_to_use, .loc = loc };
             if (comptime is_generated) {
-                try p.module_scope.generated.push(p.allocator, ref);
+                try p.module_scope.generated.push(p.allocator, ref_to_use);
             }
             return ref;
         }

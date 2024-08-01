@@ -5537,6 +5537,9 @@ pub const Expr = struct {
         /// Expressions that can be moved are those that do not have side
         /// effects on their own. This is used to determine what can be moved
         /// outside of a module wrapper (__esm/__commonJS).
+        ///
+        /// TODO: this should be replaced with js_parser canBeRemovedIfUnused
+        /// since it is just code duplication of that.
         pub fn canBeMoved(data: Expr.Data) bool {
             return switch (data) {
                 .e_class => |class| class.canBeMoved(),
@@ -5548,7 +5551,7 @@ pub const Expr = struct {
                 .e_boolean,
                 .e_null,
                 .e_undefined,
-                // .e_reg_exp,
+                .e_reg_exp,
                 .e_big_int,
                 .e_string,
                 .e_inlined_enum,
@@ -5556,10 +5559,41 @@ pub const Expr = struct {
                 .e_utf8_string,
                 => true,
 
+                // Treat pure call and construct expressions as movable
+                // since @__PURE__ implies that there are no side effects.
+                // We will need to check the arguments for movability.
+                inline .e_new, .e_call => |call| {
+                    if (call.can_be_unwrapped_if_unused) {
+                        for (call.args.slice()) |arg| {
+                            if (!arg.data.canBeMoved())
+                                return false;
+                        }
+                        return true;
+                    }
+                    return false;
+                },
+
                 .e_template => |template| template.parts.len == 0,
 
-                .e_array => |array| array.was_originally_macro,
-                .e_object => |object| object.was_originally_macro,
+                .e_array => |array| {
+                    if (array.was_originally_macro)
+                        return true;
+
+                    // Treat arrays with movable values as movable too
+                    for (array.slice()) |item| {
+                        if (!item.canBeMoved())
+                            return false;
+                    }
+
+                    return true;
+                },
+                .e_object => |object| {
+                    if (object.was_originally_macro)
+                        return true;
+
+                    // TODO: Treat objects with movable keys and values as movable too
+                    return false;
+                },
 
                 // TODO: experiment with allowing some e_binary, e_unary, e_if as movable
 

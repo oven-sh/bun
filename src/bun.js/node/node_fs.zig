@@ -143,7 +143,7 @@ pub const Async = struct {
 
     fn NewAsyncFSTask(comptime ReturnType: type, comptime ArgumentType: type, comptime Function: anytype) type {
         return struct {
-            promise: JSC.JSPromise.Strong,
+            promise: JSC.JSPromise.Async,
             args: ArgumentType,
             globalObject: *JSC.JSGlobalObject,
             task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -163,7 +163,7 @@ pub const Async = struct {
                 var task = bun.new(
                     Task,
                     Task{
-                        .promise = JSC.JSPromise.Strong.init(globalObject),
+                        .promise = JSC.JSPromise.Async.init(globalObject),
                         .args = args,
                         .result = undefined,
                         .globalObject = globalObject,
@@ -204,9 +204,8 @@ pub const Async = struct {
                         break :brk out;
                     },
                 };
-                var promise_value = this.promise.value();
-                var promise = this.promise.get();
-                promise_value.ensureStillAlive();
+                var promise = this.promise;
+                this.promise = .{};
 
                 const tracker = this.tracker;
                 tracker.willDispatch(globalObject);
@@ -234,7 +233,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             }
         };
@@ -248,7 +247,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
     const ShellTask = bun.shell.Interpreter.Builtin.Cp.ShellCpTask;
     const ShellTaskT = if (is_shell) *ShellTask else u0;
     return struct {
-        promise: JSC.JSPromise.Strong = .{},
+        promise: JSC.JSPromise.Async = .{},
         args: Arguments.Cp,
         evtloop: JSC.EventLoopHandle,
         task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -374,7 +373,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             var task = bun.new(
                 ThisAsyncCpTask,
                 ThisAsyncCpTask{
-                    .promise = if (comptime enable_promise) JSC.JSPromise.Strong.init(globalObject) else .{},
+                    .promise = if (comptime enable_promise) JSC.JSPromise.Async.init(globalObject) else .{},
                     .args = cp_args,
                     .has_result = .{ .raw = false },
                     .result = undefined,
@@ -472,13 +471,13 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
                     break :brk out;
                 },
             };
-            var promise_value = this.promise.value();
-            var promise = this.promise.get();
-            promise_value.ensureStillAlive();
 
             const tracker = this.tracker;
             tracker.willDispatch(globalObject);
             defer tracker.didDispatch(globalObject);
+
+            var promise = this.promise;
+            this.promise = .{};
 
             this.deinit();
             switch (success) {
@@ -496,7 +495,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinitialized = true;
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
-            this.promise.strong.deinit();
+            this.promise.deinit();
             this.arena.deinit();
             bun.destroy(this);
         }
@@ -727,7 +726,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 }
 
 pub const AsyncReaddirRecursiveTask = struct {
-    promise: JSC.JSPromise.Strong,
+    promise: JSC.JSPromise.Async,
     args: Arguments.Readdir,
     globalObject: *JSC.JSGlobalObject,
     task: JSC.WorkPoolTask = .{ .callback = &workPoolCallback },
@@ -835,7 +834,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         vm: *JSC.VirtualMachine,
     ) JSC.JSValue {
         var task = AsyncReaddirRecursiveTask.new(.{
-            .promise = JSC.JSPromise.Strong.init(globalObject),
+            .promise = JSC.JSPromise.Async.init(globalObject),
             .args = args,
             .has_result = .{ .raw = false },
             .globalObject = globalObject,
@@ -1030,9 +1029,8 @@ pub const AsyncReaddirRecursiveTask = struct {
 
             break :brk out;
         };
-        var promise_value = this.promise.value();
-        var promise = this.promise.get();
-        promise_value.ensureStillAlive();
+        var promise = this.promise;
+        this.promise = .{};
 
         const tracker = this.tracker;
         tracker.willDispatch(globalObject);
@@ -1059,7 +1057,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.args.deinit();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
-        this.promise.strong.deinit();
+        this.promise.deinit();
         this.destroy();
     }
 };

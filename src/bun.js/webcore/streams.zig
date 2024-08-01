@@ -744,7 +744,7 @@ pub const StreamResult = union(Tag) {
 
                 pub fn deinit(this: *@This()) void {
                     if (this.* == .promise) {
-                        this.promise.strong.deinit();
+                        this.promise.deinit();
                         this.* = .{ .none = {} };
                     }
                 }

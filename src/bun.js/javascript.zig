@@ -978,9 +978,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
-        var map = this.bundler.env.map;
-
+    fn ensureSourceCodePrinter(this: *VirtualMachine) void {
         if (source_code_printer == null) {
             const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
             const writer = try js_printer.BufferWriter.init(allocator);
@@ -988,6 +986,12 @@ pub const VirtualMachine = struct {
             source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
             source_code_printer.?.ctx.append_null_byte = false;
         }
+    }
+
+    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
+        var map = this.bundler.env.map;
+
+        ensureSourceCodePrinter(this);
 
         if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
@@ -1447,6 +1451,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = .{};
+            ensureSourceCodePrinter(this);
         }
 
         this.bundler.options.target = .bun_macro;

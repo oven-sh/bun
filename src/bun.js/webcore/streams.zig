@@ -673,6 +673,11 @@ pub const StreamResult = union(Tag) {
         switch (this.*) {
             .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
+            .err => |err| {
+                if (err == .JSValue) {
+                    err.JSValue.unprotect();
+                }
+            },
             else => {},
         }
     }
@@ -956,6 +961,8 @@ pub const StreamResult = union(Tag) {
             },
             else => {
                 const value = result.toJS(globalThis);
+                value.ensureStillAlive();
+
                 result.* = .{ .temporary = .{} };
                 promise.resolve(globalThis, value);
             },
@@ -4480,6 +4487,7 @@ pub const ByteStream = struct {
 
         if (view != .zero) {
             this.pending_buffer = &.{};
+            this.pending.result.deinit();
             this.pending.result = .{ .done = {} };
             this.pending.run();
         }
@@ -4494,6 +4502,7 @@ pub const ByteStream = struct {
             this.done = true;
 
             this.pending_buffer = &.{};
+            this.pending.result.deinit();
             this.pending.result = .{ .done = {} };
             this.pending.run();
         }

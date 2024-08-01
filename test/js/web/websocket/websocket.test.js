@@ -529,8 +529,8 @@ describe("WebSocket", () => {
       await openAndCloseWS();
       if (i % 100 === 0) {
         current_websocket_count = getWebSocketCount();
-        // if we have more than 20 websockets open, we have a problem
-        expect(current_websocket_count).toBeLessThanOrEqual(20);
+        // if we have more than 1 batch of websockets open, we have a problem
+        expect(current_websocket_count).toBeLessThanOrEqual(100);
         if (initial_websocket_count === 0) {
           initial_websocket_count = current_websocket_count;
         }

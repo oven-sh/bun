@@ -13,11 +13,13 @@ test.if(process.platform === "darwin")("macOS has the assumed image offset", () 
 
 test("raise ignoring panic handler does not trigger the panic handler", async () => {
   let sent = false;
+  const resolve_handler = Promise.withResolvers();
 
   using server = Bun.serve({
     port: 0,
     fetch(request, server) {
       sent = true;
+      resolve_handler.resolve();
       return new Response("OK");
     },
   });
@@ -33,6 +35,11 @@ test("raise ignoring panic handler does not trigger the panic handler", async ()
     ]),
   });
 
+  await proc.exited;
+
+  /// Wait two seconds for a slow http request, or continue immediatly once the request is heard.
+  await Promise.race([resolve_handler.promise, Bun.sleep(2000)]);
+
   expect(proc.exited).resolves.not.toBe(0);
   expect(sent).toBe(false);
 });
@@ -41,6 +48,7 @@ describe("automatic crash reporter", () => {
   for (const approach of ["panic", "segfault", "outOfMemory"]) {
     test(`${approach} should report`, async () => {
       let sent = false;
+      const resolve_handler = Promise.withResolvers();
 
       // Self host the crash report backend.
       using server = Bun.serve({
@@ -48,6 +56,7 @@ describe("automatic crash reporter", () => {
         fetch(request, server) {
           expect(request.url).toEndWith("/ack");
           sent = true;
+          resolve_handler.resolve();
           return new Response("OK");
         },
       });
@@ -67,8 +76,9 @@ describe("automatic crash reporter", () => {
       });
       const exitCode = await proc.exited;
       const stderr = await Bun.readableStreamToText(proc.stderr);
-
       console.log(stderr);
+
+      await resolve_handler.promise;
 
       expect(exitCode).not.toBe(0);
       expect(stderr).toContain(server.url.toString());

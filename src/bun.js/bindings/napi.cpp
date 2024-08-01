@@ -7,6 +7,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
+#include "v8/HandleScope.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -340,6 +341,7 @@ public:
         NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
 
         auto scope = DECLARE_THROW_SCOPE(vm);
+        v8::HandleScope handleScope(v8::Isolate::fromGlobalObject(static_cast<Zig::GlobalObject*>(globalObject)));
 
         auto result = callback(env, NAPICallFrame::toNapiCallbackInfo(frame));
 

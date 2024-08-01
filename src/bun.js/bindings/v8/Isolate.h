@@ -22,6 +22,7 @@ public:
 
     BUN_EXPORT Local<Context> GetCurrentContext();
 
+    static Isolate* fromGlobalObject(Zig::GlobalObject* globalObject) { return reinterpret_cast<Isolate*>(globalObject); }
     Zig::GlobalObject* globalObject() { return reinterpret_cast<Zig::GlobalObject*>(this); }
     JSC::VM& vm() { return globalObject()->vm(); }
     GlobalInternals* globalInternals() { return globalObject()->V8GlobalInternals(); }

@@ -5,9 +5,8 @@ import { readdirSync, existsSync } from "fs";
 const baseTestDir = import.meta.dir;
 
 const packageJSONDirs = [
-  baseTestDir,
-  ...readdirSync(join(baseTestDir, "js", "third_party"))
-    .map(a => join(baseTestDir, "js", "third_party", a))
+  ...readdirSync(join(import.meta.dir, "js", "third_party"))
+    .map(a => join(import.meta.dir, "js", "third_party", a))
     .filter(a => existsSync(join(a, "./package.json"))),
 ];
 
@@ -15,7 +14,7 @@ const packageJSONDirs = [
 // We must use exact versions for third-party dependencies in our tests.
 describe("package.json dependencies must be exact versions", async () => {
   for (const dir of packageJSONDirs) {
-    test(join("test", dir.replace(baseTestDir, ""), "package.json"), async () => {
+    test(join(dir.replace(base, ""), "package.json"), async () => {
       const {
         dependencies = {},
         devDependencies = {},

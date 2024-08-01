@@ -530,7 +530,7 @@ async function spawnBunTest(execPath, testPath) {
   const perTestTimeout = Math.ceil(timeout / 2);
   const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: (isReallyTest ? ["test"] : []).concat([`--timeout=${perTestTimeout}`, testPath]),
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
     cwd: cwd,
     timeout,
     env: {

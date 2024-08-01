@@ -5924,6 +5924,7 @@ pub const BufferWriter = struct {
     pub fn reset(ctx: *BufferWriter) void {
         ctx.buffer.reset();
         ctx.approximate_newline_count = 0;
+        ctx.written = &.{};
     }
 
     pub fn writtenWithoutTrailingZero(ctx: *const BufferWriter) []u8 {

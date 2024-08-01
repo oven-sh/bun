@@ -27,3 +27,17 @@ exports[`macros should not lead to seg faults under any given input 1`] = `
 error: "Cannot convert argument type to JS" error in macro
     at [dir]/index.ts:2:1"
 `;
+
+exports[`macros should not lead to seg faults under any given input 1`] = `
+"2 | fn(\`©${''}\`);
+    ^
+error: "Cannot convert argument type to JS" error in macro
+    at [dir]/index.ts:2:1"
+`;
+
+exports[`macros should not lead to seg faults under any given input 1`] = `
+"2 | fn(\`©${''}\`);
+    ^
+error: "Cannot convert argument type to JS" error in macro
+    at [dir]/index.ts:2:1"
+`;

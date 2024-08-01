@@ -1905,10 +1905,10 @@ pub const ModuleLoader = struct {
 
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
-
+                defer source_code_printer.* = printer;
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
-                    defer source_code_printer.* = printer;
+
                     break :brk try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
@@ -1961,7 +1961,6 @@ pub const ModuleLoader = struct {
 
                         if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                             printer.ctx.buffer.deinit();
-                            source_code_printer.* = printer;
                         }
 
                         break :brk result;

@@ -48,6 +48,12 @@ for (let key in bunEnv) {
 
 delete bunEnv.NODE_ENV;
 
+if (isDebug) {
+  // This makes debug build memory leak tests more reliable.
+  // The code for dumping out the debug build transpiled source code has leaks.
+  bunEnv.BUN_DEBUG_NO_DUMP = "1";
+}
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;

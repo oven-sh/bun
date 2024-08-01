@@ -816,7 +816,7 @@ pub const TestCommand = struct {
 
         try vm.bundler.configureDefines();
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 

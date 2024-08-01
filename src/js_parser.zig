@@ -5050,7 +5050,7 @@ fn NewParser_(
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
 
         /// Used by commonjs_at_runtime
-        commonjs_export_names: bun.StringArrayHashMapUnmanaged(void) = .{},
+        has_commonjs_export_names: bool = false,
 
         /// When this flag is enabled, we attempt to fold all expressions that
         /// TypeScript would consider to be "constant expressions". This flag is
@@ -18896,8 +18896,7 @@ fn NewParser_(
                                     name_loc,
                                 );
                             } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
-                                // Record this CommonJS export name for use later.
-                                _ = p.commonjs_export_names.getOrPut(p.allocator, name) catch unreachable;
+                                p.has_commonjs_export_names = true;
                             }
                         }
                     }
@@ -23910,7 +23909,7 @@ fn NewParser_(
                     false,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
-                .commonjs_export_names = p.commonjs_export_names.keys(),
+                .has_commonjs_export_names = p.has_commonjs_export_names,
 
                 .hashbang = hashbang,
 

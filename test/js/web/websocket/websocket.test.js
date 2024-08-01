@@ -461,7 +461,7 @@ describe("WebSocket", () => {
 
   // If this test fails locally, check that ATT DNS error assist is disabled
   // or, make sure that your DNS server is pointed to a DNS server that does not mitm your requests
-  it.only("should report failing websocket connection in onerror and onclose for DNS resolution error", async () => {
+  it("should report failing websocket connection in onerror and onclose for DNS resolution error", async () => {
     const url = `ws://aposdkpaosdkpasodk.com`;
     const { promise, resolve, reject } = Promise.withResolvers();
     const { promise: promise2, resolve: resolve2, reject: reject2 } = Promise.withResolvers();

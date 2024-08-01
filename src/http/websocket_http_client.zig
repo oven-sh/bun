@@ -371,15 +371,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleClose(this: *HTTPClient, _: Socket, _: c_int, _: ?*anyopaque) void {
             log("onClose", .{});
             JSC.markBinding(@src());
-            this.clearData();
-            this.tcp = null;
-
-            if (this.outgoing_websocket) |ws| {
-                this.outgoing_websocket = null;
-
-                ws.didAbruptClose(ErrorCode.ended);
-            }
-
+            this.terminate(ErrorCode.ended);
             this.destroy();
         }
 

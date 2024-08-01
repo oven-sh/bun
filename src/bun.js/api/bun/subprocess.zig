@@ -2069,7 +2069,7 @@ pub const Subprocess = struct {
         }
 
         const loop = jsc_vm.eventLoop();
-        var island = bun.new(Island, .{});
+        var island = Island.new(.{});
 
         // When run synchronously, subprocess isn't garbage collected
         subprocess.* = Subprocess{
@@ -2288,6 +2288,8 @@ pub const Subprocess = struct {
     pub const IPCHandler = IPC.NewIPCHandler(Subprocess);
 
     pub const Island = struct {
+        pub usingnamespace bun.New(@This());
+
         subprocess: ?*Subprocess = null,
         stdin: ?*JSC.WebCore.FileSink = null,
 
@@ -2300,12 +2302,12 @@ pub const Subprocess = struct {
 
         pub fn clearSubprocess(this: *Island) void {
             this.subprocess = null;
-            if (this.stdin == null) bun.destroy(this);
+            if (this.stdin == null) this.destroy();
         }
 
         pub fn clearStdin(this: *Island) void {
             this.stdin = null;
-            if (this.subprocess == null) bun.destroy(this);
+            if (this.subprocess == null) this.destroy();
         }
     };
 };

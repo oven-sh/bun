@@ -519,14 +519,13 @@ Object.defineProperties(EventEmitter, {
 });
 Object.assign(EventEmitter, {
   once,
-  on,
+  // on,
   getEventListeners,
   getMaxListeners,
   setMaxListeners,
   EventEmitter,
   usingDomains: false,
   captureRejectionSymbol,
-  EventEmitterAsyncResource,
   errorMonitor: kErrorMonitor,
   addAbortListener,
   init: EventEmitter,

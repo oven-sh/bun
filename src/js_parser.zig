@@ -501,8 +501,24 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
 }
 const ExportsStringName = "exports";
 
-/// All files in this list are specifically designed in src/node_fallbacks to
-/// not have a default export, so the bundler rewrites default to the namespace.
+// If this is one of a few specific built-ins, make the default value refer to
+// the *namespace* instead of the default export. This allows dot properties to
+// note property accesses on this to make tree shaking more effective. We can
+// only enable it on built-in modules that have a default export that is
+//
+// Bun's browser polyfills are specially designed to take advantage of this
+// optimization to make bundles smaller.
+//
+//     import path from 'node:path'
+//    -->
+//     import * as path from 'node:path'
+//
+// For example, bundling this code only includes a dependency on `function join`
+// and not on the entire module.
+//
+//     import path from 'node:path'
+//     console.log(path.join);
+//
 const rewrite_default_to_star_map = bun.ComptimeStringMap(void, kvs: {
     const node_builtins = .{
         "buffer",
@@ -3127,6 +3143,8 @@ pub const Parser = struct {
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
+
+        target: options.Target = .bun,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
@@ -9168,20 +9186,10 @@ fn NewParser_(
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
 
-            // If this is one of a few specific built-ins, make the default value refer to
-            // the namespace instead of the default export. This allows for visiting to
-            // note property accesses on this, and in turn better tree shaking. We can
-            // only enable it on built-in modules that re-export everything as the
-            // default.
-            //
-            // Bun's browser polyfills take special advantage of this optimization to
-            // make bundles smaller.
-            //
-            //     import path from 'node:path'
-            //    -->
-            //     import * as path from 'node:path'
-            //
-            const should_rewrite_default_to_star = p.options.bundle and rewrite_default_to_star_map.has(path.text);
+            // See the comment on `rewrite_default_to_star_map`
+            const should_rewrite_default_to_star = p.options.bundle and
+                p.options.target == .browser and
+                rewrite_default_to_star_map.has(path.text);
 
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);

@@ -674,7 +674,7 @@ describe("bundler", () => {
         const std = @import("std");
 
         pub fn main() void {
-          std.debug.print("Hello, world!\\n", .{});
+          std.log.info("Hello, world!\\n", .{});
         }
       `,
     },
@@ -684,7 +684,7 @@ describe("bundler", () => {
       "/exec.js": `
         import assert from 'node:assert';
         import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-6dhkdck1.zig');
+        assert.strictEqual(the_path, './entry-z5artd5z.zig');
       `,
     },
     run: {

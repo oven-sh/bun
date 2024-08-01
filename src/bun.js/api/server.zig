@@ -1933,7 +1933,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (body.value == .Locked) {
-                        body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        body.value.toErrorInstance(.{ .Aborted = {} }, this.server.globalThis);
                         any_js_calls = true;
                     }
                 }
@@ -1994,7 +1994,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // Case 3:
                 // Stream was not consumed and the connection was aborted or ended
                 if (body.value == .Locked) {
-                    body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                    body.value.toErrorInstance(.{ .Aborted = {} }, this.server.globalThis);
                 }
             }
 
@@ -2048,11 +2048,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+        pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
             if (this.resp) |resp| {
-                resp.overrideWriteOffset(this.sendfile.offset);
-                this.endWithoutBody(this.shouldCloseConnection());
+                this.detachResponse();
+                resp.endSendFile(writeOffSet, closeConnection);
             }
+        }
+
+        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+            this.endSendFile(this.sendfile.offset, this.shouldCloseConnection());
+
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = bun.sys.close(this.sendfile.fd);
@@ -2894,14 +2899,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value.toBlobIfPossible();
 
             switch (value.*) {
-                .Error => {
-                    const err = value.Error;
+                .Error => |*err_ref| {
                     _ = value.use();
                     if (this.isAbortedOrEnded()) {
                         this.deref();
                         return;
                     }
-                    this.runErrorHandler(err);
+                    this.runErrorHandler(err_ref.toJS(this.server.globalThis));
                     return;
                 },
                 // .InlineBlob,

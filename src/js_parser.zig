@@ -76,7 +76,6 @@ pub const StringHashMap = bun.StringHashMap;
 pub const AutoHashMap = std.AutoHashMap;
 const StringHashMapUnmanaged = bun.StringHashMapUnmanaged;
 const ObjectPool = @import("./pool.zig").ObjectPool;
-const NodeFallbackModules = @import("./node_fallbacks.zig");
 
 const DeferredImportNamespace = struct {
     namespace: LocRef,
@@ -501,6 +500,51 @@ pub fn locAfterOp(e: E.Binary) logger.Loc {
     }
 }
 const ExportsStringName = "exports";
+
+// If this is one of a few specific built-ins, make the default value refer to
+// the *namespace* instead of the default export. This allows dot properties to
+// note property accesses on this to make tree shaking more effective. We can
+// only enable it on built-in modules that have a default export that is
+//
+// Bun's browser polyfills are specially designed to take advantage of this
+// optimization to make bundles smaller.
+//
+//     import path from 'node:path'
+//    -->
+//     import * as path from 'node:path'
+//
+// For example, bundling this code only includes a dependency on `function join`
+// and not on the entire module.
+//
+//     import path from 'node:path'
+//     console.log(path.join);
+//
+const rewrite_default_to_star_map = bun.ComptimeStringMap(void, kvs: {
+    const node_builtins = .{
+        "buffer",
+        "constants",
+        "constants",
+        "crypto",
+        "domain",
+        "http",
+        "https",
+        "path",
+        "sys",
+        "util",
+        "net",
+        "os",
+        "punycode",
+        "querystring",
+    };
+    var kvs: [node_builtins.len * 2]struct { []const u8, void } = undefined;
+    var i = 0;
+    for (node_builtins) |pkg| {
+        kvs[i] = .{ pkg, {} };
+        kvs[i + 1] = .{ "node:" ++ pkg, {} };
+        i += 2;
+    }
+    break :kvs kvs;
+});
 
 const TransposeState = struct {
     is_await_target: bool = false,
@@ -3099,6 +3143,8 @@ pub const Parser = struct {
         module_type: options.ModuleType = .unknown,
 
         transform_only: bool = false,
+
+        target: options.Target = .bun,
 
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
@@ -9140,6 +9186,11 @@ fn NewParser_(
             stmt.import_record_index = p.addImportRecord(.stmt, path.loc, path.text);
             p.import_records.items[stmt.import_record_index].was_originally_bare_import = was_originally_bare_import;
 
+            // See the comment on `rewrite_default_to_star_map`
+            const should_rewrite_default_to_star = p.options.bundle and
+                p.options.target == .browser and
+                rewrite_default_to_star_map.has(path.text);
+
             if (stmt.star_name_loc) |star| {
                 const name = p.loadNameFromRef(stmt.namespace_ref);
 
@@ -9151,11 +9202,38 @@ fn NewParser_(
                         .import_record_index = stmt.import_record_index,
                     }) catch unreachable;
                 }
-            } else {
+
+                if (should_rewrite_default_to_star) {
+                    if (stmt.default_name) |default| {
+                        // Alias the namespace and the default import without using a new symbol
+                        const default_name = p.loadNameFromRef(default.ref.?);
+                        _ = try p.insertSymbolIntoCurrentScope(
+                            .import,
+                            default.loc,
+                            stmt.namespace_ref,
+                            default_name,
+                            false,
+                        );
+                        stmt.default_name = null;
+                    }
+                }
+            } else init_namespace_ref: {
+                if (should_rewrite_default_to_star) {
+                    if (stmt.default_name) |default| {
+                        // Create a namespace ref as the default
+                        const default_name = p.loadNameFromRef(default.ref.?);
+                        const ref = try p.declareSymbol(.import, default.loc, default_name);
+                        stmt.namespace_ref = ref;
+                        stmt.star_name_loc = default.loc;
+                        stmt.default_name = null;
+                        break :init_namespace_ref;
+                    }
+                }
+
                 var path_name = fs.PathName.init(strings.append(p.allocator, "import_", path.text) catch unreachable);
                 const name = try path_name.nonUniqueNameString(p.allocator);
                 stmt.namespace_ref = try p.newSymbol(.other, name);
-                var scope: *Scope = p.current_scope;
+                const scope: *Scope = p.current_scope;
                 try scope.generated.push(p.allocator, stmt.namespace_ref);
             }
 
@@ -12672,7 +12750,6 @@ fn NewParser_(
             // p.checkForNonBMPCodePoint(loc, name)
 
             if (comptime !is_generated) {
-
                 // Forbid declaring a symbol with a reserved word in strict mode
                 if (p.isStrictMode() and name.ptr != arguments_str.ptr and js_lexer.StrictModeReservedWords.has(name)) {
                     try p.markStrictModeFeature(.reserved_word, js_lexer.rangeOfIdentifier(p.source, loc), name);
@@ -12680,8 +12757,12 @@ fn NewParser_(
             }
 
             // Allocate a new symbol
-            var ref = try p.newSymbol(kind, name);
+            const ref = try p.newSymbol(kind, name);
+            return p.insertSymbolIntoCurrentScope(kind, loc, ref, name, is_generated);
+        }
 
+        fn insertSymbolIntoCurrentScope(p: *P, kind: Symbol.Kind, loc: logger.Loc, ref: Ref, name: string, comptime is_generated: bool) !Ref {
+            var ref_to_use = ref;
             const scope = p.current_scope;
             const entry = try scope.members.getOrPut(p.allocator, name);
             if (entry.found_existing) {
@@ -12696,7 +12777,7 @@ fn NewParser_(
                         },
 
                         .keep_existing => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                         },
 
                         .replace_with_new => {
@@ -12709,12 +12790,12 @@ fn NewParser_(
                         },
 
                         .become_private_get_set_pair => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                             symbol.kind = .private_get_set_pair;
                         },
 
                         .become_private_static_get_set_pair => {
-                            ref = existing.ref;
+                            ref_to_use = existing.ref;
                             symbol.kind = .private_static_get_set_pair;
                         },
 
@@ -12725,9 +12806,9 @@ fn NewParser_(
                 }
             }
             entry.key_ptr.* = name;
-            entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref, .loc = loc };
+            entry.value_ptr.* = js_ast.Scope.Member{ .ref = ref_to_use, .loc = loc };
             if (comptime is_generated) {
-                try p.module_scope.generated.push(p.allocator, ref);
+                try p.module_scope.generated.push(p.allocator, ref_to_use);
             }
             return ref;
         }
@@ -20757,7 +20838,7 @@ fn NewParser_(
             {
                 p.emitted_namespace_vars.putNoClobber(allocator, name_ref, {}) catch bun.outOfMemory();
 
-                var decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
+                const decls = allocator.alloc(G.Decl, 1) catch bun.outOfMemory();
                 decls[0] = G.Decl{ .binding = p.b(B.Identifier{ .ref = name_ref }, name_loc) };
 
                 if (p.enclosing_namespace_arg_ref == null) {

@@ -32,6 +32,7 @@ describe("bundler", () => {
     "string_decoder": "polyfill",
     "sys": "polyfill",
     "timers": "polyfill",
+    "timers/promises": "polyfill",
     "tls": "no-op",
     "tty": "polyfill",
     "url": "polyfill",
@@ -70,6 +71,55 @@ describe("bundler", () => {
       stdout: "function\nfunction\nfalse",
     },
   });
+  const utilTreeShaking = itBundled("browser/NodeUtilTreeShaking", {
+    files: {
+      "/entry.js": /* js */ `
+        import { TextEncoder } from "node:util";
+        console.log(TextEncoder);
+      `,
+    },
+    target: "browser",
+    minifySyntax: true,
+    minifyWhitespace: true,
+    minifyIdentifiers: true,
+    expectExactFilesize: {
+      // TODO: After a release with https://github.com/oven-sh/bun/pull/12808/files
+      // we can change node_fallbacks to use this and it will half this size
+      "/out.js": 60,
+    },
+  });
+  // Special rewriting is done in the parser for these polyfills, these three
+  // test different cases are unique code paths in the parser.
+  itBundled("browser/NodeUtilDefaultTreeShaking", {
+    ...utilTreeShaking.options,
+    files: {
+      "/entry.js": /* js */ `
+        import util from "node:util";
+        console.log(util.TextEncoder);
+      `,
+    },
+  });
+  itBundled("browser/NodeUtilStarTreeShaking", {
+    ...utilTreeShaking.options,
+    files: {
+      "/entry.js": /* js */ `
+        import * as util from "node:util";
+        console.log(util.TextEncoder);
+      `,
+    },
+  });
+  itBundled("browser/NodeUtilDefaultAndStarTreeShaking", {
+    ...utilTreeShaking.options,
+    files: {
+      "/entry.js": /* js */ `
+        import util2, * as util from "node:util";
+        console.log(util.TextEncoder, util2.TextEncoder);
+      `,
+    },
+    expectExactFilesize: {
+      "/out.js": 62,
+    },
+  });
   // TODO: use nodePolyfillList to generate the code in here.
   const NodePolyfills = itBundled("browser/NodePolyfills", {
     files: {
@@ -102,6 +152,7 @@ describe("bundler", () => {
         import * as string_decoder from "node:string_decoder";
         import * as sys from "node:sys";
         import * as timers from "node:timers";
+        import * as timers_promises from "node:timers/promises";
         import * as tls from "node:tls";
         import * as tty from "node:tty";
         import * as url from "node:url";
@@ -113,41 +164,42 @@ describe("bundler", () => {
           if (typeof obj === 'function') obj = obj()
           return Object.keys(obj).length === 0 ? 'no-op' : 'polyfill'
         }
-        console.log('assert         :', scan(assert))
-        console.log('buffer         :', scan(buffer))
-        console.log('child_process  :', scan(child_process))
-        console.log('cluster        :', scan(cluster))
-        console.log('console        :', console2 === console ? 'equal' : 'polyfill')
-        console.log('constants      :', scan(constants))
-        console.log('crypto         :', scan(crypto))
-        console.log('dgram          :', scan(dgram))
-        console.log('dns            :', scan(dns))
-        console.log('domain         :', scan(domain))
-        console.log('events         :', scan(events))
-        console.log('fs             :', scan(fs))
-        console.log('http           :', scan(http))
-        console.log('https          :', scan(https))
-        console.log('module         :', scan(module2))
-        console.log('net            :', scan(net))
-        console.log('os             :', scan(os))
-        console.log('path           :', scan(path))
-        console.log('perf_hooks     :', scan(perf_hooks))
-        console.log('process        :', scan(process))
-        console.log('punycode       :', scan(punycode))
-        console.log('querystring    :', scan(querystring))
-        console.log('readline       :', scan(readline))
-        console.log('repl           :', scan(repl))
-        console.log('stream         :', scan(stream))
-        console.log('string_decoder :', scan(string_decoder))
-        console.log('sys            :', scan(sys))
-        console.log('timers         :', scan(timers))
-        console.log('tls            :', scan(tls))
-        console.log('tty            :', scan(tty))
-        console.log('url            :', scan(url))
-        console.log('util           :', scan(util))
-        console.log('v8             :', scan(v8))
-        console.log('vm             :', scan(vm))
-        console.log('zlib           :', scan(zlib))
+        console.log('assert          :', scan(assert))
+        console.log('buffer          :', scan(buffer))
+        console.log('child_process   :', scan(child_process))
+        console.log('cluster         :', scan(cluster))
+        console.log('console         :', console2 === console ? 'equal' : 'polyfill')
+        console.log('constants       :', scan(constants))
+        console.log('crypto          :', scan(crypto))
+        console.log('dgram           :', scan(dgram))
+        console.log('dns             :', scan(dns))
+        console.log('domain          :', scan(domain))
+        console.log('events          :', scan(events))
+        console.log('fs              :', scan(fs))
+        console.log('http            :', scan(http))
+        console.log('https           :', scan(https))
+        console.log('module          :', scan(module2))
+        console.log('net             :', scan(net))
+        console.log('os              :', scan(os))
+        console.log('path            :', scan(path))
+        console.log('perf_hooks      :', scan(perf_hooks))
+        console.log('process         :', scan(process))
+        console.log('punycode        :', scan(punycode))
+        console.log('querystring     :', scan(querystring))
+        console.log('readline        :', scan(readline))
+        console.log('repl            :', scan(repl))
+        console.log('stream          :', scan(stream))
+        console.log('string_decoder  :', scan(string_decoder))
+        console.log('sys             :', scan(sys))
+        console.log('timers          :', scan(timers))
+        console.log('timers/promises :', scan(timers_promises))
+        console.log('tls             :', scan(tls))
+        console.log('tty             :', scan(tty))
+        console.log('url             :', scan(url))
+        console.log('util            :', scan(util))
+        console.log('v8              :', scan(v8))
+        console.log('vm              :', scan(vm))
+        console.log('zlib            :', scan(zlib))
       `,
     },
     target: "browser",
@@ -159,41 +211,42 @@ describe("bundler", () => {
     },
     run: {
       stdout: `
-        assert         : polyfill
-        buffer         : polyfill
-        child_process  : no-op
-        cluster        : no-op
-        console        : polyfill
-        constants      : polyfill
-        crypto         : polyfill
-        dgram          : no-op
-        dns            : no-op
-        domain         : polyfill
-        events         : polyfill
-        fs             : no-op
-        http           : polyfill
-        https          : polyfill
-        module         : no-op
-        net            : polyfill
-        os             : polyfill
-        path           : polyfill
-        perf_hooks     : no-op
-        process        : polyfill
-        punycode       : polyfill
-        querystring    : polyfill
-        readline       : no-op
-        repl           : no-op
-        stream         : polyfill
-        string_decoder : polyfill
-        sys            : polyfill
-        timers         : polyfill
-        tls            : no-op
-        tty            : polyfill
-        url            : polyfill
-        util           : polyfill
-        v8             : no-op
-        vm             : no-op
-        zlib           : polyfill
+        assert          : polyfill
+        buffer          : polyfill
+        child_process   : no-op
+        cluster         : no-op
+        console         : polyfill
+        constants       : polyfill
+        crypto          : polyfill
+        dgram           : no-op
+        dns             : no-op
+        domain          : polyfill
+        events          : polyfill
+        fs              : no-op
+        http            : polyfill
+        https           : polyfill
+        module          : no-op
+        net             : polyfill
+        os              : polyfill
+        path            : polyfill
+        perf_hooks      : no-op
+        process         : polyfill
+        punycode        : polyfill
+        querystring     : polyfill
+        readline        : no-op
+        repl            : no-op
+        stream          : polyfill
+        string_decoder  : polyfill
+        sys             : polyfill
+        timers          : polyfill
+        timers/promises : polyfill
+        tls             : no-op
+        tty             : polyfill
+        url             : polyfill
+        util            : polyfill
+        v8              : no-op
+        vm              : no-op
+        zlib            : polyfill
       `,
     },
   });

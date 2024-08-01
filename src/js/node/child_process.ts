@@ -2,12 +2,13 @@
 const EventEmitter = require("node:events");
 const StreamModule = require("node:stream");
 const OsModule = require("node:os");
+const { ERR_INVALID_ARG_TYPE, ERR_IPC_DISCONNECTED } = require("internal/errors");
+const { kHandle } = require("internal/shared");
 
 var NetModule;
 
 var ObjectCreate = Object.create;
 var ObjectAssign = Object.assign;
-var ObjectDefineProperty = Object.defineProperty;
 var BufferConcat = Buffer.concat;
 var BufferIsEncoding = Buffer.isEncoding;
 
@@ -21,7 +22,6 @@ var ArrayPrototypeIncludes = Array.prototype.includes;
 var ArrayPrototypeSlice = Array.prototype.slice;
 var ArrayPrototypeUnshift = Array.prototype.unshift;
 
-// var ArrayBuffer = ArrayBuffer;
 var ArrayBufferIsView = ArrayBuffer.isView;
 
 var NumberIsInteger = Number.isInteger;
@@ -104,17 +104,6 @@ var ReadableFromWeb;
 // OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
-function spawnTimeoutFunction(child, timeoutHolder) {
-  var timeoutId = timeoutHolder.timeoutId;
-  if (timeoutId > -1) {
-    try {
-      child.kill(killSignal);
-    } catch (err) {
-      child.emit("error", err);
-    }
-    timeoutHolder.timeoutId = -1;
-  }
-}
 /**
  * Spawns a new process using the given `file`.
  * @param {string} file
@@ -1940,12 +1929,6 @@ function ERR_CHILD_PROCESS_STDIO_MAXBUFFER(stdio) {
 function ERR_UNKNOWN_SIGNAL(name) {
   const err = new TypeError(`Unknown signal: ${name}`);
   err.code = "ERR_UNKNOWN_SIGNAL";
-  return err;
-}
-
-function ERR_INVALID_ARG_TYPE(name, type, value) {
-  const err = new TypeError(`The "${name}" argument must be of type ${type}. Received ${value?.toString()}`);
-  err.code = "ERR_INVALID_ARG_TYPE";
   return err;
 }
 

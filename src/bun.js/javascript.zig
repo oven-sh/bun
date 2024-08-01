@@ -978,8 +978,20 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn loadExtraEnv(this: *VirtualMachine) void {
+    fn ensureSourceCodePrinter(this: *VirtualMachine) void {
+        if (source_code_printer == null) {
+            const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
+            const writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+    }
+
+    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
+
+        ensureSourceCodePrinter(this);
 
         if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
@@ -990,18 +1002,20 @@ pub const VirtualMachine = struct {
         }
 
         if (map.map.fetchSwapRemove("NODE_CHANNEL_FD")) |kv| {
+            const fd_s = kv.value.value;
             const mode = if (map.map.fetchSwapRemove("NODE_CHANNEL_SERIALIZATION_MODE")) |mode_kv|
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
-            IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ kv.value.value, @tagName(mode) });
             if (Environment.isWindows) {
-                this.initIPCInstance(kv.value.value, mode);
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+                this.initIPCInstance(fd_s, mode);
             } else {
-                if (std.fmt.parseInt(i32, kv.value.value, 10)) |fd| {
+                IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+                if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
                     this.initIPCInstance(bun.toFD(fd), mode);
                 } else |_| {
-                    Output.warn("Failed to parse IPC channel number '{s}'", .{kv.value.value});
+                    Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
                 }
             }
         }
@@ -1437,6 +1451,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = .{};
+            ensureSourceCodePrinter(this);
         }
 
         this.bundler.options.target = .bun_macro;
@@ -1561,13 +1576,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
 
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
-
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
@@ -1680,13 +1688,6 @@ pub const VirtualMachine = struct {
 
         if (opts.smol)
             is_smol_mode = opts.smol;
-
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -1826,12 +1827,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
@@ -2431,6 +2426,10 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        if (source_code_printer) |print| {
+            print.getMutableBuffer().deinit();
+            print.ctx.written = &.{};
+        }
         this.source_mappings.deinit();
         if (this.rare_data) |rare_data| {
             rare_data.deinit();

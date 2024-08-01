@@ -470,7 +470,6 @@ describe("WebSocket", () => {
     ws.onopen = () => reject(new Error("should not be called"));
     ws.onmessage = () => reject(new Error("should not be called"));
     ws.onerror = () => {
-      console.error("onerror");
       resolve();
     };
     ws.onclose = () => resolve2();

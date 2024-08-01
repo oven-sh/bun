@@ -1687,6 +1687,9 @@ pub const Api = struct {
         /// packages
         packages: ?PackagesMode = null,
 
+        /// ignore_dce_annotations
+        ignore_dce_annotations: bool,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 

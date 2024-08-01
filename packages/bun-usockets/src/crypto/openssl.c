@@ -362,7 +362,6 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ERR_clear_error();
-        s->fatal_error = 1;
       }
       return;
     }
@@ -1665,7 +1664,6 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
     // these two errors may add to the error queue, which is per thread and
     // must be cleared
     ERR_clear_error();
-    s->fatal_error = 1;
 
     // all errors here except for want write are critical and should not
     // happen

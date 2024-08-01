@@ -246,36 +246,7 @@ pub const ShellSubprocess = struct {
             }
         }
 
-        pub fn toJS(this: *Writable, globalThis: *JSC.JSGlobalObject, subprocess: *Subprocess) JSValue {
-            return switch (this.*) {
-                .fd => |fd| JSValue.jsNumber(fd),
-                .memfd, .ignore => JSValue.jsUndefined(),
-                .buffer, .inherit => JSValue.jsUndefined(),
-                .pipe => |pipe| {
-                    this.* = .{ .ignore = {} };
-                    if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
-                        pipe.onAttachedProcessExit();
-                        return pipe.toJS(globalThis);
-                    } else {
-                        subprocess.flags.has_stdin_destructor_called = false;
-                        subprocess.weak_file_sink_stdin_ptr = pipe;
-                        return pipe.toJSWithDestructor(
-                            globalThis,
-                            JSC.WebCore.SinkDestructor.Ptr.init(subprocess),
-                        );
-                    }
-                },
-            };
-        }
-
         pub fn finalize(this: *Writable) void {
-            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
-            if (subprocess.this_jsvalue != .zero) {
-                if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
-                    JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
-                }
-            }
-
             return switch (this.*) {
                 .pipe => |pipe| {
                     pipe.deref();

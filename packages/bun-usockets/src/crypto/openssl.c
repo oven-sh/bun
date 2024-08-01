@@ -1684,12 +1684,12 @@ void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *s) {
 
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
   return !s->ssl || us_socket_is_shut_down(0, &s->s) ||
-         SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN;
+         SSL_get_shutdown(s->ssl) & SSL_SENT_SHUTDOWN || s->fatal_error;
 }
 
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
   if (!us_socket_is_closed(0, &s->s) &&
-      !us_internal_ssl_socket_is_shut_down(s) && !s->fatal_error) {
+      !us_internal_ssl_socket_is_shut_down(s)) {
     struct us_internal_ssl_socket_context_t *context =
         (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
     struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);

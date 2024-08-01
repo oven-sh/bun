@@ -28,7 +28,7 @@ Local<ObjectTemplate> ObjectTemplate::New(Isolate* isolate, Local<FunctionTempla
     auto* objectTemplate = new (NotNull, JSC::allocateCell<ObjectTemplate>(vm)) ObjectTemplate(vm, structure);
     // TODO pass constructor
     objectTemplate->finishCreation(vm);
-    return Local<ObjectTemplate>(JSValue(objectTemplate));
+    return isolate->currentHandleScope()->createLocal<ObjectTemplate>(objectTemplate);
 }
 
 MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
@@ -36,31 +36,33 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
     // TODO handle constructor
     // TODO handle interceptors?
 
-    auto& vm = (*context)->vm();
+    auto& vm = context->vm();
 
     // get a structure
-    if (!objectStructure) {
+    if (!internals().objectStructure) {
         auto structure = JSC::Structure::create(
             vm,
-            *context,
-            (*context)->objectPrototype(),
+            context->globalObject(),
+            context->globalObject()->objectPrototype(),
             JSC::TypeInfo(JSC::ObjectType, InternalFieldObject::StructureFlags),
             InternalFieldObject::info());
-        objectStructure.set((*context)->vm(), this, structure);
+        internals().objectStructure.set(context->vm(), this, structure);
     }
-    auto structure = objectStructure.get();
+    auto structure = internals().objectStructure.get();
 
     // create object from it
+    // examine in debugger, but the `this` here comes from the Local so it should be okay with
+    // any public functions InternalFieldObject calls
     auto newInstance = InternalFieldObject::create(vm, structure, this);
 
     // todo: apply properties
 
-    return MaybeLocal<Object>(Local<Object>(JSValue(newInstance)));
+    return MaybeLocal<Object>(context->currentHandleScope()->createLocal<Object>(newInstance));
 }
 
 void ObjectTemplate::SetInternalFieldCount(int value)
 {
-    internalFieldCount = value;
+    internals().internalFieldCount = value;
 }
 
 Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSValue prototype)

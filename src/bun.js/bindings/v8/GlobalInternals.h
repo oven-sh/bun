@@ -4,6 +4,8 @@
 
 namespace v8 {
 
+class HandleScope;
+
 class GlobalInternals : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -38,16 +40,28 @@ public:
     //     return m_InternalFieldObjectStructure.getInitializedOnMainThread(globalObject);
     // }
 
+    JSC::Structure* handleScopeBufferStructure(JSC::JSGlobalObject* globalObject) const
+    {
+        return m_HandleScopeBufferStructure.getInitializedOnMainThread(globalObject);
+    }
+
+    HandleScope* currentHandleScope() const { return m_CurrentHandleScope; }
+
+    void setCurrentHandleScope(HandleScope* handleScope) { m_CurrentHandleScope = handleScope; }
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
 
 private:
     JSC::LazyClassStructure m_ObjectTemplateStructure;
     JSC::LazyClassStructure m_InternalFieldObjectStructure;
+    JSC::LazyClassStructure m_HandleScopeBufferStructure;
+    HandleScope* m_CurrentHandleScope;
 
     void finishCreation(JSC::VM& vm);
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure)
         : Base(vm, structure)
+        , m_CurrentHandleScope(nullptr)
     {
     }
 };

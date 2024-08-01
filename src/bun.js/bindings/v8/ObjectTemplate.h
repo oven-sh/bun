@@ -11,8 +11,10 @@
 
 namespace v8 {
 
-// TODO subclass template then data
-class ObjectTemplate : public JSC::InternalFunction {
+// matches V8 class hierarchy
+class Template : public Data {};
+
+class ObjectTemplate : public JSC::InternalFunction, public Template {
 public:
     DECLARE_INFO;
 
@@ -35,11 +37,29 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForObjectTemplate = std::forward<decltype(space)>(space); });
     }
 
-    int getInternalFieldCount() const { return internalFieldCount; }
+    int getInternalFieldCount() const { return internals().internalFieldCount; }
 
 private:
-    int internalFieldCount = 0;
-    JSC::WriteBarrier<JSC::Structure> objectStructure;
+    class Internals {
+        int internalFieldCount = 0;
+        JSC::WriteBarrier<JSC::Structure> objectStructure;
+        friend class ObjectTemplate;
+    };
+
+    // do not use directly inside exported V8 functions, use internals()
+    Internals __internals;
+
+    Internals& internals()
+    {
+        ObjectTemplate* thisObj = Data::locationToObjectPointer<ObjectTemplate>(this);
+        return thisObj->__internals;
+    }
+
+    const Internals& internals() const
+    {
+        const ObjectTemplate* thisObj = Data::locationToObjectPointer<ObjectTemplate>(this);
+        return thisObj->__internals;
+    }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 

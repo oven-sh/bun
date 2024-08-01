@@ -913,6 +913,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForObjectTemplate;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
     std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
+    std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
 };
 } // namespace WebCore
 

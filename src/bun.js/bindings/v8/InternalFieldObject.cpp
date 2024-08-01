@@ -15,6 +15,8 @@ const JSC::ClassInfo InternalFieldObject::s_info = {
 
 InternalFieldObject* InternalFieldObject::create(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate)
 {
+    // TODO figure out how this works with __internals
+    // maybe pass a Local<ObjectTemplate>
     auto object = new (NotNull, JSC::allocateCell<InternalFieldObject>(vm)) InternalFieldObject(vm, structure, objectTemplate->getInternalFieldCount());
     object->finishCreation(vm);
     return object;

@@ -1,5 +1,7 @@
 #include "v8/String.h"
 
+#include "v8/HandleScope.h"
+
 using JSC::JSString;
 using JSC::JSValue;
 
@@ -25,17 +27,15 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
     // ReplacingInvalidSequences matches how v8 behaves here
     auto string = WTF::String::fromUTF8ReplacingInvalidSequences(span);
     RELEASE_ASSERT(!string.isNull());
-    auto jsString = JSC::jsString(isolate->vm(), string);
-    JSValue jsValue(jsString);
-    Local<String> local(jsValue);
-    return MaybeLocal<String>(local);
+    JSString* jsString = JSC::jsString(isolate->vm(), string);
+    return MaybeLocal<String>(isolate->globalInternals()->currentHandleScope()->createLocal<String>(jsString));
 }
 
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
     RELEASE_ASSERT(options == 0);
-    auto jsValue = toJSValue();
-    WTF::String string = jsValue.getString(isolate->globalObject());
+    auto jsString = toObjectPointer<const JSString>();
+    WTF::String string = jsString->getString(isolate->globalObject());
 
     // TODO(@190n) handle 16 bit strings
     RELEASE_ASSERT(string.is8Bit());
@@ -65,10 +65,9 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 
 int String::Length() const
 {
-    auto jsValue = toJSValue();
-    RELEASE_ASSERT(jsValue.isString());
-    WTF::String s;
-    jsValue.getString(Isolate::GetCurrent()->globalObject(), s);
+    auto jsString = toObjectPointer<const JSString>();
+    RELEASE_ASSERT(jsString->isString());
+    WTF::String s = jsString->getString(Isolate::GetCurrent()->globalObject());
     return s.length();
 }
 

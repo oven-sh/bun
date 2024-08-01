@@ -2,37 +2,30 @@
 
 #include "root.h"
 
+#include "v8/TaggedPointer.h"
+
 namespace v8 {
 
 template<class T>
 class Local final {
 public:
     Local()
-        : ptr(nullptr)
+        : location(nullptr)
     {
     }
 
-    Local(T* ptr_)
-        : ptr(ptr_)
+    Local(TaggedPointer* slot)
+        : location(reinterpret_cast<T*>(slot))
     {
     }
 
-    Local(JSC::JSValue jsv)
-        : ptr(reinterpret_cast<T*>(JSC::JSValue::encode(jsv)))
-    {
-    }
+    bool IsEmpty() const { return location == nullptr; }
 
-    Local(JSC::EncodedJSValue encoded)
-        : ptr(reinterpret_cast<T*>(encoded))
-    {
-    }
-
-    bool IsEmpty() const { return ptr == nullptr; }
-
-    T* operator*() const { return ptr; }
+    T* operator*() const { return location; }
+    T* operator->() const { return location; }
 
 private:
-    T* ptr;
+    T* location;
 };
 
 }

@@ -1,4 +1,5 @@
 #include "v8/Object.h"
+#include "JavaScriptCore/ConstructData.h"
 #include "v8/InternalFieldObject.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -16,7 +17,7 @@ using FieldContainer = InternalFieldObject::FieldContainer;
 
 static FieldContainer* getInternalFieldsContainer(Object* object)
 {
-    JSObject* js_object = object->toJSValue().getObject();
+    JSObject* js_object = object->toObjectPointer<JSObject>();
 
     // TODO(@190n): do we need to unwrap proxies like node-jsc did?
 
@@ -30,16 +31,15 @@ static FieldContainer* getInternalFieldsContainer(Object* object)
 Local<Object> Object::New(Isolate* isolate)
 {
     JSFinalObject* object = JSC::constructEmptyObject(isolate->globalObject());
-    JSValue jsv(object);
-    return Local<Object>(jsv);
+    return isolate->currentHandleScope()->createLocal<Object>(object);
 }
 
 Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> value)
 {
-    JSGlobalObject* globalObject = *context;
-    JSObject* object = toJSValue().getObject();
-    JSValue k = (*key)->toJSValue();
-    JSValue v = (*value)->toJSValue();
+    JSGlobalObject* globalObject = context->globalObject();
+    JSObject* object = toObjectPointer<JSObject>();
+    JSValue k = key->toTagged().getJSValue();
+    JSValue v = value->toTagged().getJSValue();
     auto& vm = globalObject->vm();
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -63,20 +63,25 @@ void Object::SetInternalField(int index, Local<Data> data)
 {
     auto fields = getInternalFieldsContainer(this);
     if (fields && index >= 0 && index < fields->size()) {
-        fields->at(index) = InternalFieldObject::InternalField((*data)->toJSValue());
+        fields->at(index) = InternalFieldObject::InternalField(data->toTagged().getJSValue());
     }
 }
 
 Local<Data> Object::SlowGetInternalField(int index)
 {
-    auto fields = getInternalFieldsContainer(this);
-    if (fields && index >= 0 && index < fields->size()) {
-        auto& field = fields->at(index);
-        if (field.is_js_value) {
-            return Local<Data>(field.data.js_value);
-        }
-    }
-    return Local<Data>(JSC::jsUndefined());
+    V8_UNIMPLEMENTED();
+    // auto fields = getInternalFieldsContainer(this);
+    // if (fields && index >= 0 && index < fields->size()) {
+    //     auto& field = fields->at(index);
+    //     if (field.is_js_value) {
+    //         return Local<Data>(field.data.js_value);
+    //     }
+    // }
+    // return Local<Data>(JSC::jsUndefined());
+
+    // TODO: this might need to allocate a heap number
+    // internal fields should be v8 pointers not jsvalues
+    return Local<Data>();
 }
 
 }

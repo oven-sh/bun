@@ -20,7 +20,7 @@ Isolate* Isolate::GetCurrent()
 
 Local<Context> Isolate::GetCurrentContext()
 {
-    return Local<Context> { reinterpret_cast<Context*>(this) };
+    return currentHandleScope()->createLocal<Context>(reinterpret_cast<Zig::GlobalObject*>(this));
 }
 
 }

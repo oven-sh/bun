@@ -1,6 +1,8 @@
 #include "v8/GlobalInternals.h"
+
 #include "v8/ObjectTemplate.h"
 #include "v8/InternalFieldObject.h"
+#include "v8/HandleScopeBuffer.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
@@ -30,9 +32,11 @@ void GlobalInternals::finishCreation(VM& vm)
     m_ObjectTemplateStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(ObjectTemplate::createStructure(init.vm, init.global, init.global->functionPrototype()));
     });
-
     m_InternalFieldObjectStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(InternalFieldObject::createStructure(init.vm, init.global, init.global->objectPrototype()));
+    });
+    m_HandleScopeBufferStructure.initLater([](LazyClassStructure::Initializer& init) {
+        init.setStructure(HandleScopeBuffer::createStructure(init.vm, init.global));
     });
 }
 

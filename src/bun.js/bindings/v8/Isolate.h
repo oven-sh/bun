@@ -3,6 +3,8 @@
 #include "v8.h"
 #include "v8/Context.h"
 #include "v8/Local.h"
+#include "v8/GlobalInternals.h"
+#include "v8/HandleScope.h"
 
 namespace v8 {
 
@@ -22,6 +24,8 @@ public:
 
     Zig::GlobalObject* globalObject() { return reinterpret_cast<Zig::GlobalObject*>(this); }
     JSC::VM& vm() { return globalObject()->vm(); }
+    GlobalInternals* globalInternals() { return globalObject()->V8GlobalInternals(); }
+    HandleScope* currentHandleScope() { return globalInternals()->currentHandleScope(); }
 };
 
 }

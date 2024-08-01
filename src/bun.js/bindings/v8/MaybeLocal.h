@@ -1,6 +1,5 @@
 #pragma once
 
-#include "v8.h"
 #include "v8/Local.h"
 
 namespace v8 {
@@ -9,7 +8,7 @@ template<class T>
 class MaybeLocal {
 public:
     MaybeLocal()
-        : local_(Local<T>(nullptr)) {};
+        : local_(Local<T>()) {};
 
     template<class S> MaybeLocal(Local<S> that)
         : local_(that)

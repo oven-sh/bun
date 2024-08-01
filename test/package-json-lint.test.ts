@@ -23,19 +23,19 @@ describe("package.json dependencies must be exact versions", async () => {
       } = await Bun.file(join(dir, "./package.json")).json();
 
       for (const [name, dep] of Object.entries(dependencies)) {
-        expect(dep).toMatch(/\^?([a-zA-Z0-9\.])+$/);
+        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
       }
 
       for (const [name, dep] of Object.entries(devDependencies)) {
-        expect(dep).toMatch(/\^?([a-zA-Z0-9\.])+$/);
+        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
       }
 
       for (const [name, dep] of Object.entries(peerDependencies)) {
-        expect(dep).toMatch(/\^?([a-zA-Z0-9\.])+$/);
+        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
       }
 
       for (const [name, dep] of Object.entries(optionalDependencies)) {
-        expect(dep).toMatch(/\^?([a-zA-Z0-9\.])+$/);
+        expect(dep).toMatch(/^([a-zA-Z0-9\.])+$/);
       }
     });
   }

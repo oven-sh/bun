@@ -350,7 +350,11 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             var tcp = this.tcp orelse return;
             this.tcp = null;
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
-            tcp.close(.normal);
+            if (comptime ssl) {
+                tcp.close(.normal);
+            } else {
+                tcp.close(.failure);
+            }
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
@@ -1014,10 +1018,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             log("cancel", .{});
             this.clearData();
 
-            if (this.tcp.isClosed() or this.tcp.isShutdown())
-                return;
-
-            this.tcp.close(.normal);
+            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
+            if (comptime ssl) {
+                this.tcp.close(.normal);
+            } else {
+                this.tcp.close(.failure);
+            }
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {
@@ -1878,10 +1884,12 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             this.outgoing_websocket = null;
 
-            if (this.tcp.isClosed())
-                return;
-
-            this.tcp.close(.normal);
+            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
+            if (comptime ssl) {
+                this.tcp.close(.normal);
+            } else {
+                this.tcp.close(.failure);
+            }
         }
 
         pub const Export = shim.exportFunctions(.{

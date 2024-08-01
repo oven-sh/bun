@@ -625,6 +625,9 @@ describe("tls.createServer events", () => {
           hostname: address.address,
           port: address.port,
           socket: {
+            error(socket, err) {
+              closeAndFail();
+            },
             drain(socket) {
               socket.write("Hello");
             },

@@ -72,9 +72,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     struct us_socket_t *s = context->head_sockets;
     while (s) {
         struct us_socket_t *nextS = s->next;
-        if(!us_socket_is_closed(ssl, s)) {
-            us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
-        }
+        us_socket_close(ssl, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, 0);
         s = nextS;
     }
 }

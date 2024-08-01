@@ -369,24 +369,12 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     }
     s->handshake_state = HANDSHAKE_PENDING;
     s->ssl_write_wants_read = 1;
-    // SSL_do_handshake(s->ssl);
-    // SSL_write(s->ssl, "\0", 0);
-    // Ensure that we'll cycle through internal openssl's state
-    // if (!us_socket_is_closed(0, &s->s) &&
-    //     !us_internal_ssl_socket_is_shut_down(s)) {
-    //   us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
-    // }
 
     return;
   }
   // success
   us_internal_trigger_handshake_callback(s, 1);
   s->ssl_write_wants_read = 1;
-  // Ensure that we'll cycle through internal openssl's state
-  // if (!us_socket_is_closed(0, &s->s) &&
-  //     !us_internal_ssl_socket_is_shut_down(s)) {
-  //   us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
-  // }
 }
 
 struct us_internal_ssl_socket_t *

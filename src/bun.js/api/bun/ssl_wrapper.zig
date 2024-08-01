@@ -38,6 +38,7 @@ pub fn SSLWrapper(T: type) type {
             sent_ssl_shutdown: bool = false,
             is_client: bool = false,
             authorized: bool = false,
+            fatal_error: bool = false,
         };
         pub const HandshakeState = enum(u2) {
             HANDSHAKE_PENDING = 0,
@@ -123,7 +124,7 @@ pub fn SSLWrapper(T: type) type {
         /// Caution: never reuse a socket if fast_shutdown = true, this will also fully close both read and write directions
         pub fn shutdown(this: *This, fast_shutdown: bool) bool {
             // we already sent the ssl shutdown
-            if (this.flags.sent_ssl_shutdown) return this.received_ssl_shutdown;
+            if (this.flags.sent_ssl_shutdown or this.flags.fatal_error) return this.received_ssl_shutdown;
 
             // Calling SSL_shutdown() only closes the write direction of the connection; the read direction is closed by the peer.
             // Once SSL_shutdown() is called, SSL_write(3) can no longer be used, but SSL_read(3) may still be used until the peer decides to close the connection in turn.
@@ -149,7 +150,15 @@ pub fn SSLWrapper(T: type) type {
 
             // we sent the shutdown
             this.flags.sent_ssl_shutdown = ret >= 0;
-            defer if (ret < 0) BoringSSL.ERR_clear_error();
+            defer if (ret < 0) {
+                const err = BoringSSL.SSL_get_error(this.ssl, ret);
+                BoringSSL.ERR_clear_error();
+
+                if (err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL) {
+                    this.flags.fatal_error = true;
+                    this.triggerCloseCallback();
+                }
+            }
             return ret == 1; // truly closed
         }
 
@@ -207,13 +216,15 @@ pub fn SSLWrapper(T: type) type {
             const written = BoringSSL.SSL_write(this.ssl, data.ptr, @as(c_int, @intCast(data.len)));
             if (written <= 0) {
                 const err = BoringSSL.SSL_get_error(this.ssl, written);
+                BoringSSL.ERR_clear_error();
+
                 if (err == BoringSSL.SSL_ERROR_WANT_READ or err == BoringSSL.SSL_ERROR_WANT_WRITE) {
                     // we wanna read/write
                     this.handleTraffic();
                     return 0;
                 }
                 // some bad error happened here we must close
-                BoringSSL.ERR_clear_error();
+                this.flags.fatal_error = err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL;
                 this.triggerCloseCallback();
                 return 0;
             }
@@ -292,16 +303,19 @@ pub fn SSLWrapper(T: type) type {
 
             if (result <= 0) {
                 const err = BoringSSL.SSL_get_error(this.ssl, result);
+                BoringSSL.ERR_clear_error();
+
                 // as far as I know these are the only errors we want to handle
                 if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
-                    this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
-
-                    this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
-                    this.triggerHandshakeCallback(true, this.getVerifyError());
-
                     // clear per thread error queue if it may contain something
-                    if (err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL) {
-                        BoringSSL.ERR_clear_error();
+                    this.flags.fatal_error = err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL;
+                    
+                    this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
+                    this.triggerHandshakeCallback(false, this.getVerifyError());
+                    
+                    if(this.flags.fatal_error) {
+                        this.triggerCloseCallback();
+                        return false;
                     }
                     return true;
                 }
@@ -343,6 +357,8 @@ pub fn SSLWrapper(T: type) type {
 
                 if (just_read <= 0) {
                     const err = BoringSSL.SSL_get_error(this.ssl, just_read);
+                    BoringSSL.ERR_clear_error();
+
                     if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
                         if (err == BoringSSL.SSL_ERROR_WANT_RENEGOTIATE) {
                             this.flags.handshake_state = HandshakeState.HANDSHAKE_RENEGOTIATION_PENDING;
@@ -365,12 +381,13 @@ pub fn SSLWrapper(T: type) type {
                             _ = this.shutdown(false);
                             this.handleEndOfRenegotiation();
                         }
+                        this.flags.fatal_error = err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL;
 
                         // flush the reading
                         if (read > 0) {
                             this.triggerDataCallback(buffer[0..read]);
                         }
-                        BoringSSL.ERR_clear_error();
+                       
                         this.triggerCloseCallback();
                         return false;
                     } else {

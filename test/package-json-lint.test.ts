@@ -14,7 +14,7 @@ const packageJSONDirs = [
 // We must use exact versions for third-party dependencies in our tests.
 describe("package.json dependencies must be exact versions", async () => {
   for (const dir of packageJSONDirs) {
-    test(join("test", dir.replace(base, ""), "package.json"), async () => {
+    test(join(dir.replace(base, ""), "package.json"), async () => {
       const {
         dependencies = {},
         devDependencies = {},

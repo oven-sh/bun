@@ -65,8 +65,8 @@ const ascii_only_always_on_unless_minifying = true;
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
-    // Write out the number from the end to the front
 
+    // Write out the number from the end to the front
     inline while (i > 0) {
         comptime i -= 1;
         buf[comptime i] = @as(u8, @intCast((remainder % 10))) + '0';
@@ -536,6 +536,8 @@ pub const Options = struct {
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    print_dce_annotations: bool = true,
+
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
     has_run_symbol_renamer: bool = false,
@@ -544,7 +546,7 @@ pub const Options = struct {
 
     module_type: options.OutputFormat = .preserve,
 
-    /// Used for cross-module inlining of import items when bundling
+    // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
@@ -2146,8 +2148,10 @@ fn NewPrinter(
             return;
         }
 
-        // noop for now
-        pub inline fn printPure(_: *Printer) void {}
+        pub inline fn printPure(p: *Printer) void {
+            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
+            p.printWhitespacer(ws("/* @__PURE__ */ "));
+        }
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = if (comptime !is_json)
@@ -2353,7 +2357,7 @@ fn NewPrinter(
                     }
                 },
                 .e_new => |e| {
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
                     if (wrap) {
@@ -2403,7 +2407,7 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     if (has_pure_comment and level.gte(.postfix)) {
                         wrap = true;
                     }
@@ -5924,6 +5928,7 @@ pub const BufferWriter = struct {
     pub fn reset(ctx: *BufferWriter) void {
         ctx.buffer.reset();
         ctx.approximate_newline_count = 0;
+        ctx.written = &.{};
     }
 
     pub fn writtenWithoutTrailingZero(ctx: *const BufferWriter) []u8 {
@@ -6131,6 +6136,11 @@ pub fn printAst(
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
+    defer {
+        if (comptime generate_source_map) {
+            printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
+        }
+    }
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();

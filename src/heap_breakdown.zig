@@ -11,14 +11,14 @@ fn heapLabel(comptime T: type) [:0]const u8 {
         T.heap_label
     else
         bun.meta.typeBaseName(@typeName(T));
-    return "Bun__" ++ base_name;
+    return base_name;
 }
 
 pub fn allocator(comptime T: type) std.mem.Allocator {
     return namedAllocator(comptime heapLabel(T));
 }
 pub fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
-    return getZone(name).allocator();
+    return getZone("Bun__" ++ name).allocator();
 }
 
 pub fn getZoneT(comptime T: type) *Zone {

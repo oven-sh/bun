@@ -1174,6 +1174,8 @@ pub fn onClose(
 
     if (client.allow_retry) {
         client.allow_retry = false;
+        // we need to retry the request, clean up the response message buffer and start again
+        client.state.response_message_buffer.deinit();
         client.start(client.state.original_request_body, client.state.body_out_str.?);
         return;
     }
@@ -3255,7 +3257,7 @@ pub fn progressUpdate(this: *HTTPClient, comptime is_ssl: bool, ctx: *NewHTTPCon
         const body = out_str.*;
         const result = this.toResult();
         const is_done = !result.has_more;
-      
+
         if (this.signals.aborted != null and is_done) {
             _ = socket_async_http_abort_tracker.swapRemove(this.async_http_id);
         }

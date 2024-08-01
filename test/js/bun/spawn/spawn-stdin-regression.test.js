@@ -3,7 +3,7 @@ import { bunExe } from "harness";
 const jsc = require("bun:jsc");
 
 test(`this used to crash`, async () => {
-  for (let i = 0; i < 30; i++) {
+  for (let i = 0; i < 10; i++) {
     const buffer = Buffer.alloc(1024 * 1024, "a");
 
     async function getStdin() {

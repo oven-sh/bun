@@ -2300,12 +2300,12 @@ pub const Subprocess = struct {
 
         pub fn clearSubprocess(this: *Island) void {
             this.subprocess = null;
-            if (this.stdin == null) bun.default_allocator.destroy(this);
+            if (this.stdin == null) bun.destroy(this);
         }
 
         pub fn clearStdin(this: *Island) void {
             this.stdin = null;
-            if (this.subprocess == null) bun.default_allocator.destroy(this);
+            if (this.subprocess == null) bun.destroy(this);
         }
     };
 };

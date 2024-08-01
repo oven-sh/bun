@@ -357,6 +357,7 @@ windows-build-tools
 wix-style-react
 wordpos
 workerd
+wrangler
 wrtc
 xxhash
 yarn

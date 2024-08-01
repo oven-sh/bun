@@ -1298,12 +1298,12 @@ pub const Subprocess = struct {
 
                 .blob => |blob| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess, result, .{ .blob = blob }),
+                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .blob = blob }),
                     };
                 },
                 .array_buffer => |array_buffer| {
                     return Writable{
-                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess, result, .{ .array_buffer = array_buffer }),
+                        .buffer = StaticPipeWriter.create(event_loop, island.subprocess.?, result, .{ .array_buffer = array_buffer }),
                     };
                 },
                 .memfd => |memfd| {

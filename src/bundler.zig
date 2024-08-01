@@ -1144,6 +1144,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1167,6 +1168,7 @@ pub const Bundler = struct {
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1200,6 +1202,7 @@ pub const Bundler = struct {
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
                         .target = bundler.options.target,
+                        .print_dce_annotations = bundler.options.emit_dce_annotations,
                     },
                     enable_source_map,
                 ),
@@ -1405,6 +1408,8 @@ pub const Bundler = struct {
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
+
+                opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;

@@ -1516,6 +1516,9 @@ pub const BundleOptions = struct {
     minify_identifiers: bool = false,
     dead_code_elimination: bool = true,
 
+    ignore_dce_annotations: bool = false,
+    emit_dce_annotations: bool = false,
+
     code_coverage: bool = false,
     debugger: bool = false,
 

@@ -1929,13 +1929,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2065,23 +2066,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -3118,6 +3102,10 @@ pub const Parser = struct {
                 hasher.update("TS");
             } else {
                 hasher.update("NO_TS");
+            }
+
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
             }
 
             this.features.hashForRuntimeTranspiler(hasher);
@@ -13223,12 +13211,6 @@ fn NewParser_(
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
                     },
-
-                    // this is specifically added only to support our implementation
-                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
-                    .e_dot => |ex| {
-                        ex.can_be_removed_if_unused = true;
-                    },
                     else => {},
                 }
             }
@@ -20918,7 +20900,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
-                    .can_be_unwrapped_if_unused = all_values_are_pure,
+                    // TODO: make these fully tree-shakable. this annotation
+                    // as-is is incorrect.  This would be done by changing all
+                    // enum wrappers into `var Enum = ...` instead of two
+                    // separate statements. This way, the @__PURE__ annotation
+                    // is attached to the variable binding.
+                    //
+                    // .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );

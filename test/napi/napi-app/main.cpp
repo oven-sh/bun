@@ -83,24 +83,46 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
 
 #include <v8.h>
 
-napi_value test_v8_number_new(const Napi::CallbackInfo &info) {
+napi_value test_v8_number_int(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
-  auto integer = v8::Number::New(v8::Isolate::GetCurrent(), 123.0);
-  auto fraction = v8::Number::New(v8::Isolate::GetCurrent(), 6.125);
-
+  v8::Local<v8::Number> integer =
+      v8::Number::New(v8::Isolate::GetCurrent(), 123.0);
   if (integer->Value() != 123.0) {
     return fail_fmt(env, "wrong v8 number value: expected 123.0 got %f",
                     integer->Value());
-  } else if (fraction->Value() != 6.125) {
-    return fail_fmt(env, "wrong v8 number value: expected 6.125 got %f",
+  }
+
+  return ok(env);
+}
+
+napi_value test_v8_number_large_int(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  v8::Local<v8::Number> large_int =
+      v8::Number::New(v8::Isolate::GetCurrent(), 8589934592);
+  if (large_int->Value() != 8589934592) {
+    return fail_fmt(env, "wrong v8 number value: expected 8589934592 got %f",
+                    large_int->Value());
+  }
+
+  return ok(env);
+}
+
+napi_value test_v8_number_fraction(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+
+  v8::Local<v8::Number> fraction =
+      v8::Number::New(v8::Isolate::GetCurrent(), 2.5);
+  if (fraction->Value() != 2.5) {
+    return fail_fmt(env, "wrong v8 number value: expected 2.5 got %f",
                     fraction->Value());
   }
 
   return ok(env);
 }
 
-napi_value test_v8_string_new_from_utf8(const Napi::CallbackInfo &info) {
+napi_value test_v8_string_ascii(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   v8::Isolate *isolate = v8::Isolate::GetCurrent();
 
@@ -240,6 +262,7 @@ napi_value test_v8_array_new(const Napi::CallbackInfo &info) {
   };
   v8::Local<v8::Array> v8_array = v8::Array::New(isolate, vals, 2);
   // TODO(@190n) do the rest of this with V8 APIs
+  // this test will fail until that is done
   napi_value napi_array;
   static_assert(sizeof v8_array == sizeof napi_array);
   memcpy(&napi_array, &v8_array, sizeof v8_array);
@@ -391,10 +414,14 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
-  exports.Set("test_v8_number_new",
-              Napi::Function::New(env, test_v8_number_new));
-  exports.Set("test_v8_string_new_from_utf8",
-              Napi::Function::New(env, test_v8_string_new_from_utf8));
+  exports.Set("test_v8_number_int",
+              Napi::Function::New(env, test_v8_number_int));
+  exports.Set("test_v8_number_large_int",
+              Napi::Function::New(env, test_v8_number_large_int));
+  exports.Set("test_v8_number_fraction",
+              Napi::Function::New(env, test_v8_number_fraction));
+  exports.Set("test_v8_string_ascii",
+              Napi::Function::New(env, test_v8_string_ascii));
   exports.Set("test_v8_external", Napi::Function::New(env, test_v8_external));
   exports.Set("test_v8_object", Napi::Function::New(env, test_v8_object));
   exports.Set("test_v8_array_new", Napi::Function::New(env, test_v8_array_new));

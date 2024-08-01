@@ -26,23 +26,41 @@ describe("napi", () => {
   });
 
   describe("v8 c++", () => {
-    it("Number::New", () => {
-      checkSameOutput("test_v8_number_new", []);
+    describe("Number", () => {
+      it("can create small integer", () => {
+        checkSameOutput("test_v8_number_int", []);
+      });
+      it("can create large integer", () => {
+        checkSameOutput("test_v8_number_large_int", []);
+      });
+      it("can create fraction", () => {
+        checkSameOutput("test_v8_number_fraction", []);
+      });
     });
-    it("String::NewFromUtf8", () => {
-      checkSameOutput("test_v8_string_new_from_utf8", []);
+    describe("String", () => {
+      it("can create and read back strings with only ASCII characters", () => {
+        checkSameOutput("test_v8_string_ascii", []);
+      });
     });
-    it("External", () => {
-      checkSameOutput("test_v8_external", []);
+    describe("External", () => {
+      it("can create an external and read back the correct value", () => {
+        checkSameOutput("test_v8_external", []);
+      });
     });
-    it("Object", () => {
-      checkSameOutput("test_v8_object", []);
+    describe("Object", () => {
+      it("can create an object and set properties", () => {
+        checkSameOutput("test_v8_object", []);
+      });
     });
-    it("Array::New", () => {
-      checkSameOutput("test_v8_array_new", []);
+    describe("Array", () => {
+      it("can create an array from a C array of Locals", () => {
+        checkSameOutput("test_v8_array_new", []);
+      });
     });
-    it("ObjectTemplate", () => {
-      checkSameOutput("test_v8_object_template", []);
+    describe("ObjectTemplate", () => {
+      it("creates objects with internal fields", () => {
+        checkSameOutput("test_v8_object_template", []);
+      });
     });
   });
 

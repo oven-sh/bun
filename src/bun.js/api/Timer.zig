@@ -669,7 +669,19 @@ pub const TimerObject = struct {
         }
 
         if (this.has_accessed_primitive) {
-            _ = vm.timer.maps.get(this.kind).orderedRemove(this.id);
+            const map = vm.timer.maps.get(this.kind);
+            if (map.orderedRemove(this.id)) {
+                // If this array gets large, let's shrink it down
+                // Array keys are i32
+                // Values are 1 ptr
+                // Therefore, 12 bytes per entry
+                // So if you created 21,000 timers and accessed them by ID, you'd be using 252KB
+                const allocated_bytes = map.capacity() * @sizeOf(TimeoutMap.Data);
+                const used_bytes = map.count() * @sizeOf(TimeoutMap.Data);
+                if (allocated_bytes - used_bytes > 256 * 1024) {
+                    map.shrinkAndFree(bun.default_allocator, map.count() + 8);
+                }
+            }
         }
 
         this.setEnableKeepingEventLoopAlive(vm, false);

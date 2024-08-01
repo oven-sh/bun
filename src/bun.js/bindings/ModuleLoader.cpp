@@ -418,17 +418,19 @@ extern "C" void Bun__onFulfillAsyncModule(
     auto specifierValue = Bun::toJS(globalObject, *specifier);
 
     if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
-        if (res->result.value.commonJSExportsLen) {
-            if (entry.isObject()) {
-                if (auto isEvaluated = entry.getObject()->getIfPropertyExists(globalObject, Bun::builtinNames(vm).evaluatedPublicName())) {
-                    if (isEvaluated.isTrue()) {
-                        // it's a race! we lost.
-                        // https://github.com/oven-sh/bun/issues/6946
-                        return;
-                    }
+        if (entry.isObject()) {
+            auto* object = entry.getObject();
+            if (auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName())) {
+                if (state.toInt32(globalObject) > JSC::JSModuleLoader::Status::Fetch) {
+                    // it's a race! we lost.
+                    // https://github.com/oven-sh/bun/issues/6946
+                    // https://github.com/oven-sh/bun/issues/12910
+                    return;
                 }
             }
+        }
 
+        if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
@@ -600,7 +602,7 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     getSourceCodeStringForDeref();
 
-    if (res->success && res->result.value.commonJSExportsLen) {
+    if (res->success && res->result.value.isCommonJSModule) {
         target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
@@ -772,7 +774,7 @@ static JSValue fetchESMSourceCode(
         getSourceCodeStringForDeref();
     }
 
-    if (res->success && res->result.value.commonJSExportsLen) {
+    if (res->success && res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
 
         if (created.has_value()) {

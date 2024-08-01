@@ -18,8 +18,8 @@ void ObjectTemplate::finishCreation(JSC::VM& vm)
     __internals.objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
         init.set(JSC::Structure::create(
             init.vm,
-            Bun__getDefaultGlobalObject(),
-            Bun__getDefaultGlobalObject()->objectPrototype(),
+            init.owner->globalObject(),
+            init.owner->globalObject()->objectPrototype(),
             JSC::TypeInfo(JSC::ObjectType, InternalFieldObject::StructureFlags),
             InternalFieldObject::info()));
     });

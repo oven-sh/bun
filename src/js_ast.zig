@@ -5938,27 +5938,19 @@ pub const Expr = struct {
                     }
                 },
 
-                .e_require_main => {
-                    if (right.as(.e_identifier)) |id| {
-                        if (id.ref.eql(p.module_ref)) return .{
-                            .ok = true,
-                            .equal = true,
-                            .is_require_main_and_module = true,
-                        };
-                    }
-                },
-
-                .e_identifier => |id| {
+                else => {
+                    // Do not need to check left because e_require_main is
+                    // always re-ordered to the right side.
                     if (right == .e_require_main) {
-                        if (id.ref.eql(p.module_ref)) return .{
-                            .ok = true,
-                            .equal = true,
-                            .is_require_main_and_module = true,
-                        };
+                        if (left.as(.e_identifier)) |id| {
+                            if (id.ref.eql(p.module_ref)) return .{
+                                .ok = true,
+                                .equal = true,
+                                .is_require_main_and_module = true,
+                            };
+                        }
                     }
                 },
-
-                else => {},
             }
 
             return Equality.unknown;

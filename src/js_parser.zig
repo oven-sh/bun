@@ -1837,6 +1837,7 @@ pub const SideEffects = enum(u1) {
             .e_number,
             .e_big_int,
             .e_inlined_enum,
+            .e_require_main,
             => true,
             else => false,
         };

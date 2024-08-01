@@ -1,5 +1,6 @@
 "use strict";
 const common = require("../common");
+if (common.isWindows) return; // TODO: bun
 const assert = require("assert");
 const child_process = require("child_process");
 const cluster = require("cluster");

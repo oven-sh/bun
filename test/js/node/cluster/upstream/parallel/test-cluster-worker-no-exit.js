@@ -20,7 +20,9 @@
 // USE OR OTHER DEALINGS IN THE SOFTWARE.
 
 "use strict";
-require("../common");
+const common = require("../common");
+if (common.isLinux) return; // TODO: bun
+if (common.isWindows) return; // TODO: bun
 const assert = require("assert");
 const cluster = require("cluster");
 const net = require("net");

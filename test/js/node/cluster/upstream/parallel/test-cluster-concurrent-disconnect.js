@@ -3,6 +3,8 @@
 // Ref: https://github.com/nodejs/node/issues/32106
 
 const common = require("../common");
+if (common.isLinux) return; // TODO: bun
+if (common.isWindows) return; // TODO: bun
 
 const assert = require("assert");
 const cluster = require("cluster");

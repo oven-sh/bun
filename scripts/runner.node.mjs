@@ -528,8 +528,9 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
 async function spawnBunTest(execPath, testPath) {
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
+  const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: ["test", `--timeout=${perTestTimeout}`, testPath],
+    args: (isReallyTest ? ["test"] : []).concat([`--timeout=${perTestTimeout}`, testPath]),
     cwd: cwd,
     timeout,
     env: {
@@ -810,6 +811,12 @@ function isJavaScript(path) {
  * @returns {boolean}
  */
 function isTest(path) {
+  if (path.includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  return isTestStrict(path);
+}
+
+function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 

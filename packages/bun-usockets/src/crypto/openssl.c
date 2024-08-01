@@ -358,31 +358,35 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
     int err = SSL_get_error(s->ssl, result);
     // as far as I know these are the only errors we want to handle
     if (err != SSL_ERROR_WANT_READ && err != SSL_ERROR_WANT_WRITE) {
-      us_internal_trigger_handshake_callback(s, 1);
-
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ERR_clear_error();
         s->fatal_error = 1;
       }
+      us_internal_trigger_handshake_callback(s, 0);
+    
       return;
     }
     s->handshake_state = HANDSHAKE_PENDING;
+    s->ssl_write_wants_read = 1;
+    // SSL_do_handshake(s->ssl);
+    // SSL_write(s->ssl, "\0", 0);
     // Ensure that we'll cycle through internal openssl's state
-    if (!us_socket_is_closed(0, &s->s) &&
-        !us_internal_ssl_socket_is_shut_down(s)) {
-      us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
-    }
+    // if (!us_socket_is_closed(0, &s->s) &&
+    //     !us_internal_ssl_socket_is_shut_down(s)) {
+    //   us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
+    // }
 
     return;
   }
   // success
   us_internal_trigger_handshake_callback(s, 1);
+  s->ssl_write_wants_read = 1;
   // Ensure that we'll cycle through internal openssl's state
-  if (!us_socket_is_closed(0, &s->s) &&
-      !us_internal_ssl_socket_is_shut_down(s)) {
-    us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
-  }
+  // if (!us_socket_is_closed(0, &s->s) &&
+  //     !us_internal_ssl_socket_is_shut_down(s)) {
+  //   us_socket_write(1, loop_ssl_data->ssl_socket, "\0", 0, 0);
+  // }
 }
 
 struct us_internal_ssl_socket_t *
@@ -441,7 +445,7 @@ restart:
                              loop_ssl_data->ssl_read_output +
                                  LIBUS_RECV_BUFFER_PADDING + read,
                              LIBUS_RECV_BUFFER_LENGTH - read);
-   
+    
     if (just_read <= 0) {
       int err = SSL_get_error(s->ssl, just_read);
       // as far as I know these are the only errors we want to handle
@@ -584,7 +588,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
   // Do not call on_writable if the socket is closed.
   // on close means the socket data is no longer accessible
   if (!s || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return 0;
+    return s;
   }
 
   if (s->handshake_state == HANDSHAKE_COMPLETED) {
@@ -1625,8 +1629,8 @@ int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
 
 int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
                                  const char *data, int length, int msg_more) {
-
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  
+  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) || length == 0) {
     return 0;
   }
 
@@ -1666,6 +1670,7 @@ int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
     // these two errors may add to the error queue, which is per thread and
     // must be cleared
     ERR_clear_error();
+    s->fatal_error = 1;
 
     // all errors here except for want write are critical and should not
     // happen

@@ -349,8 +349,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             var tcp = this.tcp orelse return;
             this.tcp = null;
-
-            tcp.close(.failure);
+            // no need to be .failure we still wanna to send pending SSL buffer + close_notify
+            tcp.close(.normal);
         }
 
         pub fn fail(this: *HTTPClient, code: ErrorCode) void {
@@ -1017,7 +1017,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (this.tcp.isClosed() or this.tcp.isShutdown())
                 return;
 
-            this.tcp.close(.failure);
+            this.tcp.close(.normal);
         }
 
         pub fn fail(this: *WebSocket, code: ErrorCode) void {

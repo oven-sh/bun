@@ -189,6 +189,7 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   s->ssl = SSL_new(context->ssl_context);
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
+  s->fatal_error = 0;
   s->handshake_state = HANDSHAKE_PENDING;
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
@@ -362,6 +363,7 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
       // clear per thread error queue if it may contain something
       if (err == SSL_ERROR_SSL || err == SSL_ERROR_SYSCALL) {
         ERR_clear_error();
+        s->fatal_error = 1;
       }
       return;
     }
@@ -2013,6 +2015,7 @@ us_socket_context_on_socket_connect_error(
   socket->ssl = NULL;
   socket->ssl_write_wants_read = 0;
   socket->ssl_read_wants_write = 0;
+  socket->fatal_error = 0;
   socket->handshake_state = HANDSHAKE_PENDING;
   return socket;
 }

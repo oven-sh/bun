@@ -1234,6 +1234,18 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+            return bundler.printWithSourceMapMaybe(
+                result.ast,
+                &result.source,
+                Writer,
+                writer,
+                format,
+                false,
+                handler,
+                result.runtime_transpiler_cache,
+            );
+        }
         return bundler.printWithSourceMapMaybe(
             result.ast,
             &result.source,

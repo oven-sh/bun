@@ -931,14 +931,15 @@ pub const Fetch = struct {
             }
 
             if (!success) {
-                const err = this.onReject();
-                err.ensureStillAlive();
+                var err = this.onReject();
+                var need_deinit = true;
+                defer if (need_deinit) err.deinit();
                 // if we are streaming update with error
                 if (this.readable_stream_ref.get()) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
                             .{
-                                .err = .{ .JSValue = err },
+                                .err = .{ .JSValue = err.toJS(globalThis) },
                             },
                             bun.default_allocator,
                         );
@@ -946,14 +947,15 @@ pub const Fetch = struct {
                 }
                 // if we are buffering resolve the promise
                 if (this.getCurrentResponse()) |response| {
+                    response.body.value.toErrorInstance(err, globalThis);
+                    need_deinit = false; // body value now owns the error
                     const body = response.body;
                     if (body.value == .Locked) {
                         if (body.value.Locked.promise) |promise_| {
                             const promise = promise_.asAnyPromise().?;
-                            promise.reject(globalThis, err);
+                            promise.reject(globalThis, response.body.value.Error.toJS(globalThis));
                         }
                     }
-                    response.body.value.toErrorInstance(err, globalThis);
                 }
                 return;
             }
@@ -1110,12 +1112,12 @@ pub const Fetch = struct {
                     // we need to abort the request
                     const promise = promise_value.asAnyPromise().?;
                     const tracker = this.tracker;
-                    const result = this.onReject();
+                    var result = this.onReject();
+                    defer result.deinit();
 
-                    result.ensureStillAlive();
                     promise_value.ensureStillAlive();
 
-                    promise.reject(globalThis, result);
+                    promise.reject(globalThis, result.toJS(globalThis));
 
                     tracker.didDispatch(globalThis);
                     this.promise.deinit();
@@ -1152,10 +1154,14 @@ pub const Fetch = struct {
             const success = this.result.isSuccess();
 
             const result = switch (success) {
-                true => this.onResolve(),
-                false => this.onReject(),
+                true => JSC.Strong.create(this.onResolve(), globalThis),
+                false => brk: {
+                    // in this case we wanna a JSC.Strong so we just convert it
+                    var value = this.onReject();
+                    _ = value.toJS(globalThis);
+                    break :brk value.JSValue;
+                },
             };
-            result.ensureStillAlive();
 
             promise_value.ensureStillAlive();
             const Holder = struct {
@@ -1190,7 +1196,7 @@ pub const Fetch = struct {
             };
             var holder = bun.default_allocator.create(Holder) catch bun.outOfMemory();
             holder.* = .{
-                .held = JSC.Strong.create(result, globalThis),
+                .held = result,
                 // we need the promise to be alive until the task is done
                 .promise = this.promise.strong,
                 .globalObject = globalThis,
@@ -1220,7 +1226,7 @@ pub const Fetch = struct {
                         const js_hostname = hostname.toJS(globalObject);
                         js_hostname.ensureStillAlive();
                         js_cert.ensureStillAlive();
-                        const check_result = check_server_identity.callWithThis(globalObject, JSC.JSValue.jsUndefined(), &[_]JSC.JSValue{ js_hostname, js_cert });
+                        const check_result = check_server_identity.call(globalObject, .undefined, &[_]JSC.JSValue{ js_hostname, js_cert });
                         // if check failed abort the request
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
@@ -1265,22 +1271,22 @@ pub const Fetch = struct {
             return null;
         }
 
-        pub fn onReject(this: *FetchTasklet) JSValue {
+        pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
             bun.assert(this.result.fail != null);
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
-                return err;
+                return .{ .JSValue = JSC.Strong.create(err, this.global_this) };
             }
 
             if (this.result.isTimeout()) {
                 // Timeout without reason
-                return JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, this.global_this);
+                return .{ .Timeout = {} };
             }
 
             if (this.result.isAbort()) {
                 // Abort without reason
-                return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                return .{ .Aborted = {} };
             }
 
             // some times we don't have metadata so we also check http.url
@@ -1375,7 +1381,7 @@ pub const Fetch = struct {
                 .path = path,
             };
 
-            return fetch_error.toErrorInstance(this.global_this);
+            return .{ .SystemError = fetch_error };
         }
 
         pub fn onReadableStreamAvailable(ctx: *anyopaque, readable: JSC.WebCore.ReadableStream) void {
@@ -1433,7 +1439,11 @@ pub const Fetch = struct {
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             if (this.getAbortError()) |err| {
-                return .{ .Error = err };
+                return .{
+                    .Error = .{
+                        .JSValue = JSC.Strong.create(err, this.global_this),
+                    },
+                };
             }
             if (this.is_waiting_body) {
                 const response = Body.Value{
@@ -2059,7 +2069,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         } else {
                             body = request.body.value.useAsAnyBlob();
@@ -2372,7 +2382,7 @@ pub const Fetch = struct {
                                     hostname = null;
                                 }
                                 // an error was thrown
-                                return JSC.JSValue.jsUndefined();
+                                return .undefined;
                             }
                         }
 

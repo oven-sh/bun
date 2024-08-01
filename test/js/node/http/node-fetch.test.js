@@ -3,7 +3,17 @@ import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";
 import * as stream from "stream";
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll, afterEach } from "bun:test";
+
+const originalResponse = globalThis.Response;
+const originalRequest = globalThis.Request;
+const originalHeaders = globalThis.Headers;
+afterEach(() => {
+  globalThis.Response = originalResponse;
+  globalThis.Request = originalRequest;
+  globalThis.Headers = originalHeaders;
+  globalThis.fetch = Bun.fetch;
+});
 
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);

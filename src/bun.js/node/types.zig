@@ -269,6 +269,26 @@ pub const BlobOrStringOrBuffer = union(enum) {
         };
     }
 
+    pub fn protect(this: *const BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.protect();
+            },
+            else => {},
+        }
+    }
+
+    pub fn deinitAndUnprotect(this: *BlobOrStringOrBuffer) void {
+        switch (this.*) {
+            .string_or_buffer => |sob| {
+                sob.deinitAndUnprotect();
+            },
+            .blob => |*blob| {
+                blob.deinit();
+            },
+        }
+    }
+
     pub fn fromJS(global: *JSC.JSGlobalObject, allocator: std.mem.Allocator, value: JSC.JSValue) ?BlobOrStringOrBuffer {
         if (value.as(JSC.WebCore.Blob)) |blob| {
             if (blob.store) |store| {
@@ -313,6 +333,15 @@ pub const StringOrBuffer = union(enum) {
             .threadsafe_string => {},
             .encoded_slice => {},
             .buffer => {},
+        }
+    }
+
+    pub fn protect(this: *const StringOrBuffer) void {
+        switch (this.*) {
+            .buffer => |buf| {
+                buf.buffer.value.protect();
+            },
+            else => {},
         }
     }
 
@@ -2072,7 +2101,7 @@ pub const Process = struct {
                 fs.top_level_dir_buf[len + 1] = 0;
                 fs.top_level_dir = fs.top_level_dir_buf[0 .. len + 1];
 
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .err => |e| return e.toJSC(globalObject),
         }
@@ -2086,8 +2115,9 @@ pub const Process = struct {
             return;
         }
 
+        vm.exit_handler.exit_code = code;
         vm.onExit();
-        bun.Global.exit(code);
+        vm.globalExit();
     }
 
     pub export const Bun__version: [*:0]const u8 = "v" ++ bun.Global.package_json_version;

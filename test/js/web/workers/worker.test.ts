@@ -3,8 +3,6 @@ import { bunEnv, bunExe, isWindows } from "harness";
 import path from "path";
 import wt from "worker_threads";
 
-const todoIfWindows = isWindows ? test.todo : test;
-
 describe("web worker", () => {
   async function waitForWorkerResult(worker: Worker, message: any): Promise<any> {
     const promise = new Promise((resolve, reject) => {
@@ -45,6 +43,10 @@ describe("web worker", () => {
   test("worker-env", done => {
     const worker = new Worker(new URL("worker-fixture-env.js", import.meta.url).href, {
       env: {
+        // Verify that we use putDirectMayBeIndex instead of putDirect
+        [0]: "123",
+        [1]: "234",
+
         hello: "world",
         another_key: 123 as any,
       },
@@ -57,6 +59,8 @@ describe("web worker", () => {
       try {
         expect(e.data).toEqual({
           env: {
+            [0]: "123",
+            [1]: "234",
             hello: "world",
             another_key: "123",
           },
@@ -231,7 +235,7 @@ describe("worker_threads", () => {
     });
   });
 
-  todoIfWindows("worker terminate", async () => {
+  test("worker terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-hang.js", import.meta.url).href, {
       smol: true,
     });
@@ -239,7 +243,7 @@ describe("worker_threads", () => {
     expect(code).toBe(0);
   });
 
-  todoIfWindows("worker with process.exit (delay) and terminate", async () => {
+  test("worker with process.exit (delay) and terminate", async () => {
     const worker = new wt.Worker(new URL("worker-fixture-process-exit.js", import.meta.url).href, {
       smol: true,
     });

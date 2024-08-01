@@ -43,6 +43,20 @@ pub const callconv_inline: std.builtin.CallingConvention = if (builtin.mode == .
 /// FileSystem is a singleton.
 pub const fs_allocator = default_allocator;
 
+pub fn typedAllocator(comptime T: type) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.allocator(comptime T);
+
+    return default_allocator;
+}
+
+pub inline fn namedAllocator(comptime name: [:0]const u8) std.mem.Allocator {
+    if (heap_breakdown.enabled)
+        return heap_breakdown.namedAllocator(name);
+
+    return default_allocator;
+}
+
 pub const C = @import("root").C;
 pub const sha = @import("./sha.zig");
 pub const FeatureFlags = @import("feature_flags.zig");
@@ -1910,15 +1924,17 @@ pub fn Ref(comptime T: type) type {
 pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
     return struct {
         const HiveAllocator = HiveArray(@This(), capacity).Fallback;
-
         ref_count: u32,
         allocator: *HiveAllocator,
         value: T,
+
         pub fn init(value: T, allocator: *HiveAllocator) !*@This() {
-            var this = try allocator.tryGet();
-            this.allocator = allocator;
-            this.ref_count = 1;
-            this.value = value;
+            const this = try allocator.tryGet();
+            this.* = .{
+                .ref_count = 1,
+                .allocator = allocator,
+                .value = value,
+            };
             return this;
         }
 
@@ -1928,8 +1944,9 @@ pub fn HiveRef(comptime T: type, comptime capacity: u16) type {
         }
 
         pub fn unref(this: *@This()) ?*@This() {
-            this.ref_count -= 1;
-            if (this.ref_count == 0) {
+            const ref_count = this.ref_count;
+            this.ref_count = ref_count - 1;
+            if (ref_count == 1) {
                 if (@hasDecl(T, "deinit")) {
                     this.value.deinit();
                 }
@@ -2330,7 +2347,7 @@ pub const win32 = struct {
             if (exit_code == watcher_reload_exit) {
                 continue;
             } else {
-                Global.exitWide(exit_code);
+                Global.exit(exit_code);
             }
         }
     }
@@ -2928,6 +2945,11 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 
 /// Globally-allocate a value on the heap.
 ///
+/// **Prefer `bun.New`, `bun.NewRefCounted`, or `bun.NewThreadSafeRefCounted` instead.**
+/// Use this when the struct is a third-party struct you cannot modify, like a
+/// Zig stdlib struct. Choosing the wrong allocator is an easy way to introduce
+/// bugs.
+///
 /// When used, you must call `bun.destroy` to free the memory.
 /// default_allocator.destroy should not be used.
 ///
@@ -2935,7 +2957,7 @@ pub const heap_breakdown = @import("./heap_breakdown.zig");
 /// to dump the heap.
 pub inline fn new(comptime T: type, init: T) *T {
     const ptr = if (heap_breakdown.enabled)
-        heap_breakdown.getZone(T).create(T, init)
+        heap_breakdown.getZoneT(T).create(T, init)
     else ptr: {
         const ptr = default_allocator.create(T) catch outOfMemory();
         ptr.* = init;
@@ -2960,8 +2982,8 @@ pub inline fn destroy(ptr: anytype) void {
         logAlloc("destroy({s}) = {*}", .{ meta.typeName(T), ptr });
     }
 
-    if (heap_breakdown.enabled) {
-        heap_breakdown.getZone(T).destroy(T, ptr);
+    if (comptime heap_breakdown.enabled) {
+        heap_breakdown.getZoneT(T).destroy(T, ptr);
     } else {
         default_allocator.destroy(ptr);
     }

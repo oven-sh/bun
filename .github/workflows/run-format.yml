@@ -31,7 +31,7 @@ jobs:
         with:
           bun-version: "1.1.20"
       - name: Setup Zig
-        uses: goto-bus-stop/setup-zig@c7b6cdd3adba8f8b96984640ff172c37c93f73ee
+        uses: mlugg/setup-zig@v1
         with:
           version: ${{ inputs.zig-version }}
       - name: Install Dependencies

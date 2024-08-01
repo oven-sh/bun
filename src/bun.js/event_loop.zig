@@ -871,7 +871,7 @@ pub const EventLoop = struct {
         this.enter();
         defer this.exit();
 
-        const result = callback.callWithThis(globalObject, thisValue, arguments);
+        const result = callback.call(globalObject, thisValue, arguments);
 
         if (result.toError()) |err| {
             _ = this.virtual_machine.uncaughtException(globalObject, err, false);
@@ -1802,7 +1802,7 @@ pub const MiniEventLoop = struct {
     pub fn filePolls(this: *MiniEventLoop) *Async.FilePoll.Store {
         return this.file_polls_ orelse {
             this.file_polls_ = this.allocator.create(Async.FilePoll.Store) catch bun.outOfMemory();
-            this.file_polls_.?.* = Async.FilePoll.Store.init(this.allocator);
+            this.file_polls_.?.* = Async.FilePoll.Store.init();
             return this.file_polls_.?;
         };
     }

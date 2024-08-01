@@ -356,6 +356,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8()) {
@@ -364,10 +365,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             }
-
-                            return lhs;
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
@@ -391,6 +391,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
                                         ) catch bun.outOfMemory();
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8() and right.head.isUTF8()) {
@@ -400,9 +401,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         r.data == .e_inlined_enum,
                                     ) };
                                     left.parts = right.parts;
+                                    return lhs;
                                 }
                             }
-                            return lhs;
                         }
                     },
                     else => {
@@ -2736,7 +2737,7 @@ pub const StmtsKind = enum {
 };
 
 fn notimpl() noreturn {
-    Global.panic("Not implemented yet!!", .{});
+    Output.panic("Not implemented yet!!", .{});
 }
 
 const ExprBindingTuple = struct {
@@ -3782,10 +3783,12 @@ pub const Parser = struct {
                 var remaining_stmts = all_stmts;
 
                 for (p.imports_to_convert_from_require.items) |deferred_import| {
-                    var stmts_ = remaining_stmts[0..1];
+                    var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    stmts_[0] = Stmt.alloc(
+                    p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?) catch bun.outOfMemory();
+
+                    import_part_stmts[0] = Stmt.alloc(
                         S.Import,
                         S.Import{
                             .star_name_loc = deferred_import.namespace.loc,
@@ -3797,10 +3800,11 @@ pub const Parser = struct {
                     var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
                     declared_symbols.appendAssumeCapacity(.{ .ref = deferred_import.namespace.ref.?, .is_top_level = true });
                     before.appendAssumeCapacity(.{
-                        .stmts = stmts_,
+                        .stmts = import_part_stmts,
                         .declared_symbols = declared_symbols,
                         .tag = .import_to_convert_from_require,
-                        .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
+                        // This part has a single symbol, so it may be removed if unused.
+                        .can_be_removed_if_unused = true,
                     });
                 }
                 bun.assert(remaining_stmts.len == 0);
@@ -14905,7 +14909,7 @@ fn NewParser_(
             p.log.level = .verbose;
             p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
 
-            Global.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
 
         pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -16191,7 +16195,7 @@ fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Global.panic("Unexpected type in export default: {any}", .{s2});
+                                        Output.panic("Unexpected type in export default: {any}", .{s2});
                                     },
                                 }
                             },
@@ -17486,7 +17490,7 @@ fn NewParser_(
                     var has_proto = false;
                     for (e_.properties.slice()) |*property| {
                         if (property.kind != .spread) {
-                            property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
+                            property.key = p.visitExpr(property.key orelse Output.panic("Expected property key", .{}));
                             const key = property.key.?;
                             // Forbid duplicate "__proto__" properties according to the specification
                             if (!property.flags.contains(.is_computed) and
@@ -18653,7 +18657,15 @@ fn NewParser_(
                                 name_loc,
                                 E.Identifier{ .ref = ref },
                                 name,
-                                identifier_opts,
+                                .{
+                                    .assign_target = identifier_opts.assign_target,
+                                    .is_call_target = identifier_opts.is_call_target,
+                                    .is_delete_target = identifier_opts.is_delete_target,
+
+                                    // If this expression is used as the target of a call expression, make
+                                    // sure the value of "this" is preserved.
+                                    .was_originally_identifier = false,
+                                },
                             );
                         }
                     }
@@ -20712,7 +20724,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    Global.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
+                    Output.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
                 },
             }
         }

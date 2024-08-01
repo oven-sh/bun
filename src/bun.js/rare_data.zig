@@ -156,7 +156,7 @@ pub const HotMap = struct {
 pub fn filePolls(this: *RareData, vm: *JSC.VirtualMachine) *Async.FilePoll.Store {
     return this.file_polls_ orelse {
         this.file_polls_ = vm.allocator.create(Async.FilePoll.Store) catch unreachable;
-        this.file_polls_.?.* = Async.FilePoll.Store.init(vm.allocator);
+        this.file_polls_.?.* = Async.FilePoll.Store.init();
         return this.file_polls_.?;
     };
 }

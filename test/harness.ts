@@ -142,9 +142,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;
@@ -357,21 +359,21 @@ expect.extend({
       }
     }
   },
-  toRun(cmds: string[], optionalStdout?: string) {
+  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== expectedCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
@@ -383,6 +385,43 @@ expect.extend({
       pass: true,
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
+  },
+  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
   },
 });
 
@@ -1030,7 +1069,8 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string): void;
+  toRun(optionalStdout?: string, expectedCode?: number): void;
+  toThrowWithCode(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {

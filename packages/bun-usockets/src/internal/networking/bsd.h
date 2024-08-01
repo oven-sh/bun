@@ -17,6 +17,7 @@
 
 #ifndef BSD_H
 #define BSD_H
+#pragma once
 
 // top-most wrapper of bsd-like syscalls
 
@@ -25,7 +26,7 @@
 
 #include "libusockets.h"
 
-#ifdef _WIN32
+#ifdef _WIN32 
 #ifndef NOMINMAX
 #define NOMINMAX
 #endif
@@ -34,7 +35,7 @@
 #pragma comment(lib, "ws2_32.lib")
 #define SETSOCKOPT_PTR_TYPE const char *
 #define LIBUS_SOCKET_ERROR INVALID_SOCKET
-#else
+#else /* POSIX */
 #ifndef _GNU_SOURCE
 #define _GNU_SOURCE
 #endif

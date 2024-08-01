@@ -346,8 +346,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         }
         pub fn cancel(this: *HTTPClient) callconv(.C) void {
             this.clearData();
-
-            var tcp = this.tcp orelse return;
+            this.outgoing_websocket = null;
+            const tcp = this.tcp orelse return;
             this.tcp = null;
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if (comptime ssl) {
@@ -935,7 +935,7 @@ const Copy = union(enum) {
 pub fn NewWebSocketClient(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
-        tcp: Socket,
+        tcp: ?Socket = null,
         outgoing_websocket: ?*CppWebSocket = null,
 
         receive_state: ReceiveState = ReceiveState.need_header,
@@ -1016,12 +1016,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         pub fn cancel(this: *WebSocket) callconv(.C) void {
             log("cancel", .{});
             this.clearData();
-
+            const tcp = this.tcp orelse return;
+            this.tcp = null;
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if (comptime ssl) {
-                this.tcp.close(.normal);
+                tcp.close(.normal);
             } else {
-                this.tcp.close(.failure);
+                tcp.close(.failure);
             }
         }
 
@@ -1882,12 +1883,13 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             this.clearData();
 
             this.outgoing_websocket = null;
-
+            const tcp = this.tcp orelse return;
+            this.tcp = null;
             // no need to be .failure we still wanna to send pending SSL buffer + close_notify
             if (comptime ssl) {
-                this.tcp.close(.normal);
+                tcp.close(.normal);
             } else {
-                this.tcp.close(.failure);
+                tcp.close(.failure);
             }
         }
 

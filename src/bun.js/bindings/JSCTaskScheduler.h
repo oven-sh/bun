@@ -12,7 +12,7 @@ public:
     {
     }
 
-    static void onAddPendingWork(Ref<JSC::DeferredWorkTimer::TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind);
+    static void onAddPendingWork(Ref<JSC::DeferredWorkTimer::TicketData> ticket, JSC::DeferredWorkTimer::WorkType kind);
     static void onScheduleWorkSoon(JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
     static void onCancelPendingWork(JSC::DeferredWorkTimer::Ticket ticket);
 

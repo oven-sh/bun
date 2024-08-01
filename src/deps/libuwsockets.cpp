@@ -1155,7 +1155,7 @@ extern "C"
       data->offset = offset;
       data->state |= uWS::HttpResponseData<true>::HTTP_END_CALLED;
       data->markDone();
-      us_socket_timeout(true, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
+      us_socket_timeout(0, (us_socket_t *)uwsRes, uWS::HTTP_TIMEOUT_S);
     }
   }
   void uws_res_end_without_body(int ssl, uws_res_t *res, bool close_connection)

@@ -393,7 +393,7 @@ pub const RuntimeTranspilerStore = struct {
             };
 
             resolved_source.tag = brk: {
-                if (resolved_source.commonjs_exports_len > 0) {
+                if (resolved_source.is_commonjs_module) {
                     const actual_package_json: *PackageJSON = brk2: {
                         // this should already be cached virtually always so it's fine to do this
                         const dir_info = (vm.bundler.resolver.readDirInfo(this.path.name.dir) catch null) orelse
@@ -617,7 +617,7 @@ pub const RuntimeTranspilerStore = struct {
                     .specifier = duped,
                     .source_url = duped.createIfDifferent(path.text),
                     .hash = 0,
-                    .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
+                    .is_commonjs_module = entry.metadata.module_type == .cjs,
                 };
 
                 return;
@@ -731,11 +731,7 @@ pub const RuntimeTranspilerStore = struct {
                 .source_code = source_code,
                 .specifier = duped,
                 .source_url = duped.createIfDifferent(path.text),
-                .commonjs_exports = null,
-                .commonjs_exports_len = if (parse_result.ast.exports_kind == .cjs)
-                    std.math.maxInt(u32)
-                else
-                    0,
+                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                 .hash = 0,
             };
         }
@@ -1471,11 +1467,6 @@ pub const ModuleLoader = struct {
                 dumpSource(jsc_vm, specifier, &printer);
             }
 
-            const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
-            for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
-                out.* = ZigString.fromUTF8(name);
-            }
-
             if (jsc_vm.isWatcherEnabled()) {
                 var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, bun.String.init(specifier), path.text, null, false);
 
@@ -1493,16 +1484,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                resolved_source.commonjs_exports = if (commonjs_exports.len > 0)
-                    commonjs_exports.ptr
-                else
-                    null;
-                resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @as(u32, @truncate(commonjs_exports.len))
-                else if (parse_result.ast.exports_kind == .cjs)
-                    std.math.maxInt(u32)
-                else
-                    0;
+                resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
 
                 return resolved_source;
             }
@@ -1512,16 +1494,7 @@ pub const ModuleLoader = struct {
                 .source_code = bun.String.createLatin1(printer.ctx.getWritten()),
                 .specifier = String.init(specifier),
                 .source_url = String.init(path.text),
-                .commonjs_exports = if (commonjs_exports.len > 0)
-                    commonjs_exports.ptr
-                else
-                    null,
-                .commonjs_exports_len = if (commonjs_exports.len > 0)
-                    @as(u32, @truncate(commonjs_exports.len))
-                else if (parse_result.ast.exports_kind == .cjs)
-                    std.math.maxInt(u32)
-                else
-                    0,
+                .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
 
                 .hash = 0,
             };
@@ -1861,7 +1834,7 @@ pub const ModuleLoader = struct {
                         .specifier = input_specifier,
                         .source_url = input_specifier.createIfDifferent(path.text),
                         .hash = 0,
-                        .commonjs_exports_len = if (entry.metadata.module_type == .cjs) std.math.maxInt(u32) else 0,
+                        .is_commonjs_module = entry.metadata.module_type == .cjs,
                         .tag = brk: {
                             if (entry.metadata.module_type == .cjs and parse_result.source.path.isFile()) {
                                 const actual_package_json: *PackageJSON = package_json orelse brk2: {
@@ -1932,10 +1905,10 @@ pub const ModuleLoader = struct {
 
                 var printer = source_code_printer.*;
                 printer.ctx.reset();
-
+                defer source_code_printer.* = printer;
                 _ = brk: {
                     var mapper = jsc_vm.sourceMapHandler(&printer);
-                    defer source_code_printer.* = printer;
+
                     break :brk try jsc_vm.bundler.printWithSourceMap(
                         parse_result,
                         @TypeOf(&printer),
@@ -1949,11 +1922,6 @@ pub const ModuleLoader = struct {
                     dumpSource(jsc_vm, specifier, &printer);
                 }
 
-                const commonjs_exports = try bun.default_allocator.alloc(ZigString, parse_result.ast.commonjs_export_names.len);
-                for (parse_result.ast.commonjs_export_names, commonjs_exports) |name, *out| {
-                    out.* = ZigString.fromUTF8(name);
-                }
-
                 defer {
                     if (is_main) {
                         jsc_vm.has_loaded = true;
@@ -1962,17 +1930,7 @@ pub const ModuleLoader = struct {
 
                 if (jsc_vm.isWatcherEnabled()) {
                     var resolved_source = jsc_vm.refCountedResolvedSource(printer.ctx.written, input_specifier, path.text, null, false);
-
-                    resolved_source.commonjs_exports = if (commonjs_exports.len > 0)
-                        commonjs_exports.ptr
-                    else
-                        null;
-                    resolved_source.commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @as(u32, @truncate(commonjs_exports.len))
-                    else if (parse_result.ast.exports_kind == .cjs)
-                        std.math.maxInt(u32)
-                    else
-                        0;
+                    resolved_source.is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs;
                     return resolved_source;
                 }
 
@@ -2003,25 +1961,14 @@ pub const ModuleLoader = struct {
 
                         if (written.len > 1024 * 1024 * 2 or jsc_vm.smol) {
                             printer.ctx.buffer.deinit();
-                            source_code_printer.* = printer;
                         }
 
                         break :brk result;
                     },
                     .specifier = input_specifier,
                     .source_url = input_specifier.createIfDifferent(path.text),
-                    .commonjs_exports = if (commonjs_exports.len > 0)
-                        commonjs_exports.ptr
-                    else
-                        null,
-                    .commonjs_exports_len = if (commonjs_exports.len > 0)
-                        @as(u32, @truncate(commonjs_exports.len))
-                    else if (parse_result.ast.exports_kind == .cjs)
-                        std.math.maxInt(u32)
-                    else
-                        0,
+                    .is_commonjs_module = parse_result.ast.has_commonjs_export_names or parse_result.ast.exports_kind == .cjs,
                     .hash = 0,
-
                     .tag = tag,
                 };
             },

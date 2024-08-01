@@ -268,6 +268,8 @@ export interface BundlerTestInput {
   skipIfWeDidNotImplementWildcardSideEffects?: boolean;
 
   snapshotSourceMap?: Record<string, SourceMapTests>;
+
+  expectExactFilesize?: Record<string, number>;
 }
 
 export interface SourceMapTests {
@@ -443,6 +445,7 @@ function expectBundled(
     emitDCEAnnotations,
     // @ts-expect-error
     _referenceFn,
+    expectExactFilesize,
     ...unknownProps
   } = opts;
 
@@ -1380,6 +1383,15 @@ for (const [key, blob] of build.outputs) {
               }
             }
           });
+        }
+      }
+    }
+
+    if (expectExactFilesize) {
+      for (const [key, expected] of Object.entries(expectExactFilesize)) {
+        const actual = api.readFile(key).length;
+        if (actual !== expected) {
+          throw new Error(`Expected file ${key} to be ${expected} bytes but was ${actual} bytes.`);
         }
       }
     }

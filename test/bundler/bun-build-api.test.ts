@@ -386,4 +386,38 @@ describe("Bun.build", () => {
 
     Bun.gc(true);
   });
+
+  test("ignoreDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      ignoreDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("console.log(1);\n");
+  });
+
+  test("emitDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        export const OUT = /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      emitDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
+  });
 });

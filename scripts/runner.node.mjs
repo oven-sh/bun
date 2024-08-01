@@ -532,7 +532,7 @@ async function spawnBunTest(execPath, testPath) {
   const { ok, error, stdout } = await spawnBun(execPath, {
     args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
     cwd: cwd,
-    timeout,
+    timeout: isReallyTest ? timeout : 30_000,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },

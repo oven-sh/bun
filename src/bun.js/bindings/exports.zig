@@ -202,11 +202,7 @@ pub const ResolvedSource = extern struct {
     /// source_url is eventually deref'd on success
     source_url: bun.String = bun.String.empty,
 
-    // this pointer is unused and shouldn't exist
-    commonjs_exports: ?[*]ZigString = null,
-
-    // This field is used to indicate whether it's a CommonJS module or ESM
-    commonjs_exports_len: u32 = 0,
+    is_commonjs_module: bool = false,
 
     hash: u32 = 0,
 

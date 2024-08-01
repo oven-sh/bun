@@ -430,7 +430,7 @@ extern "C" void Bun__onFulfillAsyncModule(
             }
         }
 
-        if (res->result.value.commonJSExportsLen) {
+        if (res->result.value.isCommonJSModule) {
             auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
             if (created.has_value()) {
                 JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
@@ -602,7 +602,7 @@ JSValue fetchCommonJSModule(
     Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     getSourceCodeStringForDeref();
 
-    if (res->success && res->result.value.commonJSExportsLen) {
+    if (res->success && res->result.value.isCommonJSModule) {
         target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
@@ -774,7 +774,7 @@ static JSValue fetchESMSourceCode(
         getSourceCodeStringForDeref();
     }
 
-    if (res->success && res->result.value.commonJSExportsLen) {
+    if (res->success && res->result.value.isCommonJSModule) {
         auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
 
         if (created.has_value()) {

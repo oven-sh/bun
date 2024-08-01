@@ -208,7 +208,6 @@ pub const Subprocess = struct {
     pub const Flags = packed struct {
         is_sync: bool = false,
         killed: bool = false,
-        finalized: bool = false,
     };
 
     pub const SignalCode = bun.SignalCode;
@@ -707,9 +706,8 @@ pub const Subprocess = struct {
     pub fn onStdinDestroyed(this: *Subprocess) void {
         this.island.clearStdin();
 
-        if (this.flags.finalized) {
+        if (this.island.subprocess == null) {
             // if the process has already been garbage collected, we can free the memory now
-            this.island.clearSubprocess();
             bun.default_allocator.destroy(this);
         } else {
             // otherwise update the pending activity flag
@@ -1560,10 +1558,9 @@ pub const Subprocess = struct {
         this.process.detach();
         this.process.deref();
 
-        this.flags.finalized = true;
+        this.island.clearSubprocess();
         if (this.island.stdin == null) {
             // if no file sink exists we can free immediately
-            this.island.clearSubprocess();
             bun.default_allocator.destroy(this);
         }
     }

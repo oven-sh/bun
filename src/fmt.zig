@@ -881,35 +881,6 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             }
         }
     }
-
-    /// Function for testing in highlighter.test.ts
-    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
-        const args = callframe.arguments(1);
-        if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-        defer code.deinit();
-        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
-        defer buffer.deinit();
-        var writer = buffer.bufferedWriter();
-        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-        formatter.limited = false;
-        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
-        };
-
-        writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
-        };
-
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
-    }
 };
 
 pub fn quote(self: string) bun.fmt.QuotedFormatter {
@@ -1260,3 +1231,69 @@ pub fn NullableFallback(comptime T: type) type {
         }
     };
 }
+
+pub fn escapePowershell(str: []const u8) std.fmt.Formatter(escapePowershellImpl) {
+    return .{ .data = str };
+}
+
+fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    comptime bun.assert(f.len == 0);
+    var remain = str;
+    while (bun.strings.indexOfAny(remain, "\"`")) |i| {
+        try writer.writeAll(remain[0..i]);
+        try writer.writeAll("`");
+        try writer.writeByte(remain[i]);
+        remain = remain[i + 1 ..];
+    }
+    try writer.writeAll(remain);
+}
+
+pub const fmt_js_test_bindings = struct {
+    const Formatter = enum {
+        fmtJavaScript,
+        escapePowershell,
+    };
+
+    /// Internal function for testing in highlighter.test.ts
+    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
+        const args = callframe.arguments(2);
+        if (args.len < 2) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse
+            return .zero;
+        defer code.deinit();
+
+        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+
+        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
+        switch (formatter_id) {
+            .fmtJavaScript => {
+                var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+                formatter.limited = false;
+                std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+                    globalThis.throwError(err, "Error formatting");
+                    return .zero;
+                };
+            },
+            .escapePowershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
+                    globalThis.throwError(err, "Error formatting");
+                    return .zero;
+                };
+            },
+        }
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting");
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
+    }
+};

@@ -217,7 +217,7 @@ pub const WebWorker = struct {
 
         vm.bundler.env = loader;
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;

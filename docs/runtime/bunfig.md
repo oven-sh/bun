@@ -1,21 +1,21 @@
-Bun's behavior can be configured using its configuration file, `bunfig.toml`.
+Bun's behavior can be configured using its configuration file, `.bunfig.toml`.
 
-In general, Bun relies on pre-existing configuration files like `package.json` and `tsconfig.json` to configure its behavior. `bunfig.toml` is only necessary for configuring Bun-specific things. This file is optional, and Bun will work out of the box without it.
+In general, Bun relies on pre-existing configuration files like `package.json` and `tsconfig.json` to configure its behavior. `.bunfig.toml` is only necessary for configuring Bun-specific things. This file is optional, and Bun will work out of the box without it.
 
 ## Global vs. local
 
-In general, it's recommended to add a `bunfig.toml` file to your project root, alongside your `package.json`.
+In general, it's recommended to add a `.bunfig.toml` file to your project root, alongside your `package.json`.
 
 To configure Bun globally, you can also create a `.bunfig.toml` file at one of the following paths:
 
 - `$HOME/.bunfig.toml`
 - `$XDG_CONFIG_HOME/.bunfig.toml`
 
-If both a global and local `bunfig` are detected, the results are shallow-merged, with local overriding global. CLI flags will override `bunfig` setting where applicable.
+If both a global and local `.bunfig.toml` are detected, the results are shallow-merged, with local overriding global. CLI flags will override `.bunfig.toml` setting where applicable.
 
 ## Runtime
 
-Bun's runtime behavior is configured using top-level fields in the `bunfig.toml` file.
+Bun's runtime behavior is configured using top-level fields in the `.bunfig.toml` file.
 
 ### `preload`
 
@@ -110,7 +110,7 @@ telemetry = false
 
 ## Test runner
 
-The test runner is configured under the `[test]` section of your bunfig.toml.
+The test runner is configured under the `[test]` section of your `.bunfig.toml`.
 
 ```toml
 [test]
@@ -341,7 +341,7 @@ globalBinDir = "~/.bun/bin"
 
 ### `install.registry`
 
-The default registry is `https://registry.npmjs.org/`. This can be globally configured in `bunfig.toml`:
+The default registry is `https://registry.npmjs.org/`. This can be globally configured in `.bunfig.toml`:
 
 ```toml
 [install]
@@ -433,7 +433,7 @@ editor = "code"
 
 The `bun run` command can be configured under the `[run]` section. These apply to the `bun run` command and the `bun` command when running a file or executable or script.
 
-Currently, `bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `bunfig.toml`), so you might still need to pass `-c` or `-c=bunfig.toml` to use these settings.
+Currently, `.bunfig.toml` isn't always automatically loaded for `bun run` in a local project (it does check for a global `.bunfig.toml`), so you might still need to pass `-c` or `-c=.bunfig.toml` to use these settings.
 
 ### `run.shell` - use the system shell or Bun's shell
 

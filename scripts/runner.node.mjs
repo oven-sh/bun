@@ -21,7 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative } from "node:path";
+import { join, basename, dirname, relative, sep } from "node:path";
 import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
@@ -811,8 +811,8 @@ function isJavaScript(path) {
  * @returns {boolean}
  */
 function isTest(path) {
-  if (path.includes("/test-cluster-") && path.endsWith(".js")) return true;
-  if (path.startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
+  if (path.replaceAll(sep, "/").includes("/test-cluster-") && path.endsWith(".js")) return true;
+  if (path.replaceAll(sep, "/").startsWith("js/node/cluster/test-") && path.endsWith(".ts")) return true;
   return isTestStrict(path);
 }
 

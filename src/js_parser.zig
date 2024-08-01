@@ -503,12 +503,31 @@ const ExportsStringName = "exports";
 
 /// All files in this list are specifically designed in src/node_fallbacks to
 /// not have a default export, so the bundler rewrites default to the namespace.
-const rewrite_default_to_star_map = bun.ComptimeStringMap(void, .{
-    .{ "node:buffer", {} },
-    .{ "node:path", {} },
-    .{ "node:util", {} },
-    .{ "node:sys", {} },
-    .{ "node:constants", {} },
+const rewrite_default_to_star_map = bun.ComptimeStringMap(void, kvs: {
+    const node_builtins = .{
+        "buffer",
+        "constants",
+        "constants",
+        "crypto",
+        "domain",
+        "http",
+        "https",
+        "path",
+        "sys",
+        "util",
+        "net",
+        "os",
+        "punycode",
+        "querystring",
+    };
+    var kvs: [node_builtins.len * 2]struct { []const u8, void } = undefined;
+    var i = 0;
+    for (node_builtins) |pkg| {
+        kvs[i] = .{ pkg, {} };
+        kvs[i + 1] = .{ "node:" ++ pkg, {} };
+        i += 2;
+    }
+    break :kvs kvs;
 });
 
 const TransposeState = struct {

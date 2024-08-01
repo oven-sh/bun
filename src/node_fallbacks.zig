@@ -56,6 +56,7 @@ pub const Map = bun.ComptimeStringMap(Module, .{
     .{ "stream", nodeFallback("stream", @embedFile("./node-fallbacks/out/stream.js")) },
     .{ "string_decoder", nodeFallback("string", @embedFile("./node-fallbacks/out/string_decoder.js")) },
     .{ "timers", nodeFallback("timers", @embedFile("./node-fallbacks/out/timers.js")) },
+    .{ "timers/promises", nodeFallback("timers/promises", @embedFile("./node-fallbacks/out/timers.promises.js")) },
     .{ "tty", nodeFallback("tty", @embedFile("./node-fallbacks/out/tty.js")) },
     .{ "url", nodeFallback("url", @embedFile("./node-fallbacks/out/url.js")) },
     .{ "util", nodeFallback("util", @embedFile("./node-fallbacks/out/util.js")) },

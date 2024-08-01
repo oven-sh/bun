@@ -528,6 +528,3 @@ export const posix = /* @__PURE__ */ (p => ((p.posix = p), p))({
   win32: null,
   posix: null,
 });
-
-// no export default: the bundler aliases default to the namespace
-// see 'rewrite_default_to_star_map' for more details

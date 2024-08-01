@@ -6,7 +6,7 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build-gen": "bash -c 'esbuild --bundle *.js --outdir=bun --format=esm --platform=browser --external:buffer --external:stream --external:util --external:util/ --external:assert'",
-    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify-syntax --platform=browser --external:node:buffer'"
+    "build": "bash -c 'esbuild --bundle *.js --outdir=out --format=esm --minify-syntax --platform=browser --external:node:buffer --external:node:timers/promises'"
   },
   "author": "",
   "license": "ISC",

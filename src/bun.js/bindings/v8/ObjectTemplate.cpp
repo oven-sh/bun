@@ -4,6 +4,7 @@
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"
+#include "JavaScriptCore/VMTrapsInlines.h"
 
 using JSC::JSGlobalObject;
 using JSC::JSValue;

@@ -6,6 +6,7 @@
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
+#include "JavaScriptCore/VMTrapsInlines.h"
 
 using JSC::ClassInfo;
 using JSC::LazyClassStructure;

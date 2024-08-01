@@ -208,7 +208,6 @@ pub const Subprocess = struct {
     pub const Flags = packed struct {
         is_sync: bool = false,
         killed: bool = false,
-        has_stdin_destructor_called: bool = false,
         finalized: bool = false,
     };
 
@@ -706,7 +705,6 @@ pub const Subprocess = struct {
     }
 
     pub fn onStdinDestroyed(this: *Subprocess) void {
-        this.flags.has_stdin_destructor_called = true;
         this.island.clearStdin();
 
         if (this.flags.finalized) {
@@ -1235,7 +1233,6 @@ pub const Subprocess = struct {
                             }
                             pipe.writer.setParent(pipe);
                             island.stdin = pipe;
-                            island.subprocess.?.flags.has_stdin_destructor_called = false;
 
                             return Writable{
                                 .pipe = pipe,
@@ -1293,7 +1290,6 @@ pub const Subprocess = struct {
                     }
 
                     island.stdin = pipe;
-                    island.subprocess.flags.has_stdin_destructor_called = false;
 
                     pipe.writer.handle.poll.flags.insert(.socket);
 
@@ -1338,11 +1334,10 @@ pub const Subprocess = struct {
                 .buffer, .inherit => JSValue.jsUndefined(),
                 .pipe => |pipe| {
                     this.* = .{ .ignore = {} };
-                    if (subprocess.process.hasExited() and !subprocess.flags.has_stdin_destructor_called) {
+                    if (subprocess.process.hasExited() and subprocess.island.stdin != null) {
                         pipe.onAttachedProcessExit();
                         return pipe.toJS(globalThis);
                     } else {
-                        subprocess.flags.has_stdin_destructor_called = false;
                         subprocess.island.stdin = pipe;
                         if (@intFromPtr(pipe.signal.ptr) == @intFromPtr(subprocess)) {
                             pipe.signal.clear();
@@ -1437,7 +1432,6 @@ pub const Subprocess = struct {
 
         if (stdin) |pipe| {
             this.island.clearStdin();
-            this.flags.has_stdin_destructor_called = true;
             pipe.onAttachedProcessExit();
         }
 

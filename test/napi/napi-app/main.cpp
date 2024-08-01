@@ -308,6 +308,12 @@ napi_value test_v8_object_template(const Napi::CallbackInfo &info) {
     return fail(env, "ObjectTemplate::NewInstance failed");
   }
   obj_template->SetInternalFieldCount(2);
+  if (obj_template->InternalFieldCount() != 2) {
+    return fail_fmt(env,
+                    "ObjectTemplate::InternalFieldCount() returned wrong "
+                    "value: expected 2 got %d",
+                    obj_template->InternalFieldCount());
+  }
 
   v8::Local<v8::Object> obj1 =
       obj_template->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();

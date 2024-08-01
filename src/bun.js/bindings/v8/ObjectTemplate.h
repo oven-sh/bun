@@ -21,6 +21,7 @@ public:
     BUN_EXPORT static Local<ObjectTemplate> New(Isolate* isolate, Local<FunctionTemplate> constructor = Local<FunctionTemplate>());
     BUN_EXPORT MaybeLocal<Object> NewInstance(Local<Context> context);
     BUN_EXPORT void SetInternalFieldCount(int value);
+    BUN_EXPORT int InternalFieldCount() const;
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::JSValue prototype);
 
@@ -37,12 +38,12 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForObjectTemplate = std::forward<decltype(space)>(space); });
     }
 
-    int getInternalFieldCount() const { return internals().internalFieldCount; }
+    DECLARE_VISIT_CHILDREN;
 
 private:
     class Internals {
         int internalFieldCount = 0;
-        JSC::WriteBarrier<JSC::Structure> objectStructure;
+        JSC::LazyProperty<ObjectTemplate, JSC::Structure> objectStructure;
         friend class ObjectTemplate;
     };
 
@@ -67,6 +68,8 @@ private:
         : JSC::InternalFunction(vm, structure, DummyCallback, DummyCallback)
     {
     }
+
+    void finishCreation(JSC::VM& vm);
 };
 
 }

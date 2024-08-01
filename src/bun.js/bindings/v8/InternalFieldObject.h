@@ -50,7 +50,7 @@ public:
     using FieldContainer = WTF::Vector<InternalField, 2>;
 
     FieldContainer* internalFields() { return &fields; }
-    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, ObjectTemplate* objectTemplate);
+    static InternalFieldObject* create(JSC::VM& vm, JSC::Structure* structure, Local<ObjectTemplate> objectTemplate);
 
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)

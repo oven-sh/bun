@@ -2383,7 +2383,15 @@ fn NewPrinter(
                     for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
                         if (value.loc_ref.ref.?.eql(id.ref)) {
                             if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
-                                p.printSymbol(p.options.commonjs_named_exports_ref);
+                                if (p.options.commonjs_named_exports_deoptimized and
+                                    p.options.commonjs_module_ref.isValid())
+                                {
+                                    p.printSymbol(p.options.commonjs_module_ref);
+                                    p.print(".exports");
+                                } else {
+                                    p.printSymbol(p.options.commonjs_named_exports_ref);
+                                }
+
                                 if (p.canPrintIdentifier(key)) {
                                     p.print(".");
                                     p.print(key);

@@ -48,7 +48,7 @@ $CC = "clang-cl"
 $CXX = "clang-cl"
 
 $CFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
-$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL'
+$CXXFLAGS = '/O2 /Z7 /MT /O2 /Ob2 /DNDEBUG /U_DLL -Xclang -fno-c++-static-destructors '
 
 if ($Lto) {
   $CXXFLAGS += " -fuse-ld=lld -flto -Xclang -emit-llvm-bc"

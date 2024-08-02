@@ -56,12 +56,12 @@ struct TaggedPointer {
         }
     }
 
-    JSC::JSCell* getPtr() const
+    template<typename T = JSC::JSCell> T* getPtr() const
     {
         if (type() == Type::Smi) {
             return nullptr;
         }
-        return reinterpret_cast<JSC::JSCell*>(value & ~3ull);
+        return reinterpret_cast<T*>(value & ~3ull);
     }
 
     bool getSmi(int32_t& smi) const

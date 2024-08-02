@@ -304,6 +304,28 @@ pub const GenerateHeader = struct {
             return platform_;
         }
 
+        var use_msgx_on_macos_14_or_later: bool = false;
+        var detectUseMsgXOnMacOS14OrLater_once = std.once(detectUseMsgXOnMacOS14OrLater);
+        fn detectUseMsgXOnMacOS14OrLater() void {
+            const version = Semver.Version.parseUTF8(forOS().version);
+            if (version.version.max().major >= 14) {
+                use_msgx_on_macos_14_or_later = true;
+            }
+        }
+
+        pub export fn Bun__doesMacOSVersionSupportSendRecvMsgX() i32 {
+            if (comptime !Environment.isMac) {
+                // this should not be used on non-mac platforms.
+                return 0;
+            }
+
+            detectUseMsgXOnMacOS14OrLater_once.call();
+
+            // Make this a no-op for CI.
+            return 1;
+            // return @intFromBool(use_msgx_on_macos_14_or_later);
+        }
+
         pub fn kernelVersion() Semver.Version {
             if (comptime !Environment.isLinux) {
                 @compileError("This function is only implemented on Linux");

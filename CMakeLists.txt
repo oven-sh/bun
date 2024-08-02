@@ -334,7 +334,7 @@ option(USE_LTO "Enable Link-Time Optimization" ${DEFAULT_LTO})
 
 if(APPLE AND USE_LTO)
     set(USE_LTO OFF)
-    message(WARNING "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
+    message(FATAL_ERROR "Link-Time Optimization is not supported on macOS because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)")
 endif()
 
 if(WIN32 AND USE_LTO)

@@ -410,6 +410,7 @@ us_internal_ssl_socket_get_context(struct us_internal_ssl_socket_t *s);
 void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s);
 void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
 int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s);
+int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s);
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(

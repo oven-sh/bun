@@ -113,6 +113,9 @@ void us_socket_flush(int ssl, struct us_socket_t *s) {
 }
 
 int us_socket_is_closed(int ssl, struct us_socket_t *s) {
+    if(ssl) {
+        return us_internal_ssl_socket_is_closed((struct us_internal_ssl_socket_t *) s);
+    }
     return s->prev == (struct us_socket_t *) s->context;
 }
 

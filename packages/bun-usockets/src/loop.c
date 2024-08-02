@@ -424,6 +424,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                             /* We got FIN back after sending it */
                             /* Todo: We should give "CLEAN SHUTDOWN" as reason here */
                             s = us_socket_close(0, s, LIBUS_SOCKET_CLOSE_CODE_CLEAN_SHUTDOWN, NULL);
+                            return;
                         } else {
                             /* We got FIN, so stop polling for readable */
                             us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);

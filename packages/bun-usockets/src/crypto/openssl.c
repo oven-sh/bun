@@ -229,9 +229,9 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 
 /// @brief Complete the shutdown or do a fast shutdown when needed, this should only be called before closing the socket
 /// @param s 
-void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
+int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(!s->ssl || us_socket_is_shut_down(0, &s->s) || s->fatal_error) return;
+  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error) return 1;
   
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
@@ -245,7 +245,7 @@ void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_f
     if(ret == 0 && force_fast_shutdown) { 
       // do a fast shutdown (dont wait for peer)
       ret = SSL_shutdown(s->ssl);
-    } 
+    }
     if(ret < 0) {
       // we got some error here, but we dont care about it, we are closing the socket
       int err = SSL_get_error(s->ssl, ret);
@@ -255,7 +255,9 @@ void us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_f
         s->fatal_error = 1;
       }
     }
+    return ret == 1;
   }
+  return 1;
 }
 
 void us_internal_on_ssl_handshake(
@@ -268,12 +270,16 @@ void us_internal_on_ssl_handshake(
   context->handshake_data = custom_data;
 }
 
+int us_internal_ssl_socket_is_closed(struct us_internal_ssl_socket_t *s) {
+  return us_socket_is_closed(0, &s->s);
+}
+
 struct us_internal_ssl_socket_t *
 us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
                              void *reason) {
 
   // check if we are already closed
-  if (us_socket_is_closed(0, &s->s)) return s;
+  if (us_internal_ssl_socket_is_closed(s)) return s;
   
   if (s->handshake_state != HANDSHAKE_COMPLETED) {
     // if we have some pending handshake we cancel it and try to check the
@@ -286,10 +292,10 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   }
 
   // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
-  us_internal_handle_shutdown(s, code != 0);
+  int can_close = us_internal_handle_shutdown(s, code != 0);
 
   // only close the socket if we are not in the middle of a handshake
-  if(!s->ssl || s->fatal_error || SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+  if(s->fatal_error || can_close) {
     return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
   }
   return s;
@@ -340,8 +346,8 @@ void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s) ||
-      SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN) {
+  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
+     (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
 
     us_internal_trigger_handshake_callback(s, 0);
     return;
@@ -414,7 +420,7 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   loop_ssl_data->ssl_socket = &s->s;
   loop_ssl_data->msg_more = 0;
 
-  if (us_socket_is_closed(0, &s->s)) {
+  if (us_internal_ssl_socket_is_closed(s)) {
     return NULL;
   }
 
@@ -459,7 +465,7 @@ restart:
             s = context->on_data(
                 s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
                 read);
-            if (!s || us_socket_is_closed(0, &s->s)) {
+            if (!s || us_internal_ssl_socket_is_closed(s)) {
               return NULL;  // stop processing data
             }
           }
@@ -501,7 +507,7 @@ restart:
         s = context->on_data(
             s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING,
             read);
-        if (!s || us_socket_is_closed(0, &s->s)) {
+        if (!s || us_internal_ssl_socket_is_closed(s)) {
           return NULL; // stop processing data
         }
 
@@ -524,7 +530,7 @@ restart:
       // emit data and restart
       s = context->on_data(
           s, loop_ssl_data->ssl_read_output + LIBUS_RECV_BUFFER_PADDING, read);
-      if (!s || us_socket_is_closed(0, &s->s)) {
+      if (!s || us_internal_ssl_socket_is_closed(s)) {
         return NULL;
       }
 
@@ -544,7 +550,7 @@ restart:
     s = (struct us_internal_ssl_socket_t *)context->sc.on_writable(
         &s->s); // cast here!
     // if we are closed here, then exit
-    if (!s || us_socket_is_closed(0, &s->s)) {
+    if (!s || us_internal_ssl_socket_is_closed(s)) {
       return NULL;
     }
   }
@@ -575,7 +581,7 @@ ssl_on_writable(struct us_internal_ssl_socket_t *s) {
   }
   // Do not call on_writable if the socket is closed.
   // on close means the socket data is no longer accessible
-  if (!s || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (!s || us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
     return s;
   }
 
@@ -1001,7 +1007,7 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
 
 struct us_bun_verify_error_t
 us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
     return (struct us_bun_verify_error_t){
         .error = 0, .code = NULL, .reason = NULL};
   }
@@ -1681,7 +1687,7 @@ int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s) {
 }
 
 void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s) {
-  if (!us_socket_is_closed(0, &s->s) &&
+  if (!us_internal_ssl_socket_is_closed(s) &&
       !us_internal_ssl_socket_is_shut_down(s)) {
     struct us_internal_ssl_socket_context_t *context =
         (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);

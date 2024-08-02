@@ -1405,7 +1405,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
         pub const shim = JSC.Shimmer("Bun", name, @This());
 
-        server: *ThisServer,
+        server: ?*ThisServer,
         resp: ?*App.Response,
         /// thread-local default heap allocator
         /// this prevents an extra pthread_getspecific() call which shows up in profiling
@@ -1455,7 +1455,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn drainMicrotasks(this: *const RequestContext) void {
             if (this.isAsync()) return;
-            this.server.vm.drainMicrotasks();
+            if(this.server) |server| server.vm.drainMicrotasks();
         }
 
         pub fn setAbortHandler(this: *RequestContext) void {
@@ -1493,32 +1493,39 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn renderMissingInvalidResponse(ctx: *RequestContext, value: JSC.JSValue) void {
             var class_name = value.getClassInfoName() orelse bun.String.empty;
             defer class_name.deref();
-            const globalThis: *JSC.JSGlobalObject = ctx.server.globalThis;
 
-            Output.enableBuffering();
-            var writer = Output.errorWriter();
+            if(ctx.server) |server| {
+                const globalThis: *JSC.JSGlobalObject = server.globalThis;
 
-            if (class_name.eqlComptime("Response")) {
-                Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
-            } else if (!value.isEmpty() and !globalThis.hasException()) {
-                var formatter = JSC.ConsoleObject.Formatter{
-                    .globalThis = globalThis,
-                    .quote_strings = true,
-                };
-                Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
-            } else {
-                Output.errGeneric("Expected a Response object", .{});
+                Output.enableBuffering();
+                var writer = Output.errorWriter();
+
+                if (class_name.eqlComptime("Response")) {
+                    Output.errGeneric("Expected a native Response object, but received a polyfilled Response object. Bun.serve() only supports native Response objects.", .{});
+                } else if (!value.isEmpty() and !globalThis.hasException()) {
+                    var formatter = JSC.ConsoleObject.Formatter{
+                        .globalThis = globalThis,
+                        .quote_strings = true,
+                    };
+                    Output.errGeneric("Expected a Response object, but received '{}'", .{value.toFmt(&formatter)});
+                } else {
+                    Output.errGeneric("Expected a Response object", .{});
+                }
+
+                Output.flush();
+                if (!globalThis.hasException()) {
+                    JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
+                }
+                Output.flush();
             }
-
-            Output.flush();
-            if (!globalThis.hasException()) {
-                JSC.ConsoleObject.writeTrace(@TypeOf(&writer), &writer, globalThis);
-            }
-            Output.flush();
             ctx.renderMissing();
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+            if(ctx.server == null) {
+                ctx.renderMissingInvalidResponse(value);
+                return;
+            }
             if (value.isEmptyOrUndefinedOrNull() or !value.isCell()) {
                 ctx.renderMissingInvalidResponse(value);
                 return;
@@ -1531,7 +1538,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.response_jsvalue = value;
             assert(!ctx.flags.response_protected);
             ctx.flags.response_protected = true;
-            JSC.C.JSValueProtect(ctx.server.globalThis, value.asObjectRef());
+            JSC.C.JSValueProtect(ctx.server.?.globalThis, value.asObjectRef());
 
             ctx.render(response);
         }
@@ -1586,14 +1593,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.request_body = null;
             }
 
-            const server = this.server;
-            server.request_pool_allocator.put(this);
-            server.onRequestComplete();
+            if(this.server) |server| {
+                this.server = null;
+                server.request_pool_allocator.put(this);
+                server.onRequestComplete();
+            }
         }
 
         pub fn deref(this: *RequestContext) void {
             streamLog("deref", .{});
-            bun.assert(this.ref_count > 0);
+            assert(this.ref_count > 0);
             const ref_count = this.ref_count;
             this.ref_count -= 1;
             if (ref_count == 1) {
@@ -1887,13 +1896,14 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onAbort(this: *RequestContext, resp: *App.Response) void {
             assert(this.resp == resp);
             assert(!this.flags.aborted);
+            assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
             // we should not use the response anymore
             this.resp = null;
             var any_js_calls = false;
-            var vm = this.server.vm;
-            const globalThis = this.server.globalThis;
+            var vm = this.server.?.vm;
+            const globalThis = this.server.?.globalThis;
             defer {
                 // This is a task in the event loop.
                 // If we called into JavaScript, we must drain the microtask queue
@@ -1958,7 +1968,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn finalizeWithoutDeinit(this: *RequestContext) void {
             ctxLog("finalizeWithoutDeinit<d> ({*})<r>", .{this});
             this.blob.detach();
-            const globalThis = this.server.globalThis;
+            assert(this.server != null);
+            const globalThis = this.server.?.globalThis;
 
             if (comptime Environment.allow_assert) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
@@ -2192,8 +2203,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         // We tried open() in another thread for this
         // it was not faster due to the mountain of syscalls
         pub fn renderSendFile(this: *RequestContext, blob: JSC.WebCore.Blob) void {
-            if (this.resp == null) return;
-            const globalThis = this.server.globalThis;
+            if (this.resp == null or this.server == null) return;
+            const globalThis = this.server.?.globalThis;
             const resp = this.resp.?;
 
             this.blob = .{ .Blob = blob };
@@ -2321,10 +2332,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (comptime can_sendfile) {
                 return this.renderSendFile(blob);
             }
-
-            this.setAbortHandler();
-            this.ref();
-            this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, this.server.globalThis);
+            if(this.server) |server| {
+               this.setAbortHandler();
+               this.ref();
+               this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, server.globalThis);
+            }
         }
 
         pub fn onReadFile(this: *RequestContext, result: Blob.ReadFile.ResultType) void {
@@ -2335,7 +2347,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (result == .err) {
-                this.runErrorHandler(result.err.toErrorInstance(this.server.globalThis));
+                if(this.server) |server| {
+                    this.runErrorHandler(result.err.toErrorInstance(server.globalThis));
+                }
                 return;
             }
 
@@ -2409,7 +2423,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("doRenderStream", .{});
             var this = pair.this;
             var stream = pair.stream;
-            const globalThis = this.server.globalThis;
+            assert(this.server != null);
+            const globalThis = this.server.?.globalThis;
 
             if (this.isAbortedOrEnded()) {
                 stream.cancel(globalThis);
@@ -2592,6 +2607,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
             request_object.request_context.setRequest(req);
+            assert(ctx.server != null);
+
 
             request_object.ensureURL() catch {
                 request_object.url = bun.String.empty;
@@ -2599,7 +2616,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // we have to clone the request headers here since they will soon belong to a different request
             if (!request_object.hasFetchHeaders()) {
-                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.globalThis, req));
+                request_object.setFetchHeaders(JSC.FetchHeaders.createFromUWS(ctx.server.?.globalThis, req));
             }
 
             // This object dies after the stack frame is popped
@@ -2625,7 +2642,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.resp = null;
 
                 // onAbort should have set this to null
-                bun.assert(!this.flags.aborted);
+                assert(!this.flags.aborted);
                 if (this.flags.is_waiting_for_request_body) {
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
@@ -2639,7 +2656,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn isAbortedOrEnded(this: *const RequestContext) bool {
             // resp == null or aborted or server.stop(true)
-            return this.resp == null or this.flags.aborted or this.server.flags.terminated;
+            return this.resp == null or this.flags.aborted or this.server == null or this.server.?.flags.terminated;
         }
 
         // Each HTTP request or TCP socket connection is effectively a "task".
@@ -2797,9 +2814,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (req.response_ptr) |resp| {
+                assert(req.server != null);
+
                 if (resp.body.value == .Locked) {
                     if (resp.body.value.Locked.readable.get()) |stream| {
-                        stream.done(req.server.globalThis);
+                        stream.done(req.server.?.globalThis);
                     }
                     resp.body.value.Locked.readable.deinit();
                     resp.body.value = .{ .Used = {} };
@@ -2881,10 +2900,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             req.endStream(true);
             if (comptime debug_mode) {
-                if (!err.isEmptyOrUndefinedOrNull()) {
-                    var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
-                    defer exception_list.deinit();
-                    req.server.vm.runErrorHandler(err, &exception_list);
+                if(req.server) |server| {
+                    if (!err.isEmptyOrUndefinedOrNull()) {
+                        var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(req.allocator);
+                        defer exception_list.deinit();
+                        server.vm.runErrorHandler(err, &exception_list);
+                    }
                 }
             }
             req.deref();
@@ -2896,7 +2917,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // If a ReadableStream can trivially be converted to a Blob, do so.
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
             value.toBlobIfPossible();
-            const globalThis = this.server.globalThis;
+            if (this.isAbortedOrEnded()) {
+                this.deref();
+                return;
+            }
+            const globalThis = this.server.?.globalThis;
             switch (value.*) {
                 .Error => |*err_ref| {
                     _ = value.use();
@@ -3152,8 +3177,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn finishRunningErrorHandler(this: *RequestContext, value: JSC.JSValue, status: u16) void {
-            var vm: *JSC.VirtualMachine = this.server.vm;
-            const globalThis = this.server.globalThis;
+            if(this.server == null) return this.renderProductionError(status);
+            var vm: *JSC.VirtualMachine = this.server.?.vm;
+            const globalThis = this.server.?.globalThis;
             if (comptime debug_mode) {
                 var exception_list: std.ArrayList(Api.JsException) = std.ArrayList(Api.JsException).init(this.allocator);
                 defer exception_list.deinit();
@@ -3185,24 +3211,26 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             status: u16,
         ) void {
             JSC.markBinding(@src());
-            if (!this.server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
-                this.flags.has_called_error_handler = true;
-                const result = this.server.config.onError.call(
-                    this.server.globalThis,
-                    this.server.thisObject,
-                    &.{value},
-                );
-                defer result.ensureStillAlive();
-                if (!result.isEmptyOrUndefinedOrNull()) {
-                    if (result.toError()) |err| {
-                        this.finishRunningErrorHandler(err, status);
-                        return;
-                    } else if (result.asAnyPromise()) |promise| {
-                        this.processOnErrorPromise(result, promise, value, status);
-                        return;
-                    } else if (result.as(Response)) |response| {
-                        this.render(response);
-                        return;
+            if(this.server) |server| {
+                if (!server.config.onError.isEmpty() and !this.flags.has_called_error_handler) {
+                    this.flags.has_called_error_handler = true;
+                    const result = server.config.onError.call(
+                        server.globalThis,
+                        server.thisObject,
+                        &.{value},
+                    );
+                    defer result.ensureStillAlive();
+                    if (!result.isEmptyOrUndefinedOrNull()) {
+                        if (result.toError()) |err| {
+                            this.finishRunningErrorHandler(err, status);
+                            return;
+                        } else if (result.asAnyPromise()) |promise| {
+                            this.processOnErrorPromise(result, promise, value, status);
+                            return;
+                        } else if (result.as(Response)) |response| {
+                            this.render(response);
+                            return;
+                        }
                     }
                 }
             }
@@ -3217,7 +3245,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value: JSC.JSValue,
             status: u16,
         ) void {
-            var vm = ctx.server.vm;
+            assert(ctx.server != null);
+            var vm = ctx.server.?.vm;
 
             switch (promise.status(vm.global.vm())) {
                 .Pending => {},
@@ -3271,7 +3300,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 ctx.flags.is_error_promise_pending = true;
                 ctx.ref();
                 promise_js.then(
-                    ctx.server.globalThis,
+                    ctx.server.?.globalThis,
                     ctx,
                     RequestContext.onResolve,
                     RequestContext.onReject,
@@ -3445,8 +3474,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // We have to ignore those chunks unless it's the last one
                 return;
             }
-            const vm = this.server.vm;
-            const globalThis = this.server.globalThis;
+            const vm = this.server.?.vm;
+            const globalThis = this.server.?.globalThis;
 
             // This is the start of a task, so it's a good time to drain
             if (this.request_body != null) {
@@ -3566,22 +3595,24 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
         const max_request_body_preallocate_length = 1024 * 256;
         pub fn onStartBuffering(this: *RequestContext) void {
-            ctxLog("onStartBuffering", .{});
-            // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
-            // if is not, this should be removed and only keep protect + setAbortHandler
-            if (this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
-                // no content-length or 0 content-length
-                // no transfer-encoding
-                if (this.request_body != null) {
-                    var body = this.request_body.?;
-                    var old = body.value;
-                    old.Locked.onReceiveValue = null;
-                    var new_body = .{ .Null = {} };
-                    old.resolve(&new_body, this.server.globalThis, null);
-                    body.value = new_body;
+            if(this.server) |server| {
+                ctxLog("onStartBuffering", .{});
+                // TODO: check if is someone calling onStartBuffering other than onStartBufferingCallback
+                // if is not, this should be removed and only keep protect + setAbortHandler
+                if (this.flags.is_transfer_encoding == false and this.request_body_content_len == 0) {
+                    // no content-length or 0 content-length
+                    // no transfer-encoding
+                    if (this.request_body != null) {
+                        var body = this.request_body.?;
+                        var old = body.value;
+                        old.Locked.onReceiveValue = null;
+                        var new_body = .{ .Null = {} };
+                        old.resolve(&new_body, server.globalThis, null);
+                        body.value = new_body;
+                    }
+                } else {
+                    this.setAbortHandler();
                 }
-            } else {
-                this.setAbortHandler();
             }
         }
 

@@ -2963,7 +2963,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                 assert(this.byte_stream == null);
                                 if (this.resp == null) {
                                     // we don't have a response, so we can discard the stream
-                                    stream.done(this.server.globalThis);
+                                    stream.done(globalThis);
                                     this.readable_stream_ref.deinit();
                                     return;
                                 }

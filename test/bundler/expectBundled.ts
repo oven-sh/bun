@@ -959,6 +959,8 @@ function expectBundled(
           splitting,
           target,
           publicPath,
+          emitDCEAnnotations,
+          ignoreDCEAnnotations,
         } as BuildConfig;
 
         if (conditions?.length) {

@@ -1598,6 +1598,7 @@ pub const BundleV2 = struct {
         pub var instance: ?*BundleThread = undefined;
     };
 
+    /// This is called from `Bun.build` in JavaScript.
     fn generateInNewThread(
         completion: *JSBundleCompletionTask,
         generation: bun.Generation,
@@ -1654,6 +1655,8 @@ pub const BundleV2 = struct {
         bundler.options.packages = config.packages;
         bundler.resolver.generation = generation;
         bundler.options.code_splitting = config.code_splitting;
+        bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
+        bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
 
         bundler.configureLinker();
         try bundler.configureDefines();

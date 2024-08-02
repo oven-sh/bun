@@ -895,6 +895,9 @@ pub fn printMetadata(writer: anytype) !void {
             std.fmt.fmtIntSizeDec(current_commit),
             page_faults,
         });
+        try writer.print("Env: BUN_CRASH_REPORT_URL = {?s}\n", .{bun.getenvZ("BUN_CRASH_REPORT_URL")});
+        try writer.print("Env: BUN_ENABLE_CRASH_REPORTING = {?s}\n", .{bun.getenvZ("BUN_ENABLE_CRASH_REPORTING")});
+        try writer.print("isReportingEnabled: {}\n", .{isReportingEnabled()});
     }
 
     if (Output.enable_ansi_colors) {

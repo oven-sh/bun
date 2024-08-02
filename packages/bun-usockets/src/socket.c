@@ -174,6 +174,8 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
@@ -224,6 +226,8 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }

@@ -368,6 +368,7 @@ void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error, int events)
                         s->context->loop->data.low_prio_budget--; /* Still having budget for this iteration - do normal processing */
                     } else {
                         us_poll_change(&s->p, us_socket_context(0, s)->loop, us_poll_events(&s->p) & LIBUS_SOCKET_WRITABLE);
+                        us_socket_context_ref(0,  s->context->ref_count);
                         us_internal_socket_context_unlink_socket(0, s->context, s);
 
                         /* Link this socket to the low-priority queue - we use a LIFO queue, to prioritize newer clients that are

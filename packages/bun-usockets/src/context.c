@@ -729,6 +729,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     if (us_socket_is_closed(ssl, s)) {
         return s;
     }
+    us_socket_context_ref(ssl, context);
 
     if (s->low_prio_state != 1) {
         /* This properly updates the iterator if in on_timeout */
@@ -757,6 +758,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         if (new_s->next) new_s->next->prev = new_s;
     } else {
         us_internal_socket_context_link_socket(context, new_s);
+        us_socket_context_unref(ssl, context);
     }
 
     return new_s;

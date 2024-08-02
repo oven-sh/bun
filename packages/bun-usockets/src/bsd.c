@@ -78,7 +78,7 @@ int bsd_sendmmsg(LIBUS_SOCKET_DESCRIPTOR fd, struct udp_sendbuf* sendbuf, int fl
     return sendbuf->num;
 #elif defined(__APPLE__)
     // sendmsg_x does not support addresses.
-    if (!sendbuf->has_empty && !sendbuf->has_addresses) {
+    if (!sendbuf->has_empty && !sendbuf->has_addresses && Bun__doesMacOSVersionSupportSendRecvMsgX()) {
         while (1) {
             int ret = sendmsg_x(fd, sendbuf->msgvec, sendbuf->num, flags);
             if (ret >= 0) return ret;

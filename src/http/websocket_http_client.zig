@@ -439,6 +439,13 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             this.to_send = this.input_body_buf[@as(usize, @intCast(wrote))..];
         }
 
+        pub fn isSameSocket(this: *HTTPClient, socket: Socket) bool {
+            if (this.tcp) |tcp| {
+                return socket.socket.eq(tcp.socket);
+            }
+            return false;
+        }
+
         pub fn handleData(this: *HTTPClient, socket: Socket, data: []const u8) void {
             log("onData", .{});
             if (this.outgoing_websocket == null) {
@@ -446,7 +453,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                 return;
             }
 
-            bun.assert(socket.socket.eq(this.tcp.?.socket));
+            bun.assert(this.isSameSocket(socket));
 
             if (comptime Environment.allow_assert)
                 bun.assert(!socket.isShutdown());
@@ -488,7 +495,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
         pub fn handleEnd(this: *HTTPClient, socket: Socket) void {
             log("onEnd", .{});
 
-            bun.assert(socket.socket.eq(this.tcp.?.socket));
+            bun.assert(this.isSameSocket(socket));
             this.terminate(ErrorCode.ended);
         }
 
@@ -604,17 +611,19 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
 
             this.clearData();
             JSC.markBinding(@src());
-            this.tcp.?.timeout(0);
-            log("onDidConnect", .{});
+            if (this.tcp != null and this.outgoing_websocket != null) {
+                this.tcp.?.timeout(0);
+                log("onDidConnect", .{});
 
-            this.outgoing_websocket.?.didConnect(this.tcp.?.socket.get().?, overflow.ptr, overflow.len);
+                this.outgoing_websocket.?.didConnect(this.tcp.?.socket.get().?, overflow.ptr, overflow.len);
+            }
         }
 
         pub fn handleWritable(
             this: *HTTPClient,
             socket: Socket,
         ) void {
-            bun.assert(socket.socket.eq(this.tcp.?.socket));
+            bun.assert(this.isSameSocket(socket));
 
             if (this.to_send.len == 0)
                 return;
@@ -1196,7 +1205,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 bun.assert(this.initial_data_handler == null);
 
                 // If we disconnected for any reason in the re-entrant case, we should just ignore the data
-                if (this.outgoing_websocket == null or this.tcp.isShutdown() or this.tcp.isClosed())
+                if (this.outgoing_websocket == null or this.tcp == null or this.tcp.?.isShutdown() or this.tcp.?.isClosed())
                     return;
             }
 
@@ -1507,7 +1516,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn sendClose(this: *WebSocket) void {
-            this.sendCloseWithBody(this.tcp, 1000, null, 0);
+            if (this.tcp) |tcp| {
+                this.sendCloseWithBody(tcp, 1000, null, 0);
+            }
         }
 
         fn enqueueEncodedBytes(
@@ -1551,9 +1562,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
 
             if (do_write) {
                 if (comptime Environment.allow_assert) {
-                    bun.assert(!this.tcp.isShutdown());
-                    bun.assert(!this.tcp.isClosed());
-                    bun.assert(this.tcp.isEstablished());
+                    if (this.tcp) |tcp| {
+                        bun.assert(!tcp.isShutdown());
+                        bun.assert(!tcp.isClosed());
+                        bun.assert(tcp.isEstablished());
+                    }
                 }
                 return this.sendBuffer(this.send_buffer.readableSlice(0));
             }
@@ -1567,7 +1580,8 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         ) bool {
             bun.assert(out_buf.len > 0);
             // Do not set MSG_MORE, see https://github.com/oven-sh/bun/issues/4010
-            const wrote = this.tcp.write(out_buf, false);
+            const tcp = this.tcp orelse return false;
+            const wrote = tcp.write(out_buf, false);
             if (wrote < 0) {
                 this.terminate(ErrorCode.failed_to_write);
                 return false;
@@ -1656,9 +1670,15 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 this.clearData();
             }
         }
+        pub fn isSameSocket(this: *WebSocket, socket: Socket) bool {
+            if (this.tcp) |tcp| {
+                return socket.socket.eq(tcp.socket);
+            }
+            return false;
+        }
 
         pub fn handleEnd(this: *WebSocket, socket: Socket) void {
-            bun.assert(socket.socket.eq(this.tcp.socket));
+            bun.assert(this.isSameSocket(socket));
             this.terminate(ErrorCode.ended);
         }
 
@@ -1667,7 +1687,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             socket: Socket,
         ) void {
             if (this.close_received) return;
-            bun.assert(socket.socket.eq(this.tcp.socket));
+            bun.assert(this.isSameSocket(socket));
             const send_buf = this.send_buffer.readableSlice(0);
             if (send_buf.len == 0)
                 return;
@@ -1693,7 +1713,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             len: usize,
             op: u8,
         ) callconv(.C) void {
-            if (this.tcp.isClosed() or this.tcp.isShutdown() or op > 0xF) {
+            if (!this.hasTCP() or op > 0xF) {
                 this.dispatchAbruptClose();
                 return;
             }
@@ -1706,11 +1726,17 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             if (!this.hasBackpressure() and frame_size < stack_frame_size) {
                 var inline_buf: [stack_frame_size]u8 = undefined;
                 bytes.copy(this.globalThis, inline_buf[0..frame_size], slice.len, opcode);
-                _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                _ = this.enqueueEncodedBytes(this.tcp.?, inline_buf[0..frame_size]);
                 return;
             }
 
             _ = this.sendData(bytes, !this.hasBackpressure(), opcode);
+        }
+        fn hasTCP(this: *WebSocket) bool {
+            if (this.tcp) |tcp| {
+                return !tcp.isClosed() and !tcp.isShutdown();
+            }
+            return false;
         }
 
         pub fn writeString(
@@ -1719,10 +1745,11 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
             op: u8,
         ) callconv(.C) void {
             const str = str_.*;
-            if (this.tcp.isClosed() or this.tcp.isShutdown()) {
+            if (!this.hasTCP()) {
                 this.dispatchAbruptClose();
                 return;
             }
+            const tcp = this.tcp.?;
 
             // Note: 0 is valid
 
@@ -1737,7 +1764,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     const frame_size = bytes.len(&byte_len);
                     if (!this.hasBackpressure() and frame_size < stack_frame_size) {
                         bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode);
-                        _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                        _ = this.enqueueEncodedBytes(tcp, inline_buf[0..frame_size]);
                         return;
                     }
                     // max length of a utf16 -> utf8 conversion is 4 times the length of the utf16 string
@@ -1747,7 +1774,7 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                     const frame_size = bytes.len(&byte_len);
                     bun.assert(frame_size <= stack_frame_size);
                     bytes.copy(this.globalThis, inline_buf[0..frame_size], byte_len, opcode);
-                    _ = this.enqueueEncodedBytes(this.tcp, inline_buf[0..frame_size]);
+                    _ = this.enqueueEncodedBytes(tcp, inline_buf[0..frame_size]);
                     return;
                 }
             }
@@ -1779,21 +1806,21 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
         }
 
         pub fn close(this: *WebSocket, code: u16, reason: ?*const JSC.ZigString) callconv(.C) void {
-            if (this.tcp.isClosed() or this.tcp.isShutdown())
+            if (!this.hasTCP())
                 return;
-
+            const tcp = this.tcp.?;
             var close_reason_buf: [128]u8 = undefined;
             if (reason) |str| {
                 inner: {
                     var fixed_buffer = std.heap.FixedBufferAllocator.init(&close_reason_buf);
                     const allocator = fixed_buffer.allocator();
                     const wrote = std.fmt.allocPrint(allocator, "{}", .{str.*}) catch break :inner;
-                    this.sendCloseWithBody(this.tcp, code, wrote.ptr[0..125], wrote.len);
+                    this.sendCloseWithBody(tcp, code, wrote.ptr[0..125], wrote.len);
                     return;
                 }
             }
 
-            this.sendCloseWithBody(this.tcp, code, null, 0);
+            this.sendCloseWithBody(tcp, code, null, 0);
         }
 
         const InitialDataHandler = struct {
@@ -1810,8 +1837,9 @@ pub fn NewWebSocketClient(comptime ssl: bool) type {
                 var ws = this.ws;
                 defer ws.unref();
 
-                if (this_socket.outgoing_websocket != null)
-                    this_socket.handleData(this_socket.tcp, this.slice);
+                if (this_socket.outgoing_websocket != null and this_socket.tcp != null) {
+                    this_socket.handleData(this_socket.tcp.?, this.slice);
+                }
             }
 
             pub fn handle(this: *@This()) void {

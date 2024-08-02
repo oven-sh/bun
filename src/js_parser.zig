@@ -5029,6 +5029,7 @@ fn NewParser_(
 
         commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
         commonjs_named_exports_deoptimized: bool = false,
+        commonjs_module_exports_assigned_deoptimized: bool = false,
         commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
         had_commonjs_named_exports_this_visit: bool = false,
         commonjs_replacement_stmts: StmtNodeList = &.{},
@@ -18709,6 +18710,9 @@ fn NewParser_(
                             p.ignoreUsage(p.module_ref);
                             return p.valueForRequire(name_loc);
                         } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
+                            if (identifier_opts.assign_target != .none) {
+                                p.commonjs_module_exports_assigned_deoptimized = true;
+                            }
 
                             // Detect if we are doing
                             //
@@ -23951,6 +23955,7 @@ fn NewParser_(
                 .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
                 .uses_require_ref = p.runtime_imports.__require != null and
                     p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
+                .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,

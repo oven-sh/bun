@@ -5393,6 +5393,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             var upgrader = bun.cast(*RequestContext, request.upgrader.?);
+            upgrader.setAbortHandler(); // make sure that we have an abort handler
+
             if (upgrader.isAbortedOrEnded()) {
                 return JSC.jsBoolean(false);
             }

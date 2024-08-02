@@ -2409,7 +2409,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("doRenderStream", .{});
             var this = pair.this;
             var stream = pair.stream;
-            var globalThis = this.server.globalThis;
+            const globalThis = this.server.globalThis;
 
             if (this.isAbortedOrEnded()) {
                 stream.cancel(globalThis);
@@ -3445,7 +3445,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // We have to ignore those chunks unless it's the last one
                 return;
             }
-            var vm = this.server.vm;
+            const vm = this.server.vm;
             const globalThis = this.server.globalThis;
 
             // This is the start of a task, so it's a good time to drain

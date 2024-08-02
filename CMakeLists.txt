@@ -15,6 +15,19 @@ set(CMAKE_C_STANDARD 17)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_C_STANDARD_REQUIRED ON)
 
+option(ZIG_CACHE_DIR "Path to the Zig cache directory" "")
+
+if(NOT ZIG_CACHE_DIR)
+    SET(ZIG_CACHE_DIR "${BUN_WORKDIR}")
+    cmake_path(APPEND ZIG_CACHE_DIR "zig-cache")
+endif()
+
+set(LOCAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
+set(GLOBAL_ZIG_CACHE_DIR "${ZIG_CACHE_DIR}")
+
+cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
+cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
+
 # Used in process.version, process.versions.node, napi, and elsewhere
 set(REPORTED_NODEJS_VERSION "22.3.0")
 
@@ -463,6 +476,8 @@ elseif(NOT BUN_CPP_ONLY AND NOT BUN_LINK_ONLY AND NOT BUN_TIDY_ONLY AND NOT BUN_
 
     message(STATUS "Installed Zig Compiler: ${ZIG_COMPILER}")
     set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS "build.zig")
+
+    message(STATUS "Using zig cache directory: ${ZIG_CACHE_DIR}")
 endif()
 
 # Bun
@@ -762,7 +777,7 @@ if(NOT NO_CODEGEN)
         OUTPUT ${BUN_IDENTIFIER_CACHE_OUT}
         MAIN_DEPENDENCY "${BUN_SRC}/js_lexer/identifier_data.zig"
         DEPENDS "${BUN_SRC}/js_lexer/identifier_cache.zig"
-        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
+        COMMAND ${ZIG_COMPILER} run "--zig-lib-dir" "${ZIG_LIB_DIR}" "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}" "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}" "${BUN_SRC}/js_lexer/identifier_data.zig"
         VERBATIM
         COMMENT "Building Identifier Cache"
     )
@@ -911,6 +926,8 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "-Denable_logs=${ENABLE_LOGS}"
         "-Dreported_nodejs_version=${REPORTED_NODEJS_VERSION}"
         "-Dobj_format=${BUN_ZIG_OBJ_FORMAT}"
+        "--cache-dir" "${LOCAL_ZIG_CACHE_DIR}"
+        "--global-cache-dir" "${GLOBAL_ZIG_CACHE_DIR}"
         DEPENDS
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"

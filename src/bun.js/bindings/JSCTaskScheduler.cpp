@@ -39,7 +39,7 @@ static JSC::VM& getVM(Ticket& ticket)
     return ticket->scriptExecutionOwner()->vm();
 }
 
-void JSCTaskScheduler::onAddPendingWork(Ref<TicketData> ticket, JSC::DeferredWorkTimer::WorkType kind)
+void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
     JSC::VM& vm = getVM(ticket);
     auto clientData = WebCore::clientData(vm);

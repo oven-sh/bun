@@ -75,7 +75,9 @@ describe("WebSocket", () => {
         },
       });
       {
-        for (let i = 0; i < 1000; i++) {
+        const batchSize = 100;
+        const batch = new Array(batchSize);
+        async function run() {
           const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
           await new Promise((resolve, reject) => {
             ws.onopen = resolve;
@@ -88,6 +90,13 @@ describe("WebSocket", () => {
           ws.close();
           await closed;
         }
+        for (let i = 0; i < 1_000; i++) {
+          batch[i % batchSize] = run();
+          if (i % batchSize === batchSize - 1) {
+            await Promise.all(batch);
+          }
+        }
+        await Promise.all(batch);
         Bun.gc(true);
       }
     }

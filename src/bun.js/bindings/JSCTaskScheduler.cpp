@@ -39,10 +39,8 @@ static JSC::VM& getVM(Ticket& ticket)
     return ticket->scriptExecutionOwner()->vm();
 }
 
-void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
+void JSCTaskScheduler::onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
-    JSC::VM& vm = ticket->scriptExecutionOwner()->vm();
-    auto clientData = WebCore::clientData(vm);
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
     if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
@@ -52,16 +50,14 @@ void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredW
         scheduler.m_pendingTicketsOther.add(WTFMove(ticket));
     }
 }
-void JSCTaskScheduler::onScheduleWorkSoon(Ticket ticket, Task&& task)
+void JSCTaskScheduler::onScheduleWorkSoon(WebCore::JSVMClientData* clientData, Ticket ticket, Task&& task)
 {
     auto* job = new JSCDeferredWorkTask(*ticket, WTFMove(task));
-    Bun__queueJSCDeferredWorkTaskConcurrently(WebCore::clientData(job->vm())->bunVM, job);
+    Bun__queueJSCDeferredWorkTaskConcurrently(clientData->bunVM, job);
 }
 
-void JSCTaskScheduler::onCancelPendingWork(Ticket ticket)
+void JSCTaskScheduler::onCancelPendingWork(WebCore::JSVMClientData* clientData, Ticket ticket)
 {
-    JSC::VM& vm = getVM(ticket);
-    auto* clientData = WebCore::clientData(vm);
     auto* bunVM = clientData->bunVM;
     auto& scheduler = clientData->deferredWorkTimer;
 

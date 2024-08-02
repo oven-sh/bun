@@ -134,35 +134,36 @@ async function printInfo() {
 async function runTests() {
   let execPath;
   if (options["step"]) {
-    execPath = await getExecPathFromBuildKite(options["step"]);
+    downloadLoop: for (let i = 0; i < 10; i++) {
+      execPath = await getExecPathFromBuildKite(options["step"]);
+      for (let j = 0; j < 10; j++) {
+        const { error } = spawnSync(execPath, ["--version"], {
+          encoding: "utf-8",
+          timeout: spawnTimeout,
+          env: {
+            PATH: process.env.PATH,
+            BUN_DEBUG_QUIET_LOGS: 1,
+          },
+        });
+        if (!error) {
+          break;
+        }
+        const { code } = error;
+        if (code === "EBUSY") {
+          console.log("Bun appears to be busy, retrying...");
+          continue;
+        }
+        if (code === "UNKNOWN") {
+          console.log("Bun appears to be corrupted, downloading again...");
+          rmSync(execPath, { force: true });
+          continue downloadLoop;
+        }
+      }
+    }
   } else {
     execPath = getExecPath(options["exec-path"]);
   }
   console.log("Bun:", execPath);
-
-  for (let i = 0; i < 10; i++) {
-    try {
-      const { error } = spawnSync(execPath, ["--version"], {
-        encoding: "utf-8",
-        timeout: spawnTimeout,
-        env: {
-          PATH: process.env.PATH,
-          BUN_DEBUG_QUIET_LOGS: 1,
-        },
-      });
-      if (!error) {
-        break;
-      }
-      throw error;
-    } catch (error) {
-      const { code } = error;
-      if (code === "EBUSY" || code === "UNKNOWN") {
-        console.log(`Bun appears to be busy, retrying... [code: ${code}]`);
-        await new Promise(resolve => setTimeout(resolve, 1000 * (i + 1)));
-        continue;
-      }
-    }
-  }
 
   const revision = getRevision(execPath);
   console.log("Revision:", revision);

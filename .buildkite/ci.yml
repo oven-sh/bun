@@ -622,8 +622,9 @@ steps:
           - "build\\bun-deps\\*.lib"
         env:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
         command:
           - ".\\scripts\\all-dependencies.ps1"
 
@@ -646,6 +647,11 @@ steps:
           # HACK: See scripts/build-bun-cpp.ps1
           # - "build\\bun-cpp-objects.a"
           - "build\\bun-cpp-objects.a.*"
+        env:
+          SCCACHE_DIR: "$$HOME\\.cache\\sccache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
+          SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
         command:
           - ".\\scripts\\build-bun-cpp.ps1"
 
@@ -665,8 +671,9 @@ steps:
           - "features.json"
         env:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1"
 
@@ -709,8 +716,9 @@ steps:
           - "build\\bun-deps\\*.lib"
         env:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
           USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\all-dependencies.ps1"
@@ -736,8 +744,9 @@ steps:
           - "build\\bun-cpp-objects.a.*"
         env:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
           USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\build-bun-cpp.ps1"
@@ -758,8 +767,9 @@ steps:
           - "features.json"
         env:
           SCCACHE_DIR: "$$HOME\\.cache\\sccache"
-          ZIG_LOCAL_CACHE_DIR: "$$HOME\\.cache\\zig-cache"
+          CCACHE_DIR: "$$HOME\\.cache\\ccache"
           SCCACHE_IGNORE_SERVER_IO_ERROR: "1"
+          CCACHE_DISABLE: "1"
           USE_BASELINE_BUILD: "1"
         command:
           - ".\\scripts\\buildkite-link-bun.ps1 -Baseline $$True"

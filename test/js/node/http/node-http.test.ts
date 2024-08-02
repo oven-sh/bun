@@ -1890,9 +1890,9 @@ it("should emit events in the right order", async () => {
 });
 
 it("destroy should end download", async () => {
+  // just simulate some file that will take forever to download
+  const payload = Buffer.alloc(128 * 1024, "X");
   for (let i = 0; i < 5; i++) {
-    // just simulate some file that will take forever to download
-    const payload = Buffer.from("X".repeat(128 * 1024));
     let sendedByteLength = 0;
     using server = Bun.serve({
       port: 0,

@@ -80,7 +80,7 @@ function export_environment() {
   export ZIG_LOCAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
   export ZIG_GLOBAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
   export BUN_DEPS_CACHE_DIR="$HOME/.cache/bun-deps/$BUILDKITE_STEP_KEY"
-  if [ "$(assert_os)" == "darwin" ]; then
+  if [ "$(assert_os)" == "linux" ]; then
     export USE_LTO="ON"
   fi
   if [ "$(assert_arch)" == "aarch64" ]; then

@@ -729,9 +729,10 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
     if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return s;
     }
-    us_socket_context_ref(ssl, context);
 
     if (s->low_prio_state != 1) {
+         /* We need to be sure that we still holding a reference*/
+        us_socket_context_ref(ssl, context);
         /* This properly updates the iterator if in on_timeout */
         us_internal_socket_context_unlink_socket(ssl, s->context, s);
     }

@@ -49,22 +49,13 @@ const Body = JSC.WebCore.Body;
 const Blob = JSC.WebCore.Blob;
 const Response = JSC.WebCore.Response;
 
-const body_value_pool_size: u16 = 256;
-pub const BodyValueRef = bun.HiveRef(Body.Value, body_value_pool_size);
-const BodyValueHiveAllocator = bun.HiveArray(BodyValueRef, body_value_pool_size).Fallback;
-
-var body_value_hive_allocator = BodyValueHiveAllocator.init(bun.default_allocator);
-
-pub fn InitRequestBodyValue(value: Body.Value) !*BodyValueRef {
-    return try BodyValueRef.init(value, &body_value_hive_allocator);
-}
 // https://developer.mozilla.org/en-US/docs/Web/API/Request
 pub const Request = struct {
     url: bun.String = bun.String.empty,
     // NOTE(@cirospaciari): renamed to _headers to avoid direct manipulation, use getFetchHeaders, setFetchHeaders, ensureFetchHeaders and hasFetchHeaders instead
     _headers: ?*FetchHeaders = null,
     signal: ?*AbortSignal = null,
-    body: *BodyValueRef,
+    body: *JSC.BodyValueRef,
     method: Method = Method.GET,
     request_context: JSC.API.AnyRequestContext = JSC.API.AnyRequestContext.Null,
     https: bool = false,
@@ -75,6 +66,7 @@ pub const Request = struct {
 
     const RequestMixin = BodyMixin(@This());
     pub usingnamespace JSC.Codegen.JSRequest;
+    pub usingnamespace bun.New(@This());
 
     pub const getText = RequestMixin.getText;
     pub const getBytes = RequestMixin.getBytes;
@@ -101,7 +93,7 @@ pub const Request = struct {
     pub fn init(
         url: bun.String,
         headers: ?*FetchHeaders,
-        body: *BodyValueRef,
+        body: *JSC.BodyValueRef,
         method: Method,
     ) Request {
         return Request{
@@ -294,15 +286,15 @@ pub const Request = struct {
         this.url = bun.String.empty;
 
         if (this.signal) |signal| {
-            _ = signal.unref();
+            signal.unref();
             this.signal = null;
         }
     }
 
-    pub fn finalize(this: *Request) callconv(.C) void {
+    pub fn finalize(this: *Request) void {
         this.finalizeWithoutDeinit();
         _ = this.body.unref();
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 
     pub fn getRedirect(
@@ -477,7 +469,8 @@ pub const Request = struct {
         arguments: []const JSC.JSValue,
     ) ?Request {
         var success = false;
-        const body = InitRequestBodyValue(.{ .Null = {} }) catch {
+        const vm = globalThis.bunVM();
+        const body = vm.initRequestBodyValue(.{ .Null = {} }) catch {
             return null;
         };
         var req = Request{
@@ -709,11 +702,7 @@ pub const Request = struct {
         const request = constructInto(globalThis, arguments) orelse {
             return null;
         };
-        const request_ = getAllocator(globalThis).create(Request) catch {
-            return null;
-        };
-        request_.* = request;
-        return request_;
+        return Request.new(request);
     }
 
     pub fn getBodyValue(
@@ -821,8 +810,8 @@ pub const Request = struct {
     ) void {
         _ = allocator;
         this.ensureURL() catch {};
-
-        const body = InitRequestBodyValue(this.body.value.clone(globalThis)) catch {
+        const vm = globalThis.bunVM();
+        const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
             globalThis.throw("Failed to clone request", .{});
             return;
         };
@@ -841,7 +830,7 @@ pub const Request = struct {
     }
 
     pub fn clone(this: *Request, allocator: std.mem.Allocator, globalThis: *JSGlobalObject) *Request {
-        const req = allocator.create(Request) catch unreachable;
+        const req = Request.new(undefined);
         this.cloneInto(req, allocator, globalThis, false);
         return req;
     }

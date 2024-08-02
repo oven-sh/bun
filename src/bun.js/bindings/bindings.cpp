@@ -116,6 +116,13 @@
 
 #include "ErrorStackFrame.h"
 
+#if OS(DARWIN)
+#if BUN_DEBUG
+#include <malloc/malloc.h>
+#define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
+#endif
+
 static WTF::StringView StringView_slice(WTF::StringView sv, unsigned start, unsigned end)
 {
     return sv.substring(start, end - start);
@@ -4811,6 +4818,12 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
 {
     JSC::JSLockHolder lock(vm);
 
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected!!");
+    }
+#endif
+
     vm->finalizeSynchronousJSExecution();
     WTF::releaseFastMallocFreeMemory();
 
@@ -4818,12 +4831,21 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
         vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+        malloc_zone_pressure_relief(nullptr, 0);
+#endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
         vm->heap.collectSync(JSC::CollectionScope::Full);
     }
 
     vm->finalizeSynchronousJSExecution();
+
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+    if (!malloc_zone_check(nullptr)) {
+        BUN_PANIC("Heap corruption detected after GC!!");
+    }
+#endif
 
     return JSC::JSValue::encode(JSC::jsNumber(vm->heap.sizeAfterLastFullCollection()));
 }
@@ -5489,12 +5511,12 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal*
     return arg0;
 }
 
-extern "C" WebCore__AbortSignal* WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
+extern "C" void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
-    return arg0;
 }
+
 extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);

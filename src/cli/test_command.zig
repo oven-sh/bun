@@ -740,7 +740,7 @@ pub const TestCommand = struct {
             loader.* = DotEnv.Loader.init(map, ctx.allocator);
             break :brk loader;
         };
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
         HTTPThread.init();
 
         var snapshot_file_buf = std.ArrayList(u8).init(ctx.allocator);
@@ -816,7 +816,7 @@ pub const TestCommand = struct {
 
         try vm.bundler.configureDefines();
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 

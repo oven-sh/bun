@@ -307,4 +307,57 @@ describe("bundler", () => {
     },
     minifySyntax: true,
   });
+  itBundled("cjs2esm/ReactSpecificUnwrapping2", {
+    files: {
+      "/entry.js": /* js */ `
+        import * as react from "react-dom";
+        console.log(react);
+      `,
+      "/node_modules/react-dom/index.js": /* js */ `
+        export const stuff = [
+          require('./a.js'),
+          require('./b.js')
+        ];
+      `,
+      "/node_modules/react-dom/a.js": /* js */ `
+        (function () {
+          var React = require('react');
+          var stream = require('stream');
+
+          console.log([React, stream]);
+
+          exports.version = null;
+        })();
+      `,
+      "/node_modules/react-dom/b.js": /* js */ `
+        (function () {
+          var React = require('react');
+          var util = require('util');
+
+          console.log([React, util]);
+
+          exports.version = null;
+        })();
+      `,
+      "/node_modules/react/index.js": /* js */ `
+        module.exports = 123;
+      `,
+    },
+    run: true,
+    minifyIdentifiers: true,
+    target: "bun",
+  });
+  itBundled("cjs2esm/ModuleExportsRenaming", {
+    files: {
+      "/entry.js": /* js */ `
+        let y = () => module.exports.xyz;
+        module.exports = { xyz: 123 };
+        let z = () => module.exports.xyz;
+        console.log(y(), z());
+      `,
+    },
+    run: {
+      stdout: "123 123",
+    },
+  });
 });

@@ -493,7 +493,7 @@ pub const HTMLRewriter = struct {
             return response_js_value;
         }
 
-        pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.JSValue, is_async: bool) void {
+        pub fn onFinishedBuffering(ctx: *anyopaque, bytes: []const u8, js_err: ?JSC.WebCore.Body.Value.ValueError, is_async: bool) void {
             const sink = bun.cast(*BufferOutputSink, ctx);
             if (js_err) |err| {
                 if (sink.response.body.value == .Locked and @intFromPtr(sink.response.body.value.Locked.task) == @intFromPtr(sink) and
@@ -510,7 +510,7 @@ pub const HTMLRewriter = struct {
                     sink.response.body.value.Locked.task = null;
                 }
                 if (is_async) {
-                    sink.response.body.value.toErrorInstance(err, sink.global);
+                    sink.response.body.value.toErrorInstance(err.dupe(sink.global), sink.global);
                 } else {
                     var ret_err = throwLOLHTMLError(sink.global);
                     ret_err.ensureStillAlive();
@@ -544,7 +544,7 @@ pub const HTMLRewriter = struct {
                 sink.deinit();
 
                 if (is_async) {
-                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+                    response.body.value.toErrorInstance(.{ .Message = throwLOLHTMLStringError() }, global);
 
                     return null;
                 } else {
@@ -558,7 +558,7 @@ pub const HTMLRewriter = struct {
                 sink.deinit();
 
                 if (is_async) {
-                    response.body.value.toErrorInstance(throwLOLHTMLError(global), global);
+                    response.body.value.toErrorInstance(.{ .Message = throwLOLHTMLStringError() }, global);
                     return null;
                 } else {
                     return throwLOLHTMLError(global);
@@ -1027,6 +1027,11 @@ fn throwLOLHTMLError(global: *JSGlobalObject) JSValue {
     const err = LOLHTML.HTMLString.lastError();
     defer err.deinit();
     return ZigString.fromUTF8(err.slice()).toErrorInstance(global);
+}
+fn throwLOLHTMLStringError() bun.String {
+    const err = LOLHTML.HTMLString.lastError();
+    defer err.deinit();
+    return bun.String.fromUTF8(err.slice());
 }
 
 fn htmlStringValue(input: LOLHTML.HTMLString, globalObject: *JSGlobalObject) JSValue {

@@ -674,7 +674,7 @@ describe("bundler", () => {
         const std = @import("std");
 
         pub fn main() void {
-          std.debug.print("Hello, world!\\n", .{});
+          std.log.info("Hello, world!\\n", .{});
         }
       `,
     },
@@ -684,7 +684,7 @@ describe("bundler", () => {
       "/exec.js": `
         import assert from 'node:assert';
         import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-6dhkdck1.zig');
+        assert.strictEqual(the_path, './entry-z5artd5z.zig');
       `,
     },
     run: {
@@ -1765,6 +1765,45 @@ describe("bundler", () => {
         {"0":"A","1":"B","A":0,"B":1}
         false
       `,
+    },
+  });
+  itBundled("edgecase/ImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("edgecase/ImportMetaMainTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    target: 'node',
+    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
+      api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
   });
 

@@ -993,7 +993,11 @@ const StackLine = struct {
                     .address = @intCast(addr - base_address),
 
                     .object = if (!std.mem.eql(u16, name, image_path)) name: {
-                        const basename = name[std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' }) orelse 0 ..];
+                        const basename = name[if (std.mem.lastIndexOfAny(u16, name, &[_]u16{ '\\', '/' })) |i|
+                            // skip the last slash
+                            i + 1
+                        else
+                            0..];
                         break :name bun.strings.convertUTF16toUTF8InBuffer(name_bytes, basename) catch null;
                     } else null,
                 };
@@ -1515,7 +1519,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.12 fixes this
+            // TODO(@paperdave): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);

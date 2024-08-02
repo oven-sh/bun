@@ -35,7 +35,7 @@ $BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $B
 $BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { Join-Path $BUN_BASE_DIR 'build\bun-deps' }
 
 $CPUS = if ($env:CPUS) { $env:CPUS } else { (Get-CimInstance -Class Win32_Processor).NumberOfCores }
-$Lto = if ($env:USE_LTO) { $env:USE_LTO -eq "1" } else { $True }
+$Lto = if ($env:USE_LTO) { $env:USE_LTO -eq "1" } else { $False }
 $Baseline = if ($env:USE_BASELINE_BUILD) {
   $env:USE_BASELINE_BUILD -eq "1"
 } elseif ($env:BUILDKITE_STEP_KEY -match "baseline") {
@@ -103,7 +103,10 @@ if ($Lto) {
   $CMAKE_FLAGS += "-DUSE_LTO=ON"
 }
 
-if (Get-Command sccache -ErrorAction SilentlyContinue) {
+if (Get-Command ccache -ErrorAction SilentlyContinue) {
+  $CMAKE_FLAGS += "-DCMAKE_C_COMPILER_LAUNCHER=ccache"
+  $CMAKE_FLAGS += "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+} elseif (Get-Command sccache -ErrorAction SilentlyContinue) {
   # Continue with local compiler if sccache has an error
   $env:SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
 

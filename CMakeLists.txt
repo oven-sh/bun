@@ -487,7 +487,7 @@ if(USE_UNIFIED_SOURCES)
 endif()
 
 # CCache
-find_program(CCACHE_PROGRAM sccache)
+# find_program(CCACHE_PROGRAM sccache)
 find_program(CCACHE_PROGRAM ccache)
 
 if(CCACHE_PROGRAM)

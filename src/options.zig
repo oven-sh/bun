@@ -1510,6 +1510,7 @@ pub const BundleOptions = struct {
     install: ?*Api.BunInstall = null,
 
     inlining: bool = false,
+    inline_entrypoint_import_meta_main: bool = false,
     minify_whitespace: bool = false,
     minify_syntax: bool = false,
     minify_identifiers: bool = false,

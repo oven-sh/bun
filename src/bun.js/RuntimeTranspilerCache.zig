@@ -1,7 +1,8 @@
 /// ** Update the version number when any breaking changes are made to the cache format or to the JS parser **
 /// Version 3: "Infinity" becomes "1/0".
 /// Version 4: TypeScript enums are properly handled + more constant folding
-const expected_version = 4;
+/// Version 5: `require.main === module` no longer marks a module as CJS
+const expected_version = 5;
 
 const bun = @import("root").bun;
 const std = @import("std");

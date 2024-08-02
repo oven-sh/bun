@@ -55,7 +55,7 @@ void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredW
 void JSCTaskScheduler::onScheduleWorkSoon(Ticket ticket, Task&& task)
 {
     auto* job = new JSCDeferredWorkTask(*ticket, WTFMove(task));
-    Bun__queueJSCDeferredWorkTaskConcurrently(WebCore::clientData(getVM(ticket))->bunVM, job);
+    Bun__queueJSCDeferredWorkTaskConcurrently(WebCore::clientData(job->vm())->bunVM, job);
 }
 
 void JSCTaskScheduler::onCancelPendingWork(Ticket ticket)

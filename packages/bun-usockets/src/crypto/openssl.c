@@ -253,6 +253,7 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
         // clear
         ERR_clear_error();
         s->fatal_error = 1;
+        return 1;
       }
     }
     return ret == 1;
@@ -292,10 +293,10 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   }
 
   // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
-  int can_close = us_internal_handle_shutdown(s, code != 0);
+  int can_close = s->ssl && us_internal_handle_shutdown(s, code != 0);
 
   // only close the socket if we are not in the middle of a handshake
-  if(s->fatal_error || can_close) {
+  if(can_close) {
     return (struct us_internal_ssl_socket_t *)us_socket_close(0, (struct us_socket_t *)s, code, reason);
   }
   return s;

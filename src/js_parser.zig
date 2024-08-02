@@ -511,13 +511,6 @@ const TransposeState = struct {
     import_options: Expr = Expr.empty,
 };
 
-var true_args = &[_]Expr{
-    .{
-        .data = .{ .e_boolean = .{ .value = true } },
-        .loc = logger.Loc.Empty,
-    },
-};
-
 const JSXTag = struct {
     pub const TagType = enum { fragment, tag };
     pub const Data = union(TagType) {
@@ -1845,6 +1838,7 @@ pub const SideEffects = enum(u1) {
             .e_number,
             .e_big_int,
             .e_inlined_enum,
+            .e_require_main,
             => true,
             else => false,
         };
@@ -1935,13 +1929,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2071,23 +2066,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -3100,6 +3078,10 @@ pub const Parser = struct {
 
         transform_only: bool = false,
 
+        /// Used for inlining the state of import.meta.main during visiting
+        import_meta_main_value: ?bool = null,
+        lower_import_meta_main_for_node_js: bool = false,
+
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
 
@@ -3120,6 +3102,10 @@ pub const Parser = struct {
                 hasher.update("TS");
             } else {
                 hasher.update("NO_TS");
+            }
+
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
             }
 
             this.features.hashForRuntimeTranspiler(hasher);
@@ -7531,8 +7517,14 @@ fn NewParser_(
                         }
                     },
                     .bin_loose_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                p.ignoreUsage(p.module_ref);
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(
                                 E.Boolean{ .value = equality.equal },
                                 v.loc,
@@ -7554,8 +7546,14 @@ fn NewParser_(
 
                     },
                     .bin_strict_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
                         }
 
@@ -7564,8 +7562,14 @@ fn NewParser_(
                         // TODO: warn about typeof string
                     },
                     .bin_loose_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                         // const after_op_loc = locAfterOp(e_.);
@@ -7578,8 +7582,14 @@ fn NewParser_(
                         }
                     },
                     .bin_strict_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                     },
@@ -13201,12 +13211,6 @@ fn NewParser_(
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
                     },
-
-                    // this is specifically added only to support our implementation
-                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
-                    .e_dot => |ex| {
-                        ex.can_be_removed_if_unused = true;
-                    },
                     else => {},
                 }
             }
@@ -16898,24 +16902,6 @@ fn NewParser_(
                     }
                 },
 
-                .inline_identifier => |id| {
-                    const ref = p.macro.imports.get(id) orelse {
-                        p.panic("Internal error: missing identifier from macro: {d}", .{id});
-                    };
-
-                    if (!p.is_control_flow_dead) {
-                        p.recordUsage(ref);
-                    }
-
-                    return p.newExpr(
-                        E.ImportIdentifier{
-                            .was_originally_identifier = false,
-                            .ref = ref,
-                        },
-                        expr.loc,
-                    );
-                },
-
                 .e_binary => |e_| {
 
                     // The handling of binary expressions is convoluted because we're using
@@ -17172,9 +17158,9 @@ fn NewParser_(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
-                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_before = e_.value.data == .e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
-                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_after = e_.value.data == .e_identifier;
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
@@ -17184,6 +17170,11 @@ fn NewParser_(
                                     e_.value,
                                     p.allocator,
                                 );
+                            }
+
+                            if (e_.value.data == .e_require_call_target) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.newExpr(E.String{ .data = "function" }, expr.loc);
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
@@ -17210,6 +17201,10 @@ fn NewParser_(
                                     if (p.options.features.minify_syntax) {
                                         if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
                                             return exp;
+                                        }
+                                        if (e_.value.data == .e_import_meta_main) {
+                                            e_.value.data.e_import_meta_main.inverted = !e_.value.data.e_import_meta_main.inverted;
+                                            return e_.value;
                                         }
                                     }
                                 },
@@ -17886,6 +17881,16 @@ fn NewParser_(
             }
         }
 
+        fn ignoreUsageOfRuntimeRequire(p: *P) void {
+            if (!p.options.features.use_import_meta_require and
+                p.options.features.allow_runtime)
+            {
+                bun.assert(p.runtime_imports.__require != null);
+                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
+            }
+        }
+
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
             bun.assert(!p.isSourceRuntime());
             return Expr{
@@ -17894,6 +17899,32 @@ fn NewParser_(
                 },
                 .loc = loc,
             };
+        }
+
+        inline fn valueForImportMetaMain(p: *P, inverted: bool, loc: logger.Loc) Expr {
+            if (p.options.import_meta_main_value) |known| {
+                return .{ .loc = loc, .data = .{ .e_boolean = .{ .value = if (inverted) !known else known } } };
+            } else {
+                // Node.js does not have import.meta.main, so we end up lowering
+                // this to `require.main === module`, but with the ESM format,
+                // both `require` and `module` are not present, so the code
+                // generation we need is:
+                //
+                //     import { createRequire } from "node:module";
+                //     var __require = createRequire(import.meta.url);
+                //     var import_meta_main = __require.main === __require.module;
+                //
+                // The printer can handle this for us, but we need to reference
+                // a handle to the `__require` function.
+                if (p.options.lower_import_meta_main_for_node_js) {
+                    p.recordUsageOfRuntimeRequire();
+                }
+
+                return .{
+                    .loc = loc,
+                    .data = .{ .e_import_meta_main = .{ .inverted = inverted } },
+                };
+            }
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -18963,6 +18994,15 @@ fn NewParser_(
                             },
                             target.loc,
                         );
+                    }
+
+                    if (strings.eqlComptime(name, "main")) {
+                        return p.valueForImportMetaMain(false, target.loc);
+                    }
+                },
+                .e_require_call_target => {
+                    if (strings.eqlComptime(name, "main")) {
+                        return .{ .loc = loc, .data = .e_require_main };
                     }
                 },
                 .e_import_identifier => |id| {
@@ -20860,7 +20900,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
-                    .can_be_unwrapped_if_unused = all_values_are_pure,
+                    // TODO: make these fully tree-shakable. this annotation
+                    // as-is is incorrect.  This would be done by changing all
+                    // enum wrappers into `var Enum = ...` instead of two
+                    // separate statements. This way, the @__PURE__ annotation
+                    // is attached to the variable binding.
+                    //
+                    // .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );
@@ -23901,12 +23947,10 @@ fn NewParser_(
                     p.require_ref,
 
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
-                .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
-                .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
-                .uses_require_ref = if (p.runtime_imports.__require != null)
-                    (p.symbols.items[p.runtime_imports.__require.?.ref.innerIndex()].use_count_estimate > 0)
-                else
-                    false,
+                .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
+                .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
+                .uses_require_ref = p.runtime_imports.__require != null and
+                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,

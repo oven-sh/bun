@@ -1038,8 +1038,20 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn loadExtraEnv(this: *VirtualMachine) void {
+    fn ensureSourceCodePrinter(this: *VirtualMachine) void {
+        if (source_code_printer == null) {
+            const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
+            const writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+    }
+
+    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
+
+        ensureSourceCodePrinter(this);
 
         if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
@@ -1499,6 +1511,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = .{};
+            ensureSourceCodePrinter(this);
         }
 
         this.bundler.options.target = .bun_macro;
@@ -1623,13 +1636,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
 
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
-
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
@@ -1742,13 +1748,6 @@ pub const VirtualMachine = struct {
 
         if (opts.smol)
             is_smol_mode = opts.smol;
-
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -1888,12 +1887,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
@@ -2493,6 +2486,10 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        if (source_code_printer) |print| {
+            print.getMutableBuffer().deinit();
+            print.ctx.written = &.{};
+        }
         this.source_mappings.deinit();
         if (this.rare_data) |rare_data| {
             rare_data.deinit();

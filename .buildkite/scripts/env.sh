@@ -78,18 +78,17 @@ function export_environment() {
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
   export SCCACHE_DIR="$HOME/.cache/sccache/$BUILDKITE_STEP_KEY"
   export ZIG_LOCAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
+  export ZIG_GLOBAL_CACHE_DIR="$HOME/.cache/zig-cache/$BUILDKITE_STEP_KEY"
   export BUN_DEPS_CACHE_DIR="$HOME/.cache/bun-deps/$BUILDKITE_STEP_KEY"
+  if [ "$(assert_os)" == "linux" ]; then
+    export USE_LTO="ON"
+  fi
   if [ "$(assert_arch)" == "aarch64" ]; then
     export CPU_TARGET="native"
   elif [[ "$BUILDKITE_STEP_KEY" == *"baseline"* ]]; then
     export CPU_TARGET="nehalem"
   else
     export CPU_TARGET="haswell"
-  fi
-  if [[ "$BUILDKITE_STEP_KEY" == *"nolto"* ]]; then
-    export USE_LTO="OFF"
-  else
-    export USE_LTO="ON"
   fi
   if $(buildkite-agent meta-data exists release &> /dev/null); then
     export CMAKE_BUILD_TYPE="$(buildkite-agent meta-data get release)"
@@ -106,11 +105,13 @@ function export_environment() {
   else
     export USE_DEBUG_JSC="OFF"
   fi
-  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ]; then
+  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" || "$BUILDKITE_BRANCH" == "main" ]; then
     rm -rf "$CCACHE_DIR"
     rm -rf "$SCCACHE_DIR"
     rm -rf "$ZIG_LOCAL_CACHE_DIR"
+    rm -rf "$ZIG_GLOBAL_CACHE_DIR"
     rm -rf "$BUN_DEPS_CACHE_DIR"
+    export CCACHE_RECACHE="1"
   fi
 }
 

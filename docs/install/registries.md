@@ -25,42 +25,43 @@ To configure a private registry scoped to a particular organization:
 "@myorg3" = { token = "$npm_token", url = "https://registry.myorg.com/" }
 ```
 
-### Changing the Mirror Source in Bun
+### Changing to Mirror Registry in Bun
 
-To change the mirror source in Bun, you can configure the `bunfig.toml` file. Here are the steps:
+If you cannot access the official registry, you can change to a mirror registry. 
+
+To change the mirror registry in Bun, you can configure the `bunfig.toml` file. Here are the steps:
 
 1. Open the `bunfig.toml` file in your project directory. If it doesn't exist, create a new file named `bunfig.toml`.
 
-2. Add the following configuration to set the mirror source:
+2. Add the following configuration to set the mirror registry:
 
 ```toml
 [install]
-# set the mirror source URL
-registry = "https://your-mirror-source-url"
+# set the mirror registry URL
+registry = "https://registry.npmmirror.com"
 ```
 
-3. If your mirror source requires authentication, you can include the token or username/password:
+3. If your mirror registry requires authentication, you can include the token:
 
 ```toml
 [install]
-# set the mirror source URL with token
-registry = { url = "https://your-mirror-source-url", token = "your-token" }
-
-# set the mirror source URL with username/password
-registry = "https://username:password@your-mirror-source-url"
+# set the mirror registry URL with token
+registry = { url = "https://registry.npmmirror.com", token = "your-token" }
 ```
 
 4. Save the `bunfig.toml` file.
 
-For more detailed information on configuring the mirror source and other registry settings, refer to the [custom registry guide](../guides/install/custom-registry.md).
+For more detailed information on configuring the mirror registry and other registry settings, refer to the [custom registry guide](../guides/install/custom-registry.md).
 
-### Available Mirror Registry
+### Recommended Mirror Registries
 
-Based on the discussion in #12936, here are some actual mirror sources that you can use:
+Based on the discussion in #12936, here are some recommended mirror registries that you can use:
 
 - `https://registry.npmmirror.com`
 - `https://mirrors.cloud.tencent.com/npm/`
 - `https://repo.huaweicloud.com/repository/npm/`
+
+Please note that our recommendations do not guarantee availability.
 
 ### `.npmrc`
 
@@ -87,30 +88,29 @@ Bun does not currently read `.npmrc` files. For private registries, migrate your
 ```toml
 [install]
 # 设置镜像源 URL
-registry = "https://your-mirror-source-url"
+registry = "https://registry.npmmirror.com"
 ```
 
-3. 如果您的镜像源需要身份验证，可以包含令牌或用户名/密码：
+3. 如果您的镜像源需要身份验证，可以包含令牌：
 
 ```toml
 [install]
 # 设置带有令牌的镜像源 URL
-registry = { url = "https://your-mirror-source-url", token = "your-token" }
-
-# 设置带有用户名/密码的镜像源 URL
-registry = "https://username:password@your-mirror-source-url"
+registry = { url = "https://registry.npmmirror.com", token = "your-token" }
 ```
 
 4. 保存 `bunfig.toml` 文件。
 
 有关配置镜像源和其他注册表设置的详细信息，请参阅[自定义注册表指南](../guides/install/custom-registry.md)。
 
-### 可用的镜像源
+### 推荐的镜像源
 
-根据 #12936 中的讨论，以下是一些实际可用的镜像源：
+根据 #12936 中的讨论，以下是一些推荐的镜像源：
 
 - `https://registry.npmmirror.com`
 - `https://mirrors.cloud.tencent.com/npm/`
 - `https://repo.huaweicloud.com/repository/npm/`
+
+请注意，我们的推荐不保证可用性。
 
 </details>

@@ -176,9 +176,9 @@ export function readableStreamToFormData(
   stream: ReadableStream<ArrayBuffer>,
   contentType: string | ArrayBuffer | ArrayBufferView,
 ): Promise<FormData> {
-  if (!$isReadableStream(stream)) throw new TypeError("First argument must be a ReadableStream");
-
-  return Bun.readableStreamToBlob(stream).then(blob => FormData.from(blob, contentType));
+  return Bun.readableStreamToBlob(stream).then(blob => {
+    return FormData.from(blob, contentType);
+  });
 }
 
 $linkTimeConstant;

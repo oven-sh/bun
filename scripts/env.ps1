@@ -103,7 +103,10 @@ if ($Lto) {
   $CMAKE_FLAGS += "-DUSE_LTO=ON"
 }
 
-if (Get-Command sccache -ErrorAction SilentlyContinue) {
+if (Get-Command ccache -ErrorAction SilentlyContinue) {
+  $CMAKE_FLAGS += "-DCMAKE_C_COMPILER_LAUNCHER=ccache"
+  $CMAKE_FLAGS += "-DCMAKE_CXX_COMPILER_LAUNCHER=ccache"
+} elseif (Get-Command sccache -ErrorAction SilentlyContinue) {
   # Continue with local compiler if sccache has an error
   $env:SCCACHE_IGNORE_SERVER_IO_ERROR = "1"
 

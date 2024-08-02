@@ -16,7 +16,6 @@
  */
 // clang-format off
 
-#include "internal/eventing/epoll_kqueue.h"
 #include "libusockets.h"
 #include "internal/internal.h"
 #include <stdlib.h>
@@ -349,11 +348,9 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     int written = bsd_send(us_poll_fd(&s->p), data, length, msg_more);
     if (written != length) {
-        struct us_socket_context_t *context = s->context;
-        struct us_loop_t *loop = context->loop;
-        if(loop) {
-            loop->data.last_write_failed = 1;
-            us_poll_change(&s->p, loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
+        if(s->context->loop) {
+            s->context->loop->data.last_write_failed = 1;
+            us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
         }
     }
 

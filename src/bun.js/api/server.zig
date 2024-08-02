@@ -1477,12 +1477,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             defer ctx.deref();
 
             if (ctx.isAbortedOrEnded()) {
-                ctx.deref();
                 return JSValue.jsUndefined();
             }
 
             if (ctx.didUpgradeWebSocket()) {
-                ctx.deref();
                 return JSValue.jsUndefined();
             }
 
@@ -1839,12 +1837,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onWritableResponseBuffer", .{});
 
             assert(this.resp == resp);
+            defer this.deref();
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return false;
             }
             this.end("", this.shouldCloseConnection());
-            this.deref();
             return false;
         }
 
@@ -6417,7 +6414,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             request_value.ensureStillAlive();
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
             defer {
-                if (!ctx.didUpgradeWebSocket()) {}
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
             }

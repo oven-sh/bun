@@ -726,7 +726,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 #endif
 
     /* Cannot adopt a closed socket */
-    if (us_socket_is_closed(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return s;
     }
     us_socket_context_ref(ssl, context);

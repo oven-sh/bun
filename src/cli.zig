@@ -81,7 +81,7 @@ pub const debug_flags = if (Environment.isDebug) struct {
         }
         return false;
     }
-} else @compileError("Do not access this namespace []const u8; in a release build");
+} else @compileError("Do not access this namespace in a release build");
 
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
@@ -774,6 +774,7 @@ pub const Arguments = struct {
 
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
+                ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -1279,6 +1280,7 @@ pub const Command = struct {
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
+            inline_entrypoint_import_meta_main: bool = false,
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,

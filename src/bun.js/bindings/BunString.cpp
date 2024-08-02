@@ -7,7 +7,7 @@
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/PutPropertySlot.h"
 
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 #include "JSDOMURL.h"
 #include "DOMURL.h"
 #include "ZigGlobalObject.h"
@@ -205,7 +205,8 @@ BunString toStringRef(WTF::StringImpl* wtfString)
     return { BunStringTag::WTFStringImpl, { .wtf = wtfString } };
 }
 
-BunString toStringView(StringView view) {
+BunString toStringView(StringView view)
+{
     return {
         BunStringTag::ZigString,
         { .zig = toZigString(view) }

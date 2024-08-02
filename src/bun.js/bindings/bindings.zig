@@ -2068,8 +2068,8 @@ pub const AbortSignal = extern opaque {
 
     pub fn unref(
         this: *AbortSignal,
-    ) *AbortSignal {
-        return cppFn("unref", .{this});
+    ) void {
+        cppFn("unref", .{this});
     }
 
     pub fn detach(this: *AbortSignal, ctx: ?*anyopaque) void {
@@ -6456,8 +6456,8 @@ pub const DOMCalls = &.{
     Bun.FFIObject.Reader.DOMCalls,
 };
 
-extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void) void;
-pub fn initialize() void {
+extern "c" fn JSCInitialize(env: [*]const [*:0]u8, count: usize, cb: *const fn ([*]const u8, len: usize) callconv(.C) void, eval_mode: bool) void;
+pub fn initialize(eval_mode: bool) void {
     JSC.markBinding(@src());
     bun.analytics.Features.jsc += 1;
     JSCInitialize(
@@ -6483,6 +6483,7 @@ pub fn initialize() void {
                 bun.Global.exit(1);
             }
         }.callback,
+        eval_mode,
     );
 }
 

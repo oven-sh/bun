@@ -30,6 +30,8 @@
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "JSValueInWrappedObject.h"
+#include "wtf/DebugHeap.h"
+#include "wtf/FastMalloc.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -42,8 +44,10 @@ class AbortAlgorithm;
 class ScriptExecutionContext;
 class WebCoreOpaqueRoot;
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
+
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED_EXPORT(AbortSignal, WEBCORE_EXPORT);
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
 
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);

@@ -55,7 +55,6 @@
 #include "JavaScriptCore/StackFrame.h"
 #include "JavaScriptCore/StackVisitor.h"
 #include "JavaScriptCore/VM.h"
-
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
@@ -189,7 +188,7 @@ static bool has_loaded_jsc = false;
 Structure* createMemoryFootprintStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject);
 
 extern "C" WebCore::Worker* WebWorker__getParentWorker(void*);
-extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length))
+extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(const char* ptr, size_t length), bool evalMode)
 {
     // NOLINTBEGIN
     if (has_loaded_jsc)
@@ -206,18 +205,22 @@ extern "C" void JSCInitialize(const char* envp[], size_t envc, void (*onCrash)(c
 
         JSC::Options::useConcurrentJIT() = true;
         // JSC::Options::useSigillCrashAnalyzer() = true;
-        JSC::Options::useWebAssembly() = true;
+        JSC::Options::useWasm() = true;
         JSC::Options::useSourceProviderCache() = true;
         // JSC::Options::useUnlinkedCodeBlockJettisoning() = false;
         JSC::Options::exposeInternalModuleLoader() = true;
         JSC::Options::useSharedArrayBuffer() = true;
         JSC::Options::useJIT() = true;
         JSC::Options::useBBQJIT() = true;
+        JSC::Options::useUint8ArrayBase64Methods() = true;
         JSC::Options::useJITCage() = false;
         JSC::Options::useShadowRealm() = true;
         JSC::Options::useResizableArrayBuffer() = true;
         JSC::Options::usePromiseWithResolversMethod() = true;
         JSC::Options::useV8DateParser() = true;
+        JSC::Options::evalMode() = evalMode;
+        JSC::Options::usePromiseTryMethod() = true;
+        JSC::Options::useRegExpEscape() = true;
 
 #ifdef BUN_DEBUG
         JSC::Options::showPrivateScriptsInStackTraces() = true;
@@ -987,7 +990,9 @@ const JSC::GlobalObjectMethodTable GlobalObject::s_globalObjectMethodTable = {
     nullptr, // defaultLanguage
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
-    &Zig::deriveShadowRealmGlobalObject
+    &Zig::deriveShadowRealmGlobalObject,
+    nullptr, // codeForEval
+    nullptr, // canCompileStrings
 };
 
 const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable = {
@@ -1010,7 +1015,9 @@ const JSC::GlobalObjectMethodTable EvalGlobalObject::s_globalObjectMethodTable =
     nullptr, // defaultLanguage
     nullptr, // compileStreaming
     nullptr, // instantiateStreaming
-    &Zig::deriveShadowRealmGlobalObject
+    &Zig::deriveShadowRealmGlobalObject,
+    nullptr, // codeForEval
+    nullptr, // canCompileStrings
 };
 
 GlobalObject::GlobalObject(JSC::VM& vm, JSC::Structure* structure, const JSC::GlobalObjectMethodTable* methodTable)
@@ -2103,7 +2110,7 @@ static inline JSC__JSValue ZigGlobalObject__readableStreamToArrayBufferBody(Zig:
 
     auto* function = globalObject->m_readableStreamToArrayBuffer.get();
     if (!function) {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToArrayBufferCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToArrayBufferCodeGenerator(vm)), globalObject);
         globalObject->m_readableStreamToArrayBuffer.set(vm, globalObject, function);
     }
 
@@ -2149,7 +2156,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBytes(Zig::GlobalObject
 
     auto* function = globalObject->m_readableStreamToBytes.get();
     if (!function) {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBytesCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBytesCodeGenerator(vm)), globalObject);
         globalObject->m_readableStreamToBytes.set(vm, globalObject, function);
     }
 
@@ -2189,7 +2196,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToText(Zig::GlobalObject*
     if (auto readableStreamToText = globalObject->m_readableStreamToText.get()) {
         function = readableStreamToText;
     } else {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToTextCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToTextCodeGenerator(vm)), globalObject);
 
         globalObject->m_readableStreamToText.set(vm, globalObject, function);
     }
@@ -2209,7 +2216,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToFormData(Zig::GlobalObj
     if (auto readableStreamToFormData = globalObject->m_readableStreamToFormData.get()) {
         function = readableStreamToFormData;
     } else {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToFormDataCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToFormDataCodeGenerator(vm)), globalObject);
 
         globalObject->m_readableStreamToFormData.set(vm, globalObject, function);
     }
@@ -2231,7 +2238,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToJSON(Zig::GlobalObject*
     if (auto readableStreamToJSON = globalObject->m_readableStreamToJSON.get()) {
         function = readableStreamToJSON;
     } else {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToJSONCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToJSONCodeGenerator(vm)), globalObject);
 
         globalObject->m_readableStreamToJSON.set(vm, globalObject, function);
     }
@@ -2252,7 +2259,7 @@ extern "C" JSC__JSValue ZigGlobalObject__readableStreamToBlob(Zig::GlobalObject*
     if (auto readableStreamToBlob = globalObject->m_readableStreamToBlob.get()) {
         function = readableStreamToBlob;
     } else {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBlobCodeGenerator(vm)), globalObject);
+        function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(readableStreamReadableStreamToBlobCodeGenerator(vm)), globalObject);
 
         globalObject->m_readableStreamToBlob.set(vm, globalObject, function);
     }
@@ -2591,7 +2598,7 @@ void GlobalObject::finishCreation(VM& vm)
             JSC::VM& vm = init.vm;
             JSC::JSGlobalObject* globalObject = init.owner;
 
-            auto* function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(importMetaObjectCreateRequireCacheCodeGenerator(vm)), globalObject);
+            auto* function = JSFunction::create(vm, globalObject, static_cast<JSC::FunctionExecutable*>(importMetaObjectCreateRequireCacheCodeGenerator(vm)), globalObject);
 
             NakedPtr<JSC::Exception> returnedException = nullptr;
             auto result = JSC::call(globalObject, function, JSC::getCallData(function), globalObject, ArgList(), returnedException);
@@ -2694,7 +2701,7 @@ void GlobalObject::finishCreation(VM& vm)
             args.append(jsCast<Zig::GlobalObject*>(init.owner)->utilInspectFunction());
 
             auto scope = DECLARE_THROW_SCOPE(init.vm);
-            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
+            JSC::JSFunction* getStylize = JSC::JSFunction::create(init.vm, init.owner, utilInspectGetStylizeWithColorCodeGenerator(init.vm), init.owner);
             // RETURN_IF_EXCEPTION(scope, {});
 
             JSC::CallData callData = JSC::getCallData(getStylize);
@@ -2712,7 +2719,7 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_utilInspectStylizeNoColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
-            init.set(JSC::JSFunction::create(init.vm, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
+            init.set(JSC::JSFunction::create(init.vm, init.owner, utilInspectStylizeWithNoColorCodeGenerator(init.vm), init.owner));
         });
 
     m_nativeMicrotaskTrampoline.initLater(
@@ -2909,6 +2916,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 JSFunction::create(
                     init.vm,
+                    init.owner,
                     moduleRequireCodeGenerator(init.vm),
                     init.owner->globalScope(),
                     JSFunction::createStructure(init.vm, init.owner, RequireFunctionPrototype::create(init.owner))));
@@ -2919,6 +2927,7 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 JSFunction::create(
                     init.vm,
+                    init.owner,
                     moduleRequireResolveCodeGenerator(init.vm),
                     init.owner->globalScope(),
                     JSFunction::createStructure(init.vm, init.owner, RequireResolveFunctionPrototype::create(init.owner))));
@@ -3149,7 +3158,7 @@ JSValue getEventSourceConstructor(VM& vm, JSObject* thisObject)
     auto globalObject = jsCast<Zig::GlobalObject*>(thisObject);
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, eventSourceGetEventSourceCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
 
     JSC::MarkedArgumentBuffer args;
@@ -3173,7 +3182,7 @@ JSC_DEFINE_CUSTOM_GETTER(getConsoleConstructor, (JSGlobalObject * globalObject, 
 {
     auto& vm = globalObject->vm();
     auto console = JSValue::decode(thisValue).getObject();
-    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, consoleObjectCreateConsoleConstructorCodeGenerator(vm), globalObject);
+    JSC::JSFunction* createConsoleConstructor = JSC::JSFunction::create(vm, globalObject, consoleObjectCreateConsoleConstructorCodeGenerator(vm), globalObject);
     JSC::MarkedArgumentBuffer args;
     args.append(console);
     JSC::CallData callData = JSC::getCallData(createConsoleConstructor);
@@ -3237,7 +3246,7 @@ EncodedJSValue GlobalObject::assignToStream(JSValue stream, JSValue controller)
     JSC::VM& vm = this->vm();
     JSC::JSFunction* function = this->m_assignToStream.get();
     if (!function) {
-        function = JSFunction::create(vm, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignToStreamCodeGenerator(vm)), this);
+        function = JSFunction::create(vm, this, static_cast<JSC::FunctionExecutable*>(readableStreamInternalsAssignToStreamCodeGenerator(vm)), this);
         this->m_assignToStream.set(vm, this, function);
     }
 
@@ -3687,9 +3696,10 @@ template void GlobalObject::visitOutputConstraints(JSCell*, SlotVisitor&);
 void GlobalObject::reload()
 {
     JSModuleLoader* moduleLoader = this->moduleLoader();
+    auto& vm = this->vm();
     JSC::JSMap* registry = jsCast<JSC::JSMap*>(moduleLoader->get(
         this,
-        Identifier::fromString(this->vm(), "registry"_s)));
+        Identifier::fromString(vm, "registry"_s)));
 
     registry->clear(this);
     this->requireMap()->clear(this);

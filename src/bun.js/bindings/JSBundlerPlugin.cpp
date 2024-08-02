@@ -259,7 +259,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
             auto* globalObject = init.owner->globalObject();
 
             init.set(
-                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunOnLoadPluginsCodeGenerator(vm), globalObject));
+                JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunOnLoadPluginsCodeGenerator(vm), globalObject));
         });
 
     this->onResolveFunction.initLater(
@@ -268,7 +268,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
             auto* globalObject = init.owner->globalObject();
 
             init.set(
-                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunOnResolvePluginsCodeGenerator(vm), globalObject));
+                JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunOnResolvePluginsCodeGenerator(vm), globalObject));
         });
 
     this->setupFunction.initLater(
@@ -277,7 +277,7 @@ void JSBundlerPlugin::finishCreation(JSC::VM& vm)
             auto* globalObject = init.owner->globalObject();
 
             init.set(
-                JSC::JSFunction::create(vm, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
+                JSC::JSFunction::create(vm, globalObject, WebCore::bundlerPluginRunSetupFunctionCodeGenerator(vm), globalObject));
         });
 
     this->putDirect(vm, Identifier::fromString(vm, String("onLoad"_s)), jsUndefined(), 0);

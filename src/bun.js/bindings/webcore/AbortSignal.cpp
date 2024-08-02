@@ -34,13 +34,15 @@
 #include "JSDOMException.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreOpaqueRoot.h"
+#include "wtf/DebugHeap.h"
+#include "wtf/FastMalloc.h"
 #include <JavaScriptCore/Exception.h>
 #include <JavaScriptCore/JSCast.h>
 #include <wtf/IsoMallocInlines.h>
 
 namespace WebCore {
 
-WTF_MAKE_ISO_ALLOCATED_IMPL(AbortSignal);
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
 
 Ref<AbortSignal> AbortSignal::create(ScriptExecutionContext* context)
 {

@@ -1100,6 +1100,8 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=uninitialized
             -Werror=conditional-uninitialized
             -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
             -Werror=move
             -Werror=sometimes-uninitialized
             -Werror=unused
@@ -1127,6 +1129,8 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=uninitialized
             -Werror=conditional-uninitialized
             -Werror=suspicious-memaccess
+            -Werror=int-conversion
+            -Werror=nonnull
             -Werror=move
             -Werror=sometimes-uninitialized
             -Werror

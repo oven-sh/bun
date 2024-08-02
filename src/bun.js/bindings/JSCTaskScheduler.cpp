@@ -60,17 +60,20 @@ void JSCTaskScheduler::onScheduleWorkSoon(Ticket ticket, Task&& task)
 
 void JSCTaskScheduler::onCancelPendingWork(Ticket ticket)
 {
-    auto& scheduler = WebCore::clientData(getVM(ticket))->deferredWorkTimer;
+    JSC::VM& vm = getVM(ticket);
+    auto* clientData = WebCore::clientData(vm);
+    auto* bunVM = clientData->bunVM;
+    auto& scheduler = clientData->deferredWorkTimer;
 
     Locker<Lock> holder { scheduler.m_lock };
     bool isKeepingEventLoopAlive = scheduler.m_pendingTicketsKeepingEventLoopAlive.removeIf([ticket](auto pendingTicket) {
         return pendingTicket.ptr() == ticket;
     });
+    // -- At this point, ticket may be an invalid pointer.
 
     if (isKeepingEventLoopAlive) {
         holder.unlockEarly();
-        JSC::VM& vm = getVM(ticket);
-        Bun__eventLoop__incrementRefConcurrently(WebCore::clientData(vm)->bunVM, -1);
+        Bun__eventLoop__incrementRefConcurrently(bunVM, -1);
     } else {
         scheduler.m_pendingTicketsOther.removeIf([ticket](auto pendingTicket) {
             return pendingTicket.ptr() == ticket;

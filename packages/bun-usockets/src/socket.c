@@ -343,6 +343,7 @@ void *us_connecting_socket_get_native_handle(int ssl, struct us_connecting_socke
 #endif
     return (void *) (uintptr_t) -1;
 }
+extern void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
 
 int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length, int msg_more) {
 #ifndef LIBUS_NO_SSL
@@ -360,8 +361,7 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
             s->context->loop->data.last_write_failed = 1;
             us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
         } else {
-            fprintf(stderr, "UAF detected\n");
-            abort();
+            Bun__panic("Loop detached in socket write", 29);
         }
     }
 

@@ -6,8 +6,7 @@
     "dev": "next dev",
     "build": "next build",
     "start": "next start",
-    "lint": "next lint",
-    "postinstall": "cd node_modules/puppeteer && bun install.mjs"
+    "lint": "next lint"
   },
   "dependencies": {
     "@types/node": "20.7.0",

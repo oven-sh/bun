@@ -2742,6 +2742,8 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionReallyKill,
         result = errno;
 #else
     int result = uv_kill(pid, signal);
+    if (result == UV_ESRCH)
+        result = 0;
 #endif
 
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(result)));

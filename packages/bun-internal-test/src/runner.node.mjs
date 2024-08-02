@@ -239,7 +239,7 @@ Starting "${testFileName}"
           GITHUB_ACTIONS: process.env.GITHUB_ACTIONS ?? "true",
           BUN_DEBUG_QUIET_LOGS: "1",
           BUN_INSTALL_CACHE_DIR: join(TMPDIR, ".bun-install-cache"),
-          BUN_ENABLE_CRASH_REPORTING: "1",
+          BUN_ENABLE_CRASH_REPORTING: "0",
           [windows ? "TEMP" : "TMPDIR"]: TMPDIR,
         },
       });

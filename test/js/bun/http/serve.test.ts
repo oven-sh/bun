@@ -8,6 +8,7 @@ import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4 } from "
 import { spawn } from "child_process";
 import { tmpdir } from "os";
 import { heapStats } from "bun:jsc";
+import net from "node:net";
 
 let renderToReadableStream: any = null;
 let app_jsx: any = null;
@@ -166,7 +167,10 @@ describe("1000 uploads & downloads in batches of 64 do not leak ReadableStream",
           async server => {
             const count = 1000;
             async function callback() {
-              const response = await fetch(server.url, { body: blob, method: "POST" });
+              const response = await fetch(server.url, {
+                body: blob,
+                method: "POST",
+              });
 
               // We are testing for ReadableStream leaks, so we use the ReadableStream here.
               const chunks = [];
@@ -278,7 +282,9 @@ it("request.signal works in trivial case", async () => {
     },
     async server => {
       expect(async () => {
-        const response = await fetch(server.url.origin, { signal: aborty.signal });
+        const response = await fetch(server.url.origin, {
+          signal: aborty.signal,
+        });
         await signaler.promise;
         await response.blob();
       }).toThrow("The operation was aborted.");
@@ -1081,7 +1087,9 @@ describe("should support Content-Range with Bun.file()", () => {
       const end = Number(searchParams.get("end"));
       const file = Bun.file(fixture);
       return new Response(file.slice(start, end), {
-        headers: { "Content-Range": "bytes " + start + "-" + end + "/" + file.size },
+        headers: {
+          "Content-Range": "bytes " + start + "-" + end + "/" + file.size,
+        },
       });
     },
   });
@@ -1173,7 +1181,10 @@ describe("should support Content-Range with Bun.file()", () => {
 
 it("formats error responses correctly", async () => {
   const { promise, resolve, reject } = Promise.withResolvers();
-  const c = spawn(bunExe(), ["./error-response.js"], { cwd: import.meta.dir, env: bunEnv });
+  const c = spawn(bunExe(), ["./error-response.js"], {
+    cwd: import.meta.dir,
+    env: bunEnv,
+  });
 
   var output = "";
   c.stderr.on("data", chunk => {
@@ -1562,7 +1573,7 @@ it("should resolve pending promise if requested ended with pending read", async 
     {
       fetch(req) {
         // @ts-ignore
-        req.body?.getReader().read().catch(shouldError).then(shouldMarkDone);
+        req.body?.getReader().read().then(shouldMarkDone).catch(shouldError);
         return new Response("OK");
       },
     },
@@ -1573,8 +1584,9 @@ it("should resolve pending promise if requested ended with pending read", async 
       });
       const text = await response.text();
       expect(text).toContain("OK");
-      expect(is_done).toBe(true);
-      expect(error).toBeUndefined();
+      expect(is_done).toBe(false);
+      expect(error).toBeDefined();
+      expect(error.name).toContain("AbortError");
     },
   );
 });
@@ -1647,5 +1659,146 @@ it("should be able to abrupt stop the server", async () => {
     } catch (e) {
       expect(e.code).toBe("ConnectionClosed");
     }
+  }
+});
+
+it("should not instanciate error instances in each request", async () => {
+  const startErrorCount = heapStats().objectTypeCounts.Error || 0;
+  using server = Bun.serve({
+    port: 0,
+    async fetch(req, server) {
+      return new Response("bun");
+    },
+  });
+  const batchSize = 100;
+  const batch = new Array(batchSize);
+  for (let i = 0; i < 1000; i++) {
+    batch[i % batchSize] = await fetch(server.url, {
+      method: "POST",
+      body: "bun",
+    });
+    if (i % batchSize === batchSize - 1) {
+      await Promise.all(batch);
+    }
+  }
+  expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount);
+});
+
+it("should not send extra bytes when using sendfile", async () => {
+  const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  const tmpFile = join(tmpdirSync(), "test.bin");
+  await Bun.write(tmpFile, payload);
+  using serve = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      if (pathname === "/file") {
+        return new Response(Bun.file(tmpFile), {
+          headers: {
+            "Content-Type": "plain/text",
+          },
+        });
+      }
+      return new Response("Not Found", {
+        status: 404,
+      });
+    },
+  });
+
+  // manually fetch the file using sockets, and get the whole content
+  const { promise, resolve, reject } = Promise.withResolvers();
+  const socket = net.connect(serve.port, "localhost", () => {
+    socket.write("GET /file HTTP/1.1\r\nHost: localhost\r\n\r\n");
+    setTimeout(() => {
+      socket.end(); // wait a bit before closing the connection so we get the whole content
+    }, 100);
+  });
+
+  let body: Buffer | null = null;
+  let content_length = 0;
+  let headers = "";
+
+  socket.on("data", data => {
+    if (body) {
+      body = Buffer.concat([body as Buffer, data]);
+
+      return;
+    }
+    // parse headers
+    const str = data.toString("utf8");
+    const index = str.indexOf("\r\n\r\n");
+    if (index === -1) {
+      headers += str;
+      return;
+    }
+    headers += str.slice(0, index);
+    const lines = headers.split("\r\n");
+    for (const line of lines) {
+      const [key, value] = line.split(": ");
+      if (key.toLowerCase() === "content-length") {
+        content_length = Number.parseInt(value, 10);
+      }
+    }
+    body = data.subarray(index + 4);
+  });
+  socket.on("error", reject);
+  socket.on("close", () => {
+    resolve(body);
+  });
+
+  expect(await promise).toEqual(Buffer.from(payload));
+  expect(content_length).toBe(payload.byteLength);
+});
+
+it("we should always send date", async () => {
+  const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);
+  const tmpFile = join(tmpdirSync(), "test.bin");
+  await Bun.write(tmpFile, payload);
+  using serve = Bun.serve({
+    port: 0,
+    fetch(req) {
+      const pathname = new URL(req.url).pathname;
+      if (pathname === "/file") {
+        return new Response(Bun.file(tmpFile), {
+          headers: {
+            "Content-Type": "plain/text",
+          },
+        });
+      }
+      if (pathname === "/file2") {
+        return new Response(Bun.file(tmpFile));
+      }
+      if (pathname === "/stream") {
+        return new Response(
+          new ReadableStream({
+            async pull(controller) {
+              await Bun.sleep(10);
+              controller.enqueue(payload);
+              await Bun.sleep(10);
+              controller.close();
+            },
+          }),
+        );
+      }
+      return new Response("Hello, World!");
+    },
+  });
+
+  {
+    const res = await fetch(new URL("/file", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+  {
+    const res = await fetch(new URL("/file2", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+
+  {
+    const res = await fetch(new URL("/", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
+  }
+  {
+    const res = await fetch(new URL("/stream", serve.url.origin));
+    expect(res.headers.has("Date")).toBeTrue();
   }
 });

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 
-# Hack for Buildkite sometimes not having the right path
+# Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   if [ -f ~/.bashrc ]; then
     source ~/.bashrc
@@ -76,7 +76,7 @@ fi
 # https://gitlab.kitware.com/cmake/cmake/-/issues/25755
 if [[ $(uname -s) == 'Darwin' && $LLVM_VERSION == '18' ]]; then
   export CFLAGS="$CFLAGS -fno-define-target-os-macros "
-  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros "
+  export CXXFLAGS="$CXXFLAGS -fno-define-target-os-macros -D_LIBCXX_ENABLE_ASSERTIONS=0 -D_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE "
 fi
 
 # libarchive needs position-independent executables to compile successfully
@@ -120,7 +120,6 @@ fi
 
 if [[ $(uname -s) == 'Darwin' ]]; then
   export CMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET:-13.0}
-
   CMAKE_FLAGS+=(-DCMAKE_OSX_DEPLOYMENT_TARGET=${CMAKE_OSX_DEPLOYMENT_TARGET})
   export CFLAGS="$CFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "
   export CXXFLAGS="$CXXFLAGS -mmacosx-version-min=${CMAKE_OSX_DEPLOYMENT_TARGET} -D__DARWIN_NON_CANCELABLE=1 "

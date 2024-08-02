@@ -639,7 +639,7 @@ pub const Bundler = struct {
                 framework.resolved = true;
                 this.options.framework = framework.*;
             } else if (!framework.resolved) {
-                Global.panic("directly passing framework path is not implemented yet!", .{});
+                Output.panic("directly passing framework path is not implemented yet!", .{});
             }
         }
     }
@@ -1144,6 +1144,7 @@ pub const Bundler = struct {
                     .minify_identifiers = bundler.options.minify_identifiers,
                     .transform_only = bundler.options.transform_only,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1167,6 +1168,7 @@ pub const Bundler = struct {
                     .transform_only = bundler.options.transform_only,
                     .import_meta_ref = ast.import_meta_ref,
                     .runtime_transpiler_cache = runtime_transpiler_cache,
+                    .print_dce_annotations = bundler.options.emit_dce_annotations,
                 },
                 enable_source_map,
             ),
@@ -1199,6 +1201,8 @@ pub const Bundler = struct {
                         .inline_require_and_import_errors = false,
                         .import_meta_ref = ast.import_meta_ref,
                         .runtime_transpiler_cache = runtime_transpiler_cache,
+                        .target = bundler.options.target,
+                        .print_dce_annotations = bundler.options.emit_dce_annotations,
                     },
                     enable_source_map,
                 ),
@@ -1234,6 +1238,18 @@ pub const Bundler = struct {
         comptime format: js_printer.Format,
         handler: js_printer.SourceMapHandler,
     ) !usize {
+        if (bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_DISABLE_SOURCE_MAPS")) {
+            return bundler.printWithSourceMapMaybe(
+                result.ast,
+                &result.source,
+                Writer,
+                writer,
+                format,
+                false,
+                handler,
+                result.runtime_transpiler_cache,
+            );
+        }
         return bundler.printWithSourceMapMaybe(
             result.ast,
             &result.source,
@@ -1392,6 +1408,8 @@ pub const Bundler = struct {
                 opts.features.no_macros = bundler.options.no_macros;
                 opts.features.runtime_transpiler_cache = this_parse.runtime_transpiler_cache;
                 opts.transform_only = bundler.options.transform_only;
+
+                opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations;
 
                 // @bun annotation
                 opts.features.dont_bundle_twice = this_parse.dont_bundle_twice;
@@ -1649,7 +1667,7 @@ pub const Bundler = struct {
                 }
             },
             .css => {},
-            else => Global.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
+            else => Output.panic("Unsupported loader {s} for path: {s}", .{ @tagName(loader), source.path.text }),
         }
 
         return null;

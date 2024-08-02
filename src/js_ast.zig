@@ -1550,6 +1550,12 @@ pub const E = struct {
         range: logger.Range,
     };
     pub const ImportMeta = struct {};
+    pub const ImportMetaMain = struct {
+        /// If we want to print `!import.meta.main`, set this flag to true
+        /// instead of wrapping in a unary not. This way, the printer can easily
+        /// print `require.main != module` instead of `!(require.main == module)`
+        inverted: bool = false,
+    };
 
     pub const Call = struct {
         // Node:
@@ -4468,13 +4474,12 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+        e_import_meta_main,
+        e_require_main,
         e_inlined_enum,
 
         /// A string that is UTF-8 encoded without escaping for use in JavaScript.
         e_utf8_string,
-
-        // This should never make it to the printer
-        inline_identifier,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5156,8 +5161,8 @@ pub const Expr = struct {
 
         e_require_string: E.RequireString,
         e_require_resolve_string: E.RequireResolveString,
-        e_require_call_target: void,
-        e_require_resolve_call_target: void,
+        e_require_call_target,
+        e_require_resolve_call_target,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -5166,13 +5171,11 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+        e_import_meta_main: E.ImportMetaMain,
+        e_require_main,
+
         e_inlined_enum: *E.InlinedEnum,
-
         e_utf8_string: *E.UTF8String,
-
-        // This type should not exist outside of MacroContext
-        // If it ends up in JSParser or JSPrinter, it is a bug.
-        inline_identifier: i32,
 
         pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
             return if (data == tag) @field(data, @tagName(tag)) else null;
@@ -5754,6 +5757,14 @@ pub const Expr = struct {
             equal: bool = false,
             ok: bool = false,
 
+            /// This extra flag is unfortunately required for the case of visiting the expression
+            /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
+            ///
+            /// We want to replace this with the dedicated import_meta_main node, which:
+            /// - Stops this module from having p.require_ref, allowing conversion to ESM
+            /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
+            is_require_main_and_module: bool = false,
+
             pub const @"true" = Equality{ .ok = true, .equal = true };
             pub const @"false" = Equality{ .ok = true, .equal = false };
             pub const unknown = Equality{ .ok = false };
@@ -5765,12 +5776,14 @@ pub const Expr = struct {
         pub fn eql(
             left: Expr.Data,
             right: Expr.Data,
-            allocator: std.mem.Allocator,
+            p: anytype,
             comptime kind: enum { loose, strict },
         ) Equality {
+            comptime bun.assert(@typeInfo(@TypeOf(p)).Pointer.size == .One); // pass *Parser
+
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
-                .e_inlined_enum => |inlined| return inlined.value.data.eql(right, allocator, kind),
+                .e_inlined_enum => |inlined| return inlined.value.data.eql(right, p, kind),
 
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
@@ -5881,8 +5894,8 @@ pub const Expr = struct {
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            r.resolveRopeIfNeeded(allocator);
-                            l.resolveRopeIfNeeded(allocator);
+                            r.resolveRopeIfNeeded(p.allocator);
+                            l.resolveRopeIfNeeded(p.allocator);
                             return .{
                                 .ok = true,
                                 .equal = r.eql(E.String, l),
@@ -5892,8 +5905,8 @@ pub const Expr = struct {
                             if (inlined.value.data == .e_string) {
                                 const r = inlined.value.data.e_string;
 
-                                r.resolveRopeIfNeeded(allocator);
-                                l.resolveRopeIfNeeded(allocator);
+                                r.resolveRopeIfNeeded(p.allocator);
+                                l.resolveRopeIfNeeded(p.allocator);
 
                                 return .{
                                     .ok = true,
@@ -5924,7 +5937,20 @@ pub const Expr = struct {
                         else => {},
                     }
                 },
-                else => {},
+
+                else => {
+                    // Do not need to check left because e_require_main is
+                    // always re-ordered to the right side.
+                    if (right == .e_require_main) {
+                        if (left.as(.e_identifier)) |id| {
+                            if (id.ref.eql(p.module_ref)) return .{
+                                .ok = true,
+                                .equal = true,
+                                .is_require_main_and_module = true,
+                            };
+                        }
+                    }
+                },
             }
 
             return Equality.unknown;
@@ -5949,7 +5975,6 @@ pub const Expr = struct {
 
                 .e_identifier,
                 .e_import_identifier,
-                .inline_identifier,
                 .e_private_identifier,
                 .e_commonjs_export_identifier,
                 => error.@"Cannot convert identifier to JS. Try a statically-known value",
@@ -6636,7 +6661,7 @@ pub const Ast = struct {
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
-    commonjs_export_names: []string = &([_]string{}),
+    has_commonjs_export_names: bool = false,
     import_meta_ref: Ref = Ref.None,
 
     pub const CommonJSNamedExport = struct {

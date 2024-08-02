@@ -14,6 +14,43 @@ describe("Bun.build", () => {
     throw new Error("should have thrown");
   });
 
+  // https://github.com/oven-sh/bun/issues/12818
+  test("sourcemap + build error crash case", async () => {
+    const dir = tempDirWithFiles("build", {
+      "/src/file1.ts": `
+        import { A } from './dir';
+        console.log(A);
+      `,
+      "/src/dir/index.ts": `
+        import { B } from "./file3";
+        export const A = [B]
+      `,
+      "/src/dir/file3.ts": `
+        import { C } from "../file1"; // error
+        export const B = C;
+      `,
+      "/src/package.json": `
+        { "type": "module" }
+      `,
+      "/src/tsconfig.json": `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+              "target": "ESNext",
+              "module": "ESNext",
+              "types": []
+          }
+        }
+      `,
+    });
+    const y = await Bun.build({
+      entrypoints: [join(dir, "src/file1.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+      external: ["@minecraft"],
+    });
+  });
+
   test("invalid options throws", async () => {
     expect(() => Bun.build({} as any)).toThrow();
     expect(() =>
@@ -348,5 +385,39 @@ describe("Bun.build", () => {
     }
 
     Bun.gc(true);
+  });
+
+  test("ignoreDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      ignoreDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("console.log(1);\n");
+  });
+
+  test("emitDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        export const OUT = /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      emitDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 });

@@ -35,6 +35,7 @@ pub const InternalLoopData = extern struct {
     last_write_failed: i32,
     head: ?*SocketContext,
     iterator: ?*SocketContext,
+    closed_context_head: ?*SocketContext,
     recv_buf: [*]u8,
     send_buf: [*]u8,
     ssl_data: ?*anyopaque,
@@ -964,8 +965,8 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
 
                     // We close immediately in this case
                     // uSockets doesn't know if this is a TLS socket or not.
-                    // So we have to do that logic in here.
-                    ThisSocket.from(socket).close(.failure);
+                    // So we need to close it like a TCP socket.
+                    NewSocketHandler(false).from(socket).close(.failure);
 
                     Fields.onConnectError(
                         val,
@@ -1086,7 +1087,7 @@ pub const Timer = opaque {
 
 pub const SocketContext = opaque {
     pub fn getNativeHandle(this: *SocketContext, comptime ssl: bool) *anyopaque {
-        return us_socket_context_get_native_handle(comptime @as(i32, @intFromBool(ssl)), this).?;
+        return us_socket_context_get_native_handle(@intFromBool(ssl), this).?;
     }
 
     fn _deinit_ssl(this: *SocketContext) void {
@@ -1143,10 +1144,7 @@ pub const SocketContext = opaque {
     }
 
     fn getLoop(this: *SocketContext, ssl: bool) ?*Loop {
-        if (ssl) {
-            return us_socket_context_loop(@as(i32, 1), this);
-        }
-        return us_socket_context_loop(@as(i32, 0), this);
+        return us_socket_context_loop(@intFromBool(ssl), this);
     }
 
     /// closes and deinit the SocketContexts
@@ -1164,7 +1162,7 @@ pub const SocketContext = opaque {
 
     pub fn close(this: *SocketContext, ssl: bool) void {
         debug("us_socket_context_close({d})", .{@intFromPtr(this)});
-        us_socket_context_close(@as(i32, @intFromBool(ssl)), this);
+        us_socket_context_close(@intFromBool(ssl), this);
     }
 
     pub fn ext(this: *SocketContext, ssl: bool, comptime ContextType: type) ?*ContextType {
@@ -1409,6 +1407,8 @@ pub extern fn us_create_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, op
 pub extern fn us_create_bun_socket_context(ssl: i32, loop: ?*Loop, ext_size: i32, options: us_bun_socket_context_options_t) ?*SocketContext;
 pub extern fn us_bun_socket_context_add_server_name(ssl: i32, context: ?*SocketContext, hostname_pattern: [*c]const u8, options: us_bun_socket_context_options_t, ?*anyopaque) void;
 pub extern fn us_socket_context_free(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_ref(ssl: i32, context: ?*SocketContext) void;
+pub extern fn us_socket_context_unref(ssl: i32, context: ?*SocketContext) void;
 extern fn us_socket_context_on_open(ssl: i32, context: ?*SocketContext, on_open: *const fn (*Socket, i32, [*c]u8, i32) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_close(ssl: i32, context: ?*SocketContext, on_close: *const fn (*Socket, i32, ?*anyopaque) callconv(.C) ?*Socket) void;
 extern fn us_socket_context_on_data(ssl: i32, context: ?*SocketContext, on_data: *const fn (*Socket, [*c]u8, i32) callconv(.C) ?*Socket) void;
@@ -2230,6 +2230,9 @@ pub fn NewApp(comptime ssl: bool) type {
             pub fn endWithoutBody(res: *Response, close_connection: bool) void {
                 uws_res_end_without_body(ssl_flag, res.downcast(), close_connection);
             }
+            pub fn endSendFile(res: *Response, write_offset: u64, close_connection: bool) void {
+                uws_res_end_sendfile(ssl_flag, res.downcast(), write_offset, close_connection);
+            }
             pub fn write(res: *Response, data: []const u8) bool {
                 return uws_res_write(ssl_flag, res.downcast(), data.ptr, data.len);
             }
@@ -2641,6 +2644,7 @@ extern fn uws_res_write_status(ssl: i32, res: *uws_res, status: [*c]const u8, le
 extern fn uws_res_write_header(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: [*c]const u8, value_length: usize) void;
 extern fn uws_res_write_header_int(ssl: i32, res: *uws_res, key: [*c]const u8, key_length: usize, value: u64) void;
 extern fn uws_res_end_without_body(ssl: i32, res: *uws_res, close_connection: bool) void;
+extern fn uws_res_end_sendfile(ssl: i32, res: *uws_res, write_offset: u64, close_connection: bool) void;
 extern fn uws_res_write(ssl: i32, res: *uws_res, data: [*c]const u8, length: usize) bool;
 extern fn uws_res_get_write_offset(ssl: i32, res: *uws_res) u64;
 extern fn uws_res_override_write_offset(ssl: i32, res: *uws_res, u64) void;

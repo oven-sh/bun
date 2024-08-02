@@ -1400,7 +1400,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         // This pre-allocates up to 2,048 RequestContext structs.
         // It costs about 655,632 bytes.
-        pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, 2048).Fallback;
+        pub const RequestContextStackAllocator = bun.HiveArray(RequestContext, if (bun.heap_breakdown.enabled) 0 else 2048).Fallback;
 
         pub const name = "HTTPRequestContext" ++ (if (debug_mode) "Debug" else "") ++ (if (ThisServer.ssl_enabled) "TLS" else "");
         pub const shim = JSC.Shimmer("Bun", name, @This());
@@ -1427,7 +1427,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         blob: JSC.WebCore.AnyBlob = JSC.WebCore.AnyBlob{ .Blob = .{} },
 
         sendfile: SendfileContext = undefined,
-        request_body: ?*JSC.WebCore.BodyValueRef = null,
+        request_body: ?*JSC.BodyValueRef = null,
         request_body_buf: std.ArrayListUnmanaged(u8) = .{},
         request_body_content_len: usize = 0,
 
@@ -1616,7 +1616,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             defer ctx.deref();
 
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else JSC.JSValue.jsUndefined());
+            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
             return JSValue.jsUndefined();
         }
 
@@ -1933,7 +1933,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                     // but we received nothing or the connection was aborted
                     if (body.value == .Locked) {
-                        body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                        body.value.toErrorInstance(.{ .Aborted = {} }, this.server.globalThis);
                         any_js_calls = true;
                     }
                 }
@@ -1994,7 +1994,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // Case 3:
                 // Stream was not consumed and the connection was aborted or ended
                 if (body.value == .Locked) {
-                    body.value.toErrorInstance(JSC.toTypeError(.ABORT_ERR, "Request aborted", .{}, this.server.globalThis), this.server.globalThis);
+                    body.value.toErrorInstance(.{ .Aborted = {} }, this.server.globalThis);
                 }
             }
 
@@ -2048,11 +2048,16 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
         }
 
-        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+        pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
             if (this.resp) |resp| {
-                resp.overrideWriteOffset(this.sendfile.offset);
-                this.endWithoutBody(this.shouldCloseConnection());
+                this.detachResponse();
+                resp.endSendFile(writeOffSet, closeConnection);
             }
+        }
+
+        fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
+            this.endSendFile(this.sendfile.offset, this.shouldCloseConnection());
+
             // use node syscall so that we don't segfault on BADF
             if (this.sendfile.auto_close)
                 _ = bun.sys.close(this.sendfile.fd);
@@ -2894,14 +2899,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             value.toBlobIfPossible();
 
             switch (value.*) {
-                .Error => {
-                    const err = value.Error;
+                .Error => |*err_ref| {
                     _ = value.use();
                     if (this.isAbortedOrEnded()) {
                         this.deref();
                         return;
                     }
-                    this.runErrorHandler(err);
+                    this.runErrorHandler(err_ref.toJS(this.server.globalThis));
                     return;
                 },
                 // .InlineBlob,
@@ -5300,6 +5304,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
 
         pub usingnamespace NamespaceType;
+        pub usingnamespace bun.New(@This());
 
         pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*ThisServer {
             globalThis.throw("Server() is not a constructor", .{});
@@ -5667,7 +5672,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 existing_request = Request.init(
                     bun.String.createUTF8(url.href),
                     headers,
-                    JSC.WebCore.InitRequestBodyValue(body) catch bun.outOfMemory(),
+                    this.vm.initRequestBodyValue(body) catch bun.outOfMemory(),
                     method,
                 );
             } else if (first_arg.as(Request)) |request_| {
@@ -5684,8 +5689,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 return JSPromise.rejectedPromiseValue(ctx, err);
             }
 
-            var request = bun.default_allocator.create(Request) catch unreachable;
-            request.* = existing_request;
+            var request = Request.new(existing_request);
 
             const response_value = this.config.onRequest.call(
                 this.globalThis,
@@ -5723,21 +5727,21 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 };
 
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
-                this.thisObject = JSC.JSValue.jsUndefined();
+                this.thisObject = .undefined;
                 this.stop(abrupt);
             }
 
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         pub fn disposeFromJS(this: *ThisServer) JSC.JSValue {
             if (this.listener != null) {
                 JSC.C.JSValueUnprotect(this.globalThis, this.thisObject.asObjectRef());
-                this.thisObject = JSC.JSValue.jsUndefined();
+                this.thisObject = .undefined;
                 this.stop(true);
             }
 
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         pub fn getPort(
@@ -5977,23 +5981,26 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             this.config.deinit();
             this.app.destroy();
-            const allocator = this.allocator;
-            allocator.destroy(this);
+            this.destroy();
         }
 
         pub fn init(config: ServerConfig, globalThis: *JSGlobalObject) *ThisServer {
-            var server = bun.default_allocator.create(ThisServer) catch bun.outOfMemory();
-            server.* = .{
+            var server = ThisServer.new(.{
                 .globalThis = globalThis,
                 .config = config,
                 .base_url_string_for_joining = bun.default_allocator.dupe(u8, strings.trim(config.base_url.href, "/")) catch unreachable,
                 .vm = JSC.VirtualMachine.get(),
                 .allocator = Arena.getThreadlocalDefault(),
-            };
+            });
 
             if (RequestContext.pool == null) {
                 RequestContext.pool = server.allocator.create(RequestContext.RequestContextStackAllocator) catch bun.outOfMemory();
-                RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(server.allocator);
+                RequestContext.pool.?.* = RequestContext.RequestContextStackAllocator.init(
+                    if (comptime bun.heap_breakdown.enabled)
+                        bun.typedAllocator(RequestContext)
+                    else
+                        bun.default_allocator,
+                );
             }
 
             server.request_pool_allocator = RequestContext.pool.?;
@@ -6236,20 +6243,19 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             var ctx = this.request_pool_allocator.tryGet() catch bun.outOfMemory();
             ctx.create(this, req, resp);
             this.vm.jsc.reportExtraMemory(@sizeOf(RequestContext));
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch bun.outOfMemory();
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            request_object.* = .{
+            const request_object = Request.new(.{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .https = ssl_enabled,
                 .signal = signal.ref(),
                 .body = body.ref(),
-            };
+            });
 
             if (comptime debug_mode) {
                 ctx.flags.is_web_browser_navigation = brk: {
@@ -6354,21 +6360,20 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             req.setYield(false);
             var ctx = this.request_pool_allocator.tryGet() catch @panic("ran out of memory");
             ctx.create(this, req, resp);
-            var request_object = this.allocator.create(JSC.WebCore.Request) catch unreachable;
-            var body = JSC.WebCore.InitRequestBodyValue(.{ .Null = {} }) catch unreachable;
+            var body = this.vm.initRequestBodyValue(.{ .Null = {} }) catch unreachable;
 
             ctx.request_body = body;
             var signal = JSC.WebCore.AbortSignal.new(this.globalThis);
             ctx.signal = signal;
 
-            request_object.* = .{
+            var request_object = Request.new(.{
                 .method = ctx.method,
                 .request_context = AnyRequestContext.init(ctx),
                 .upgrader = ctx,
                 .https = ssl_enabled,
                 .signal = signal.ref(),
                 .body = body.ref(),
-            };
+            });
             ctx.upgrade_context = upgrade_ctx;
 
             // We keep the Request object alive for the duration of the request so that we can remove the pointer to the UWS request object.

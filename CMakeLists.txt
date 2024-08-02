@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.21")
-set(WEBKIT_TAG 49907bff8781719bc2ded068b0c934f6d0074d1e)
+set(Bun_VERSION "1.1.22")
+set(WEBKIT_TAG f9a0fda2d2b2fd001a00bfcf8e7917a56b382516)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1000,8 +1000,20 @@ add_compile_definitions(
 )
 
 if(NOT ASSERT_ENABLED)
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=0")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_NONE")
+    endif()
+
     add_compile_definitions("NDEBUG=1")
 else()
+    if(APPLE)
+        add_compile_definitions("_LIBCXX_ENABLE_ASSERTIONS=1")
+        add_compile_definitions("_LIBCPP_HARDENING_MODE=_LIBCPP_HARDENING_MODE_DEBUG")
+    elseif(CMAKE_SYSTEM_NAME STREQUAL "Linux")
+        add_compile_definitions("_GLIBCXX_ASSERTIONS=1")
+    endif()
+
     add_compile_definitions("ASSERT_ENABLED=1")
 endif()
 
@@ -1211,7 +1223,7 @@ endif()
 
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
-        -fuse-ld=lld
+        -fuse-ld=lld-${LLVM_VERSION}
         -fno-pic
         -static-libstdc++
         -static-libgcc

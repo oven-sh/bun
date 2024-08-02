@@ -353,15 +353,15 @@ pub const LifecycleScriptSubprocess = struct {
             },
             .signaled => |signal| {
                 this.printOutput();
+                const signal_code = bun.SignalCode.from(signal);
+
                 Output.prettyErrorln("<r><red>error<r><d>:<r> <b>{s}<r> script from \"<b>{s}<r>\" terminated by {}<r>", .{
                     this.scriptName(),
                     this.package_name,
-
-                    bun.SignalCode.from(signal).fmt(Output.enable_ansi_colors_stderr),
+                    signal_code.fmt(Output.enable_ansi_colors_stderr),
                 });
-                Global.raiseIgnoringPanicHandler(@intFromEnum(signal));
 
-                return;
+                Global.raiseIgnoringPanicHandler(signal);
             },
             .err => |err| {
                 Output.prettyErrorln("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to\n{}", .{
@@ -372,7 +372,6 @@ pub const LifecycleScriptSubprocess = struct {
                 this.deinit();
                 Output.flush();
                 Global.exit(1);
-                return;
             },
             else => {
                 Output.panic("<r><red>error<r>: Failed to run <b>{s}<r> script from \"<b>{s}<r>\" due to unexpected status\n{any}", .{

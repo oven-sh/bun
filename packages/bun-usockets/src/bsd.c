@@ -26,6 +26,10 @@
 #include <stdlib.h>
 
 #ifndef _WIN32
+// Necessary for the stdint include
+#ifndef _GNU_SOURCE
+#define _GNU_SOURCE
+#endif
 #include <sys/types.h>
 #include <sys/socket.h>
 #include <netinet/in.h>

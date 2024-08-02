@@ -356,6 +356,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8()) {
@@ -364,10 +365,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         right,
                                         r.data == .e_inlined_enum,
                                     ) };
+                                    return lhs;
                                 }
                             }
-
-                            return lhs;
                         }
                     },
                     // `foo${bar}` + `a${hi}b` => `foo${bar}a${hi}b`
@@ -391,6 +391,7 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                             E.TemplatePart,
                                             &.{ left.parts, right.parts },
                                         ) catch bun.outOfMemory();
+                                    return lhs;
                                 }
                             } else {
                                 if (left.head.isUTF8() and right.head.isUTF8()) {
@@ -400,9 +401,9 @@ fn foldStringAddition(l: Expr, r: Expr, allocator: std.mem.Allocator, kind: Fold
                                         r.data == .e_inlined_enum,
                                     ) };
                                     left.parts = right.parts;
+                                    return lhs;
                                 }
                             }
-                            return lhs;
                         }
                     },
                     else => {
@@ -508,13 +509,6 @@ const TransposeState = struct {
     loc: logger.Loc = logger.Loc.Empty,
     import_record_tag: ?ImportRecord.Tag = null,
     import_options: Expr = Expr.empty,
-};
-
-var true_args = &[_]Expr{
-    .{
-        .data = .{ .e_boolean = .{ .value = true } },
-        .loc = logger.Loc.Empty,
-    },
 };
 
 const JSXTag = struct {
@@ -1844,6 +1838,7 @@ pub const SideEffects = enum(u1) {
             .e_number,
             .e_big_int,
             .e_inlined_enum,
+            .e_require_main,
             => true,
             else => false,
         };
@@ -1934,13 +1929,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2070,23 +2066,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -2736,7 +2715,7 @@ pub const StmtsKind = enum {
 };
 
 fn notimpl() noreturn {
-    Global.panic("Not implemented yet!!", .{});
+    Output.panic("Not implemented yet!!", .{});
 }
 
 const ExprBindingTuple = struct {
@@ -3099,6 +3078,10 @@ pub const Parser = struct {
 
         transform_only: bool = false,
 
+        /// Used for inlining the state of import.meta.main during visiting
+        import_meta_main_value: ?bool = null,
+        lower_import_meta_main_for_node_js: bool = false,
+
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
 
@@ -3119,6 +3102,10 @@ pub const Parser = struct {
                 hasher.update("TS");
             } else {
                 hasher.update("NO_TS");
+            }
+
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
             }
 
             this.features.hashForRuntimeTranspiler(hasher);
@@ -3782,10 +3769,12 @@ pub const Parser = struct {
                 var remaining_stmts = all_stmts;
 
                 for (p.imports_to_convert_from_require.items) |deferred_import| {
-                    var stmts_ = remaining_stmts[0..1];
+                    var import_part_stmts = remaining_stmts[0..1];
                     remaining_stmts = remaining_stmts[1..];
 
-                    stmts_[0] = Stmt.alloc(
+                    p.module_scope.generated.push(p.allocator, deferred_import.namespace.ref.?) catch bun.outOfMemory();
+
+                    import_part_stmts[0] = Stmt.alloc(
                         S.Import,
                         S.Import{
                             .star_name_loc = deferred_import.namespace.loc,
@@ -3797,10 +3786,11 @@ pub const Parser = struct {
                     var declared_symbols = DeclaredSymbol.List.initCapacity(p.allocator, 1) catch unreachable;
                     declared_symbols.appendAssumeCapacity(.{ .ref = deferred_import.namespace.ref.?, .is_top_level = true });
                     before.appendAssumeCapacity(.{
-                        .stmts = stmts_,
+                        .stmts = import_part_stmts,
                         .declared_symbols = declared_symbols,
                         .tag = .import_to_convert_from_require,
-                        .can_be_removed_if_unused = p.stmtsCanBeRemovedIfUnused(stmts_),
+                        // This part has a single symbol, so it may be removed if unused.
+                        .can_be_removed_if_unused = true,
                     });
                 }
                 bun.assert(remaining_stmts.len == 0);
@@ -5046,7 +5036,7 @@ fn NewParser_(
         parse_pass_symbol_uses: ParsePassSymbolUsageType = undefined,
 
         /// Used by commonjs_at_runtime
-        commonjs_export_names: bun.StringArrayHashMapUnmanaged(void) = .{},
+        has_commonjs_export_names: bool = false,
 
         /// When this flag is enabled, we attempt to fold all expressions that
         /// TypeScript would consider to be "constant expressions". This flag is
@@ -7527,8 +7517,14 @@ fn NewParser_(
                         }
                     },
                     .bin_loose_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                p.ignoreUsage(p.module_ref);
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(
                                 E.Boolean{ .value = equality.equal },
                                 v.loc,
@@ -7550,8 +7546,14 @@ fn NewParser_(
 
                     },
                     .bin_strict_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
                         }
 
@@ -7560,8 +7562,14 @@ fn NewParser_(
                         // TODO: warn about typeof string
                     },
                     .bin_loose_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                         // const after_op_loc = locAfterOp(e_.);
@@ -7574,8 +7582,14 @@ fn NewParser_(
                         }
                     },
                     .bin_strict_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                     },
@@ -13197,12 +13211,6 @@ fn NewParser_(
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
                     },
-
-                    // this is specifically added only to support our implementation
-                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
-                    .e_dot => |ex| {
-                        ex.can_be_removed_if_unused = true;
-                    },
                     else => {},
                 }
             }
@@ -14905,7 +14913,7 @@ fn NewParser_(
             p.log.level = .verbose;
             p.log.printForLogLevel(panic_stream.writer()) catch unreachable;
 
-            Global.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
+            Output.panic(fmt ++ "\n{s}", args ++ .{panic_buffer[0..panic_stream.pos]});
         }
 
         pub fn parsePrefix(p: *P, level: Level, errors: ?*DeferredErrors, flags: Expr.EFlags) anyerror!Expr {
@@ -16191,7 +16199,7 @@ fn NewParser_(
                                         }
                                     },
                                     else => {
-                                        Global.panic("Unexpected type in export default: {any}", .{s2});
+                                        Output.panic("Unexpected type in export default: {any}", .{s2});
                                     },
                                 }
                             },
@@ -16894,24 +16902,6 @@ fn NewParser_(
                     }
                 },
 
-                .inline_identifier => |id| {
-                    const ref = p.macro.imports.get(id) orelse {
-                        p.panic("Internal error: missing identifier from macro: {d}", .{id});
-                    };
-
-                    if (!p.is_control_flow_dead) {
-                        p.recordUsage(ref);
-                    }
-
-                    return p.newExpr(
-                        E.ImportIdentifier{
-                            .was_originally_identifier = false,
-                            .ref = ref,
-                        },
-                        expr.loc,
-                    );
-                },
-
                 .e_binary => |e_| {
 
                     // The handling of binary expressions is convoluted because we're using
@@ -17168,9 +17158,9 @@ fn NewParser_(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
-                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_before = e_.value.data == .e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
-                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_after = e_.value.data == .e_identifier;
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
@@ -17180,6 +17170,11 @@ fn NewParser_(
                                     e_.value,
                                     p.allocator,
                                 );
+                            }
+
+                            if (e_.value.data == .e_require_call_target) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.newExpr(E.String{ .data = "function" }, expr.loc);
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
@@ -17206,6 +17201,10 @@ fn NewParser_(
                                     if (p.options.features.minify_syntax) {
                                         if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
                                             return exp;
+                                        }
+                                        if (e_.value.data == .e_import_meta_main) {
+                                            e_.value.data.e_import_meta_main.inverted = !e_.value.data.e_import_meta_main.inverted;
+                                            return e_.value;
                                         }
                                     }
                                 },
@@ -17486,7 +17485,7 @@ fn NewParser_(
                     var has_proto = false;
                     for (e_.properties.slice()) |*property| {
                         if (property.kind != .spread) {
-                            property.key = p.visitExpr(property.key orelse Global.panic("Expected property key", .{}));
+                            property.key = p.visitExpr(property.key orelse Output.panic("Expected property key", .{}));
                             const key = property.key.?;
                             // Forbid duplicate "__proto__" properties according to the specification
                             if (!property.flags.contains(.is_computed) and
@@ -17882,6 +17881,16 @@ fn NewParser_(
             }
         }
 
+        fn ignoreUsageOfRuntimeRequire(p: *P) void {
+            if (!p.options.features.use_import_meta_require and
+                p.options.features.allow_runtime)
+            {
+                bun.assert(p.runtime_imports.__require != null);
+                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
+            }
+        }
+
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
             bun.assert(!p.isSourceRuntime());
             return Expr{
@@ -17890,6 +17899,32 @@ fn NewParser_(
                 },
                 .loc = loc,
             };
+        }
+
+        inline fn valueForImportMetaMain(p: *P, inverted: bool, loc: logger.Loc) Expr {
+            if (p.options.import_meta_main_value) |known| {
+                return .{ .loc = loc, .data = .{ .e_boolean = .{ .value = if (inverted) !known else known } } };
+            } else {
+                // Node.js does not have import.meta.main, so we end up lowering
+                // this to `require.main === module`, but with the ESM format,
+                // both `require` and `module` are not present, so the code
+                // generation we need is:
+                //
+                //     import { createRequire } from "node:module";
+                //     var __require = createRequire(import.meta.url);
+                //     var import_meta_main = __require.main === __require.module;
+                //
+                // The printer can handle this for us, but we need to reference
+                // a handle to the `__require` function.
+                if (p.options.lower_import_meta_main_for_node_js) {
+                    p.recordUsageOfRuntimeRequire();
+                }
+
+                return .{
+                    .loc = loc,
+                    .data = .{ .e_import_meta_main = .{ .inverted = inverted } },
+                };
+            }
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -18892,8 +18927,7 @@ fn NewParser_(
                                     name_loc,
                                 );
                             } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
-                                // Record this CommonJS export name for use later.
-                                _ = p.commonjs_export_names.getOrPut(p.allocator, name) catch unreachable;
+                                p.has_commonjs_export_names = true;
                             }
                         }
                     }
@@ -18960,6 +18994,15 @@ fn NewParser_(
                             },
                             target.loc,
                         );
+                    }
+
+                    if (strings.eqlComptime(name, "main")) {
+                        return p.valueForImportMetaMain(false, target.loc);
+                    }
+                },
+                .e_require_call_target => {
+                    if (strings.eqlComptime(name, "main")) {
+                        return .{ .loc = loc, .data = .e_require_main };
                     }
                 },
                 .e_import_identifier => |id| {
@@ -20720,7 +20763,7 @@ fn NewParser_(
                     }
                 },
                 else => {
-                    Global.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
+                    Output.panic("Unexpected binding type in namespace. This is a bug. {any}", .{binding});
                 },
             }
         }
@@ -20857,7 +20900,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
-                    .can_be_unwrapped_if_unused = all_values_are_pure,
+                    // TODO: make these fully tree-shakable. this annotation
+                    // as-is is incorrect.  This would be done by changing all
+                    // enum wrappers into `var Enum = ...` instead of two
+                    // separate statements. This way, the @__PURE__ annotation
+                    // is attached to the variable binding.
+                    //
+                    // .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );
@@ -23898,15 +23947,13 @@ fn NewParser_(
                     p.require_ref,
 
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
-                .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
-                .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
-                .uses_require_ref = if (p.runtime_imports.__require != null)
-                    (p.symbols.items[p.runtime_imports.__require.?.ref.innerIndex()].use_count_estimate > 0)
-                else
-                    false,
+                .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
+                .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
+                .uses_require_ref = p.runtime_imports.__require != null and
+                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
-                .commonjs_export_names = p.commonjs_export_names.keys(),
+                .has_commonjs_export_names = p.has_commonjs_export_names,
 
                 .hashbang = hashbang,
 

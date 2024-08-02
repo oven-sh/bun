@@ -5511,12 +5511,12 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal*
     return arg0;
 }
 
-extern "C" WebCore__AbortSignal* WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
+extern "C" void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
-    return arg0;
 }
+
 extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);

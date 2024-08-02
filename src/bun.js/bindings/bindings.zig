@@ -2068,8 +2068,8 @@ pub const AbortSignal = extern opaque {
 
     pub fn unref(
         this: *AbortSignal,
-    ) *AbortSignal {
-        return cppFn("unref", .{this});
+    ) void {
+        cppFn("unref", .{this});
     }
 
     pub fn detach(this: *AbortSignal, ctx: ?*anyopaque) void {

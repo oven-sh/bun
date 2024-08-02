@@ -19,10 +19,15 @@ public:
         : ticket(ticket)
         , task(WTFMove(task))
     {
+        ticket->ref();
     }
 
     Ticket ticket;
     Task task;
+    ~JSCDeferredWorkTask()
+    {
+        ticket->deref();
+    }
 
     WTF_MAKE_ISO_ALLOCATED(JSCDeferredWorkTask);
 };

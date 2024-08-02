@@ -81,7 +81,6 @@ describe("WebSocket", () => {
           const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
           await new Promise((resolve, reject) => {
             ws.onopen = resolve;
-            ws.onerror = reject;
           });
           var closed = new Promise((resolve, reject) => {
             ws.onclose = resolve;

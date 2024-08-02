@@ -526,12 +526,14 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
+    commonjs_module_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
@@ -2282,8 +2284,8 @@ fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
-            var flags = _flags;
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
+            var flags = in_flags;
 
             switch (expr.data) {
                 .e_missing => {},
@@ -2331,6 +2333,47 @@ fn NewPrinter(
                             bun.assert(p.options.module_type == .cjs);
 
                         p.printSymbol(p.options.import_meta_ref);
+                    }
+                },
+                .e_import_meta_main => |data| {
+                    if (p.options.module_type == .esm and p.options.target != .node) {
+                        // Node.js doesn't support import.meta.main
+                        // Most of the time, leave it in there
+                        if (data.inverted) {
+                            p.addSourceMapping(expr.loc);
+                            p.print("!");
+                        } else {
+                            p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
+                        }
+                        p.print("import.meta.main");
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
+
+                        if (p.options.require_ref) |require|
+                            p.printSymbol(require)
+                        else
+                            p.print("require");
+
+                        if (data.inverted)
+                            p.printWhitespacer(ws(".main != "))
+                        else
+                            p.printWhitespacer(ws(".main == "));
+
+                        if (p.options.target == .node) {
+                            // "__require.module"
+                            if (p.options.require_ref) |require|
+                                p.printSymbol(require)
+                            else
+                                p.print("require");
+
+                            p.print(".module");
+                        } else if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
                     }
                 },
                 .e_commonjs_export_identifier => |id| {
@@ -2459,6 +2502,19 @@ fn NewPrinter(
                     p.print(")");
                     if (wrap) {
                         p.print(")");
+                    }
+                },
+                .e_require_main => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.main");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".main");
+                    } else {
+                        p.print("require.main");
                     }
                 },
                 .e_require_call_target => {
@@ -3225,7 +3281,11 @@ fn NewPrinter(
                         p.print(" */");
                     }
                 },
-                else => {
+
+                .e_jsx_element,
+                .e_private_identifier,
+                .e_template_part,
+                => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },

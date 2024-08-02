@@ -655,6 +655,7 @@ pub const BundleV2 = struct {
         hash: ?u64,
         batch: *ThreadPoolLib.Batch,
         resolve: _resolver.Result,
+        is_entry_point: bool,
     ) !?Index.Int {
         var result = resolve;
         var path = result.path() orelse return null;
@@ -692,6 +693,7 @@ pub const BundleV2 = struct {
         task.loader = loader;
         task.task.node.next = null;
         task.tree_shaking = this.linker.options.tree_shaking;
+        task.is_entry_point = is_entry_point;
 
         // Handle onLoad plugins as entry points
         if (!this.enqueueOnLoadPluginIfNeeded(task)) {
@@ -766,6 +768,7 @@ pub const BundleV2 = struct {
         generator.linker.options.source_maps = bundler.options.source_map;
         generator.linker.options.tree_shaking = bundler.options.tree_shaking;
         generator.linker.options.public_path = bundler.options.public_path;
+        generator.linker.options.target = bundler.options.target;
 
         var pool = try generator.graph.allocator.create(ThreadPool);
         if (enable_reloading) {
@@ -822,7 +825,7 @@ pub const BundleV2 = struct {
 
             for (entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
+                if (try this.enqueueItem(null, &batch, resolved, true)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -836,7 +839,7 @@ pub const BundleV2 = struct {
 
             for (user_entry_points) |entry_point| {
                 const resolved = this.bundler.resolveEntryPoint(entry_point) catch continue;
-                if (try this.enqueueItem(null, &batch, resolved)) |source_index| {
+                if (try this.enqueueItem(null, &batch, resolved, true)) |source_index| {
                     this.graph.entry_points.append(this.graph.allocator, Index.source(source_index)) catch unreachable;
                 } else {}
             }
@@ -2323,6 +2326,7 @@ pub const ParseTask = struct {
     emit_decorator_metadata: bool = false,
     ctx: *BundleV2,
     package_version: string = "",
+    is_entry_point: bool = false,
 
     /// Used by generated client components
     presolved_source_indices: []const Index.Int = &.{},
@@ -2882,6 +2886,15 @@ pub const ParseTask = struct {
         opts.features.minify_identifiers = bundler.options.minify_identifiers;
         opts.features.emit_decorator_metadata = bundler.options.emit_decorator_metadata;
         opts.ignore_dce_annotations = bundler.options.ignore_dce_annotations and !source.index.isRuntime();
+
+        // For files that are not user-specified entrypoints, set `import.meta.main` to `false`.
+        // Entrypoints will have `import.meta.main` set as "unknown", unless we use `--compile`,
+        // in which we inline `true`.
+        if (bundler.options.inline_entrypoint_import_meta_main or !task.is_entry_point) {
+            opts.import_meta_main_value = task.is_entry_point;
+        } else if (bundler.options.target == .node) {
+            opts.lower_import_meta_main_for_node_js = true;
+        }
 
         opts.tree_shaking = if (source.index.isRuntime()) true else bundler.options.tree_shaking;
         opts.module_type = task.module_type;
@@ -3865,6 +3878,7 @@ pub const LinkerContext = struct {
         minify_syntax: bool = false,
         minify_identifiers: bool = false,
         source_maps: options.SourceMapOption = .none,
+        target: options.Target = .browser,
 
         mode: Mode = Mode.bundle,
 
@@ -6813,6 +6827,7 @@ pub const LinkerContext = struct {
                 .minify_whitespace = c.options.minify_whitespace,
                 .minify_identifiers = c.options.minify_identifiers,
                 .minify_syntax = c.options.minify_syntax,
+                .target = c.options.target,
                 .print_dce_annotations = c.options.emit_dce_annotations,
                 // .const_values = c.graph.const_values,
             };
@@ -9039,6 +9054,7 @@ pub const LinkerContext = struct {
                 c,
             ),
             .line_offset_tables = c.graph.files.items(.line_offset_table)[part_range.source_index.get()],
+            .target = c.options.target,
         };
 
         writer.buffer.reset();

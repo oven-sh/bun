@@ -102,6 +102,9 @@ pub const BuildCommand = struct {
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
 
+        this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+        this_bundler.resolver.opts.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 

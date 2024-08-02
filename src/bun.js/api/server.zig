@@ -1904,13 +1904,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
+                defer signal.unref();
                 if (!signal.aborted()) {
                     const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
                     any_js_calls = true;
                 }
-                _ = signal.unref();
             }
 
             //if have sink, call onAborted on sink
@@ -1975,12 +1975,12 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if signal is not aborted, abort the signal
             if (this.signal) |signal| {
                 this.signal = null;
+                defer signal.unref();
                 if (this.flags.aborted and !signal.aborted()) {
                     const reason = JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.server.globalThis);
                     reason.ensureStillAlive();
                     _ = signal.signal(reason);
                 }
-                _ = signal.unref();
             }
 
             if (this.request_body) |body| {

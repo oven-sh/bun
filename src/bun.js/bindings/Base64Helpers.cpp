@@ -1,6 +1,6 @@
 
 #include "root.h"
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 
 #include "ExceptionOr.h"
 

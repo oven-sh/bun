@@ -2461,7 +2461,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (assignment_result.toError()) |err_value| {
                 streamLog("returned an error", .{});
-                if (!this.isAbortedOrEnded()) resp.clearAborted();
                 response_stream.detach();
                 this.sink = null;
                 response_stream.sink.destroy();
@@ -2469,7 +2468,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (resp.hasResponded()) {
-                if (!this.isAbortedOrEnded()) resp.clearAborted();
                 streamLog("done", .{});
                 response_stream.detach();
                 this.sink = null;
@@ -2537,7 +2535,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 } else {
                     // if is not a promise we treat it as Error
                     streamLog("returned an error", .{});
-                    if (!this.isAbortedOrEnded()) resp.clearAborted();
                     response_stream.detach();
                     this.sink = null;
                     response_stream.sink.destroy();
@@ -2816,7 +2813,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const responded = resp.hasResponded();
 
             if (!responded) {
-                resp.clearAborted();
                 if (!req.flags.has_written_status) {
                     req.renderMetadata();
                 }
@@ -5509,8 +5505,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
             request.upgrader = null;
-
-            resp.clearAborted();
 
             data_value.ensureStillAlive();
             const ws = ServerWebSocket.new(.{

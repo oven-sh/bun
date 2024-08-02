@@ -62,7 +62,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     /* Begin by closing all listen sockets */
     struct us_listen_socket_t *ls = context->head_listen_sockets;
     while (ls) {
-        struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;\
+        struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
         
         ls = nextLS;

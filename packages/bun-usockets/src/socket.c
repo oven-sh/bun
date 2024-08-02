@@ -351,10 +351,8 @@ int us_socket_write(int ssl, struct us_socket_t *s, const char *data, int length
 
     int written = bsd_send(us_poll_fd(&s->p), data, length, msg_more);
     if (written != length) {
-        if(s->context->loop) {
-            s->context->loop->data.last_write_failed = 1;
-            us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
-        }
+        s->context->loop->data.last_write_failed = 1;
+        us_poll_change(&s->p, s->context->loop, LIBUS_SOCKET_READABLE | LIBUS_SOCKET_WRITABLE);
     }
 
     return written < 0 ? 0 : written;

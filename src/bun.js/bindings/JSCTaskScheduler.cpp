@@ -15,29 +15,24 @@ extern "C" void Bun__eventLoop__incrementRefConcurrently(void* bunVM, int delta)
 
 class JSCDeferredWorkTask {
 public:
-    JSCDeferredWorkTask(Ticket ticket, Task&& task)
-        : ticket(ticket)
+    JSCDeferredWorkTask(Ref<TicketData> ticket, Task&& task)
+        : ticket(WTFMove(ticket))
         , task(WTFMove(task))
     {
-        ticket->ref();
     }
 
-    Ticket ticket;
+    Ref<TicketData> ticket;
     Task task;
     ~JSCDeferredWorkTask()
     {
-        ticket->deref();
     }
+
+    JSC::VM& vm() const { return ticket->scriptExecutionOwner()->vm(); }
 
     WTF_MAKE_ISO_ALLOCATED(JSCDeferredWorkTask);
 };
 
 WTF_MAKE_ISO_ALLOCATED_IMPL(JSCDeferredWorkTask);
-
-static JSC::VM& getVM(Ref<TicketData> ticket)
-{
-    return ticket->scriptExecutionOwner()->vm();
-}
 
 static JSC::VM& getVM(Ticket& ticket)
 {
@@ -46,7 +41,7 @@ static JSC::VM& getVM(Ticket& ticket)
 
 void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind)
 {
-    JSC::VM& vm = getVM(ticket);
+    JSC::VM& vm = ticket->scriptExecutionOwner()->vm();
     auto clientData = WebCore::clientData(vm);
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
@@ -59,7 +54,7 @@ void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredW
 }
 void JSCTaskScheduler::onScheduleWorkSoon(Ticket ticket, Task&& task)
 {
-    auto* job = new JSCDeferredWorkTask(ticket, WTFMove(task));
+    auto* job = new JSCDeferredWorkTask(*ticket, WTFMove(task));
     Bun__queueJSCDeferredWorkTaskConcurrently(WebCore::clientData(getVM(ticket))->bunVM, job);
 }
 
@@ -95,7 +90,7 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
     holder.unlockEarly();
 
     if (pendingTicket && !pendingTicket->isCancelled()) {
-        job->task(job->ticket);
+        job->task(job->ticket.ptr());
     }
 
     delete job;
@@ -103,7 +98,7 @@ static void runPendingWork(void* bunVM, Bun::JSCTaskScheduler& scheduler, JSCDef
 
 extern "C" void Bun__runDeferredWork(Bun::JSCDeferredWorkTask* job)
 {
-    auto& vm = getVM(job->ticket);
+    auto& vm = job->vm();
     auto clientData = WebCore::clientData(vm);
 
     runPendingWork(clientData->bunVM, clientData->deferredWorkTimer, job);

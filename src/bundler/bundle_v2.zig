@@ -9036,6 +9036,7 @@ pub const LinkerContext = struct {
             .commonjs_named_exports_ref = ast.exports_ref,
             .commonjs_module_ref = if (ast.flags.uses_module_ref) ast.module_ref else Ref.None,
             .commonjs_named_exports_deoptimized = flags.wrap == .cjs,
+            .commonjs_module_exports_assigned_deoptimized = ast.flags.commonjs_module_exports_assigned_deoptimized,
             // .const_values = c.graph.const_values,
             .ts_enums = c.graph.ts_enums,
 

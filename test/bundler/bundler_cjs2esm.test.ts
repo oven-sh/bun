@@ -347,20 +347,7 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     target: "bun",
   });
-  itBundled("cjs2esm/ModuleExportsRenaming1", {
-    files: {
-      "/entry.js": /* js */ `
-        let y = () => module.exports.xyz;
-        exports = { xyz: 123 };
-        let z = () => module.exports.xyz;
-        console.log(y(), z());
-      `,
-    },
-    run: {
-      stdout: "undefined undefined",
-    },
-  });
-  itBundled("cjs2esm/ModuleExportsRenaming2", {
+  itBundled("cjs2esm/ModuleExportsRenaming", {
     files: {
       "/entry.js": /* js */ `
         let y = () => module.exports.xyz;

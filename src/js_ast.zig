@@ -6610,6 +6610,7 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     uses_require_ref: bool = false,
+    commonjs_module_exports_assigned_deoptimized: bool = false,
 
     force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
@@ -6769,19 +6770,20 @@ pub const BundledAst = struct {
     pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
     pub const ConstValuesMap = Ast.ConstValuesMap;
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         // This is a list of CommonJS features. When a file uses CommonJS features,
         // it's not a candidate for "flat bundling" and must be wrapped in its own
         // closure.
         uses_exports_ref: bool = false,
         uses_module_ref: bool = false,
         // uses_require_ref: bool = false,
-
         uses_export_keyword: bool = false,
-
         has_char_freq: bool = false,
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
+        commonjs_module_exports_assigned_deoptimized: bool = false,
+
+        _: u1 = 0,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -6792,9 +6794,6 @@ pub const BundledAst = struct {
     pub inline fn uses_module_ref(this: *const BundledAst) bool {
         return this.flags.uses_module_ref;
     }
-    // pub inline fn uses_require_ref(this: *const BundledAst) bool {
-    //     return this.flags.uses_require_ref;
-    // }
 
     pub fn toAST(this: *const BundledAst) Ast {
         return .{
@@ -6844,6 +6843,7 @@ pub const BundledAst = struct {
             .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .{} },
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
+            .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
         };
     }
 
@@ -6897,6 +6897,7 @@ pub const BundledAst = struct {
                 .has_char_freq = ast.char_freq != null,
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
+                .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
             },
         };
     }

@@ -436,7 +436,7 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
     BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
     BUN_DEBUG_QUIET_LOGS: "1",
     BUN_GARBAGE_COLLECTOR_LEVEL: "1",
-    BUN_ENABLE_CRASH_REPORTING: "1",
+    BUN_ENABLE_CRASH_REPORTING: "0", // change this to '1' if https://github.com/oven-sh/bun/issues/13012 is implemented
     BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
     BUN_INSTALL_CACHE_DIR: tmpdirPath,
     SHELLOPTS: isWindows ? "igncr" : undefined, // ignore "\r" on Windows

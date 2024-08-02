@@ -86,7 +86,8 @@ function export_environment() {
   else
     export CPU_TARGET="haswell"
   fi
-  if [[ "$BUILDKITE_STEP_KEY" == *"nolto"* ]]; then
+  # LTO is disabled on Windows and macOS.
+  if [[ "$BUILDKITE_STEP_KEY" == *"nolto"* ]] || [[ "$BUILDKITE_STEP_KEY" == *"darwin"* ]] || [[ "$BUILDKITE_STEP_KEY" == *"windows"* ]]; then
     export USE_LTO="OFF"
   else
     export USE_LTO="ON"

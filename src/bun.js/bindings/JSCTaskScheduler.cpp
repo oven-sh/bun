@@ -45,7 +45,7 @@ void JSCTaskScheduler::onAddPendingWork(Ref<TicketData>&& ticket, JSC::DeferredW
     auto clientData = WebCore::clientData(vm);
     auto& scheduler = clientData->deferredWorkTimer;
     Locker<Lock> holder { scheduler.m_lock };
-    if (kind != DeferredWorkTimer::WorkType::ImminentlyScheduled) {
+    if (kind == DeferredWorkTimer::WorkType::ImminentlyScheduled) {
         Bun__eventLoop__incrementRefConcurrently(clientData->bunVM, 1);
         scheduler.m_pendingTicketsKeepingEventLoopAlive.add(WTFMove(ticket));
     } else {

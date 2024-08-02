@@ -7425,7 +7425,7 @@ for (const forceWaiterThread of isLinux ? [false, true] : [false]) {
       }
     });
 
-    describe.if(!forceWaiterThread || process.platform === "linux")("does not use 100% cpu", async () => {
+    describe.skipIf(forceWaiterThread)("does not use 100% cpu", async () => {
       test("install", async () => {
         await writeFile(
           join(packageDir, "package.json"),

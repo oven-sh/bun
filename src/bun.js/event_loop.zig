@@ -1404,7 +1404,7 @@ pub const EventLoop = struct {
 
         if (!loop.isActive()) {
             if (this.forever_timer == null) {
-                var t = uws.Timer.create(loop, this);
+                var t = uws.Timer.createFallthrough(loop, this);
                 t.set(this, &noopForeverTimer, 1000 * 60 * 4, 1000 * 60 * 4);
                 this.forever_timer = t;
             }

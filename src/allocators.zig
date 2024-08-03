@@ -199,7 +199,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         const Self = @This();
 
         allocator: Allocator,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         head: *OverflowBlock = undefined,
         tail: OverflowBlock = OverflowBlock{},
         backing_buf: [count]ValueType = undefined,
@@ -288,7 +288,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         allocator: Allocator,
         slice_buf: [count][]const u8 = undefined,
         slice_buf_used: u16 = 0,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         pub var instance: Self = undefined;
         var loaded: bool = false;
         // only need the mutex on append
@@ -465,7 +465,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         index: IndexMap,
         overflow_list: Overflow = Overflow{},
         allocator: Allocator,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         backing_buf: [count]ValueType = undefined,
         backing_buf_used: u16 = 0,
 

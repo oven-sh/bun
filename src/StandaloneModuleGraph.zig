@@ -9,6 +9,7 @@ const Output = bun.Output;
 const Global = bun.Global;
 const Environment = bun.Environment;
 const Syscall = bun.sys;
+const SourceMap = bun.sourcemap;
 
 const w = std.os.windows;
 
@@ -78,7 +79,7 @@ pub const StandaloneModuleGraph = struct {
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
             if (this.cached_blob == null) {
-                var store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
+                const store = bun.JSC.WebCore.Blob.Store.init(@constCast(this.contents), bun.default_allocator);
                 // make it never free
                 store.ref();
 
@@ -101,25 +102,95 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    pub const LazySourceMap = union(enum) {
-        compressed: []const u8,
-        decompressed: bun.sourcemap,
+    /// Source map serialization in the bundler is specially designed to be
+    /// loaded in memory as is. The main requirement for this to work is that
+    /// all of the data is loaded in at 4-byte alignment.
+    pub const SerializedSourceMap = struct {
+        bytes: []align(@alignOf(u32)) const u8,
 
-        pub fn load(this: *LazySourceMap, log: *bun.logger.Log, allocator: std.mem.Allocator) !*bun.sourcemap {
-            if (this.* == .decompressed) return &this.decompressed;
+        pub const PackedPtr = packed struct(u64) {};
 
-            var decompressed = try allocator.alloc(u8, bun.zstd.getDecompressedSize(this.compressed));
-            const result = bun.zstd.decompress(decompressed, this.compressed);
-            if (result == .err) {
-                allocator.free(decompressed);
-                log.addError(null, bun.logger.Loc.Empty, bun.span(result.err)) catch unreachable;
-                return error.@"Failed to decompress sourcemap";
+        /// Following the header bytes:
+        /// - source_files_count number of StringPointers, file names
+        /// - source_files_count number of StringPointers, zstd compressed contents
+        /// - all mapping bytes
+        pub const Header = extern struct {
+            source_files_count: u32,
+            mappings_count: u32,
+            map_bytes_length: u32,
+        };
+
+        pub const ByteSlice = struct {
+            offset: u32,
+            len: u32,
+
+            pub fn slice(b: ByteSlice, bytes: []const u8) []const u8 {
+                return bytes[b.offset..][0..b.len];
             }
-            errdefer allocator.free(decompressed);
-            const bytes = decompressed[0..result.success];
+        };
 
-            this.* = .{ .decompressed = try bun.sourcemap.parse(allocator, &bun.logger.Source.initPathString("sourcemap.json", bytes), log) };
-            return &this.decompressed;
+        pub fn header(map: SerializedSourceMap) *const Header {
+            return @ptrCast(map.bytes.ptr);
+        }
+
+        pub fn mappings(map: SerializedSourceMap) SourceMap.Mapping.List {
+            const head = map.header();
+            const start = head.source_files_count * @sizeOf(ByteSlice) * 2 + @sizeOf(Header);
+
+            // the following aligncast asserts this alignment
+            comptime bun.assert(@alignOf(SourceMap.Mapping) == @alignOf(u32));
+            return .{
+                .bytes = @constCast(@alignCast(@ptrCast(map.bytes[start..][0..head.map_bytes_length]))),
+                .len = head.mappings_count,
+                .capacity = head.mappings_count,
+            };
+        }
+
+        pub fn sourceFileNames(map: SerializedSourceMap) []const ByteSlice {
+            const head = map.header();
+            return @as([*]const ByteSlice, @ptrCast(map.bytes[@sizeOf(Header)..]))[0..head.source_files_count];
+        }
+
+        pub fn compressedSourceFiles(map: SerializedSourceMap) []const ByteSlice {
+            const head = map.header();
+            return @as([*]const ByteSlice, @ptrCast(map.bytes[@sizeOf(Header)..]))[head.source_files_count..][0..head.source_files_count];
+        }
+    };
+
+    pub const LazySourceMap = union(enum) {
+        /// Standalone Module Graph loads all bytes in at once.
+        unparsed: SerializedSourceMap,
+        parsed: *bun.sourcemap.ParsedSourceMap,
+        none,
+
+        /// It probably is not possible to run two decoding jobs on the same file
+        var init_lock: bun.Lock = .{};
+
+        pub fn load(this: *LazySourceMap) !?bun.sourcemap.ParseUrl {
+            init_lock.lock();
+            defer init_lock.unlock();
+
+            return switch (this.*) {
+                .none => null,
+                .parsed => |map| .{ .map = map },
+                .unparsed => |serialized| {
+                    const source_files = serialized.sourceFileNames();
+                    const file_names = try bun.default_allocator.alloc([]const u8, source_files.len);
+                    for (file_names, source_files) |*dest, src| {
+                        dest.* = src.slice(serialized.bytes);
+                    }
+
+                    const parsed = SourceMap.ParsedSourceMap.new(.{
+                        .input_line_count = 0,
+                        .mappings = serialized.mappings(),
+                        .external_source_names = file_names,
+                        .underlying_provider = .{ .data = @truncate(@intFromPtr(serialized.bytes.ptr)) },
+                        .standalone_module_graph_len = @intCast(serialized.bytes.len),
+                    });
+                    this.* = .{ .parsed = parsed };
+                    return .{ .map = parsed };
+                },
+            };
         }
     };
 
@@ -152,12 +223,17 @@ pub const StandaloneModuleGraph = struct {
                     .name = sliceTo(raw_bytes, module.name),
                     .loader = module.loader,
                     .contents = sliceTo(raw_bytes, module.contents),
-                    .sourcemap = LazySourceMap{
-                        .compressed = sliceTo(raw_bytes, module.sourcemap),
-                    },
+                    .sourcemap = if (module.sourcemap.length > 0)
+                        .{ .unparsed = .{
+                            .bytes = @alignCast(sliceTo(raw_bytes, module.sourcemap)),
+                        } }
+                    else
+                        .none,
                 },
             );
         }
+
+        modules.lockPointers(); // make the pointers stable forever
 
         return StandaloneModuleGraph{
             .bytes = raw_bytes[0..offsets.byte_count],
@@ -175,6 +251,7 @@ pub const StandaloneModuleGraph = struct {
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
         var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
+
         var entry_point_id: ?usize = null;
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
@@ -183,7 +260,7 @@ pub const StandaloneModuleGraph = struct {
             string_builder.count(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
-                    string_builder.cap += bun.zstd.compressBound(output_file.value.buffer.bytes.len);
+                    string_builder.cap += output_file.value.buffer.bytes.len * 2; // this is a wild over-estimate
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
@@ -202,15 +279,18 @@ pub const StandaloneModuleGraph = struct {
         string_builder.cap += @sizeOf(CompiledModuleGraphFile) * output_files.len;
         string_builder.cap += trailer.len;
         string_builder.cap += 16;
-
-        {
-            var offsets_ = Offsets{};
-            string_builder.cap += std.mem.asBytes(&offsets_).len;
-        }
+        string_builder.cap += @sizeOf(Offsets);
 
         try string_builder.allocate(allocator);
 
         var modules = try std.ArrayList(CompiledModuleGraphFile).initCapacity(allocator, module_count);
+
+        var source_map_header_list = std.ArrayList(u8).init(allocator);
+        defer source_map_header_list.deinit();
+        var source_map_string_list = std.ArrayList(u8).init(allocator);
+        defer source_map_string_list.deinit();
+        var source_map_arena = bun.ArenaAllocator.init(allocator);
+        defer source_map_arena.deinit();
 
         for (output_files) |output_file| {
             if (output_file.output_kind == .sourcemap) {
@@ -232,12 +312,23 @@ pub const StandaloneModuleGraph = struct {
                 .contents = string_builder.appendCount(output_file.value.buffer.bytes),
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
-                const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
-                const compressed_result = bun.zstd.compress(remaining_slice, output_files[output_file.source_map_index].value.buffer.bytes, 1);
-                if (compressed_result == .err) {
-                    bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
-                }
-                module.sourcemap = string_builder.add(compressed_result.success);
+                defer source_map_header_list.clearRetainingCapacity();
+                defer source_map_string_list.clearRetainingCapacity();
+                _ = source_map_arena.reset(.retain_capacity);
+                try SourceMap.serializeJsonSourceMapForStandalone(
+                    &source_map_header_list,
+                    &source_map_string_list,
+                    source_map_arena.allocator(),
+                    output_files[output_file.source_map_index].value.buffer.bytes,
+                );
+                string_builder.ensureNextAligned(@alignOf(u32));
+                var bytes = string_builder.allocatedSlice()[string_builder.len..];
+                @memcpy(bytes[0..source_map_header_list.items.len], source_map_header_list.items);
+                bytes = bytes[source_map_header_list.items.len..];
+                @memcpy(bytes[0..source_map_string_list.items.len], source_map_string_list.items);
+                module.sourcemap = string_builder.add(
+                    source_map_string_list.items.len + source_map_header_list.items.len,
+                );
             }
             modules.appendAssumeCapacity(module);
         }

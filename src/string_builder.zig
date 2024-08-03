@@ -187,3 +187,12 @@ pub fn writable(this: *StringBuilder) []u8 {
     }
     return ptr[this.len..this.cap];
 }
+
+pub fn ensureNextAligned(this: *StringBuilder, comptime alignment: usize) void {
+    const aligned = std.mem.alignForward(usize, this.len, alignment);
+    const diff = aligned - this.len;
+    if (diff > 0) {
+        @memset(this.ptr.?[this.len..][0..diff], 0);
+        this.len = aligned;
+    }
+}

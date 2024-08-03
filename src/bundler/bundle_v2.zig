@@ -135,7 +135,7 @@ fn tracer(comptime src: std.builtin.SourceLocation, comptime name: [:0]const u8)
 pub const ThreadPool = struct {
     pool: *ThreadPoolLib = undefined,
     workers_assignments: std.AutoArrayHashMap(std.Thread.Id, *Worker) = std.AutoArrayHashMap(std.Thread.Id, *Worker).init(bun.default_allocator),
-    workers_assignments_lock: bun.Lock = bun.Lock.init(),
+    workers_assignments_lock: bun.Lock = .{},
 
     v2: *BundleV2 = undefined,
 

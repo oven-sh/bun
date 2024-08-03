@@ -1572,7 +1572,7 @@ pub const Fetch = struct {
             var fetch_tasklet = try allocator.create(FetchTasklet);
 
             fetch_tasklet.* = .{
-                .mutex = Mutex.init(),
+                .mutex = .{},
                 .scheduled_response_buffer = .{
                     .allocator = fetch_options.memory_reporter.allocator(),
                     .list = .{

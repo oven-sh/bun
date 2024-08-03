@@ -170,7 +170,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
-        pub var lock: bun.Lock = bun.Lock.init();
+        pub var lock: bun.Lock = .{};
     };
 
     BunDebugHolder.lock.lock();

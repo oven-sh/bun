@@ -1043,8 +1043,8 @@ pub const VirtualMachine = struct {
         }
     }
 
-    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: c_int) c_int;
-    extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) c_int;
+    extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool;
+    extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool;
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
 
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
@@ -1059,7 +1059,7 @@ pub const VirtualMachine = struct {
             return true;
         }
 
-        const handled = Bun__handleUnhandledRejection(globalObject, reason, promise) > 0;
+        const handled = Bun__handleUnhandledRejection(globalObject, reason, promise);
         if (!handled) {
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, reason);
@@ -1086,7 +1086,7 @@ pub const VirtualMachine = struct {
         }
         this.is_handling_uncaught_exception = true;
         defer this.is_handling_uncaught_exception = false;
-        const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, if (is_rejection) 1 else 0) > 0;
+        const handled = Bun__handleUncaughtException(globalObject, err.toError() orelse err, is_rejection);
         if (!handled) {
             // TODO maybe we want a separate code path for uncaught exceptions
             this.unhandled_error_counter += 1;

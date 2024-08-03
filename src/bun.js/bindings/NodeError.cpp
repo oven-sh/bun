@@ -258,12 +258,6 @@ extern "C" JSC::EncodedJSValue Bun__ERR_UNHANDLED_REJECTION(JSC::JSGlobalObject*
         string = jsstring->getString(globalObject);
     } while (0);
 
-    // JSString* reason = JSC::JSValue::decode(val_reason).toStringOrNull(globalObject);
-    // if (!reason) {
-    //     scope.clearException();
-    //     reason = jsString(vm, String("[object Object]"_s))->toStringInline(globalObject);
-    // }
-    // auto string = reason->getString(globalObject);
     auto message = makeString("This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \""_s, string, "\"."_s);
     return JSC::JSValue::encode(createErrorWithCode(globalObject, message, "ERR_UNHANDLED_REJECTION"_s));
 }

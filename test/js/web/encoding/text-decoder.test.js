@@ -310,3 +310,12 @@ it("truncated sequences", () => {
   assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x41, 0xf0])), "\uFFFDA\uFFFD");
   assert_equals(new TextDecoder().decode(new Uint8Array([0xf0, 0x8f, 0x92])), "\uFFFD\uFFFD\uFFFD");
 });
+
+it.each([
+  [0xc0, 0x80], // 192
+  [0xc1, 0x80], // 193
+])(`should handle %d`, (...input) => {
+  const decoder = new TextDecoder();
+  const output = decoder.decode(Uint8Array.from(input));
+  expect(output).toBe("\uFFFD\uFFFD");
+});

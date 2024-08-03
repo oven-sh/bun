@@ -40,8 +40,6 @@ const picohttp = bun.picohttp;
 pub const TextEncoder = struct {
     filler: u32 = 0,
 
-    const utf8_string: string = "utf-8";
-
     pub export fn TextEncoder__encode8(
         globalThis: *JSGlobalObject,
         ptr: [*]const u8,
@@ -451,7 +449,6 @@ pub const TextDecoder = struct {
         return JSC.JSValue.jsBoolean(this.fatal);
     }
 
-    const utf8_string: string = "utf-8";
     pub fn getEncoding(
         this: *TextDecoder,
         globalThis: *JSC.JSGlobalObject,

@@ -1755,7 +1755,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.resp) |resp| {
                 resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
             }
-            this.setAbortHandler();
         }
 
         pub fn renderResponseBuffer(this: *RequestContext) void {
@@ -1776,7 +1775,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 )) {
                     this.flags.has_marked_pending = true;
                     resp.onWritable(*RequestContext, onWritableCompleteResponseBuffer, this);
-                    this.setAbortHandler();
                     return;
                 }
             }
@@ -1787,7 +1785,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn drainResponseBufferAndMetadata(this: *RequestContext) void {
             if (this.resp) |resp| {
                 this.renderMetadata();
-                this.setAbortHandler();
 
                 _ = resp.write(
                     this.response_buf_owned.items,
@@ -1887,8 +1884,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             // mark request as aborted
             this.flags.aborted = true;
-            // we should not use the response anymore
-            this.resp = null;
+            this.detachResponse();
             var any_js_calls = false;
             var vm = this.server.?.vm;
             const globalThis = this.server.?.globalThis;
@@ -2128,7 +2124,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 resp.onWritable(*RequestContext, onWritableSendfile, this);
             }
 
-            this.setAbortHandler();
             resp.markNeedsMore();
 
             return true;
@@ -2317,7 +2312,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 return this.renderSendFile(blob);
             }
             if(this.server) |server| {
-               this.setAbortHandler();
                this.ref();
                this.blob.Blob.doReadFileInternal(*RequestContext, this, onReadFile, server.globalThis);
             }
@@ -2497,7 +2491,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                             }
 
                             // TODO: should this timeout?
-                            this.setAbortHandler();
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
                                     .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
@@ -2570,7 +2563,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            this.setAbortHandler();
             streamLog("is in progress, but did not return a Promise. Finalizing request context", .{});
             response_stream.sink.onFirstWrite = null;
             response_stream.sink.ctx = null;
@@ -2621,8 +2613,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         fn detachResponse(this: *RequestContext) void {
             if (this.resp) |resp| {
                 this.resp = null;
-                // onAbort should have set this to null
-                assert(!this.flags.aborted);
+           
                 if (this.flags.is_waiting_for_request_body) {
                     this.flags.is_waiting_for_request_body = false;
                     resp.clearOnData();
@@ -2988,7 +2979,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                                     // if we only have metadata to send, send it now
                                     resp.runCorkedWithType(*RequestContext, renderMetadata, this);
                                 }
-                                this.setAbortHandler();
                                 return;
                             },
                         }
@@ -3411,8 +3401,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 )) {
                     this.flags.has_marked_pending = true;
                     resp.onWritable(*RequestContext, onWritableBytes, this);
-                    // given a blob, we might not have set an abort handler yet
-                    this.setAbortHandler();
                     return;
                 }
             }
@@ -3573,8 +3561,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         old.resolve(&new_body, server.globalThis, null);
                         body.value = new_body;
                     }
-                } else {
-                    this.setAbortHandler();
                 }
             }
         }

@@ -101,6 +101,9 @@ struct addrinfo_result {
     int error;
 };
 
+#define us_internal_ssl_socket_context_r struct us_internal_ssl_socket_context_t *nonnull_arg
+#define us_internal_ssl_socket_r struct us_internal_ssl_socket_t *nonnull_arg
+
 extern int Bun__addrinfo_get(struct us_loop_t* loop, const char* host, struct addrinfo_request** ptr);
 extern int Bun__addrinfo_set(struct addrinfo_request* ptr, struct us_connecting_socket_t* socket); 
 extern void Bun__addrinfo_freeRequest(struct addrinfo_request* addrinfo_req, int error);
@@ -110,19 +113,19 @@ extern struct addrinfo_result *Bun__addrinfo_getRequestResult(struct addrinfo_re
 /* Loop related */
 void us_internal_dispatch_ready_poll(struct us_poll_t *p, int error,
                                      int events);
-void us_internal_timer_sweep(struct us_loop_t *loop);
-void us_internal_free_closed_sockets(struct us_loop_t *loop);
+void us_internal_timer_sweep(us_loop_r loop);
+void us_internal_free_closed_sockets(us_loop_r loop);
 void us_internal_loop_link(struct us_loop_t *loop,
                            struct us_socket_context_t *context);
 void us_internal_loop_unlink(struct us_loop_t *loop,
                              struct us_socket_context_t *context);
 void us_internal_loop_data_init(struct us_loop_t *loop,
-                                void (*wakeup_cb)(struct us_loop_t *loop),
-                                void (*pre_cb)(struct us_loop_t *loop),
-                                void (*post_cb)(struct us_loop_t *loop));
-void us_internal_loop_data_free(struct us_loop_t *loop);
-void us_internal_loop_pre(struct us_loop_t *loop);
-void us_internal_loop_post(struct us_loop_t *loop);
+                                void (*wakeup_cb)(us_loop_r loop),
+                                void (*pre_cb)(us_loop_r loop),
+                                void (*post_cb)(us_loop_r loop));
+void us_internal_loop_data_free(us_loop_r loop);
+void us_internal_loop_pre(us_loop_r loop);
+void us_internal_loop_post(us_loop_r loop);
 
 /* Asyncs (old) */
 struct us_internal_async *us_internal_create_async(struct us_loop_t *loop,
@@ -139,22 +142,22 @@ int us_internal_poll_type(struct us_poll_t *p);
 void us_internal_poll_set_type(struct us_poll_t *p, int poll_type);
 
 /* SSL loop data */
-void us_internal_init_loop_ssl_data(struct us_loop_t *loop);
-void us_internal_free_loop_ssl_data(struct us_loop_t *loop);
+void us_internal_init_loop_ssl_data(us_loop_r loop);
+void us_internal_free_loop_ssl_data(us_loop_r loop);
 
 /* Socket context related */
-void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
-                                            struct us_socket_t *s);
+void us_internal_socket_context_link_socket(us_socket_context_r context,
+                                            us_socket_r s);
 void us_internal_socket_context_unlink_socket(int ssl,
-    struct us_socket_context_t *context, struct us_socket_t *s);
+    us_socket_context_r context, us_socket_r s);
 
 void us_internal_socket_after_resolve(struct us_connecting_socket_t *s);
-void us_internal_socket_after_open(struct us_socket_t *s, int error);
+void us_internal_socket_after_open(us_socket_r s, int error);
 struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
+us_internal_ssl_socket_close(us_internal_ssl_socket_r s, int code,
                              void *reason);
                              
-int us_internal_handle_dns_results(struct us_loop_t *loop);
+int us_internal_handle_dns_results(us_loop_r loop);
 
 /* Sockets are polls */
 struct us_socket_t {
@@ -248,9 +251,9 @@ struct us_listen_socket_t {
 
 /* Listen sockets are keps in their own list */
 void us_internal_socket_context_link_listen_socket(
-    struct us_socket_context_t *context, struct us_listen_socket_t *s);
+    us_socket_context_r context, struct us_listen_socket_t *s);
 void us_internal_socket_context_unlink_listen_socket(int ssl,
-    struct us_socket_context_t *context, struct us_listen_socket_t *s);
+    us_socket_context_r context, struct us_listen_socket_t *s);
 
 struct us_socket_context_t {
   alignas(LIBUS_EXT_ALIGNMENT) struct us_loop_t *loop;
@@ -290,31 +293,31 @@ typedef void (*us_internal_on_handshake_t)(
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context);
 /* SNI functions */
 void us_internal_ssl_socket_context_add_server_name(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     const char *hostname_pattern, struct us_socket_context_options_t options,
     void *user);
 void us_bun_internal_ssl_socket_context_add_server_name(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     const char *hostname_pattern,
     struct us_bun_socket_context_options_t options, void *user);
 void us_internal_ssl_socket_context_remove_server_name(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     const char *hostname_pattern);
 void us_internal_ssl_socket_context_on_server_name(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     void (*cb)(struct us_internal_ssl_socket_context_t *, const char *));
 void *
-us_internal_ssl_socket_get_sni_userdata(struct us_internal_ssl_socket_t *s);
+us_internal_ssl_socket_get_sni_userdata(us_internal_ssl_socket_r s);
 void *us_internal_ssl_socket_context_find_server_name_userdata(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     const char *hostname_pattern);
 
 void *
-us_internal_ssl_socket_get_native_handle(struct us_internal_ssl_socket_t *s);
+us_internal_ssl_socket_get_native_handle(us_internal_ssl_socket_r s);
 void *us_internal_ssl_socket_context_get_native_handle(
-    struct us_internal_ssl_socket_context_t *context);
+    us_internal_ssl_socket_context_r context);
 struct us_bun_verify_error_t
-us_internal_verify_error(struct us_internal_ssl_socket_t *s);
+us_internal_verify_error(us_internal_ssl_socket_r s);
 struct us_internal_ssl_socket_context_t *us_internal_create_ssl_socket_context(
     struct us_loop_t *loop, int context_ext_size,
     struct us_socket_context_options_t options);
@@ -324,108 +327,108 @@ us_internal_bun_create_ssl_socket_context(
     struct us_bun_socket_context_options_t options);
 
 void us_internal_ssl_socket_context_free(
-    struct us_internal_ssl_socket_context_t *context);
+    us_internal_ssl_socket_context_r context);
 void us_internal_ssl_socket_context_on_open(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_open)(
-        struct us_internal_ssl_socket_t *s, int is_client, char *ip,
+        us_internal_ssl_socket_r s, int is_client, char *ip,
         int ip_length));
 
 void us_internal_ssl_socket_context_on_close(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_close)(
-        struct us_internal_ssl_socket_t *s, int code, void *reason));
+        us_internal_ssl_socket_r s, int code, void *reason));
 
 void us_internal_ssl_socket_context_on_data(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_data)(
-        struct us_internal_ssl_socket_t *s, char *data, int length));
+        us_internal_ssl_socket_r s, char *data, int length));
 
-void us_internal_update_handshake(struct us_internal_ssl_socket_t *s);
-int us_internal_renegotiate(struct us_internal_ssl_socket_t *s);
-void us_internal_trigger_handshake_callback(struct us_internal_ssl_socket_t *s,
+void us_internal_update_handshake(us_internal_ssl_socket_r s);
+int us_internal_renegotiate(us_internal_ssl_socket_r s);
+void us_internal_trigger_handshake_callback(us_internal_ssl_socket_r s,
                                             int success);
 void us_internal_on_ssl_handshake(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     us_internal_on_handshake_t onhandshake, void *custom_data);
 
 void us_internal_ssl_socket_context_on_writable(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_writable)(
-        struct us_internal_ssl_socket_t *s));
+        us_internal_ssl_socket_r s));
 
 void us_internal_ssl_socket_context_on_timeout(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_timeout)(
-        struct us_internal_ssl_socket_t *s));
+        us_internal_ssl_socket_r s));
 
 void us_internal_ssl_socket_context_on_long_timeout(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_timeout)(
-        struct us_internal_ssl_socket_t *s));
+        us_internal_ssl_socket_r s));
 
 void us_internal_ssl_socket_context_on_end(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_end)(
-        struct us_internal_ssl_socket_t *s));
+        us_internal_ssl_socket_r s));
 
 void us_internal_ssl_socket_context_on_connect_error(
-    struct us_internal_ssl_socket_context_t *context,
+    us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_connect_error)(
-        struct us_internal_ssl_socket_t *s, int code));
+        us_internal_ssl_socket_r s, int code));
 
 void us_internal_ssl_socket_context_on_socket_connect_error(
-        struct us_internal_ssl_socket_context_t *context,
+        us_internal_ssl_socket_context_r context,
     struct us_internal_ssl_socket_t *(*on_socket_connect_error)(
-        struct us_internal_ssl_socket_t *s, int code));
+        us_internal_ssl_socket_r s, int code));
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen(
-    struct us_internal_ssl_socket_context_t *context, const char *host,
+    us_internal_ssl_socket_context_r context, const char *host,
     int port, int options, int socket_ext_size);
 
 struct us_listen_socket_t *us_internal_ssl_socket_context_listen_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *path,
+    us_internal_ssl_socket_context_r context, const char *path,
     size_t pathlen, int options, int socket_ext_size);
 
 struct us_connecting_socket_t *us_internal_ssl_socket_context_connect(
-    struct us_internal_ssl_socket_context_t *context, const char *host,
+    us_internal_ssl_socket_context_r context, const char *host,
     int port, int options, int socket_ext_size, int* is_resolved);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_connect_unix(
-    struct us_internal_ssl_socket_context_t *context, const char *server_path,
+    us_internal_ssl_socket_context_r context, const char *server_path,
     size_t pathlen, int options, int socket_ext_size);
 
-int us_internal_ssl_socket_write(struct us_internal_ssl_socket_t *s,
+int us_internal_ssl_socket_write(us_internal_ssl_socket_r s,
                                  const char *data, int length, int msg_more);
-int us_internal_ssl_socket_raw_write(struct us_internal_ssl_socket_t *s,
+int us_internal_ssl_socket_raw_write(us_internal_ssl_socket_r s,
                                      const char *data, int length,
                                      int msg_more);
 
-void us_internal_ssl_socket_timeout(struct us_internal_ssl_socket_t *s,
+void us_internal_ssl_socket_timeout(us_internal_ssl_socket_r s,
                                     unsigned int seconds);
 void *
 us_internal_ssl_socket_context_ext(struct us_internal_ssl_socket_context_t *s);
 struct us_internal_ssl_socket_context_t *
-us_internal_ssl_socket_get_context(struct us_internal_ssl_socket_t *s);
-void *us_internal_ssl_socket_ext(struct us_internal_ssl_socket_t *s);
+us_internal_ssl_socket_get_context(us_internal_ssl_socket_r s);
+void *us_internal_ssl_socket_ext(us_internal_ssl_socket_r s);
 void *us_internal_connecting_ssl_socket_ext(struct us_connecting_socket_t *c);
-int us_internal_ssl_socket_is_shut_down(struct us_internal_ssl_socket_t *s);
-void us_internal_ssl_socket_shutdown(struct us_internal_ssl_socket_t *s);
+int us_internal_ssl_socket_is_shut_down(us_internal_ssl_socket_r s);
+void us_internal_ssl_socket_shutdown(us_internal_ssl_socket_r s);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_context_adopt_socket(
-    struct us_internal_ssl_socket_context_t *context,
-    struct us_internal_ssl_socket_t *s, int ext_size);
+    us_internal_ssl_socket_context_r context,
+    us_internal_ssl_socket_r s, int ext_size);
 
 struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
-    struct us_socket_t *s, struct us_bun_socket_context_options_t options,
+    us_socket_r s, struct us_bun_socket_context_options_t options,
     struct us_socket_events_t events, int socket_ext_size);
 struct us_internal_ssl_socket_context_t *
 us_internal_create_child_ssl_socket_context(
-    struct us_internal_ssl_socket_context_t *context, int context_ext_size);
+    us_internal_ssl_socket_context_r context, int context_ext_size);
 struct us_loop_t *us_internal_ssl_socket_context_loop(
-    struct us_internal_ssl_socket_context_t *context);
+    us_internal_ssl_socket_context_r context);
 struct us_internal_ssl_socket_t *
-us_internal_ssl_socket_open(struct us_internal_ssl_socket_t *s, int is_client,
+us_internal_ssl_socket_open(us_internal_ssl_socket_r s, int is_client,
                             char *ip, int ip_length);
 
 int us_raw_root_certs(struct us_cert_string_t **out);

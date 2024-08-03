@@ -19,13 +19,13 @@ struct TaggedPointer {
     TaggedPointer& operator=(const TaggedPointer&) = default;
     bool operator==(const TaggedPointer& other) const { return value == other.value; }
 
-    TaggedPointer(JSC::JSCell* ptr, bool weak)
+    TaggedPointer(void* ptr, bool weak)
         : value(reinterpret_cast<uintptr_t>(ptr) | (weak ? 3 : 1))
     {
         RELEASE_ASSERT((reinterpret_cast<uintptr_t>(ptr) & 3) == 0);
     }
 
-    TaggedPointer(JSC::JSCell* ptr)
+    TaggedPointer(void* ptr)
         : TaggedPointer(ptr, false)
     {
     }

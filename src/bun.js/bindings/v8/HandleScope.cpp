@@ -19,7 +19,10 @@ HandleScope::~HandleScope()
 
 uintptr_t* HandleScope::CreateHandle(internal::Isolate* isolate, uintptr_t value)
 {
-    return buffer->createHandle(value);
+    // TODO figure out if this is actually used directly
+    V8_UNIMPLEMENTED();
+    // return buffer->createHandle(value);
+    return nullptr;
 }
 
 }

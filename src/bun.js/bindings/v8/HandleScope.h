@@ -8,6 +8,7 @@
 namespace v8 {
 
 class Isolate;
+class Number;
 
 class HandleScope {
 public:
@@ -15,10 +16,16 @@ public:
     BUN_EXPORT ~HandleScope();
     BUN_EXPORT uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
 
-    template<typename T> Local<T> createLocal(TaggedPointer tagged)
+    template<typename T> Local<T> createLocal(JSCell* object)
     {
-        TaggedPointer* handle = reinterpret_cast<TaggedPointer*>(buffer->createHandle(tagged.value));
+        TaggedPointer* handle = buffer->createHandle(object);
         return Local<T>(handle);
+    }
+
+    Local<Number> createLocalSmi(int32_t smi)
+    {
+        TaggedPointer* handle = buffer->createSmiHandle(smi);
+        return Local<Number>(handle);
     }
 
 private:

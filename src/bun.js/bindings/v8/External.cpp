@@ -15,7 +15,7 @@ Local<External> External::New(Isolate* isolate, void* value)
 
 void* External::Value() const
 {
-    auto* external = toObjectPointer<Bun::NapiExternal>();
+    auto* external = localToObjectPointer<Bun::NapiExternal>();
     if (!external) {
         return nullptr;
     }

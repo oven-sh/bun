@@ -15,12 +15,12 @@ public:
 
     const Zig::GlobalObject* globalObject() const
     {
-        return toObjectPointer<Zig::GlobalObject>();
+        return localToObjectPointer<Zig::GlobalObject>();
     }
 
     Zig::GlobalObject* globalObject()
     {
-        return toObjectPointer<Zig::GlobalObject>();
+        return localToObjectPointer<Zig::GlobalObject>();
     }
 
     HandleScope* currentHandleScope() const

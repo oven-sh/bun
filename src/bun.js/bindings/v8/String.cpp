@@ -34,7 +34,7 @@ MaybeLocal<String> String::NewFromUtf8(Isolate* isolate, char const* data, NewSt
 int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_ref, int options) const
 {
     RELEASE_ASSERT(options == 0);
-    auto jsString = toObjectPointer<const JSString>();
+    auto jsString = localToObjectPointer<JSString>();
     WTF::String string = jsString->getString(isolate->globalObject());
 
     // TODO(@190n) handle 16 bit strings
@@ -65,7 +65,7 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
 
 int String::Length() const
 {
-    auto jsString = toObjectPointer<const JSString>();
+    auto jsString = localToObjectPointer<JSString>();
     RELEASE_ASSERT(jsString->isString());
     WTF::String s = jsString->getString(Isolate::GetCurrent()->globalObject());
     return s.length();

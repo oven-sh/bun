@@ -14,7 +14,7 @@ namespace v8 {
 // matches V8 class hierarchy
 class Template : public Data {};
 
-class ObjectTemplate : public JSC::InternalFunction, public Template {
+class ObjectTemplate : public Template, public JSC::InternalFunction {
 public:
     DECLARE_INFO;
 
@@ -50,16 +50,28 @@ private:
     // do not use directly inside exported V8 functions, use internals()
     Internals __internals;
 
+    ObjectTemplate* localToObjectPointer()
+    {
+        ASSERT(this == static_cast<Data*>(this));
+        return Data::localToObjectPointer<ObjectTemplate>();
+    }
+
+    const ObjectTemplate* localToObjectPointer() const
+    {
+        ASSERT(this == static_cast<const Data*>(this));
+        return Data::localToObjectPointer<ObjectTemplate>();
+    }
+
     Internals& internals()
     {
-        ObjectTemplate* thisObj = Data::locationToObjectPointer<ObjectTemplate>(this);
-        return thisObj->__internals;
+        ASSERT(this == static_cast<Data*>(this));
+        return localToObjectPointer()->__internals;
     }
 
     const Internals& internals() const
     {
-        const ObjectTemplate* thisObj = Data::locationToObjectPointer<ObjectTemplate>(this);
-        return thisObj->__internals;
+        ASSERT(this == static_cast<const Data*>(this));
+        return localToObjectPointer()->__internals;
     }
 
     static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);

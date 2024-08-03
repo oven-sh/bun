@@ -55,7 +55,7 @@ MaybeLocal<Object> ObjectTemplate::NewInstance(Local<Context> context)
     // TODO handle interceptors?
 
     auto& vm = context->vm();
-    auto thisObj = Data::locationToObjectPointer<ObjectTemplate>(this);
+    auto thisObj = localToObjectPointer();
 
     // get a structure
     // must take thisObj because JSC needs the native pointer

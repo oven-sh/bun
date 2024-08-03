@@ -1470,23 +1470,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onResolve", .{});
 
             const arguments = callframe.arguments(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = arguments.ptr[1].asPromisePtr(@This());
             const result = arguments.ptr[0];
             result.ensureStillAlive();
-
-            defer ctx.deref();
-
-            if (ctx.isAbortedOrEnded()) {
-                ctx.deref();
-                return JSValue.jsUndefined();
-            }
-
-            if (ctx.didUpgradeWebSocket()) {
-                ctx.deref();
-                return JSValue.jsUndefined();
-            }
-
-            handleResolve(ctx, result);
+            ctx.onRequestContextLifecycleMethod(handleResolve, .{ctx, result}); 
             return JSValue.jsUndefined();
         }
 
@@ -1611,12 +1598,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
+            ctx.onRequestContextLifecycleMethod(handleReject, .{ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined}); 
 
-            defer ctx.deref();
-
-            handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
             return JSValue.jsUndefined();
         }
 
@@ -2830,20 +2815,39 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             streamLog("onResolveStream", .{});
             var args = callframe.arguments(2);
-            var req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
-            defer req.deref();
-            req.handleResolveStream();
+            const req: *@This() = args.ptr[args.len - 1].asPromisePtr(@This());
+            req.onRequestContextLifecycleMethod(handleResolveStream, .{req});
             return JSValue.jsUndefined();
         }
         pub fn onRejectStream(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
             streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
-            var req = args.ptr[args.len - 1].asPromisePtr(@This());
-            defer req.deref();
+            const req = args.ptr[args.len - 1].asPromisePtr(@This());
             const err = args.ptr[0];
-            req.handleRejectStream(globalThis, err);
+            req.onRequestContextLifecycleMethod(handleRejectStream, .{req, globalThis, err});
             return JSValue.jsUndefined();
         }
+
+        fn onRequestContextLifecycleMethod(this: *RequestContext, comptime method: anytype, args: std.meta.ArgsTuple(@TypeOf(method))) void {
+            const original_deinit_until_callback_completes = this.defer_deinit_until_callback_completes;
+            var should_deinit = if (original_deinit_until_callback_completes) |original| original.* else false;
+
+            this.defer_deinit_until_callback_completes = &should_deinit;
+
+            defer {
+                if (original_deinit_until_callback_completes != null) {
+                    original_deinit_until_callback_completes.?.* = should_deinit;
+                    this.defer_deinit_until_callback_completes = original_deinit_until_callback_completes;
+                } else if (should_deinit) {
+                    this.deinit();
+                } else {
+                    this.deref();
+                }
+            }
+
+            @call(bun.callmod_inline, method, args);
+        }
+
 
         pub fn handleRejectStream(req: *@This(), globalThis: *JSC.JSGlobalObject, err: JSValue) void {
             streamLog("handleRejectStream", .{});

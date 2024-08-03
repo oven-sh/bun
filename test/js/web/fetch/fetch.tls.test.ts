@@ -191,7 +191,7 @@ it("fetch with invalid tls + rejectUnauthorized: false should not throw", async 
         try {
           const result = await fetch(url, { tls: { rejectUnauthorized: false } }).then((res: Response) => res.text());
           expect(result).toBe("Hello World");
-        } catch {
+        } catch (e) {
           expect.unreachable();
         }
       }),

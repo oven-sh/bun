@@ -5394,7 +5394,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             }
 
             var upgrader = bun.cast(*RequestContext, request.upgrader.?);
-            upgrader.setAbortHandler(); // make sure that we have an abort handler
 
             if (upgrader.isAbortedOrEnded()) {
                 return JSC.jsBoolean(false);
@@ -5507,6 +5506,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
 
             // obviously invalid pointer marks it as used
             upgrader.upgrade_context = @as(*uws.uws_socket_context_s, @ptrFromInt(std.math.maxInt(usize)));
+            // set the abort handler so we can receive onAbort to deref the context
+            upgrader.setAbortHandler(); 
+            // after upgrading we should not use the response anymore
+            upgrader.detachResponse();
             request.upgrader = null;
 
             data_value.ensureStillAlive();
@@ -5520,6 +5523,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer sec_websocket_protocol_str.deinit();
             var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
             defer sec_websocket_extensions_str.deinit();
+
             resp.upgrade(
                 *ServerWebSocket,
                 ws,

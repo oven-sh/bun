@@ -2619,19 +2619,18 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
-            if (this.resp) |_| {
+            if (this.resp) |resp| {
                 this.resp = null;
-                //TODO: investigate
                 // onAbort should have set this to null
-                // assert(!this.flags.aborted);
-                // if (this.flags.is_waiting_for_request_body) {
-                //     this.flags.is_waiting_for_request_body = false;
-                //     resp.clearOnData();
-                // }
-                // if (this.flags.has_abort_handler) {
-                //     resp.clearAborted();
-                //     this.flags.has_abort_handler = false;
-                // }
+                assert(!this.flags.aborted);
+                if (this.flags.is_waiting_for_request_body) {
+                    this.flags.is_waiting_for_request_body = false;
+                    resp.clearOnData();
+                }
+                if (this.flags.has_abort_handler) {
+                    resp.clearAborted();
+                    this.flags.has_abort_handler = false;
+                }
             }
         }
 
@@ -5509,7 +5508,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             // set the abort handler so we can receive onAbort to deref the context
             upgrader.setAbortHandler(); 
             // after upgrading we should not use the response anymore
-            upgrader.detachResponse();
+            upgrader.resp = null;
             request.upgrader = null;
 
             data_value.ensureStillAlive();

@@ -413,7 +413,7 @@ struct us_internal_ssl_socket_t * ssl_on_timeout(struct us_internal_ssl_socket_t
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
   us_internal_set_loop_ssl_data(s);
-  return context->on_long_timeout(s);
+  return context->on_timeout(s);
 }
 
 struct us_internal_ssl_socket_t * ssl_on_long_timeout(struct us_internal_ssl_socket_t *s) {

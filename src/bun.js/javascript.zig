@@ -1046,6 +1046,7 @@ pub const VirtualMachine = struct {
     extern fn Bun__handleUncaughtException(*JSC.JSGlobalObject, err: JSC.JSValue, is_rejection: bool) bool;
     extern fn Bun__handleUnhandledRejection(*JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool;
     extern fn Bun__Process__exit(*JSC.JSGlobalObject, code: c_int) noreturn;
+    extern fn Bun__ERR_UNHANDLED_REJECTION(*JSC.JSGlobalObject, reason: JSC.JSValue) JSC.JSValue;
 
     pub fn unhandledRejection(this: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, reason: JSC.JSValue, promise: JSC.JSValue) bool {
         if (this.isShuttingDown()) {
@@ -1061,6 +1062,8 @@ pub const VirtualMachine = struct {
 
         const handled = Bun__handleUnhandledRejection(globalObject, reason, promise);
         if (!handled) {
+            const handled2 = Bun__handleUncaughtException(globalObject, Bun__ERR_UNHANDLED_REJECTION(globalObject, reason), true);
+            if (handled2) return true;
             this.unhandled_error_counter += 1;
             this.onUnhandledRejection(this, globalObject, reason);
         }

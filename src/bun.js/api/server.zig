@@ -1746,7 +1746,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ) catch unreachable;
             if (this.resp == null or this.resp.?.tryEnd(bb.items, bb.items.len, this.shouldCloseConnection())) {
                 bb.clearAndFree();
+                this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 this.finalizeWithoutDeinit();
+                this.deref();
                 return;
             }
 

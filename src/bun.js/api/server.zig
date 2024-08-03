@@ -1566,6 +1566,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         /// destroy RequestContext, should be only called by deref or if defer_deinit_until_callback_completes is ref is set to true
         fn deinit(this: *RequestContext) void {
             this.detachResponse();
+            this.endRequestStreamingAndDrain();
             // TODO: has_marked_complete is doing something?
             this.flags.has_marked_complete = true;
 
@@ -1779,6 +1780,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
             this.detachResponse();
+            this.endRequestStreamingAndDrain();
             this.deref(); 
         }
 
@@ -1799,6 +1801,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer this.deref();
 
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 resp.end(data, closeConnection);
             }
         }
@@ -1809,6 +1812,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer this.deref();
 
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 // This will send a terminating 0\r\n\r\n chunk to the client
                 // We only want to do that if they're still expecting a body
                 // We cannot call this function if the Content-Length header was previously set
@@ -1822,6 +1826,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer this.deref();
 
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 resp.endWithoutBody(closeConnection);
             }
         }
@@ -1920,15 +1925,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.isDeadRequest()) {
                 this.finalizeWithoutDeinit();
             } else {
-                // if we cannot, we have to reject pending promises
-                // first, we reject the request body promise
-                if (this.request_body) |body| {
-                    // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-                    // but we received nothing or the connection was aborted
-                    if (body.value == .Locked) {
-                        body.value.toErrorInstance(.{ .Aborted = {} }, globalThis);
-                        any_js_calls = true;
-                    }
+                if(this.endRequestStreaming()) {
+                    any_js_calls = true;
                 }
 
                 if (this.response_ptr) |response| {
@@ -1978,21 +1976,17 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
             }
 
-            if (this.request_body) |body| {
-                ctxLog("finalizeWithoutDeinit: request_body != null", .{});
-                // Case 1:
-                // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
-                // but we received nothing or the connection was aborted
-                // the promise is pending
-                // Case 2:
-                // User ignored the body and the connection was aborted or ended
-                // Case 3:
-                // Stream was not consumed and the connection was aborted or ended
-                if (body.value == .Locked) {
-                    body.value.toErrorInstance(.{ .Aborted = {} }, globalThis);
-                }
-            }
 
+            // Case 1:
+            // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+            // but we received nothing or the connection was aborted
+            // the promise is pending
+            // Case 2:
+            // User ignored the body and the connection was aborted or ended
+            // Case 3:
+            // Stream was not consumed and the connection was aborted or ended
+            _ = this.endRequestStreaming();
+            
             if (this.byte_stream) |stream| {
                 ctxLog("finalizeWithoutDeinit: stream != null", .{});
 
@@ -2005,14 +1999,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
                 this.pathname = bun.String.empty;
-            }
-
-            // if we are waiting for the body yet and the request was not aborted we can safely clear the onData callback
-            if (this.resp) |resp| {
-                if (this.flags.is_waiting_for_request_body and this.flags.aborted == false) {
-                    resp.clearOnData();
-                    this.flags.is_waiting_for_request_body = false;
-                }
             }
         }
 
@@ -2048,6 +2034,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer this.deref();
 
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 resp.endSendFile(writeOffSet, closeConnection);
             }
         }
@@ -2152,6 +2139,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 this.deref();
                 return true;
             } else {
@@ -2169,6 +2157,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
                 this.detachResponse();
+                this.endRequestStreamingAndDrain();
                 this.deref();
             } else {
                 this.flags.has_marked_pending = true;
@@ -2613,6 +2602,27 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.setAbortHandler();
         }
 
+        fn endRequestStreamingAndDrain(this: *RequestContext) void {
+            assert(this.server != null);
+
+            if(this.endRequestStreaming()) {
+                this.server.?.vm.drainMicrotasks();
+            }
+        }
+        fn endRequestStreaming(this: *RequestContext) bool {
+            assert(this.server != null);
+           // if we cannot, we have to reject pending promises
+           // first, we reject the request body promise
+           if (this.request_body) |body| {
+                // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
+                // but we received nothing or the connection was aborted
+                if (body.value == .Locked) {
+                    body.value.toErrorInstance(.{ .Aborted = {} }, this.server.?.globalThis);
+                    return true;
+                }
+            }
+            return false;
+        }
         fn detachResponse(this: *RequestContext) void {
             if (this.resp) |resp| {
                 this.resp = null;

@@ -256,12 +256,15 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
   if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error) return 1;
   
+  
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
   int sent_shutdown = state & SSL_SENT_SHUTDOWN;
   int received_shutdown = state & SSL_RECEIVED_SHUTDOWN;
   // if we are missing a shutdown call, we need to do a fast shutdown here
   if(!sent_shutdown || !received_shutdown) {
+    // make sure that the ssl loop data is set
+    us_internal_set_loop_ssl_data(s);
     // Zero means that we should wait for the peer to close the connection
     // but we are already closing the connection so we do a fast shutdown here
     int ret = SSL_shutdown(s->ssl);

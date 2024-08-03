@@ -37,7 +37,7 @@ expect.extend({
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+          `Expected ${cmds.join(" ")}\n to output ${optionalStdout}\n   but got ${result.stdout.toString("utf-8")}`,
       };
     }
 

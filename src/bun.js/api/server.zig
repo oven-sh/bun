@@ -2899,9 +2899,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // If a ReadableStream can trivially be converted to a Blob, do so.
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
             value.toBlobIfPossible();
-            if (this.isAbortedOrEnded()) {
-                return;
-            }
             const globalThis = this.server.?.globalThis;
             switch (value.*) {
                 .Error => |*err_ref| {

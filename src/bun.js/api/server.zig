@@ -2807,17 +2807,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     resp.body.value = .{ .Used = {} };
                 }
             }
-
-            streamLog("onResolve({any})", .{wrote_anything});
-            //aborted so call finalizeForAbort
-            if (req.isAbortedOrEnded()) {
+             
+            if(req.isAbortedOrEnded()) {
                 return;
             }
+
+            streamLog("onResolve({any})", .{wrote_anything});
             const resp = req.resp.?;
 
             const responded = resp.hasResponded();
-
-            if (!responded) {
+            defer req.deref();
+            if (responded) {
+                req.detachResponse();
+                req.endRequestStreamingAndDrain();
+            } else {
                 if (!req.flags.has_written_status) {
                     req.renderMetadata();
                 }

@@ -19,6 +19,7 @@ JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, con
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
+extern "C" JSC::EncodedJSValue Bun__ERR_UNHANDLED_REJECTION(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue reason);
 
 namespace Bun {
 
@@ -202,6 +203,36 @@ extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* 
 JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*))
 {
     return JSC::JSValue::encode(createTypeErrorWithCode(globalObject, "Bad socket type specified. Valid types are: udp4, udp6"_s, "ERR_SOCKET_BAD_TYPE"_s));
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_REJECTION, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto argCount = callFrame->argumentCount();
+    if (argCount < 1) {
+        JSC::throwTypeError(globalObject, scope, "requires 3 arguments"_s);
+        return {};
+    }
+
+    auto reason = callFrame->argument(0);
+    return Bun__ERR_UNHANDLED_REJECTION(globalObject, JSValue::encode(reason));
+}
+extern "C" JSC::EncodedJSValue Bun__ERR_UNHANDLED_REJECTION(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_reason)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // need to make sure this does not throw
+    JSString* reason = JSC::JSValue::decode(val_reason).toStringOrNull(globalObject);
+    if (!reason) {
+        scope.clearException();
+        reason = jsString(vm, String("[object Object]"_s))->toStringInline(globalObject);
+    }
+    auto string = reason->getString(globalObject);
+    auto message = makeString("This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \""_s, string, "\"."_s);
+    return JSC::JSValue::encode(createErrorWithCode(globalObject, message, "ERR_UNHANDLED_REJECTION"_s));
 }
 
 }

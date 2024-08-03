@@ -1616,7 +1616,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const arguments = callframe.arguments(2);
             const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
-            defer ctx.deinit();
+            defer ctx.deref();
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
             return JSValue.jsUndefined();
         }

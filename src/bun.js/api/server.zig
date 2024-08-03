@@ -1778,7 +1778,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     return;
                 }
             }
-            this.deref();
+            this.detachResponse();
+            this.deref(); 
         }
 
         /// Drain a partial response buffer
@@ -2150,6 +2151,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
+                this.detachResponse();
                 this.deref();
                 return true;
             } else {
@@ -2166,6 +2168,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const bytes = bytes_[@min(bytes_.len, @as(usize, @truncate(write_offset)))..];
             if (resp.tryEnd(bytes, bytes_.len, this.shouldCloseConnection())) {
                 this.response_buf_owned.items.len = 0;
+                this.detachResponse();
                 this.deref();
             } else {
                 this.flags.has_marked_pending = true;

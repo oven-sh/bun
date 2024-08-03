@@ -2839,8 +2839,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     original_deinit_until_callback_completes.?.* = should_deinit;
                     this.defer_deinit_until_callback_completes = original_deinit_until_callback_completes;
                 } else if (should_deinit) {
+                    this.defer_deinit_until_callback_completes = null;
                     this.deinit();
                 } else {
+                    this.defer_deinit_until_callback_completes = null;
                     this.deref();
                 }
             }

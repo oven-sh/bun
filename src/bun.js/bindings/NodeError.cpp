@@ -219,18 +219,51 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_UNHANDLED_REJECTION, (JSC::JSGlobalObjec
     auto reason = callFrame->argument(0);
     return Bun__ERR_UNHANDLED_REJECTION(globalObject, JSValue::encode(reason));
 }
-extern "C" JSC::EncodedJSValue Bun__ERR_UNHANDLED_REJECTION(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_reason)
+extern "C" JSC::EncodedJSValue Bun__ERR_UNHANDLED_REJECTION(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue encoded_reason)
 {
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     // need to make sure this does not throw
-    JSString* reason = JSC::JSValue::decode(val_reason).toStringOrNull(globalObject);
-    if (!reason) {
-        scope.clearException();
-        reason = jsString(vm, String("[object Object]"_s))->toStringInline(globalObject);
-    }
-    auto string = reason->getString(globalObject);
+    auto value = JSC::JSValue::decode(encoded_reason);
+    ASSERT(!value.isEmpty());
+
+    WTF::String string;
+    do {
+        if (!value.isCell()) {
+            string = value.toString(globalObject)->getString(globalObject);
+            break;
+        }
+
+        auto cell = value.asCell();
+        auto jstype = cell->type();
+
+        if (jstype == JSC::JSType::StringType) {
+            string = cell->toStringInline(globalObject)->getString(globalObject);
+            break;
+        }
+        if (jstype == JSC::JSType::SymbolType) {
+            auto symbol = jsCast<Symbol*>(cell);
+            auto result = symbol->tryGetDescriptiveString();
+            if (result.has_value()) {
+                string = result.value();
+                break;
+            }
+        }
+        auto jsstring = value.toStringOrNull(globalObject);
+        if (!jsstring) {
+            scope.clearException();
+            jsstring = jsString(vm, String("[object Object]"_s));
+        }
+        string = jsstring->getString(globalObject);
+    } while (0);
+
+    // JSString* reason = JSC::JSValue::decode(val_reason).toStringOrNull(globalObject);
+    // if (!reason) {
+    //     scope.clearException();
+    //     reason = jsString(vm, String("[object Object]"_s))->toStringInline(globalObject);
+    // }
+    // auto string = reason->getString(globalObject);
     auto message = makeString("This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason \""_s, string, "\"."_s);
     return JSC::JSValue::encode(createErrorWithCode(globalObject, message, "ERR_UNHANDLED_REJECTION"_s));
 }

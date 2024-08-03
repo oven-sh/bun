@@ -1894,10 +1894,12 @@ it("destroy should end download", async () => {
   const payload = Buffer.alloc(128 * 1024, "X");
   for (let i = 0; i < 5; i++) {
     let sendedByteLength = 0;
+    let signals = [];
     using server = Bun.serve({
       port: 0,
       async fetch(req) {
         let running = true;
+        signals.push(req.signal);
         req.signal.onabort = () => (running = false);
         return new Response(async function* () {
           while (running) {

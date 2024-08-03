@@ -986,6 +986,52 @@ describe("process.exitCode", () => {
   });
 });
 
+describe("on(uncaughtException)", () => {
+  it("throw number", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a);
+        // TODO b is wrong
+      });
+      throw 42;
+    `,
+      "42\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("throw error", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a instanceof Error);
+        console.log(a.message);
+        // TODO b is wrong
+      });
+      throw new Error("hello");
+    `,
+      "true\nhello\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("call undefined function", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a instanceof TypeError);
+        console.log(a.message);
+        // TODO b is wrong
+      });
+      global.foo();
+    `,
+      "true\nglobal.foo is not a function. (In 'global.foo()', 'global.foo' is undefined)\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+});
+
 describe("on(unhandledRejection)", () => {
   it("normal", () => {
     expect([

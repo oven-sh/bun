@@ -20,7 +20,6 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <string.h>
-#include <errno.h>
 #ifndef _WIN32
 #include <arpa/inet.h>
 #endif
@@ -65,6 +64,7 @@ void us_socket_context_close(int ssl, struct us_socket_context_t *context) {
     while (ls) {
         struct us_listen_socket_t *nextLS = (struct us_listen_socket_t *) ls->s.next;
         us_listen_socket_close(ssl, ls);
+        
         ls = nextLS;
     }
 
@@ -726,11 +726,13 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
 #endif
 
     /* Cannot adopt a closed socket */
-    if (us_socket_is_closed(ssl, s)) {
+    if (us_socket_is_closed(ssl, s) || us_socket_is_shut_down(ssl, s)) {
         return s;
     }
 
     if (s->low_prio_state != 1) {
+         /* We need to be sure that we still holding a reference*/
+        us_socket_context_ref(ssl, context);
         /* This properly updates the iterator if in on_timeout */
         us_internal_socket_context_unlink_socket(ssl, s->context, s);
     }
@@ -757,6 +759,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         if (new_s->next) new_s->next->prev = new_s;
     } else {
         us_internal_socket_context_link_socket(context, new_s);
+        us_socket_context_unref(ssl, context);
     }
 
     return new_s;

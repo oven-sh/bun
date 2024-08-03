@@ -56,39 +56,53 @@ describe("WebSocket", () => {
   });
 
   it("should connect many times over https", async () => {
-    using server = Bun.serve({
-      port: 0,
-      tls: COMMON_CERT,
-      fetch(req, server) {
-        if (server.upgrade(req)) {
-          return;
-        }
-        return new Response("Upgrade failed :(", { status: 500 });
-      },
-      websocket: {
-        message(ws, message) {
-          // echo
-          ws.send(message);
-        },
-        open(ws) {},
-      },
-    });
     {
-      for (let i = 0; i < 1000; i++) {
-        const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
-        await new Promise((resolve, reject) => {
-          ws.onopen = resolve;
-          ws.onerror = reject;
-        });
-        var closed = new Promise((resolve, reject) => {
-          ws.onclose = resolve;
-        });
+      using server = Bun.serve({
+        port: 0,
+        tls: COMMON_CERT,
+        fetch(req, server) {
+          if (server.upgrade(req)) {
+            return;
+          }
+          return new Response("Upgrade failed :(", { status: 500 });
+        },
+        websocket: {
+          message(ws, message) {
+            // echo
+            ws.send(message);
+          },
+          open(ws) {},
+        },
+      });
+      {
+        const batchSize = 20;
+        const batch = new Array(batchSize);
+        async function run() {
+          const ws = new WebSocket(server.url.href, { tls: { rejectUnauthorized: false } });
+          await new Promise((resolve, reject) => {
+            ws.onopen = resolve;
+          });
+          var closed = new Promise((resolve, reject) => {
+            ws.onclose = resolve;
+          });
 
-        ws.close();
-        await closed;
+          ws.close();
+          await closed;
+        }
+        for (let i = 0; i < 300; i++) {
+          batch[i % batchSize] = run();
+          if (i % batchSize === batchSize - 1) {
+            await Promise.all(batch);
+          }
+        }
+        await Promise.all(batch);
+        Bun.gc(true);
       }
-      Bun.gc(true);
     }
+    // test GC after all connections are closed
+    Bun.gc(true);
+    // wait to make sure all connections are closed/freed
+    await Bun.sleep(10);
   });
 
   it("rejectUnauthorized should reject self-sign certs when true/default", async () => {

@@ -4307,7 +4307,7 @@ pub const ByteStream = struct {
             return;
         }
 
-        bun.assert(!this.has_received_last_chunk);
+        bun.assert(!this.has_received_last_chunk or stream == .err);
         this.has_received_last_chunk = stream.isDone();
 
         if (this.pipe.ctx) |ctx| {

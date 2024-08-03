@@ -1471,18 +1471,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             const arguments = callframe.arguments(2);
             var ctx = arguments.ptr[1].asPromisePtr(@This());
-            const result = arguments.ptr[0];
-            result.ensureStillAlive();
-
             defer ctx.deref();
 
-            if (ctx.isAbortedOrEnded()) {
-                return JSValue.jsUndefined();
-            }
-
-            if (ctx.didUpgradeWebSocket()) {
-                return JSValue.jsUndefined();
-            }
+            const result = arguments.ptr[0];
+            result.ensureStillAlive();
 
             handleResolve(ctx, result);
             return JSValue.jsUndefined();
@@ -1520,6 +1512,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn handleResolve(ctx: *RequestContext, value: JSC.JSValue) void {
+            if (ctx.isAbortedOrEnded() or ctx.didUpgradeWebSocket()) {
+                return;
+            }
+
             if(ctx.server == null) {
                 ctx.renderMissingInvalidResponse(value);
                 return;
@@ -1618,18 +1614,15 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onReject", .{});
 
             const arguments = callframe.arguments(2);
-            var ctx = arguments.ptr[1].asPromisePtr(@This());
+            const ctx = arguments.ptr[1].asPromisePtr(@This());
             const err = arguments.ptr[0];
-
-            defer ctx.deref();
-
+            defer ctx.deinit();
             handleReject(ctx, if (!err.isEmptyOrUndefinedOrNull()) err else .undefined);
             return JSValue.jsUndefined();
         }
 
         fn handleReject(ctx: *RequestContext, value: JSC.JSValue) void {
             if (ctx.isAbortedOrEnded()) {
-                ctx.deref();
                 return;
             }
 
@@ -1649,16 +1642,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     return;
                 }
             }
-
             // check again in case it get aborted after runErrorHandler
             if (ctx.isAbortedOrEnded()) {
-                ctx.deref();
                 return;
             }
 
             // I don't think this case happens?
             if (ctx.didUpgradeWebSocket()) {
-                ctx.deref();
                 return;
             }
 
@@ -1672,7 +1662,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (ctx.resp) |resp| {
                 resp.runCorkedWithType(*RequestContext, renderMissingCorked, ctx);
             }
-            ctx.deref();
         }
 
         pub fn renderMissingCorked(ctx: *RequestContext) void {
@@ -1682,30 +1671,30 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         resp.writeStatus("204 No Content");
                     ctx.flags.has_written_status = true;
                     ctx.end("", ctx.shouldCloseConnection());
-                } else {
-                    // avoid writing the status again and missmatching the content-length
-                    if (ctx.flags.has_written_status) {
-                        ctx.end("", ctx.shouldCloseConnection());
-                        return;
-                    }
-
-                    if (ctx.flags.is_web_browser_navigation) {
-                        resp.writeStatus("200 OK");
-                        ctx.flags.has_written_status = true;
-
-                        resp.writeHeader("content-type", MimeType.html.value);
-                        resp.writeHeader("content-encoding", "gzip");
-                        resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
-                        ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
-                        return;
-                    }
-                    const missing_content = "Welcome to Bun! To get started, return a Response object.";
-                    resp.writeStatus("200 OK");
-                    resp.writeHeader("content-type", MimeType.text.value);
-                    resp.writeHeaderInt("content-length", missing_content.len);
-                    ctx.flags.has_written_status = true;
-                    ctx.end(missing_content, ctx.shouldCloseConnection());
+                    return;
                 }
+                // avoid writing the status again and missmatching the content-length
+                if (ctx.flags.has_written_status) {
+                    ctx.end("", ctx.shouldCloseConnection());
+                    return;
+                }
+
+                if (ctx.flags.is_web_browser_navigation) {
+                    resp.writeStatus("200 OK");
+                    ctx.flags.has_written_status = true;
+
+                    resp.writeHeader("content-type", MimeType.html.value);
+                    resp.writeHeader("content-encoding", "gzip");
+                    resp.writeHeaderInt("content-length", welcome_page_html_gz.len);
+                    ctx.end(welcome_page_html_gz, ctx.shouldCloseConnection());
+                    return;
+                }
+                const missing_content = "Welcome to Bun! To get started, return a Response object.";
+                resp.writeStatus("200 OK");
+                resp.writeHeader("content-type", MimeType.text.value);
+                resp.writeHeaderInt("content-length", missing_content.len);
+                ctx.flags.has_written_status = true;
+                ctx.end(missing_content, ctx.shouldCloseConnection());
             }
         }
 
@@ -1809,6 +1798,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn end(this: *RequestContext, data: []const u8, closeConnection: bool) void {
             if (this.resp) |resp| {
+                defer this.deref();
+
                 this.detachResponse();
                 resp.end(data, closeConnection);
             }
@@ -1817,6 +1808,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         pub fn endStream(this: *RequestContext, closeConnection: bool) void {
             ctxLog("endStream", .{});
             if (this.resp) |resp| {
+                defer this.deref();
+
                 this.detachResponse();
                 // This will send a terminating 0\r\n\r\n chunk to the client
                 // We only want to do that if they're still expecting a body
@@ -1828,6 +1821,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn endWithoutBody(this: *RequestContext, closeConnection: bool) void {
             if (this.resp) |resp| {
+                defer this.deref();
+
                 this.detachResponse();
                 resp.endWithoutBody(closeConnection);
             }
@@ -1837,7 +1832,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onWritableResponseBuffer", .{});
 
             assert(this.resp == resp);
-            defer this.deref();
             if (this.isAbortedOrEnded()) {
                 return false;
             }
@@ -1851,7 +1845,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.resp == resp);
 
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return false;
             }
 
@@ -1861,7 +1854,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             if (this.method == .HEAD) {
                 this.end("", this.shouldCloseConnection());
-                this.deref();
                 return false;
             }
 
@@ -1872,7 +1864,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onWritableCompleteResponseBuffer", .{});
             assert(this.resp == resp);
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return false;
             }
             return this.sendWritableBytesForCompleteResponseBuffer(this.response_buf_owned.items, write_offset, resp);
@@ -1907,6 +1898,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (any_js_calls) {
                     vm.drainMicrotasks();
                 }
+                this.deref();
             }
 
             // if signal is not aborted, abort the signal
@@ -1930,11 +1922,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // if we can, free the request now.
             if (this.isDeadRequest()) {
                 this.finalizeWithoutDeinit();
-                this.deref();
             } else {
-                this.ref();
-                defer this.deref();
-
                 // if we cannot, we have to reject pending promises
                 // first, we reject the request body promise
                 if (this.request_body) |body| {
@@ -2060,19 +2048,20 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn endSendFile(this: *RequestContext, writeOffSet: usize, closeConnection: bool) void {
             if (this.resp) |resp| {
+                defer this.deref();
+
                 this.detachResponse();
                 resp.endSendFile(writeOffSet, closeConnection);
             }
         }
 
         fn cleanupAndFinalizeAfterSendfile(this: *RequestContext) void {
-            this.endSendFile(this.sendfile.offset, this.shouldCloseConnection());
+            const sendfile = this.sendfile;
+            this.endSendFile(sendfile.offset, this.shouldCloseConnection());
 
             // use node syscall so that we don't segfault on BADF
-            if (this.sendfile.auto_close)
-                _ = bun.sys.close(this.sendfile.fd);
-            this.sendfile = undefined;
-            this.deref();
+            if (sendfile.auto_close)
+                _ = bun.sys.close(sendfile.fd);
         }
         const separator: string = "\r\n";
         const separator_iovec = [1]std.posix.iovec_const{.{
@@ -2149,7 +2138,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("onWritableBytes", .{});
             assert(this.resp == resp);
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return false;
             }
 
@@ -2318,7 +2306,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         pub fn doSendfile(this: *RequestContext, blob: Blob) void {
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
 
@@ -2394,7 +2381,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         fn renderWithBlobFromBodyValue(this: *RequestContext) void {
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
 
@@ -2426,7 +2412,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (this.isAbortedOrEnded()) {
                 stream.cancel(globalThis);
                 this.readable_stream_ref.deinit();
-                this.deref();
                 return;
             }
             const resp = this.resp.?;
@@ -2491,7 +2476,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 stream.done(globalThis);
                 this.readable_stream_ref.deinit();
                 this.endStream(this.shouldCloseConnection());
-                this.deref();
                 return;
             }
 
@@ -2501,6 +2485,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 if (assignment_result.asAnyPromise()) |promise| {
                     streamLog("returned a promise", .{});
                     this.drainMicrotasks();
+
 
                     switch (promise.status(globalThis.vm())) {
                         .Pending => {
@@ -2513,13 +2498,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
                             // TODO: should this timeout?
                             this.setAbortHandler();
-                            this.ref();
                             this.response_ptr.?.body.value = .{
                                 .Locked = .{
                                     .readable = JSC.WebCore.ReadableStream.Strong.init(stream, globalThis),
                                     .global = globalThis,
                                 },
                             };
+                            this.ref();
                             assignment_result.then(
                                 globalThis,
                                 this,
@@ -2564,7 +2549,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 defer this.readable_stream_ref.deinit();
 
                 response_stream.sink.markDone();
-                this.deref();
                 response_stream.sink.onFirstWrite = null;
 
                 response_stream.sink.finalize();
@@ -2635,19 +2619,19 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn detachResponse(this: *RequestContext) void {
-            if (this.resp) |resp| {
+            if (this.resp) |_| {
                 this.resp = null;
-
+                //TODO: investigate
                 // onAbort should have set this to null
-                assert(!this.flags.aborted);
-                if (this.flags.is_waiting_for_request_body) {
-                    this.flags.is_waiting_for_request_body = false;
-                    resp.clearOnData();
-                }
-                if (this.flags.has_abort_handler) {
-                    resp.clearAborted();
-                    this.flags.has_abort_handler = false;
-                }
+                // assert(!this.flags.aborted);
+                // if (this.flags.is_waiting_for_request_body) {
+                //     this.flags.is_waiting_for_request_body = false;
+                //     resp.clearOnData();
+                // }
+                // if (this.flags.has_abort_handler) {
+                //     resp.clearAborted();
+                //     this.flags.has_abort_handler = false;
+                // }
             }
         }
 
@@ -2681,16 +2665,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctx.drainMicrotasks();
 
             if (ctx.isAbortedOrEnded()) {
-                ctx.deref();
                 return;
             }
-
             // if you return a Response object or a Promise<Response>
             // but you upgraded the connection to a WebSocket
             // just ignore the Response object. It doesn't do anything.
             // it's better to do that than to throw an error
             if (ctx.didUpgradeWebSocket()) {
-                ctx.deref();
                 return;
             }
 
@@ -2743,7 +2724,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         // just ignore the Response object. It doesn't do anything.
                         // it's better to do that than to throw an error
                         if (ctx.didUpgradeWebSocket()) {
-                            ctx.deref();
                             return;
                         }
 
@@ -2825,7 +2805,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             streamLog("onResolve({any})", .{wrote_anything});
             //aborted so call finalizeForAbort
             if (req.isAbortedOrEnded()) {
-                req.deref();
                 return;
             }
             const resp = req.resp.?;
@@ -2838,8 +2817,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 }
                 req.endStream(req.shouldCloseConnection());
             }
-
-            req.deref();
         }
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -2854,8 +2831,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             streamLog("onRejectStream", .{});
             const args = callframe.arguments(2);
             var req = args.ptr[args.len - 1].asPromisePtr(@This());
-            defer req.deref();
             const err = args.ptr[0];
+            defer req.deref();
+
             req.handleRejectStream(globalThis, err);
             return JSValue.jsUndefined();
         }
@@ -2885,7 +2863,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // aborted so call finalizeForAbort
             if (req.isAbortedOrEnded()) {
-                req.deref();
                 return;
             }
 
@@ -2905,7 +2882,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
-            req.deref();
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {
@@ -2915,7 +2891,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // If it's a WTFStringImpl and it cannot be used as a UTF-8 string, convert it to a Blob.
             value.toBlobIfPossible();
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
             const globalThis = this.server.?.globalThis;
@@ -2923,7 +2898,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .Error => |*err_ref| {
                     _ = value.use();
                     if (this.isAbortedOrEnded()) {
-                        this.deref();
                         return;
                     }
                     this.runErrorHandler(err_ref.toJS(globalThis));
@@ -2941,7 +2915,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 },
                 .Locked => |*lock| {
                     if (this.isAbortedOrEnded()) {
-                        this.deref();
                         return;
                     }
 
@@ -3056,7 +3029,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
             const resp = this.resp.?;
@@ -3069,7 +3041,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (resp.write(chunk)) {
                 if (stream.isDone()) {
                     this.endStream(this.shouldCloseConnection());
-                    this.deref();
                 }
             } else {
                 // when it's the last one, we just want to know if it's done
@@ -3104,7 +3075,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             ctxLog("doRender", .{});
 
             if (this.isAbortedOrEnded()) {
-                this.deref();
                 return;
             }
             var response = this.response_ptr.?;
@@ -3132,7 +3102,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     },
                 }
             }
-            this.deref();
         }
 
         pub fn runErrorHandler(
@@ -3448,8 +3417,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     return;
                 }
             }
-
-            this.deref();
         }
 
         pub fn render(this: *RequestContext, response: *JSC.WebCore.Response) void {
@@ -5553,7 +5520,6 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             defer sec_websocket_protocol_str.deinit();
             var sec_websocket_extensions_str = sec_websocket_extensions.toSlice(bun.default_allocator);
             defer sec_websocket_extensions_str.deinit();
-
             resp.upgrade(
                 *ServerWebSocket,
                 ws,

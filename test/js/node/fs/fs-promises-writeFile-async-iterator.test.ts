@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, mock } from "bun:test";
 import { writeFile } from "fs/promises";
 import { tempDirWithFiles } from "harness";
 test("fs.promises.writeFile async iterator", async () => {
@@ -38,11 +38,16 @@ test("fs.promises.writeFile async iterator throws on invalid input", async () =>
   expect(() => writeFile(dir + "/file2.txt", symbolStream())).toThrow();
   expect(() =>
     writeFile(
-      require("os").devNull,
+      dir + "/file3.txt",
       (async function* () {
         yield "once";
         throw new Error("good");
       })(),
     ),
   ).toThrow("good");
+  const fn = {
+    [Symbol.asyncIterator]: mock(() => {}),
+  };
+  expect(() => writeFile(dir, fn)).toThrow();
+  expect(fn[Symbol.asyncIterator]).not.toBeCalled();
 });

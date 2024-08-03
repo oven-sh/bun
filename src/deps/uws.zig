@@ -2312,8 +2312,12 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
+                
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
+                        if(castRes(this).hasResponded()) {
+                            return;
+                        }
                         if (comptime UserDataType == void) {
                             @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
                         } else {

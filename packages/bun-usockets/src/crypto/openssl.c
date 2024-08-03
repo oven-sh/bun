@@ -206,15 +206,14 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
+  struct loop_ssl_data *loop_ssl_data = us_internal_set_loop_ssl_data(s);
 
   s->ssl = SSL_new(context->ssl_context);
   s->ssl_write_wants_read = 0;
   s->ssl_read_wants_write = 0;
   s->fatal_error = 0;
   s->handshake_state = HANDSHAKE_PENDING;
+  
 
   SSL_set_bio(s->ssl, loop_ssl_data->shared_rbio, loop_ssl_data->shared_wbio);
 // if we allow renegotiation, we need to set the mode here

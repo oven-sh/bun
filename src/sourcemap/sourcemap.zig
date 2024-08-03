@@ -2025,6 +2025,8 @@ pub fn serializeJsonSourceMapForStandalone(
         .success => |x| x,
         .fail => |fail| return fail.err,
     };
+
+    try map_data.mappings.setCapacity(arena, map_data.mappings.len);
     const map_data_slice = map_data.mappings.slice();
     const map_bytes = multiArrayListAllocatedBytes(Mapping, map_data.mappings);
 

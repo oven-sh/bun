@@ -1,5 +1,6 @@
 import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
 import { describe } from "bun:test";
 
 describe("bundler", () => {
@@ -311,5 +312,38 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
+  });
+  itBundled("bun/SourceMap", {
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw   new
+            Error("Hello World");
+        }
+      `,
+    },
+    sourceMap: "external",
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toStartWith(
+          `1 | // this file has comments and weird whitespace, intentionally
+2 | // to make it obvious if sourcemaps were generated and mapped properly
+3 | if           (true) code();
+4 | function code() {
+5 |   // hello world
+6 |           throw   new
+                      ^
+error: Hello World`,
+        );
+        expect(stderr).toInclude("entry.ts:6:19");
+      },
+    },
   });
 });

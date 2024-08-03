@@ -111,15 +111,17 @@ pub const StandaloneModuleGraph = struct {
         pub const PackedPtr = packed struct(u64) {};
 
         /// Following the header bytes:
-        /// - source_files_count number of StringPointers, file names
-        /// - source_files_count number of StringPointers, zstd compressed contents
+        /// - source_files_count number of ByteSlices, file names
+        /// - source_files_count number of ByteSlices, zstd compressed contents
         /// - all mapping bytes
+        /// - all the ByteSlice contents
         pub const Header = extern struct {
             source_files_count: u32,
             mappings_count: u32,
             map_bytes_length: u32,
         };
 
+        /// An offset and a length relative to the start of `SerializedSourceMap`
         pub const ByteSlice = struct {
             offset: u32,
             len: u32,
@@ -135,7 +137,7 @@ pub const StandaloneModuleGraph = struct {
 
         pub fn mappings(map: SerializedSourceMap) SourceMap.Mapping.List {
             const head = map.header();
-            const start = head.source_files_count * @sizeOf(ByteSlice) * 2 + @sizeOf(Header);
+            const start = @sizeOf(Header) + head.source_files_count * @sizeOf(ByteSlice) * 2;
 
             // the following aligncast asserts this alignment
             comptime bun.assert(@alignOf(SourceMap.Mapping) == @alignOf(u32));
@@ -160,22 +162,22 @@ pub const StandaloneModuleGraph = struct {
     pub const LazySourceMap = union(enum) {
         /// Standalone Module Graph loads all bytes in at once.
         unparsed: SerializedSourceMap,
-        parsed: *bun.sourcemap.ParsedSourceMap,
+        parsed: *SourceMap.ParsedSourceMap,
         none,
 
         /// It probably is not possible to run two decoding jobs on the same file
         var init_lock: bun.Lock = .{};
 
-        pub fn load(this: *LazySourceMap) !?bun.sourcemap.ParseUrl {
+        pub fn load(this: *LazySourceMap) ?*SourceMap.ParsedSourceMap {
             init_lock.lock();
             defer init_lock.unlock();
 
             return switch (this.*) {
                 .none => null,
-                .parsed => |map| .{ .map = map },
+                .parsed => |map| map,
                 .unparsed => |serialized| {
                     const source_files = serialized.sourceFileNames();
-                    const file_names = try bun.default_allocator.alloc([]const u8, source_files.len);
+                    const file_names = bun.default_allocator.alloc([]const u8, source_files.len) catch bun.outOfMemory();
                     for (file_names, source_files) |*dest, src| {
                         dest.* = src.slice(serialized.bytes);
                     }
@@ -188,7 +190,7 @@ pub const StandaloneModuleGraph = struct {
                         .standalone_module_graph_len = @intCast(serialized.bytes.len),
                     });
                     this.* = .{ .parsed = parsed };
-                    return .{ .map = parsed };
+                    return parsed;
                 },
             };
         }
@@ -202,7 +204,8 @@ pub const StandaloneModuleGraph = struct {
 
     const trailer = "\n---- Bun! ----\n";
 
-    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []const u8, offsets: Offsets) !StandaloneModuleGraph {
+    /// Alignment requirement on raw_bytes is so that
+    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []align(@alignOf(u32)) const u8, offsets: Offsets) !StandaloneModuleGraph {
         if (raw_bytes.len == 0) return StandaloneModuleGraph{
             .files = bun.StringArrayHashMap(File).init(allocator),
         };
@@ -720,8 +723,8 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
 
-        var to_read = try bun.default_allocator.alloc(u8, offsets.byte_count);
-        var to_read_from = to_read;
+        var to_read = try bun.default_allocator.alignedAlloc(u8, @alignOf(u32), offsets.byte_count);
+        var to_read_from: []u8 = to_read;
 
         // Reading the data and making sure it's page-aligned + won't crash due
         // to out of bounds using mmap() is very complicated.
@@ -735,7 +738,7 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
                 if (offsets.byte_count <= 1024 * 3) {
-                    to_read_from = try bun.default_allocator.alloc(u8, offsets.byte_count);
+                    to_read_from = try bun.default_allocator.alignedAlloc(u8, @alignOf(u32), offsets.byte_count);
                 }
             }
 

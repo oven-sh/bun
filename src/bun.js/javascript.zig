@@ -3698,24 +3698,20 @@ pub const VirtualMachine = struct {
         return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
             if (this.standalone_module_graph) |graph| {
                 const file = graph.find(path) orelse return null;
-
-                const parse = (file.sourcemap.load() catch return null) orelse return null;
-
-                const map = parse.map orelse
-                    unreachable; // StandaloneModuleGraph returns null if there is no map
+                const map = file.sourcemap.load() orelse return null;
 
                 map.ref();
 
-                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch bun.outOfMemory();
+                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
+                    bun.outOfMemory();
 
-                const mapping = parse.mapping orelse
-                    SourceMap.Mapping.find(map.mappings, line, column) orelse
+                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
                     return null;
 
                 return .{
                     .mapping = mapping,
                     .source_map = map,
-                    .prefetched_source_code = parse.source_contents,
+                    .prefetched_source_code = null,
                 };
             }
 

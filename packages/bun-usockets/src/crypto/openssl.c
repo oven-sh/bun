@@ -84,6 +84,10 @@ struct us_internal_ssl_socket_context_t {
   struct us_internal_ssl_socket_t *(*on_close)(
       struct us_internal_ssl_socket_t *, int code, void *reason);
 
+  struct us_internal_ssl_socket_t *(*on_timeout)(
+      struct us_internal_ssl_socket_t *);
+      struct us_internal_ssl_socket_t *(*on_long_timeout)(struct us_internal_ssl_socket_t *);
+
   /* Called for missing SNI hostnames, if not NULL */
   void (*on_server_name)(struct us_internal_ssl_socket_context_t *,
                          const char *hostname);
@@ -173,6 +177,26 @@ int BIO_s_custom_read(BIO *bio, char *dst, int length) {
   loop_ssl_data->ssl_read_input_offset += length;
   loop_ssl_data->ssl_read_input_length -= length;
   return length;
+}
+
+
+struct loop_ssl_data * us_internal_set_loop_ssl_data(struct us_internal_ssl_socket_t *s) {
+   // note: this context can change when we adopt the socket!
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
+  struct loop_ssl_data *loop_ssl_data =
+      (struct loop_ssl_data *)loop->data.ssl_data;
+
+  // note: if we put data here we should never really clear it (not in write
+  // either, it still should be available for SSL_write to read from!)
+
+  loop_ssl_data->ssl_read_input_length = 0;
+  loop_ssl_data->ssl_read_input_offset = 0;
+  loop_ssl_data->ssl_socket = &s->s;
+  loop_ssl_data->msg_more = 0;
+  return loop_ssl_data;
 }
 
 struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
@@ -331,22 +355,11 @@ int us_internal_ssl_renegotiate(struct us_internal_ssl_socket_t *s) {
 }
 
 void us_internal_update_handshake(struct us_internal_ssl_socket_t *s) {
-  struct us_internal_ssl_socket_context_t *context =
-      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
   // nothing todo here, renegotiation must be handled in SSL_read
   if (s->handshake_state != HANDSHAKE_PENDING)
     return;
-
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
-
-  loop_ssl_data->ssl_read_input_length = 0;
-  loop_ssl_data->ssl_read_input_offset = 0;
-  loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = 0;
-
+  
   if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s) ||
      (s->ssl && SSL_get_shutdown(s->ssl) & SSL_RECEIVED_SHUTDOWN)) {
 
@@ -389,14 +402,32 @@ ssl_on_close(struct us_internal_ssl_socket_t *s, int code, void *reason) {
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
+  us_internal_set_loop_ssl_data(s);
   struct us_internal_ssl_socket_t * ret = context->on_close(s, code, reason);
   SSL_free(s->ssl); // free SSL after on_close
   s->ssl = NULL; // set to NULL
   return ret;
 }
 
+struct us_internal_ssl_socket_t * ssl_on_timeout(struct us_internal_ssl_socket_t *s) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  us_internal_set_loop_ssl_data(s);
+  return context->on_long_timeout(s);
+}
+
+struct us_internal_ssl_socket_t * ssl_on_long_timeout(struct us_internal_ssl_socket_t *s) {
+  struct us_internal_ssl_socket_context_t *context =
+      (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
+
+  us_internal_set_loop_ssl_data(s);
+  return context->on_long_timeout(s);
+}
+
 struct us_internal_ssl_socket_t *
 ssl_on_end(struct us_internal_ssl_socket_t *s) {
+  us_internal_set_loop_ssl_data(s);
   // whatever state we are in, a TCP FIN is always an answered shutdown
   return us_internal_ssl_socket_close(s, 0, NULL);
 }
@@ -409,17 +440,12 @@ struct us_internal_ssl_socket_t *ssl_on_data(struct us_internal_ssl_socket_t *s,
   struct us_internal_ssl_socket_context_t *context =
       (struct us_internal_ssl_socket_context_t *)us_socket_context(0, &s->s);
 
-  struct us_loop_t *loop = us_socket_context_loop(0, &context->sc);
-  struct loop_ssl_data *loop_ssl_data =
-      (struct loop_ssl_data *)loop->data.ssl_data;
+  struct loop_ssl_data *loop_ssl_data = us_internal_set_loop_ssl_data(s);
 
   // note: if we put data here we should never really clear it (not in write
   // either, it still should be available for SSL_write to read from!)
   loop_ssl_data->ssl_read_input = data;
   loop_ssl_data->ssl_read_input_length = length;
-  loop_ssl_data->ssl_read_input_offset = 0;
-  loop_ssl_data->ssl_socket = &s->s;
-  loop_ssl_data->msg_more = 0;
 
   if (us_internal_ssl_socket_is_closed(s)) {
     return NULL;
@@ -561,6 +587,7 @@ restart:
 
 struct us_internal_ssl_socket_t *
 ssl_on_writable(struct us_internal_ssl_socket_t *s) {
+  us_internal_set_loop_ssl_data(s);
   us_internal_update_handshake(s);
 
   struct us_internal_ssl_socket_context_t *context =
@@ -1560,7 +1587,8 @@ void us_internal_ssl_socket_context_on_timeout(
         struct us_internal_ssl_socket_t *s)) {
   us_socket_context_on_timeout(0, (struct us_socket_context_t *)context,
                                (struct us_socket_t * (*)(struct us_socket_t *))
-                                   on_timeout);
+                                   ssl_on_timeout);
+  context->on_timeout = on_timeout;
 }
 
 void us_internal_ssl_socket_context_on_long_timeout(
@@ -1569,7 +1597,8 @@ void us_internal_ssl_socket_context_on_long_timeout(
         struct us_internal_ssl_socket_t *s)) {
   us_socket_context_on_long_timeout(
       0, (struct us_socket_context_t *)context,
-      (struct us_socket_t * (*)(struct us_socket_t *)) on_long_timeout);
+      (struct us_socket_t * (*)(struct us_socket_t *)) ssl_on_long_timeout);
+  context->on_long_timeout = on_long_timeout;
 }
 
 /* We do not really listen to passed FIN-handler, we entirely override it with

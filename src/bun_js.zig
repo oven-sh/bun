@@ -307,11 +307,15 @@ pub const Run = struct {
         if (vm.loadEntryPoint(this.entry_path)) |promise| {
             if (promise.status(vm.global.vm()) == .Rejected) {
                 const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
+                const hot_reload = vm.hot_reload != .none;
 
-                if (vm.hot_reload != .none or handled) {
+                if (handled) {
                     vm.eventLoop().tick();
+                }
+                if (hot_reload) {
                     vm.eventLoop().tickPossiblyForever();
-                } else {
+                }
+                if (!handled and !hot_reload) {
                     vm.exit_handler.exit_code = 1;
                     vm.onExit();
 

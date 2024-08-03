@@ -985,3 +985,85 @@ describe("process.exitCode", () => {
     ]).toRunInlineFixture();
   });
 });
+
+describe("on(unhandledRejection)", () => {
+  it("normal", () => {
+    expect([
+      `
+      process.on("unhandledRejection", (a, b) => {
+        console.log("unhandledRejection", a, b);
+      });
+      Promise.reject(42);
+    `,
+      "unhandledRejection 42 Promise { <rejected> }\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+});
+
+describe("unhandled rejection -> uncaughtException", () => {
+  it("number", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject(42);
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "42".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("plain object with toString that throws", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      const x = {toString:()=>{throw new Error()}};
+      Promise.reject(x);
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "[object Object]".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("symbol", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject(Symbol('bun'));
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "Symbol(bun)".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("string", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject('bun');
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "bun".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+});

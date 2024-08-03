@@ -2288,8 +2288,6 @@ pub const AsyncHTTP = struct {
             this.response_buffer.allocator = default_allocator;
         }
         this.client.start(this.request_body, this.response_buffer);
-
-        log("onStart: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
     }
 };
 

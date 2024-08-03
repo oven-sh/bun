@@ -2315,9 +2315,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
-                        if(castRes(this).hasResponded()) {
-                            return;
-                        }
                         if (comptime UserDataType == void) {
                             @call(bun.callmod_inline, handler, .{ {}, castRes(this), {} });
                         } else {

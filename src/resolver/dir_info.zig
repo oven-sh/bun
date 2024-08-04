@@ -12,7 +12,7 @@ const C = bun.C;
 const StoredFileDescriptorType = bun.StoredFileDescriptorType;
 const FeatureFlags = bun.FeatureFlags;
 
-const allocators = @import("../allocators.zig");
+const allocators = @import("../allocators/allocators.zig");
 const DirInfo = @This();
 const Fs = @import("../fs.zig");
 const TSConfigJSON = @import("./tsconfig_json.zig").TSConfigJSON;

@@ -27,6 +27,8 @@ data.version; // => "1.0.0"
 data.author.name; // => "John Dough"
 ```
 
+---
+
 Bun also supports [Import Attributes](https://github.com/tc39/proposal-import-attributes/) and [JSON modules](https://github.com/tc39/proposal-json-modules) syntax.
 
 ```ts

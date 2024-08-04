@@ -685,22 +685,26 @@ pub const StreamResult = union(Tag) {
     pub const StreamError = union(enum) {
         Error: Syscall.Error,
         AbortReason: JSC.CommonAbortReason,
-        JSValue: JSC.JSValue,
 
-        pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+        // TODO: use an explicit JSC.Strong here.
+        JSValue: JSC.JSValue,
+        WeakJSValue: JSC.JSValue,
+
+        const WasStrong = enum {
+            Strong,
+            Weak,
+        };
+
+        pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
             return switch (this.*) {
-                .Error => |*err| {
-                    const value = err.toJSC(globalObject);
-                    value.protect();
-                    this.* = .{ .JSValue = value };
-                    return value;
+                .Error => |err| {
+                    return .{ err.toJSC(globalObject), WasStrong.Weak };
                 },
-                .JSValue => this.JSValue,
+                .JSValue => .{ this.JSValue, WasStrong.Strong },
+                .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
                 .AbortReason => |reason| {
                     const value = reason.toJS(globalObject);
-                    value.protect();
-                    this.* = .{ .JSValue = value };
-                    return value;
+                    return .{ value, WasStrong.Weak };
                 },
             };
         }
@@ -964,9 +968,10 @@ pub const StreamResult = union(Tag) {
         switch (result.*) {
             .err => |*err| {
                 const value = brk: {
-                    const js_err = err.toJS(globalThis);
+                    const js_err, const was_strong = err.toJSWeak(globalThis);
                     js_err.ensureStillAlive();
-                    js_err.unprotect();
+                    if (was_strong == .Strong)
+                        js_err.unprotect();
 
                     break :brk js_err;
                 };
@@ -1027,12 +1032,11 @@ pub const StreamResult = union(Tag) {
             },
 
             .err => |err| {
-                if (err == .Error) {
-                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.Error.toJS(globalThis))).asValue(globalThis);
+                const js_err, const was_strong = err.toJSWeak(globalThis);
+                if (was_strong == .Strong) {
+                    js_err.unprotect();
                 }
-                const js_err = err.JSValue;
                 js_err.ensureStillAlive();
-                js_err.unprotect();
                 return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
             },
 

@@ -18,6 +18,7 @@
 #include "wtf/text/WTFString.h"
 #include "AbortSignal.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
+#include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
 
 #include "NodeError.h"
 

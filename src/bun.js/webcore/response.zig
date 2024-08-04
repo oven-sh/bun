@@ -1262,7 +1262,7 @@ pub const Fetch = struct {
                 if (signal.aborted()) {
                     this.abort_reason = signal.abortReason();
                     if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
-                        return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                        return JSC.CommonAbortReason.UserAbort.toJS(this.global_this);
                     }
                     this.abort_reason.protect();
                     return this.abort_reason;

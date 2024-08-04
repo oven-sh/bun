@@ -321,10 +321,24 @@ pub const Body = struct {
             Message: bun.String,
             JSValue: JSC.Strong,
 
+            pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.WebCore.StreamResult.StreamError {
+                return switch (this.*) {
+                    .Aborted => .{
+                        .AbortReason = JSC.CommonAbortReason.UserAbort,
+                    },
+                    .Timeout => .{
+                        .AbortReason = JSC.CommonAbortReason.Timeout,
+                    },
+                    else => .{
+                        .JSValue = this.toJS(globalObject),
+                    },
+                };
+            }
+
             pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 const js_value = switch (this.*) {
-                    .Timeout => JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, globalObject),
-                    .Aborted => JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, globalObject),
+                    .Timeout => JSC.CommonAbortReason.Timeout.toJS(globalObject),
+                    .Aborted => JSC.CommonAbortReason.UserAbort.toJS(globalObject),
                     .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                     .Message => |message| message.toErrorInstance(globalObject),
                     // do a early return in this case we don't need to create a new Strong
@@ -927,12 +941,12 @@ pub const Body = struct {
                     }
                 }
 
+                // The Promise version goes before the ReadableStream version incase the Promise version is used too.
+                // Avoid creating unnecessary duplicate JSValue.
                 if (strong_readable.get()) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{ .JSValue = this.Error.toJS(global) },
-                            },
+                            .{ .err = this.Error.toStreamError(global) },
                             bun.default_allocator,
                         );
                     } else {

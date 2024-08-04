@@ -5547,49 +5547,6 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__fromJS(JSC__JSValue value
 
     return reinterpret_cast<WebCore__AbortSignal*>(&object->wrapped());
 }
-static auto ABORT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("AbortError");
-extern "C" JSC__JSValue WebCore__AbortSignal__createAbortError(const ZigString* message, const ZigString* arg1,
-    JSC__JSGlobalObject* globalObject)
-{
-    JSC::VM& vm = globalObject->vm();
-    ZigString code = *arg1;
-    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-
-    error->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(vm, ABORT_ERROR_NAME)),
-        0);
-
-    if (code.len > 0) {
-        auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
-        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
-    }
-
-    return JSC::JSValue::encode(error);
-}
-
-static auto TIMEOUT_ERROR_NAME = MAKE_STATIC_STRING_IMPL("TimeoutError");
-extern "C" JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString* message, const ZigString* arg1,
-    JSC__JSGlobalObject* globalObject)
-{
-    JSC::VM& vm = globalObject->vm();
-    ZigString code = *arg1;
-    JSC::JSObject* error = Zig::getErrorInstance(message, globalObject).asCell()->getObject();
-
-    error->putDirect(
-        vm, vm.propertyNames->name,
-        JSC::JSValue(JSC::jsOwnedString(vm, TIMEOUT_ERROR_NAME)),
-        0);
-
-    if (code.len > 0) {
-        auto clientData = WebCore::clientData(vm);
-        JSC::JSValue codeValue = Zig::toJSStringValue(code, globalObject);
-        error->putDirect(vm, clientData->builtinNames().codePublicName(), codeValue, 0);
-    }
-
-    return JSC::JSValue::encode(error);
-}
 
 CPP_DECL double JSC__JSValue__getUnixTimestamp(JSC__JSValue timeValue)
 {

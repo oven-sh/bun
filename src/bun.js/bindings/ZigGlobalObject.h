@@ -402,6 +402,9 @@ public:
     //
     LazyProperty<JSGlobalObject, JSC::JSFunction> m_errorConstructorPrepareStackTraceInternalValue;
 
+    LazyProperty<JSGlobalObject, JSObject> m_nodeErrorCache;
+    JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
+
     Structure* memoryFootprintStructure()
     {
         return m_memoryFootprintStructure.getInitializedOnMainThread(this);

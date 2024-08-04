@@ -315,19 +315,23 @@ pub const Body = struct {
 
         pub const heap_breakdown_label = "BodyValue";
         pub const ValueError = union(enum) {
-            Aborted: void,
-            Timeout: void,
+            Aborted: JSC.CommonAbortReason.Cacheable.ID,
+            ConnectionClosed: JSC.CommonAbortReason.Cacheable.ID,
+            Timeout: JSC.CommonAbortReason.Cacheable.ID,
             SystemError: JSC.SystemError,
             Message: bun.String,
             JSValue: JSC.Strong,
 
             pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.WebCore.StreamResult.StreamError {
                 return switch (this.*) {
-                    .Aborted => .{
-                        .AbortReason = JSC.CommonAbortReason.UserAbort,
+                    .Aborted => |id| .{
+                        .AbortReason = .{ .UserAbort = id },
                     },
-                    .Timeout => .{
-                        .AbortReason = JSC.CommonAbortReason.Timeout,
+                    .ConnectionClosed => |id| .{
+                        .AbortReason = .{ .ConnectionClosed = id },
+                    },
+                    .Timeout => |id| .{
+                        .AbortReason = .{ .Timeout = id },
                     },
                     else => .{
                         .JSValue = this.toJS(globalObject),
@@ -337,8 +341,9 @@ pub const Body = struct {
 
             pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 const js_value = switch (this.*) {
-                    .Timeout => JSC.CommonAbortReason.Timeout.toJS(globalObject),
-                    .Aborted => JSC.CommonAbortReason.UserAbort.toJS(globalObject),
+                    .Timeout => |id| JSC.CommonAbortReason.Cacheable.toJS(.{ .Timeout = id }, globalObject),
+                    .ConnectionClosed => |id| JSC.CommonAbortReason.Cacheable.toJS(.{ .ConnectionClosed = id }, globalObject),
+                    .Aborted => |id| JSC.CommonAbortReason.Cacheable.toJS(.{ .UserAbort = id }, globalObject),
                     .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                     .Message => |message| message.toErrorInstance(globalObject),
                     // do a early return in this case we don't need to create a new Strong
@@ -359,7 +364,7 @@ pub const Body = struct {
                         }
                         return .{ .JSValue = .{} };
                     },
-                    .Aborted, .Timeout => {},
+                    .ConnectionClosed, .Aborted, .Timeout => {},
                 }
                 return value;
             }
@@ -369,7 +374,7 @@ pub const Body = struct {
                     .SystemError => |system_error| system_error.deref(),
                     .Message => |message| message.deref(),
                     .JSValue => this.JSValue.deinit(),
-                    .Aborted, .Timeout => {},
+                    .ConnectionClosed, .Aborted, .Timeout => {},
                 }
                 // safe empty value after deinit
                 this.* = .{ .JSValue = .{} };

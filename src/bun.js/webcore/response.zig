@@ -1281,12 +1281,12 @@ pub const Fetch = struct {
 
             if (this.result.isTimeout()) {
                 // Timeout without reason
-                return .{ .Timeout = {} };
+                return .{ .Timeout = 0 };
             }
 
             if (this.result.isAbort()) {
                 // Abort without reason
-                return .{ .Aborted = {} };
+                return .{ .Aborted = 0 };
             }
 
             // some times we don't have metadata so we also check http.url

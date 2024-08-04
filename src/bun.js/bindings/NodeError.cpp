@@ -88,6 +88,7 @@ void NodeErrorCache::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<NodeErrorCache*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
+    visitor.append(thisObject->m_cachedReason);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, NodeErrorCache);
@@ -112,6 +113,8 @@ void NodeErrorCache::finishCreation(VM& vm)
     for (unsigned i = 0; i < NODE_ERROR_COUNT; i++) {
         this->internalField(i).clear();
     }
+
+    this->m_cachedReason.clear();
 }
 
 static NodeErrorCache* errorCache(Zig::GlobalObject* globalObject)
@@ -310,6 +313,30 @@ JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * 
 
 } // namespace Bun
 
+JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CacheableAbortReason abortReason)
+{
+    if (auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+        auto* cache = Bun::errorCache(zigGlobal);
+        if (abortReason.shouldCache()) {
+            if (cache->m_cacheableAbortReason.m_identifier == abortReason.identifier() && cache->m_cacheableAbortReason.m_reason == abortReason.reason()) {
+                return cache->m_cachedReason.get();
+            }
+        }
+
+        JSValue reason = toJS(globalObject, abortReason.reason());
+
+        if (abortReason.shouldCache()) {
+            auto& vm = globalObject->vm();
+            cache->m_cacheableAbortReason = abortReason;
+            cache->m_cachedReason.set(vm, cache, reason);
+        }
+
+        return reason;
+    }
+
+    return toJS(globalObject, abortReason.reason());
+}
+
 JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason abortReason)
 {
     switch (abortReason) {
@@ -333,4 +360,21 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
 extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJS(JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason abortReason)
 {
     return JSC::JSValue::encode(WebCore::toJS(globalObject, abortReason));
+}
+extern "C" JSC::EncodedJSValue WebCore__CommonAbortReason__toJSCached(JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason abortReason, size_t id)
+{
+    return JSC::JSValue::encode(WebCore::toJS(globalObject, { id, abortReason }));
+}
+
+extern "C" void WebCore__CommonAbortReason__bustCached(JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason abortReason, size_t id)
+{
+    if (auto* zigGlobal = jsDynamicCast<Zig::GlobalObject*>(globalObject)) {
+        if (zigGlobal->m_nodeErrorCache.isInitialized()) {
+            auto* cache = Bun::errorCache(zigGlobal);
+            if (cache->m_cacheableAbortReason.m_identifier == id) {
+                cache->m_cacheableAbortReason = { 0, WebCore::CommonAbortReason::None };
+                cache->m_cachedReason.clear();
+            }
+        }
+    }
 }

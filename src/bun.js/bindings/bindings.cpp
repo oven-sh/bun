@@ -1,3 +1,4 @@
+#include "AbortSignal.h"
 #include "root.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
@@ -5484,13 +5485,13 @@ extern "C" JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, J
     return JSValue::encode(toJS<IDLInterface<WebCore__AbortSignal>>(*globalObject, *jsCast<JSDOMGlobalObject*>(globalObject), *abortSignal));
 }
 
-extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC::JSGlobalObject* globalObject, uint8_t reason)
+extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC::JSGlobalObject* globalObject, WebCore::CommonAbortReason reason, uint32_t id)
 {
 
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->signalAbort(
         globalObject,
-        static_cast<WebCore::CommonAbortReason>(reason));
+        { id, reason });
     ;
     return arg0;
 }

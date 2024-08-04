@@ -117,9 +117,9 @@ JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
 {
     JSValue existingValue = m_reason.getValue(jsUndefined());
     if (existingValue.isUndefined()) {
-        if (m_commonReason != CommonAbortReason::None) {
-            existingValue = toJS(&globalObject, m_commonReason);
-            m_commonReason = CommonAbortReason::None;
+        if (m_cacheableReason.reason() != CommonAbortReason::None) {
+            existingValue = toJS(&globalObject, m_cacheableReason);
+            m_cacheableReason = { 0, CommonAbortReason::None };
             m_reason.setWeakly(existingValue);
         }
     }
@@ -185,7 +185,17 @@ void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReas
     if (m_aborted)
         return;
 
-    m_commonReason = reason;
+    m_cacheableReason = { 0, reason };
+    signalAbort(toJS(globalObject, reason));
+}
+
+void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CacheableAbortReason reason)
+{
+    // 1. If signal's aborted flag is set, then return.
+    if (m_aborted)
+        return;
+
+    m_cacheableReason = reason;
     signalAbort(toJS(globalObject, reason));
 }
 

@@ -1,5 +1,7 @@
 #pragma once
 
+#include "AbortSignal.h"
+#include "JavaScriptCore/WriteBarrier.h"
 #include "ZigGlobalObject.h"
 #include "root.h"
 #include <JavaScriptCore/JSInternalFieldObjectImpl.h>
@@ -62,6 +64,9 @@ public:
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject);
 
     JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, NodeErrorCode code, JSValue message, JSValue options);
+
+    CacheableAbortReason m_cacheableAbortReason { 0, CommonAbortReason::None };
+    mutable WriteBarrier<Unknown> m_cachedReason;
 
 private:
     JS_EXPORT_PRIVATE NodeErrorCache(VM&, Structure*);

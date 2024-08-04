@@ -1298,6 +1298,7 @@ fn NewFlags(comptime debug_mode: bool) type {
         response_protected: bool = false,
         aborted: bool = false,
         has_finalized: bun.DebugOnly(bool) = bun.DebugOnlyDefault(false),
+        must_bust_abort_reason_cache_to_prevent_leaking_error_instance: bool = false,
 
         is_error_promise_pending: bool = false,
     };
@@ -1305,12 +1306,15 @@ fn NewFlags(comptime debug_mode: bool) type {
 
 /// A generic wrapper for the HTTP(s) Server`RequestContext`s.
 /// Only really exists because of `NewServer()` and `NewRequestContext()` generics.
+/// When the RequestContext is finalized, this points to the request ID.
 pub const AnyRequestContext = struct {
+    const RequestIDInt = usize;
     pub const Pointer = bun.TaggedPointerUnion(.{
         HTTPServer.RequestContext,
         HTTPSServer.RequestContext,
         DebugHTTPServer.RequestContext,
         DebugHTTPSServer.RequestContext,
+        RequestIDInt,
     });
 
     tagged_pointer: Pointer,
@@ -1339,7 +1343,7 @@ pub const AnyRequestContext = struct {
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
                 return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getRemoteSocketInfo();
             },
-            else => @panic("Unexpected AnyRequestContext tag"),
+            else => return null,
         }
     }
 
@@ -1366,6 +1370,34 @@ pub const AnyRequestContext = struct {
         }
     }
 
+    pub fn getRequestID(self: AnyRequestContext) ?RequestID {
+        if (self.tagged_pointer.isNull()) {
+            return null;
+        }
+
+        switch (self.tagged_pointer.tag()) {
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPServer.RequestContext).getRequestID();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(HTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(HTTPSServer.RequestContext).getRequestID();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPServer.RequestContext).getRequestID();
+            },
+            @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
+                return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).getRequestID();
+            },
+            Pointer.Tag.usize => return self.tagged_pointer.repr._ptr,
+            else => @panic("Unexpected AnyRequestContext tag"),
+        }
+    }
+
+    pub fn setRequestID(self: *AnyRequestContext, id: JSC.CommonAbortReason.Cacheable.ID) void {
+        self.tagged_pointer.repr._ptr = @intCast(id);
+        self.tagged_pointer.repr.data = @intFromEnum(Pointer.Tag.usize);
+    }
+
     pub fn getRequest(self: AnyRequestContext) ?*uws.Request {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -1384,10 +1416,26 @@ pub const AnyRequestContext = struct {
             @field(Pointer.Tag, bun.meta.typeBaseName(@typeName(DebugHTTPSServer.RequestContext))) => {
                 return self.tagged_pointer.as(DebugHTTPSServer.RequestContext).req;
             },
+            Pointer.Tag.usize => return null,
             else => @panic("Unexpected AnyRequestContext tag"),
         }
     }
 };
+
+pub const RequestID = struct {
+    pub const Int = u48;
+};
+
+pub fn nextRequestID() JSC.CommonAbortReason.Cacheable.SizedID {
+    const Holder = struct {
+        pub var current_request_id = std.atomic.Value(u64).init(1);
+    };
+
+    const max = Holder.current_request_id.fetchAdd(1, .monotonic);
+    // Never return 0
+    // Number between 1 and 2^31 - 1
+    return @truncate((max % JSC.CommonAbortReason.Cacheable.max_id) + 1);
+}
 
 // This is defined separately partially to work-around an LLVM debugger bug.
 fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comptime ThisServer: type) type {
@@ -1445,6 +1493,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
         /// Defer finalization until after the request handler task is completed?
         defer_deinit_until_callback_completes: ?*bool = null,
+        request_id: JSC.CommonAbortReason.Cacheable.ID = 0,
 
         // TODO: support builtin compression
         const can_sendfile = !ssl_enabled and !Environment.isWindows;
@@ -1882,6 +1931,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 .req = req,
                 .method = HTTP.Method.which(req.method()) orelse .GET,
                 .server = server,
+                .request_id = nextRequestID(),
             };
 
             ctxLog("create<d> ({*})<r>", .{this});
@@ -1911,7 +1961,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.signal = null;
                 defer signal.unref();
                 if (!signal.aborted()) {
-                    signal.signal(globalThis, .ConnectionClosed);
+                    this.flags.must_bust_abort_reason_cache_to_prevent_leaking_error_instance = true;
+                    signal.signal(globalThis, .{
+                        .ConnectionClosed = this.request_id,
+                    });
                     any_js_calls = true;
                 }
             }
@@ -1919,6 +1972,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             //if have sink, call onAborted on sink
             if (this.sink) |wrapper| {
                 wrapper.sink.abort();
+                this.flags.must_bust_abort_reason_cache_to_prevent_leaking_error_instance = true;
                 return;
             }
 
@@ -1952,6 +2006,8 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             assert(this.server != null);
             const globalThis = this.server.?.globalThis;
 
+            var must_bust_cache = this.flags.must_bust_abort_reason_cache_to_prevent_leaking_error_instance;
+
             if (comptime Environment.allow_assert) {
                 ctxLog("finalizeWithoutDeinit: has_finalized {any}", .{this.flags.has_finalized});
                 this.flags.has_finalized = true;
@@ -1971,7 +2027,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 this.signal = null;
                 defer signal.unref();
                 if (this.flags.aborted and !signal.aborted()) {
-                    signal.signal(globalThis, .ConnectionClosed);
+                    this.flags.must_bust_abort_reason_cache_to_prevent_leaking_error_instance = true;
+                    signal.signal(globalThis, .{
+                        .ConnectionClosed = this.request_id,
+                    });
+                    must_bust_cache = true;
                 }
             }
 
@@ -1983,11 +2043,13 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             // User ignored the body and the connection was aborted or ended
             // Case 3:
             // Stream was not consumed and the connection was aborted or ended
-            _ = this.endRequestStreaming();
+            if (this.endRequestStreaming()) {
+                must_bust_cache = true;
+            }
 
             if (this.byte_stream) |stream| {
                 ctxLog("finalizeWithoutDeinit: stream != null", .{});
-
+                must_bust_cache = true;
                 this.byte_stream = null;
                 stream.unpipeWithoutDeref();
             }
@@ -1997,6 +2059,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             if (!this.pathname.isEmpty()) {
                 this.pathname.deref();
                 this.pathname = bun.String.empty;
+            }
+
+            if (must_bust_cache) {
+                this.flags.must_bust_abort_reason_cache_to_prevent_leaking_error_instance = false;
+                JSC.CommonAbortReason.Cacheable.bust(.{ .ConnectionClosed = this.request_id }, globalThis);
             }
         }
 
@@ -2568,6 +2635,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
         }
 
         fn toAsyncWithoutAbortHandler(ctx: *RequestContext, req: *uws.Request, request_object: *Request) void {
+            const id = ctx.getRequestID();
             request_object.request_context.setRequest(req);
             assert(ctx.server != null);
 
@@ -2582,7 +2650,11 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
 
             // This object dies after the stack frame is popped
             // so we have to clear it in here too
-            request_object.request_context = JSC.API.AnyRequestContext.Null;
+            request_object.request_context.setRequestID(id);
+        }
+
+        pub fn getRequestID(this: *const RequestContext) JSC.CommonAbortReason.Cacheable.ID {
+            return this.request_id;
         }
 
         fn toAsync(
@@ -2613,7 +2685,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (body.value == .Locked) {
-                    body.value.toErrorInstance(.{ .Aborted = {} }, this.server.?.globalThis);
+                    body.value.toErrorInstance(.{ .ConnectionClosed = this.request_id }, this.server.?.globalThis);
                     return true;
                 }
             }
@@ -5295,6 +5367,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doReload = onReload;
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
+        pub const doRequestID = JSC.wrapInstanceMethod(ThisServer, "requestID", false);
 
         pub usingnamespace NamespaceType;
         pub usingnamespace bun.New(@This());
@@ -5319,6 +5392,14 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 )
             else
                 JSValue.jsNull();
+        }
+
+        pub fn requestID(_: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            if (request.request_context.getRequestID()) |id| {
+                return JSValue.jsNumber(id);
+            }
+
+            return JSValue.jsNull();
         }
 
         pub fn publish(this: *ThisServer, globalThis: *JSC.JSGlobalObject, topic: ZigString, message_value: JSValue, compress_value: ?JSValue, exception: JSC.C.ExceptionRef) JSValue {
@@ -6314,9 +6395,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             request_value.ensureStillAlive();
 
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
+            const id = ctx.getRequestID();
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.setRequestID(id);
             }
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
@@ -6331,7 +6413,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.setRequestID(id);
                 ctx.deinit();
                 return;
             }
@@ -6380,11 +6462,11 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const request_value = args[0];
             request_value.ensureStillAlive();
             const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
+            const id = ctx.getRequestID();
             defer {
                 // uWS request will not live longer than this function
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.setRequestID(id);
             }
-
             const original_state = ctx.defer_deinit_until_callback_completes;
             var should_deinit_context = false;
             ctx.defer_deinit_until_callback_completes = &should_deinit_context;
@@ -6398,7 +6480,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             ctx.defer_deinit_until_callback_completes = original_state;
 
             if (should_deinit_context) {
-                request_object.request_context = JSC.API.AnyRequestContext.Null;
+                request_object.request_context.setRequestID(id);
                 ctx.deinit();
                 return;
             }

@@ -684,7 +684,7 @@ pub const StreamResult = union(Tag) {
 
     pub const StreamError = union(enum) {
         Error: Syscall.Error,
-        AbortReason: JSC.CommonAbortReason,
+        AbortReason: JSC.CommonAbortReason.Cacheable,
 
         // TODO: use an explicit JSC.Strong here.
         JSValue: JSC.JSValue,

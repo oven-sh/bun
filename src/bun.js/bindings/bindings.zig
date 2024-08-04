@@ -2003,6 +2003,7 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
     }.callback;
 }
 
+// These objects are extremely common.
 pub const CommonAbortReason = enum(u8) {
     Timeout = 1,
     UserAbort = 2,
@@ -2012,7 +2013,33 @@ pub const CommonAbortReason = enum(u8) {
         return WebCore__CommonAbortReason__toJS(global, this);
     }
 
+    pub const Cacheable = union(CommonAbortReason) {
+        Timeout: ID,
+        UserAbort: ID,
+        ConnectionClosed: ID,
+
+        pub const ID = usize;
+
+        // Using the u48 size is generally pretty slow and won't work across C ABI.
+        pub const SizedID = u48;
+        pub const max_id = std.math.maxInt(SizedID) - 1;
+
+        pub fn toJS(this: Cacheable, global: *JSGlobalObject) JSValue {
+            return switch (this) {
+                inline else => |x| WebCore__CommonAbortReason__toJSCached(global, this, x),
+            };
+        }
+
+        pub fn bust(this: Cacheable, globalObject: *JSC.JSGlobalObject) void {
+            switch (this) {
+                inline else => |x| WebCore__CommonAbortReason__bustCached(globalObject, this, x),
+            }
+        }
+    };
+
     extern fn WebCore__CommonAbortReason__toJS(*JSGlobalObject, CommonAbortReason) JSValue;
+    extern fn WebCore__CommonAbortReason__toJSCached(*JSGlobalObject, CommonAbortReason, Cacheable.ID) JSValue;
+    extern fn WebCore__CommonAbortReason__bustCached(*JSGlobalObject, CommonAbortReason, Cacheable.ID) void;
 };
 
 pub const AbortSignal = extern opaque {
@@ -2054,15 +2081,22 @@ pub const AbortSignal = extern opaque {
         return cppFn("cleanNativeBindings", .{ this, ctx });
     }
 
-    extern fn WebCore__AbortSignal__signal(*AbortSignal, *JSC.JSGlobalObject, CommonAbortReason) void;
+    extern fn WebCore__AbortSignal__signal(*AbortSignal, *JSC.JSGlobalObject, CommonAbortReason, CommonAbortReason.Cacheable.ID) void;
 
     pub fn signal(
         this: *AbortSignal,
         globalObject: *JSC.JSGlobalObject,
-        reason: CommonAbortReason,
+        reason: CommonAbortReason.Cacheable,
     ) void {
         bun.Analytics.Features.abort_signal += 1;
-        return WebCore__AbortSignal__signal(this, globalObject, reason);
+        return WebCore__AbortSignal__signal(
+            this,
+            globalObject,
+            reason,
+            switch (reason) {
+                inline else => |x| x,
+            },
+        );
     }
 
     /// This function is not threadsafe. aborted is a boolean, not an atomic!

@@ -32,6 +32,10 @@ function generate(name) {
         fn: "doRequestIP",
         length: 1,
       },
+      requestID: {
+        fn: "doRequestID",
+        length: 1,
+      },
       port: {
         getter: "getPort",
       },

@@ -55,7 +55,25 @@ enum class CommonAbortReason : uint8_t {
     ConnectionClosed,
 };
 
+class CacheableAbortReason {
+public:
+    CacheableAbortReason() = default;
+    CacheableAbortReason(size_t identifier = 0, CommonAbortReason reason = CommonAbortReason::None)
+        : m_reason(reason)
+        , m_identifier(identifier)
+    {
+    }
+
+    size_t identifier() const { return m_identifier; }
+    CommonAbortReason reason() const { return m_reason; }
+    bool shouldCache() const { return m_identifier > 0; }
+
+    size_t m_identifier = 0;
+    CommonAbortReason m_reason { CommonAbortReason::None };
+};
+
 JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
+JSC::JSValue toJS(JSC::JSGlobalObject* globalObject, CacheableAbortReason abortReason);
 
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
@@ -72,6 +90,7 @@ public:
     static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
     static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
 
+    void signalAbort(JSC::JSGlobalObject* globalObject, CacheableAbortReason reason);
     void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
@@ -127,13 +146,13 @@ private:
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;
-    CommonAbortReason m_commonReason { CommonAbortReason::None };
+    CacheableAbortReason m_cacheableReason { 0, CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     uint32_t m_algorithmIdentifier { 0 };
-    bool m_aborted { false };
-    bool m_hasActiveTimeoutTimer { false };
-    bool m_hasAbortEventListener { false };
-    bool m_isDependent { false };
+    bool m_aborted : 1 { false };
+    bool m_hasActiveTimeoutTimer : 1 { false };
+    bool m_hasAbortEventListener : 1 { false };
+    bool m_isDependent : 1 { false };
 };
 
 WebCoreOpaqueRoot root(AbortSignal*);

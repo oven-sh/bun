@@ -70,6 +70,8 @@ using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 class GlobalObject : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
+    // Move this to the front for better cache locality.
+    void* m_bunVM;
 
 public:
     static const JSC::ClassInfo s_info;
@@ -567,8 +569,6 @@ public:
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    void* m_bunVM;
-
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;

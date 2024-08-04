@@ -2816,10 +2816,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             const resp = req.resp.?;
 
             const responded = resp.hasResponded();
-            defer req.deref();
             if (responded) {
                 req.detachResponse();
                 req.endRequestStreamingAndDrain();
+                req.deref();
             } else {
                 if (!req.flags.has_written_status) {
                     req.renderMetadata();

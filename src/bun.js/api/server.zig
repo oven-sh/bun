@@ -2813,18 +2813,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onResolve({any})", .{wrote_anything});
-            const resp = req.resp.?;
-
-            const responded = resp.hasResponded();
-            if (responded) {
-                req.detachResponse();
-                req.endRequestStreamingAndDrain();
-            } else {
-                if (!req.flags.has_written_status) {
-                    req.renderMetadata();
-                }
-                req.endStream(req.shouldCloseConnection());
+            if (!req.flags.has_written_status) {
+                req.renderMetadata();
             }
+            req.endStream(req.shouldCloseConnection());
         }
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -2880,7 +2872,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.renderMetadata();
             }
 
-            req.endStream(true);
             if (comptime debug_mode) {
                 if(req.server) |server| {
                     if (!err.isEmptyOrUndefinedOrNull()) {
@@ -2890,6 +2881,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
+            req.endStream(true);
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {

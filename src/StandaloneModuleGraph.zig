@@ -72,7 +72,7 @@ pub const StandaloneModuleGraph = struct {
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
-        contents: []const u8 = "",
+        contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
         cached_blob: ?*bun.JSC.WebCore.Blob = null,
 
@@ -166,10 +166,10 @@ pub const StandaloneModuleGraph = struct {
         };
     }
 
-    fn sliceTo(bytes: []const u8, ptr: bun.StringPointer) []const u8 {
+    fn sliceTo(bytes: []const u8, ptr: bun.StringPointer) [:0]const u8 {
         if (ptr.length == 0) return "";
 
-        return bytes[ptr.offset..][0..ptr.length];
+        return bytes[ptr.offset..][0..ptr.length :0];
     }
 
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
@@ -179,8 +179,8 @@ pub const StandaloneModuleGraph = struct {
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
         for (output_files, 0..) |output_file, i| {
-            string_builder.count(output_file.dest_path);
-            string_builder.count(prefix);
+            string_builder.countZ(output_file.dest_path);
+            string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
                     string_builder.cap += bun.zstd.compressBound(output_file.value.buffer.bytes.len);
@@ -191,7 +191,7 @@ pub const StandaloneModuleGraph = struct {
                         }
                     }
 
-                    string_builder.count(output_file.value.buffer.bytes);
+                    string_builder.countZ(output_file.value.buffer.bytes);
                     module_count += 1;
                 }
             }
@@ -224,12 +224,12 @@ pub const StandaloneModuleGraph = struct {
             const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
 
             var module = CompiledModuleGraphFile{
-                .name = string_builder.fmtAppendCount("{s}{s}", .{
+                .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,
                     dest_path,
                 }),
                 .loader = output_file.loader,
-                .contents = string_builder.appendCount(output_file.value.buffer.bytes),
+                .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
                 const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];

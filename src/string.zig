@@ -314,6 +314,10 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
+    pub fn ascii(bytes: []const u8) String {
+        return String{ .tag = ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
+    }
+
     pub fn isGlobal(this: String) bool {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
     }
@@ -430,7 +434,11 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFormat(comptime fmt: []const u8, args: anytype) !String {
+    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) !String {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
+            return String.static(fmt);
+        }
+
         var sba = std.heap.stackFallback(16384, bun.default_allocator);
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
@@ -566,7 +574,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn static(input: []const u8) String {
+    pub fn static(input: [:0]const u8) String {
         return .{
             .tag = .StaticZigString,
             .value = .{ .StaticZigString = ZigString.init(input) },

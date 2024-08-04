@@ -134,6 +134,25 @@ pub fn appendCount(this: *StringBuilder, slice: string) bun.StringPointer {
     return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(slice.len)) };
 }
 
+pub fn appendCountZ(this: *StringBuilder, slice: string) bun.StringPointer {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    const start = this.len;
+    bun.copy(u8, this.ptr.?[this.len..this.cap], slice);
+    this.ptr.?[this.len + slice.len] = 0;
+    const result = this.ptr.?[this.len..this.cap][0..slice.len];
+    _ = result;
+    this.len += slice.len;
+    this.len += 1;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return bun.StringPointer{ .offset = @as(u32, @truncate(start)), .length = @as(u32, @truncate(slice.len)) };
+}
+
 pub fn fmt(this: *StringBuilder, comptime str: string, args: anytype) string {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
@@ -161,6 +180,26 @@ pub fn fmtAppendCount(this: *StringBuilder, comptime str: string, args: anytype)
     this.len += out.len;
 
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+
+    return bun.StringPointer{
+        .offset = @as(u32, @truncate(off)),
+        .length = @as(u32, @truncate(out.len)),
+    };
+}
+
+pub fn fmtAppendCountZ(this: *StringBuilder, comptime str: string, args: anytype) bun.StringPointer {
+    if (comptime Environment.allow_assert) {
+        assert(this.len <= this.cap); // didn't count everything
+        assert(this.ptr != null); // must call allocate first
+    }
+
+    const buf = this.ptr.?[this.len..this.cap];
+    const out = std.fmt.bufPrintZ(buf, str, args) catch unreachable;
+    const off = this.len;
+    this.len += out.len;
+
+    if (comptime Environment.allow_assert) assert(this.len <= this.cap);
+    this.len += 1;
 
     return bun.StringPointer{
         .offset = @as(u32, @truncate(off)),

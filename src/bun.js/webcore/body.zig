@@ -1200,11 +1200,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
-                const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    err,
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR("Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
 
             if (value.* == .Locked) {
@@ -1220,15 +1216,12 @@ pub fn BodyMixin(comptime Type: type) type {
                 blob.slice(),
                 encoder.encoding,
             ) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    globalObject.createTypeErrorInstance(
-                        "FormData parse error {s}",
-                        .{
-                            @errorName(err),
-                        },
-                    ),
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR(
+                    "FormData parse error {s}",
+                    .{
+                        @errorName(err),
+                    },
+                ).reject();
             };
 
             return JSC.JSPromise.wrap(

@@ -1,4 +1,6 @@
+
 #include "root.h"
+
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
@@ -5698,7 +5700,7 @@ CPP_DECL void JSC__VM__setControlFlowProfiler(JSC__VM* vm, bool isEnabled)
 
 extern "C" EncodedJSValue JSC__createError(JSC::JSGlobalObject* globalObject, const BunString* str)
 {
-    return JSValue::encode(JSC::createError(globalObject, str->toWTFString()));
+    return JSValue::encode(JSC::createError(globalObject, str->toWTFString(BunString::ZeroCopy)));
 }
 
 extern "C" EncodedJSValue ExpectMatcherUtils__getSingleton(JSC::JSGlobalObject* globalObject_)

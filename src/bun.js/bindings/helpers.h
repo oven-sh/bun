@@ -1,6 +1,7 @@
 #pragma once
 
 #include "root.h"
+#include "wtf/text/ASCIILiteral.h"
 
 #include <JavaScriptCore/Error.h>
 #include <JavaScriptCore/Exception.h>
@@ -84,13 +85,13 @@ static const WTF::String toString(ZigString str)
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create(
-                { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+                  { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ untag(str.ptr), str.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
+              { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
 }
 
 static WTF::AtomString toAtomString(ZigString str)
@@ -115,7 +116,7 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
-            { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
@@ -130,7 +131,7 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::create(std::span { &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::create(
-            std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
+              std::span { &reinterpret_cast<const UChar*>(untag(str.ptr))[ptr.off], ptr.len }));
 }
 
 static const WTF::String toStringCopy(ZigString str)
@@ -284,13 +285,15 @@ static const WTF::String toStringStatic(ZigString str)
         return WTF::String(AtomStringImpl::add(std::span { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }));
     }
 
-    return WTF::String(AtomStringImpl::add(
-        std::span { reinterpret_cast<const LChar*>(untag(str.ptr)), str.len }));
+    auto* untagged = untag(str.ptr);
+    ASSERT(untagged[str.len] == 0);
+    ASCIILiteral ascii = ASCIILiteral::fromLiteralUnsafe(reinterpret_cast<const char*>(untagged));
+    return WTF::String(ascii);
 }
 
 static JSC::JSValue getErrorInstance(const ZigString* str, JSC__JSGlobalObject* globalObject)
 {
-    WTF::String message = toStringCopy(*str);
+    WTF::String message = toString(*str);
     if (UNLIKELY(message.isNull() && str->len > 0)) {
         // pending exception while creating an error.
         return JSC::JSValue();

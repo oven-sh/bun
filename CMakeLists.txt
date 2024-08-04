@@ -704,6 +704,23 @@ add_custom_command(
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
+# --- ErrorCode Generator ---
+file(GLOB NODE_ERRORS_TS ${CONFIGURE_DEPENDS}
+    "${BUN_SRC}/bun.js/bindings/ErrorCode.ts"
+)
+add_custom_command(
+    OUTPUT "${BUN_WORKDIR}/codegen/ErrorCode+List.h" "${BUN_WORKDIR}/codegen/ErrorCode+Data.h" "${BUN_WORKDIR}/codegen/ErrorCode.zig"
+    COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-node-errors.ts" "${BUN_WORKDIR}/codegen"
+    WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+    MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-node-errors.ts"
+    DEPENDS ${NODE_ERRORS_TS}
+    VERBATIM
+    COMMENT "Generating ErrorCode.zig"
+)
+
+# This needs something to force it to be regenerated
+list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ErrorCode+List.h")
+
 # --- JSSink Generator ---
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/JSSink.cpp"
@@ -1551,6 +1568,7 @@ endif()
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
+
     if(NOT APPLE OR EXISTS "${WEBKIT_LIB_DIR}/libbmalloc.a")
         target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
     endif()

@@ -2926,7 +2926,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         if (stream.isLocked(globalThis)) {
                             streamLog("was locked but it shouldn't be", .{});
                             var err = JSC.SystemError{
-                                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE))),
+                                .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_STREAM_CANNOT_PIPE)),
                                 .message = bun.String.static("Stream already used, please create a new one"),
                             };
                             stream.value.unprotect();
@@ -5313,7 +5313,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             return if (request.request_context.getRemoteSocketInfo()) |info|
                 JSSocketAddress__create(
                     this.globalThis,
-                    bun.String.static(info.ip).toJS(this.globalThis),
+                    bun.String.init(info.ip).toJS(this.globalThis),
                     info.port,
                     info.is_ipv6,
                 )

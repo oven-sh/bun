@@ -1574,7 +1574,7 @@ pub const Crypto = struct {
                     assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
                     const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
                     if (buffer_value == .zero) {
-                        promise.reject(globalThis, globalThis.createTypeErrorInstance("Failed to create buffer", .{}));
+                        promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
                         return;
                     }
 
@@ -1663,8 +1663,7 @@ pub const Crypto = struct {
                             const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
-                            const err = globalThis.createTypeErrorInstanceWithCode(.ERR_CRYPTO_INVALID_DIGEST, "Unsupported algorithm \"{s}\"", .{name});
-                            globalThis.throwValue(err);
+                            globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                         }
                         return null;
                     };

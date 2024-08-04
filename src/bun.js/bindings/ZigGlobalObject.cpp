@@ -146,7 +146,7 @@
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
-#include "NodeError.h"
+#include "ErrorCode.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2698,11 +2698,11 @@ void GlobalObject::finishCreation(VM& vm)
 
     m_nodeErrorCache.initLater(
         [](const Initializer<JSObject>& init) {
-            auto* structure = NodeErrorCache::createStructure(
+            auto* structure = ErrorCodeCache::createStructure(
                 init.vm,
                 init.owner);
 
-            init.set(NodeErrorCache::create(init.vm, structure));
+            init.set(ErrorCodeCache::create(init.vm, structure));
         });
 
     m_utilInspectStylizeColorFunction.initLater(

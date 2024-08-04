@@ -2121,7 +2121,8 @@ pub const H2FrameParser = struct {
             const payload = zig_str.slice();
             this.sendData(stream_id, payload, close and !stream.waitForTrailers);
         } else {
-            globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
+            if (!globalObject.hasException())
+                globalObject.throw("Expected data to be an ArrayBuffer or a string", .{});
             return .zero;
         }
 

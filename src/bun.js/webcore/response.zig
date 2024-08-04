@@ -2348,8 +2348,9 @@ pub const Fetch = struct {
                     bun.default_allocator.free(hn);
                     hostname = null;
                 }
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
-                return JSPromise.rejectedPromiseValue(globalThis, err);
+                return globalThis
+                    .ERR_INVALID_ARG_VALUE("fetch() URL is invalid", .{})
+                    .reject();
             };
             url_proxy_buffer = url.href;
             if (url.isFile()) {
@@ -2525,9 +2526,12 @@ pub const Fetch = struct {
                 }
             }
         } else {
-            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
-            exception.* = err.asObjectRef();
+            if (!globalThis.hasException()) {
+                const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
+                exception.* = err.asObjectRef();
+            }
+
             return .zero;
         }
 

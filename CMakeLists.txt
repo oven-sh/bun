@@ -719,7 +719,7 @@ add_custom_command(
 )
 
 # This needs something to force it to be regenerated
-list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ErrorCode+List.h")
+list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ErrorCode+List.h" "${BUN_WORKDIR}/codegen/ErrorCode+Data.h")
 
 # --- JSSink Generator ---
 add_custom_command(
@@ -949,6 +949,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+        "${BUN_WORKDIR}/codegen/ErrorCode.zig"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"

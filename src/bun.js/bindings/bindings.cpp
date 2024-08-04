@@ -4938,12 +4938,14 @@ void JSC__VM__notifyNeedDebuggerBreak(JSC__VM* arg0) { (*arg0).notifyNeedDebugge
 void JSC__VM__notifyNeedShellTimeoutCheck(JSC__VM* arg0) { (*arg0).notifyNeedShellTimeoutCheck(); }
 void JSC__VM__notifyNeedWatchdogCheck(JSC__VM* arg0) { (*arg0).notifyNeedWatchdogCheck(); }
 
-void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue value)
+void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue encodedValue)
 {
     JSC::VM& vm = *reinterpret_cast<JSC::VM*>(vm_);
-
     auto scope = DECLARE_THROW_SCOPE(vm);
-    JSC::JSObject* error = JSC::JSValue::decode(value).getObject();
+    JSValue value = JSValue::decode(encodedValue);
+    scope.assertNoException(); // can't throw an exception when there's already one.
+    ASSERT(!value.isEmpty()); // can't throw an empty value.
+    JSC::JSObject* error = value.getObject();
     JSC::Exception* exception = JSC::Exception::create(vm, error);
     scope.throwException(arg1, exception);
 }

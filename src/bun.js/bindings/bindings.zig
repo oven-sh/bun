@@ -2903,11 +2903,13 @@ pub const JSGlobalObject = opaque {
             writer.print(fmt, args) catch
             // if an exception occurs in the middle of formatting the error message, it's better to just return the formatting string than an error about an error
                 return ZigString.static(fmt).toErrorInstance(this);
-            var str = ZigString.fromUTF8(buf.toOwnedSliceLeaky());
+
+            // Ensure we clone it.
+            var str = ZigString.initUTF8(buf.toOwnedSliceLeaky());
+
             return str.toErrorInstance(this);
         } else {
             if (comptime strings.isAllASCII(fmt)) {
-                // Ensure we go through the ASCIILiteral code path.
                 return String.static(fmt).toErrorInstance(this);
             } else {
                 return ZigString.initUTF8(fmt).toErrorInstance(this);

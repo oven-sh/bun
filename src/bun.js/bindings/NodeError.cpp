@@ -1,5 +1,5 @@
-#include "ExceptionCode.h"
-#include "JSDOMException.h"
+#include "root.h"
+
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -10,19 +10,17 @@
 #include "helpers.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/ErrorInstance.h"
-#include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/Symbol.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/MakeString.h"
 #include "wtf/text/WTFString.h"
-#include <cstdio>
 #include "AbortSignal.h"
+#include "JavaScriptCore/ErrorInstanceInlines.h"
 
 #include "NodeError.h"
-#include "JavaScriptCore/ErrorInstanceInlines.h"
-#include "JSDOMException.h"
+
 static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
 {
     JSC::JSObject* prototype;
@@ -54,9 +52,6 @@ static JSC::Structure* createErrorStructure(JSC::VM& vm, JSC::JSGlobalObject* gl
     JSC::JSObject* prototype = createErrorPrototype(vm, globalObject, type, name, code);
     return JSC::ErrorInstance::createStructure(vm, globalObject, prototype);
 }
-
-JSC::EncodedJSValue JSC__JSValue__createTypeError(const ZigString* message, const ZigString* arg1, JSC::JSGlobalObject* globalObject);
-JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1, JSC::JSGlobalObject* globalObject);
 
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);

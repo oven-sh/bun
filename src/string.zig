@@ -315,7 +315,7 @@ pub const String = extern struct {
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
     pub fn ascii(bytes: []const u8) String {
-        return String{ .tag = ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
+        return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
     }
 
     pub fn isGlobal(this: String) bool {

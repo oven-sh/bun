@@ -758,7 +758,7 @@ $ bun build ./index.tsx --outdir ./out --external '*'
 
 ### `packages`
 
-Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun threats any import which path do not start with `.`, `..` or `/` as package.
+Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun treats any import which path do not start with `.`, `..` or `/` as package.
 
 {% codetabs group="a" %}
 

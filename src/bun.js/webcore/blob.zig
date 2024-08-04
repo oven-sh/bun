@@ -1408,9 +1408,16 @@ pub const Blob = struct {
             };
 
             if (blob.store) |store_| {
-                store_.data.bytes.stored_name = bun.PathString.init(
-                    (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
-                );
+                switch (store_.data) {
+                    .bytes => |*bytes| {
+                        bytes.stored_name = bun.PathString.init(
+                            (name_value_str.toUTF8WithoutRef(bun.default_allocator).clone(bun.default_allocator) catch unreachable).slice(),
+                        );
+                    },
+                    .file => {
+                        blob.name = name_value_str.dupeRef();
+                    },
+                }
             }
         }
 

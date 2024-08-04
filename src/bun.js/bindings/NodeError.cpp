@@ -1,5 +1,6 @@
 #include "root.h"
 
+#include "DOMException.h"
 #include "JavaScriptCore/Error.h"
 #include "JavaScriptCore/ErrorType.h"
 #include "JavaScriptCore/ObjectConstructor.h"
@@ -19,39 +20,46 @@
 #include "AbortSignal.h"
 #include "JavaScriptCore/ErrorInstanceInlines.h"
 #include "JavaScriptCore/JSInternalFieldObjectImplInlines.h"
+#include "JSDOMException.h"
 
 #include "NodeError.h"
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
-static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+static JSC::JSObject* createErrorPrototype(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
     JSC::JSObject* prototype;
 
-    switch (type) {
-    case JSC::ErrorType::TypeError:
-        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
-        break;
-    case JSC::ErrorType::RangeError:
-        prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
-        break;
-    case JSC::ErrorType::Error:
-        prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
-        break;
-    default: {
-        RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
-        break;
-    }
+    // Inherit from DOMException
+    // But preserve the error.stack property.
+    if (isDOMExceptionPrototype) {
+        auto* domGlobalObject = JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject);
+        if (UNLIKELY(!domGlobalObject)) {
+            domGlobalObject = Bun__getDefaultGlobalObject();
+        }
+        // TODO: node:vm?
+        prototype = JSC::constructEmptyObject(globalObject, WebCore::JSDOMException::prototype(vm, *domGlobalObject));
+    } else {
+        switch (type) {
+        case JSC::ErrorType::TypeError:
+            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_typeErrorStructure.prototype(globalObject));
+            break;
+        case JSC::ErrorType::RangeError:
+            prototype = JSC::constructEmptyObject(globalObject, globalObject->m_rangeErrorStructure.prototype(globalObject));
+            break;
+        case JSC::ErrorType::Error:
+            prototype = JSC::constructEmptyObject(globalObject, globalObject->errorPrototype());
+            break;
+        default: {
+            RELEASE_ASSERT_NOT_REACHED_WITH_MESSAGE("TODO: Add support for more error types");
+            break;
+        }
+        }
     }
 
     prototype->putDirect(vm, vm.propertyNames->name, jsString(vm, String(name)), 0);
     prototype->putDirect(vm, WebCore::builtinNames(vm).codePublicName(), jsString(vm, String(code)), 0);
 
     return prototype;
-}
-
-static JSC::Structure* createErrorStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
-{
-    JSC::JSObject* prototype = createErrorPrototype(vm, globalObject, type, name, code);
-    return JSC::ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
@@ -120,9 +128,9 @@ static NodeErrorCache* errorCache(Zig::GlobalObject* globalObject)
 }
 
 // clang-format on
-static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code)
+static Structure* createErrorStructure(JSC::VM& vm, JSGlobalObject* globalObject, JSC::ErrorType type, WTF::ASCIILiteral name, WTF::ASCIILiteral code, bool isDOMExceptionPrototype = false)
 {
-    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code);
+    auto* prototype = createErrorPrototype(vm, globalObject, type, name, code, isDOMExceptionPrototype);
     return ErrorInstance::createStructure(vm, globalObject, prototype);
 }
 
@@ -131,7 +139,7 @@ JSObject* NodeErrorCache::createError(VM& vm, Zig::GlobalObject* globalObject, N
     auto* cache = errorCache(globalObject);
     if (!cache->internalField(static_cast<unsigned>(code))) {
         const auto& data = errors[code];
-        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code);
+        auto* structure = createErrorStructure(vm, globalObject, data.type, data.name, data.code, code == NodeErrorCode::ABORT_ERR);
         cache->internalField(static_cast<unsigned>(code)).set(vm, cache, structure);
     }
 
@@ -317,7 +325,9 @@ JSC::JSValue WebCore::toJS(JSC::JSGlobalObject* globalObject, CommonAbortReason 
         return createError(globalObject, Bun::NodeErrorCode::ABORT_ERR, "The operation timed out"_s);
     }
     case CommonAbortReason::UserAbort: {
-        return createError(globalObject, Bun::NodeErrorCode::ABORT_ERR, "The operation was aborted by the user"_s);
+        // This message is a standardized error message. We cannot change it.
+        // https://webidl.spec.whatwg.org/#idl-DOMException:~:text=The%20operation%20was%20aborted.
+        return createError(globalObject, Bun::NodeErrorCode::ABORT_ERR, "The operation was aborted."_s);
     }
     case CommonAbortReason::ConnectionClosed: {
         return createError(globalObject, Bun::NodeErrorCode::ABORT_ERR, "The connection was closed"_s);

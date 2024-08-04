@@ -52,11 +52,11 @@ JSC::JSObject* createError(Zig::GlobalObject* globalObject, ErrorCode code, JSC:
 JSC::JSObject* createError(VM& vm, Zig::GlobalObject* globalObject, ErrorCode code, JSValue message, JSValue options = jsUndefined());
 JSC::JSValue toJS(JSC::JSGlobalObject*, ErrorCode);
 
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
-JSC_DEFINE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE, (JSC::JSGlobalObject * globalObject, JSC::CallFrame*));
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_INVALID_ARG_TYPE);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_OUT_OF_RANGE);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_DISCONNECTED);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SERVER_NOT_RUNNING);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_IPC_CHANNEL_CLOSED);
+JSC_DECLARE_HOST_FUNCTION(jsFunction_ERR_SOCKET_BAD_TYPE);
 
 }

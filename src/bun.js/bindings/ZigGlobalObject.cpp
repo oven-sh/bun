@@ -499,10 +499,13 @@ WTF::String Bun::formatStackTrace(
             // Sometimes, the sourceURL is empty.
             // For example, pages in Next.js.
             if (sourceURLForFrame.isEmpty()) {
-                // hasLineAndColumnInfo() checks codeBlock(). If it's null, then we can't get the sourceURL.
+                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
                 const auto& source = frame.codeBlock()->source();
+
+                // source.isNull() is true when the SourceProvider is a null pointer.
                 if (!source.isNull()) {
                     auto* provider = source.provider();
+                    // I'm not 100% sure we should show sourceURLDirective here.
                     if (!provider->sourceURLDirective().isEmpty()) {
                         sourceURLForFrame = provider->sourceURLDirective();
                     } else if (!provider->sourceURL().isEmpty()) {

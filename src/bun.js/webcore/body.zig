@@ -662,12 +662,15 @@ pub const Body = struct {
 
             return Body.Value{
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
-                    if (err == error.InvalidArguments) {
-                        globalThis.throwInvalidArguments("Expected an Array", .{});
-                        return null;
+                    if (!globalThis.hasException()) {
+                        if (err == error.InvalidArguments) {
+                            globalThis.throwInvalidArguments("Expected an Array", .{});
+                            return null;
+                        }
+
+                        globalThis.throwInvalidArguments("Invalid Body object", .{});
                     }
 
-                    globalThis.throwInvalidArguments("Invalid Body object", .{});
                     return null;
                 },
             };

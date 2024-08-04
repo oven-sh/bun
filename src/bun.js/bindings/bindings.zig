@@ -2003,6 +2003,18 @@ pub fn PromiseCallback(comptime Type: type, comptime CallbackFunction: fn (*Type
     }.callback;
 }
 
+pub const CommonAbortReason = enum(u8) {
+    Timeout = 1,
+    UserAbort = 2,
+    ConnectionClosed = 3,
+
+    pub fn toJS(this: CommonAbortReason, global: *JSGlobalObject) JSValue {
+        return WebCore__CommonAbortReason__toJS(global, this);
+    }
+
+    extern fn WebCore__CommonAbortReason__toJS(*JSGlobalObject, CommonAbortReason) JSValue;
+};
+
 pub const AbortSignal = extern opaque {
     pub const shim = Shimmer("WebCore", "AbortSignal", @This());
     const cppFn = shim.cppFn;
@@ -2042,12 +2054,15 @@ pub const AbortSignal = extern opaque {
         return cppFn("cleanNativeBindings", .{ this, ctx });
     }
 
+    extern fn WebCore__AbortSignal__signal(*AbortSignal, *JSC.JSGlobalObject, CommonAbortReason) void;
+
     pub fn signal(
         this: *AbortSignal,
-        reason: JSValue,
-    ) *AbortSignal {
+        globalObject: *JSC.JSGlobalObject,
+        reason: CommonAbortReason,
+    ) void {
         bun.Analytics.Features.abort_signal += 1;
-        return cppFn("signal", .{ this, reason });
+        return WebCore__AbortSignal__signal(this, globalObject, reason);
     }
 
     /// This function is not threadsafe. aborted is a boolean, not an atomic!
@@ -2095,15 +2110,7 @@ pub const AbortSignal = extern opaque {
         return WebCore__AbortSignal__new(global);
     }
 
-    pub fn createAbortError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
-        return cppFn("createAbortError", .{ message, code, global });
-    }
-
-    pub fn createTimeoutError(message: *const ZigString, code: *const ZigString, global: *JSGlobalObject) JSValue {
-        return cppFn("createTimeoutError", .{ message, code, global });
-    }
-
-    pub const Extern = [_][]const u8{ "createAbortError", "createTimeoutError", "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
+    pub const Extern = [_][]const u8{ "create", "ref", "unref", "signal", "abortReason", "aborted", "addListener", "fromJS", "toJS", "cleanNativeBindings" };
 };
 
 pub const JSPromise = extern struct {

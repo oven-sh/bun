@@ -660,7 +660,7 @@ pub const DrainResult = union(enum) {
 
 pub const StreamResult = union(Tag) {
     pending: *Pending,
-    err: union(Err) { Error: Syscall.Error, JSValue: JSC.JSValue },
+    err: StreamError,
     done: void,
     owned: bun.ByteList,
     owned_and_done: bun.ByteList,
@@ -682,9 +682,28 @@ pub const StreamResult = union(Tag) {
         }
     }
 
-    pub const Err = enum {
-        Error,
-        JSValue,
+    pub const StreamError = union(enum) {
+        Error: Syscall.Error,
+        AbortReason: JSC.CommonAbortReason,
+        JSValue: JSC.JSValue,
+
+        pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+            return switch (this.*) {
+                .Error => |*err| {
+                    const value = err.toJSC(globalObject);
+                    value.protect();
+                    this.* = .{ .JSValue = value };
+                    return value;
+                },
+                .JSValue => this.JSValue,
+                .AbortReason => |reason| {
+                    const value = reason.toJS(globalObject);
+                    value.protect();
+                    this.* = .{ .JSValue = value };
+                    return value;
+                },
+            };
+        }
     };
 
     pub const Tag = enum {
@@ -943,11 +962,9 @@ pub const StreamResult = union(Tag) {
         defer loop.exit();
 
         switch (result.*) {
-            .err => |err| {
+            .err => |*err| {
                 const value = brk: {
-                    if (err == .Error) break :brk err.Error.toJSC(globalThis);
-
-                    const js_err = err.JSValue;
+                    const js_err = err.toJS(globalThis);
                     js_err.ensureStillAlive();
                     js_err.unprotect();
 
@@ -4332,13 +4349,9 @@ pub const ByteStream = struct {
 
                 if (to_copy.len == 0) {
                     if (stream == .err) {
-                        if (stream.err == .Error) {
-                            this.pending.result = .{ .err = .{ .Error = stream.err.Error } };
-                        }
-                        const js_err = stream.err.JSValue;
-                        js_err.ensureStillAlive();
-                        js_err.protect();
-                        this.pending.result = .{ .err = .{ .JSValue = js_err } };
+                        this.pending.result = .{
+                            .err = stream.err,
+                        };
                     } else {
                         this.pending.result = .{
                             .done = {},

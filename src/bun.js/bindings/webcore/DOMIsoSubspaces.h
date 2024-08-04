@@ -44,6 +44,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
+    std::unique_ptr<IsoSubspace> m_subspaceForNodeErrors;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;

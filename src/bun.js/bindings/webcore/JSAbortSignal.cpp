@@ -225,7 +225,7 @@ static inline JSValue jsAbortSignal_reasonGetter(JSGlobalObject& lexicalGlobalOb
     auto& vm = JSC::getVM(&lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto& impl = thisObject.wrapped();
-    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.reason())));
+    RELEASE_AND_RETURN(throwScope, (toJS<IDLAny>(lexicalGlobalObject, throwScope, impl.jsReason(lexicalGlobalObject))));
 }
 
 JSC_DEFINE_CUSTOM_GETTER(jsAbortSignal_reason, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))

@@ -231,8 +231,6 @@ CPP_DECL JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* ar
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC__JSValue JSValue1));
 CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* arg0);
-CPP_DECL JSC__JSValue WebCore__AbortSignal__createAbortError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
-CPP_DECL JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__fromJS(JSC__JSValue JSValue0);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSValue JSValue1);

@@ -1,3 +1,6 @@
+// Most of this test was copied from
+// https://github.com/nodejs/node/blob/2eff28fb7a93d3f672f80b582f664a7c701569fb/test/parallel/test-aborted-util.js#L1-L60
+// and then translated to bun:test using Claude.
 import { expect, test } from "bun:test";
 import { getEventListeners } from "events";
 import { aborted } from "util";
@@ -28,6 +31,7 @@ test("aborted works when provided a resource that was not already aborted", asyn
   await abortedPromise;
   expect(ac.signal.aborted).toBe(true);
   expect(getEventListeners(ac.signal, "abort").length).toBe(0);
+  delete globalThis.strong;
   return expect(abortedPromise).resolves.toBeUndefined();
 });
 

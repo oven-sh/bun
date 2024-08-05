@@ -293,8 +293,14 @@ function getSystemErrorName(err: any) {
 
 let lazyAbortedRegistry: FinalizationRegistry<{
   ref: WeakRef<AbortSignal>;
-  resolve: (...args: any[]) => void;
+  unregisterToken: (...args: any[]) => void;
 }>;
+function onAbortedCallback(resolveFn: Function) {
+  lazyAbortedRegistry.unregister(resolveFn);
+
+  resolveFn();
+}
+
 function aborted(signal: AbortSignal, resource: object) {
   if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
     throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
@@ -308,30 +314,33 @@ function aborted(signal: AbortSignal, resource: object) {
     return Promise.resolve();
   }
 
-  const { promise, resolve, reject } = $newPromiseCapability(Promise);
+  const { promise, resolve } = $newPromiseCapability(Promise);
+  const unregisterToken = onAbortedCallback.bind(undefined, resolve);
   signal.addEventListener(
     "abort",
-    () => {
-      lazyAbortedRegistry.unregister(resolve);
-      resolve();
-    },
+    // Do not leak the current scope into the listener.
+    // Instead, create a new function.
+    unregisterToken,
     { once: true },
   );
 
   if (!lazyAbortedRegistry) {
-    lazyAbortedRegistry = new FinalizationRegistry(({ ref, resolve }) => {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, unregisterToken }) => {
       const signal = ref.deref();
-      if (signal) signal.removeEventListener("abort", resolve);
+      if (signal) signal.removeEventListener("abort", unregisterToken);
     });
   }
 
+  // When the resource is garbage collected, clear the listener from the
+  // AbortSignal so we do not cause the AbortSignal itself to leak (AbortSignal
+  // keeps alive until it is signaled).
   lazyAbortedRegistry.register(
     resource,
     {
       ref: new WeakRef(signal),
-      resolve,
+      unregisterToken,
     },
-    resolve,
+    unregisterToken,
   );
 
   return promise;

@@ -158,6 +158,27 @@ test("blob: can reliable get type from fetch #10072", async () => {
   expect(blob.type).toBe("plain/text");
 });
 
+// https://github.com/oven-sh/bun/issues/13049
+test("new Blob(new Uint8Array()) is supported", async () => {
+  const blob = new Blob(Buffer.from("1234"));
+  expect(await blob.text()).toBe("1234");
+});
+
+// https://github.com/oven-sh/bun/issues/13049
+test("new File(new Uint8Array()) is supported", async () => {
+  const blob = new File(Buffer.from("1234"), "file.txt");
+  expect(await blob.text()).toBe("1234");
+  expect(blob.name).toBe("file.txt");
+});
+
+test("new File('123', '123') is NOT supported", async () => {
+  expect(() => new File("123", "123")).toThrow();
+});
+
+test("new Blob('123') is NOT supported", async () => {
+  expect(() => new Blob("123")).toThrow();
+});
+
 test("blob: can set name property #10178", () => {
   const blob = new Blob([Buffer.from("Hello, World")]);
   // @ts-expect-error

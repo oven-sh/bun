@@ -211,3 +211,8 @@ test("blob: can set name property #10178", () => {
   myOtherBlob.name = 10;
   expect(myOtherBlob.name).toBe(10);
 });
+
+test("#12894", () => {
+  const bunFile = Bun.file("foo.txt");
+  expect(new File([bunFile], "bar.txt").name).toBe("bar.txt");
+});

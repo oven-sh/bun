@@ -1798,12 +1798,26 @@ describe("bundler", () => {
         export const other = [capture(require.main === module), capture(import.meta.main)];
       `,
     },
-    target: 'node',
+    target: "node",
     capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
     onAfterBundle(api) {
       // This should not be marked as a CommonJS module
       api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
+    },
+  });
+  itBundled("edgecase/IdentifierInEnum#13081", {
+    files: {
+      "/entry.ts": `
+        export const B1 = "bbbbbbbbbbbbbbbb";
+
+        export enum AccountType {
+          A = A1_AAAAAAAAAAAAAAAAAAA,
+          B = B1,
+        }
+
+        console.log(AccountType);
+      `,
     },
   });
 

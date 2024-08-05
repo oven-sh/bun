@@ -2533,7 +2533,7 @@ pub const ModuleLoader = struct {
         } else if (jsc_vm.standalone_module_graph) |graph| {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
-            if (graph.files.get(specifier_utf8.slice())) |file| {
+            if (graph.files.getPtr(specifier_utf8.slice())) |file| {
                 if (file.loader == .sqlite or file.loader == .sqlite_embedded) {
                     const code =
                         \\/* Generated code */
@@ -2556,7 +2556,7 @@ pub const ModuleLoader = struct {
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.static(file.contents),
+                    .source_code = file.toWTFString(),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,

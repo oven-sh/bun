@@ -593,6 +593,11 @@ pub const String = extern struct {
         ptr: ?*anyopaque,
         callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
     ) String;
+    extern fn BunString__createStaticExternal(
+        bytes: [*]const u8,
+        len: usize,
+        isLatin1: bool,
+    ) String;
 
     /// ctx is the pointer passed into `createExternal`
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
@@ -603,6 +608,16 @@ pub const String = extern struct {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
+    }
+
+    /// This should rarely be used. The WTF::StringImpl* will never be freed.
+    ///
+    /// So this really only makes sense when you need to dynamically allocate a
+    /// string that will never be freed.
+    pub fn createStaticExternal(bytes: []const u8, isLatin1: bool) String {
+        JSC.markBinding(@src());
+        bun.assert(bytes.len > 0);
+        return BunString__createStaticExternal(bytes.ptr, bytes.len, isLatin1);
     }
 
     extern fn BunString__createExternalGloballyAllocatedLatin1(

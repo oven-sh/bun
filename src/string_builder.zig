@@ -197,9 +197,9 @@ pub fn fmtAppendCountZ(this: *StringBuilder, comptime str: string, args: anytype
     const out = std.fmt.bufPrintZ(buf, str, args) catch unreachable;
     const off = this.len;
     this.len += out.len;
+    this.len += 1;
 
     if (comptime Environment.allow_assert) assert(this.len <= this.cap);
-    this.len += 1;
 
     return bun.StringPointer{
         .offset = @as(u32, @truncate(off)),

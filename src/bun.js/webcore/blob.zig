@@ -4417,6 +4417,7 @@ pub const Blob = struct {
         var might_only_be_one_thing = false;
         arg.ensureStillAlive();
         defer arg.ensureStillAlive();
+        var fail_if_top_value_is_not_typed_array_like = false;
         switch (current.jsTypeLoose()) {
             .Array, .DerivedArray => {
                 var top_iter = JSC.JSArrayIterator.init(current, global);
@@ -4431,7 +4432,7 @@ pub const Blob = struct {
             else => {
                 might_only_be_one_thing = true;
                 if (require_array) {
-                    return error.InvalidArguments;
+                    fail_if_top_value_is_not_typed_array_like = true;
                 }
             },
         }
@@ -4446,10 +4447,12 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.StringObject,
                 JSC.JSValue.JSType.DerivedStringObject,
                 => {
-                    var str = top_value.toBunString(global);
-                    defer str.deref();
-                    const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
-                    return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
+                    if (!fail_if_top_value_is_not_typed_array_like) {
+                        var str = top_value.toBunString(global);
+                        defer str.deref();
+                        const bytes, const ascii = try str.toOwnedSliceReturningAllASCII(bun.default_allocator);
+                        return Blob.initWithAllASCII(bytes, bun.default_allocator, global, ascii);
+                    }
                 },
 
                 JSC.JSValue.JSType.ArrayBuffer,
@@ -4470,32 +4473,40 @@ pub const Blob = struct {
                 },
 
                 .DOMWrapper => {
-                    if (top_value.as(Blob)) |blob| {
-                        if (comptime move) {
-                            var _blob = blob.*;
-                            _blob.allocator = null;
-                            blob.transfer();
-                            return _blob;
-                        } else {
-                            return blob.dupe();
-                        }
-                    } else if (top_value.as(JSC.API.BuildArtifact)) |build| {
-                        if (comptime move) {
-                            // I don't think this case should happen?
-                            var blob = build.blob;
-                            blob.transfer();
-                            return blob;
-                        } else {
-                            return build.blob.dupe();
-                        }
-                    } else if (current.toSliceClone(global)) |sliced| {
-                        if (sliced.allocator.get()) |allocator| {
-                            return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
+                    if (!fail_if_top_value_is_not_typed_array_like) {
+                        if (top_value.as(Blob)) |blob| {
+                            if (comptime move) {
+                                var _blob = blob.*;
+                                _blob.allocator = null;
+                                blob.transfer();
+                                return _blob;
+                            } else {
+                                return blob.dupe();
+                            }
+                        } else if (top_value.as(JSC.API.BuildArtifact)) |build| {
+                            if (comptime move) {
+                                // I don't think this case should happen?
+                                var blob = build.blob;
+                                blob.transfer();
+                                return blob;
+                            } else {
+                                return build.blob.dupe();
+                            }
+                        } else if (current.toSliceClone(global)) |sliced| {
+                            if (sliced.allocator.get()) |allocator| {
+                                return Blob.initWithAllASCII(@constCast(sliced.slice()), allocator, global, false);
+                            }
                         }
                     }
                 },
 
                 else => {},
+            }
+
+            // new Blob("ok")
+            // new File("ok", "file.txt")
+            if (fail_if_top_value_is_not_typed_array_like) {
+                return error.InvalidArguments;
             }
         }
 

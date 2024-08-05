@@ -4831,6 +4831,9 @@ JSC__JSValue JSC__VM__runGC(JSC__VM* vm, bool sync)
         vm->clearSourceProviderCaches();
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::PreventCollectionAndDeleteAllCode);
         vm->heap.collectNow(JSC::Sync, JSC::CollectionScope::Full);
+#if IS_MALLOC_DEBUGGING_ENABLED && OS(DARWIN)
+        malloc_zone_pressure_relief(nullptr, 0);
+#endif
     } else {
         vm->heap.deleteAllUnlinkedCodeBlocks(JSC::DeleteAllCodeIfNotCollecting);
         vm->heap.collectSync(JSC::CollectionScope::Full);
@@ -5508,12 +5511,12 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal*
     return arg0;
 }
 
-extern "C" WebCore__AbortSignal* WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
+extern "C" void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);
     abortSignal->deref();
-    return arg0;
 }
+
 extern "C" void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);

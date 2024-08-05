@@ -44,7 +44,7 @@ pub const Run = struct {
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
 
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
@@ -182,7 +182,8 @@ pub const Run = struct {
             return;
         }
 
-        bun.JSC.initialize();
+        bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
+
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
@@ -279,7 +280,7 @@ pub const Run = struct {
     }
 
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.runErrorHandler(value, null);
+        this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
         run.any_unhandled = true;
     }
 
@@ -450,6 +451,8 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        vm.onExit();
+
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
 
@@ -461,7 +464,6 @@ pub const Run = struct {
             );
         }
 
-        vm.onExit();
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
     }

@@ -76,9 +76,15 @@ void JSVMClientData::create(VM* vm, void* bunVM)
     auto provider = WebCore::createBuiltinsSourceProvider();
     JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
-    vm->deferredWorkTimer->onAddPendingWork = Bun::JSCTaskScheduler::onAddPendingWork;
-    vm->deferredWorkTimer->onScheduleWorkSoon = Bun::JSCTaskScheduler::onScheduleWorkSoon;
-    vm->deferredWorkTimer->onCancelPendingWork = Bun::JSCTaskScheduler::onCancelPendingWork;
+    vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
+        Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
+    };
+    vm->deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
+        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTFMove(task));
+    };
+    vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
+        Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
+    };
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);

@@ -2,7 +2,7 @@ import { file, gc, Serve, serve, Server } from "bun";
 import { afterEach, describe, it, expect, afterAll, mock } from "bun:test";
 import { readFileSync, writeFileSync } from "fs";
 import { join, resolve } from "path";
-import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4 } from "harness";
+import { bunExe, bunEnv, dumpStats, isPosix, isIPv6, tmpdirSync, isIPv4, rejectUnauthorizedScope, tls } from "harness";
 // import { renderToReadableStream } from "react-dom/server";
 // import app_jsx from "./app.jsx";
 import { spawn } from "child_process";
@@ -1683,6 +1683,47 @@ it("should not instanciate error instances in each request", async () => {
   }
   expect(heapStats().objectTypeCounts.Error || 0).toBeLessThanOrEqual(startErrorCount);
 });
+
+it("should be able to abort a sendfile response and streams", async () => {
+  const bigfile = join(import.meta.dir, "../../web/encoding/utf8-encoding-fixture.bin");
+  using server = serve({
+    port: 0,
+    tls,
+    hostname: "localhost",
+    async fetch() {
+      return new Response(file(bigfile), {
+        headers: { "Content-Type": "text/html" },
+      });
+    },
+  });
+
+  async function doRequest() {
+    try {
+      const controller = new AbortController();
+      const res = await fetch(server.url, {
+        signal: controller.signal,
+        tls: { rejectUnauthorized: false },
+      });
+      res.body
+        ?.getReader()
+        .read()
+        .catch(() => {});
+      controller.abort();
+    } catch {}
+  }
+  const batchSize = 20;
+  const batch = [];
+
+  for (let i = 0; i < 500; i++) {
+    batch.push(doRequest());
+    if (batch.length === batchSize) {
+      await Promise.all(batch);
+      batch.length = 0;
+    }
+  }
+  await Promise.all(batch);
+  expect().pass();
+}, 10_000);
 
 it("should not send extra bytes when using sendfile", async () => {
   const payload = new Uint8Array([1, 2, 3, 4, 5, 6, 7, 8, 9, 10]);

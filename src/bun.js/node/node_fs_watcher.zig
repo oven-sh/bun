@@ -535,7 +535,7 @@ pub const FSWatcher = struct {
                 listener.ensureStillAlive();
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(this.globalThis),
-                    if (err.isEmptyOrUndefinedOrNull()) JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.globalThis) else err,
+                    JSC.CommonAbortReason.UserAbort.toJS(this.globalThis),
                 };
                 _ = listener.callWithGlobalThis(
                     this.globalThis,

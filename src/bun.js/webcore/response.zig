@@ -495,8 +495,7 @@ pub const Response = struct {
 
                     bun.assert(!arguments[1].isEmptyOrUndefinedOrNull());
 
-                    const err = globalThis.createTypeErrorInstance("Expected options to be one of: null, undefined, or object", .{});
-                    globalThis.throwValue(err);
+                    globalThis.throwInvalidArguments("Expected options to be one of: null, undefined, or object", .{});
                     break :brk null;
                 },
             }
@@ -1262,7 +1261,7 @@ pub const Fetch = struct {
                 if (signal.aborted()) {
                     this.abort_reason = signal.abortReason();
                     if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
-                        return JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, this.global_this);
+                        return JSC.CommonAbortReason.UserAbort.toJS(this.global_this);
                     }
                     this.abort_reason.protect();
                     return this.abort_reason;
@@ -1864,12 +1863,12 @@ pub const Fetch = struct {
         }
 
         if (url_str.tag == .Dead) {
-            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "Invalid URL", .{}, globalObject));
+            globalObject.ERR_INVALID_ARG_TYPE("Invalid URL", .{}).throw();
             return .zero;
         }
 
         if (url_str.isEmpty()) {
-            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             return .zero;
         }
 
@@ -1881,7 +1880,7 @@ pub const Fetch = struct {
         }
 
         if (url.hostname.len == 0) {
-            globalObject.throwValue(JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fetch_error_blank_url, .{}, globalObject));
+            globalObject.ERR_INVALID_ARG_TYPE(fetch_error_blank_url, .{}).throw();
             bun.default_allocator.free(url.href);
             return .zero;
         }
@@ -2349,8 +2348,9 @@ pub const Fetch = struct {
                     bun.default_allocator.free(hn);
                     hostname = null;
                 }
-                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "fetch() URL is invalid", .{}, ctx);
-                return JSPromise.rejectedPromiseValue(globalThis, err);
+                return globalThis
+                    .ERR_INVALID_ARG_VALUE("fetch() URL is invalid", .{})
+                    .reject();
             };
             url_proxy_buffer = url.href;
             if (url.isFile()) {
@@ -2526,9 +2526,12 @@ pub const Fetch = struct {
                 }
             }
         } else {
-            const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
-            const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
-            exception.* = err.asObjectRef();
+            if (!globalThis.hasException()) {
+                const fetch_error = fetch_type_error_strings.get(js.JSValueGetType(ctx, first_arg.asRef()));
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_TYPE, "{s}", .{fetch_error}, ctx);
+                exception.* = err.asObjectRef();
+            }
+
             return .zero;
         }
 

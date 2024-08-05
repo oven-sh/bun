@@ -1283,8 +1283,9 @@ fn NewSocket(comptime ssl: bool) type {
         }
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
+            const needs_deref = !this.flags.detached;
             this.flags.detached = true;
-            defer this.deref();
+            defer if (needs_deref) this.deref();
 
             defer this.markInactive(socket_ctx);
 

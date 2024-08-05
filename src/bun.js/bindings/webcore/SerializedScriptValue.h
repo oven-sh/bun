@@ -26,6 +26,7 @@
 
 #pragma once
 
+#include "root.h"
 // #include "Blob.h"
 // #include "DetachedRTCDataChannel.h"
 #include "ExceptionOr.h"

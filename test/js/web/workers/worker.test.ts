@@ -293,4 +293,31 @@ describe("worker_threads", () => {
     expect(process.argv).toEqual(original_argv);
     expect(process.execArgv).toEqual(original_execArgv);
   });
+
+  test("worker with eval = false fails with code", async () => {
+    let has_error = false;
+    try {
+      const worker = new wt.Worker("console.log('this should not get printed')", { eval: false });
+    } catch (err) {
+      expect(err.constructor.name).toEqual("TypeError");
+      expect(err.message).toMatch(/BuildMessage: ModuleNotFound.+/);
+      has_error = true;
+    }
+    expect(has_error).toBe(true);
+  });
+
+  test("worker with eval = true succeeds with valid code", async () => {
+    let message;
+    const worker = new wt.Worker("postMessage('hello')", { eval: true });
+    worker.on('message', e => {
+      message = e;
+    });
+    const p = new Promise((resolve, reject) => {
+      worker.on('error', reject);
+      worker.on('exit', resolve);
+    })
+    await p;
+    expect(message).toEqual("hello");
+  });
+
 });

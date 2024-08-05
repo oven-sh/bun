@@ -280,7 +280,7 @@ pub const Run = struct {
     }
 
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.runErrorHandler(value, null);
+        this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
         run.any_unhandled = true;
     }
 
@@ -451,6 +451,8 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        vm.onExit();
+
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
 
@@ -462,7 +464,6 @@ pub const Run = struct {
             );
         }
 
-        vm.onExit();
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
         vm.globalExit();
     }

@@ -37,7 +37,7 @@ expect.extend({
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
-          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+          `Expected ${cmds.join(" ")}\n to output ${optionalStdout}\n   but got ${result.stdout.toString("utf-8")}`,
       };
     }
 
@@ -1006,6 +1006,217 @@ describe("process.exitCode", () => {
     `,
       "",
       6,
+    ]).toRunInlineFixture();
+  });
+});
+
+describe("on(uncaughtException)", () => {
+  it("throw number", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a);
+        // TODO b is wrong
+      });
+      throw 42;
+    `,
+      "42\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("throw error", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a instanceof Error);
+        console.log(a.message);
+        // TODO b is wrong
+      });
+      throw new Error("hello");
+    `,
+      "true\nhello\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("call undefined function", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a instanceof TypeError);
+        console.log(a.message);
+        // TODO b is wrong
+      });
+      global.foo();
+    `,
+      "true\nglobal.foo is not a function. (In 'global.foo()', 'global.foo' is undefined)\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+});
+
+describe("on(unhandledRejection)", () => {
+  it("normal", () => {
+    expect([
+      `
+      process.on("unhandledRejection", (a, b) => {
+        console.log("unhandledRejection", a, b);
+      });
+      Promise.reject(42);
+    `,
+      "unhandledRejection 42 Promise { <rejected> }\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+});
+
+describe("unhandled rejection -> uncaughtException", () => {
+  it("number", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject(42);
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "42".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("plain object with toString that throws", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      const x = {toString:()=>{throw new Error()}};
+      Promise.reject(x);
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "[object Object]".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("symbol", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject(Symbol('bun'));
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "Symbol(bun)".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("string", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log("uncaughtException");
+        console.log(a.code);
+        console.log(a.message);
+        console.log(b);
+      });
+      Promise.reject('bun');
+    `,
+      `uncaughtException\nERR_UNHANDLED_REJECTION\nThis error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "bun".\nunhandledRejection\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("string object", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      Promise.reject(new String('bun'));
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "[object String]".\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("bigint", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      Promise.reject(3n);
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "3".\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("array", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      Promise.reject([]);
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "[object Array]".\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("require", () => {
+    expect([
+      `
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      Promise.reject(require);
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "function require() {\n    [native code]\n}".\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("function", () => {
+    expect([
+      `
+      // @bun
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      const x = () => {};
+      Promise.reject(x);
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "() => {}".\n`,
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("function with toString that throws", () => {
+    expect([
+      `
+      // @bun
+      process.on("uncaughtException", (a, b) => {
+        console.log(a.message);
+      });
+      const x = () => {};
+      x.__proto__.toString = () => {throw new Error()};
+      Promise.reject(x);
+    `,
+      `This error originated either by throwing inside of an async function without a catch block, or by rejecting a promise which was not handled with .catch(). The promise rejected with the reason "() => {}".\n`,
+      0,
     ]).toRunInlineFixture();
   });
 });

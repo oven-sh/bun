@@ -1959,7 +1959,7 @@ static JSValue constructProcessChannel(VM& vm, JSObject* processObject)
         auto& vm = globalObject->vm();
         auto scope = DECLARE_THROW_SCOPE(vm);
 
-        JSC::JSFunction* getControl = JSC::JSFunction::create(vm, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
+        JSC::JSFunction* getControl = JSC::JSFunction::create(vm, globalObject, processObjectInternalsGetChannelCodeGenerator(vm), globalObject);
         JSC::MarkedArgumentBuffer args;
         JSC::CallData callData = JSC::getCallData(getControl);
 
@@ -2697,7 +2697,7 @@ JSValue Process::constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObjec
         nextTickQueueObject = jsCast<Bun::JSNextTickQueue*>(globalObject->m_nextTickQueue.get());
     }
 
-    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), lexicalGlobalObject);
+    JSC::JSFunction* initializer = JSC::JSFunction::create(vm, globalObject, processObjectInternalsInitializeNextTickQueueCodeGenerator(vm), globalObject);
 
     JSC::MarkedArgumentBuffer args;
     args.append(this);

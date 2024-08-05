@@ -1809,16 +1809,14 @@ describe("bundler", () => {
   itBundled("edgecase/IdentifierInEnum#13081", {
     files: {
       "/entry.ts": `
-        export const B1 = "bbbbbbbbbbbbbbbb";
-
-        export enum AccountType {
-          A = A1_AAAAAAAAAAAAAAAAAAA,
-          B = B1,
+        let ZZZZZZZZZ = 1;
+        enum B {
+          C = ZZZZZZZZZ,
         }
-
-        console.log(AccountType);
+        console.log(B.C);
       `,
     },
+    run: { stdout: "1" },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

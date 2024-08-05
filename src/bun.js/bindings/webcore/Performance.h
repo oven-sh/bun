@@ -37,6 +37,8 @@
 #include "EventTarget.h"
 #include "ExceptionOr.h"
 // #include "ReducedResolutionSeconds.h"
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "ScriptExecutionContext.h"
 // #include "Timer.h"
 #include <variant>
@@ -78,6 +80,7 @@ struct PerformanceMeasureOptions;
 
 class Performance final : public RefCounted<Performance>, public ContextDestructionObserver, public EventTarget {
     WTF_MAKE_ISO_ALLOCATED(Performance);
+
 public:
     static Ref<Performance> create(ScriptExecutionContext* context, MonotonicTime timeOrigin) { return adoptRef(*new Performance(context, timeOrigin)); }
     ~Performance();
@@ -123,13 +126,12 @@ public:
 
     ScriptExecutionContext* scriptExecutionContext() const final { return ContextDestructionObserver::scriptExecutionContext(); }
 
-    using RefCounted::ref;
     using RefCounted::deref;
+    using RefCounted::ref;
 
     // void scheduleNavigationObservationTaskIfNeeded();
 
     // PerformanceNavigationTiming* navigationTiming() { return m_navigationTiming.get(); }
-
 
     // EventTargetData* eventTargetData() override;
     // EventTargetData* eventTargetDataConcurrently() override;
@@ -173,7 +175,6 @@ private:
     std::unique_ptr<PerformanceUserTiming> m_userTiming;
 
     ListHashSet<RefPtr<PerformanceObserver>> m_observers;
-
 
     EventTargetData* eventTargetData() final { return &m_eventTargetData; }
     EventTargetData* eventTargetDataConcurrently() final { return &m_eventTargetData; }

@@ -1279,6 +1279,17 @@ pub fn withoutUTF8BOM(bytes: []const u8) []const u8 {
     }
 }
 
+// https://github.com/WebKit/WebKit/blob/443e796d1538654c34f2690e39600c70c8052b63/Source/WebCore/PAL/pal/text/TextCodecUTF8.cpp#L69
+pub fn nonASCIISequenceLength(first_byte: u8) u3 {
+    return switch (first_byte) {
+        0...193 => 0,
+        194...223 => 2,
+        224...239 => 3,
+        240...244 => 4,
+        245...255 => 0,
+    };
+}
+
 /// Convert a UTF-8 string to a UTF-16 string IF there are any non-ascii characters
 /// If there are no non-ascii characters, this returns null
 /// This is intended to be used for strings that go to JavaScript
@@ -2076,9 +2087,9 @@ pub const UTF16Replacement = struct {
 };
 
 // This variation matches WebKit behavior.
-pub fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
+fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
     if (comptime Environment.allow_assert) assert(sequence[0] > 127);
-    const len = wtf8ByteSequenceLengthWithInvalid(sequence[0]);
+    const len = nonASCIISequenceLength(sequence[0]);
     switch (len) {
         2 => {
             if (comptime Environment.allow_assert) {

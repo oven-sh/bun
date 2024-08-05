@@ -1149,7 +1149,7 @@ pub fn onClose(
 ) void {
     log("Closed  {s}\n", .{client.url.href});
 
-    const in_progress = client.state.stage != .done and client.state.stage != .fail;
+    const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
     if (in_progress) {
         // if the peer closed after a full chunk, treat this
@@ -1181,7 +1181,7 @@ pub fn onClose(
     }
 
     if (in_progress) {
-        client.closeAndFail(error.ConnectionClosed, is_ssl, socket);
+        client.fail(error.ConnectionClosed);
     }
 }
 pub fn onTimeout(
@@ -2288,8 +2288,6 @@ pub const AsyncHTTP = struct {
             this.response_buffer.allocator = default_allocator;
         }
         this.client.start(this.request_body, this.response_buffer);
-
-        log("onStart: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
     }
 };
 
@@ -2502,7 +2500,6 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
-        assert(this.state.fail != null);
         return;
     }
 }

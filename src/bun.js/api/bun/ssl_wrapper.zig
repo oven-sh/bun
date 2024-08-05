@@ -209,7 +209,6 @@ pub fn SSLWrapper(T: type) type {
 
             if (data.len == 0) {
                 // just cycle through internal openssl's state
-                _ = BoringSSL.SSL_write(this.ssl, data.ptr, @as(c_int, @intCast(data.len)));
                 this.handleTraffic();
                 return 0;
             }
@@ -320,17 +319,12 @@ pub fn SSLWrapper(T: type) type {
                     return true;
                 }
                 this.flags.handshake_state = HandshakeState.HANDSHAKE_PENDING;
-                // ensure that we'll cycle through internal openssl's state
-                this.writeData("");
                 return true;
             }
 
             // handshake completed
             this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
             this.triggerHandshakeCallback(true, this.getVerifyError());
-
-            // ensure that we'll cycle through internal openssl's state
-            this.writeData("");
 
             return true;
         }

@@ -25,12 +25,14 @@ const server = app.listen(port, () => {
 
       // https://github.com/oven-sh/bun/issues/11739
       if (json[String.fromCharCode(169)] !== "©") {
+        console.log("Copyright", json[String.fromCharCode(169)]);
         console.log("json has an encoding issue.", json);
         process.exit(1);
       }
 
       // https://github.com/oven-sh/bun/issues/11739
-      if (json[String.fromCharCode(55357)] !== "😀") {
+      if (json[String.fromCodePoint(128512)] !== "😀") {
+        console.log("Smiley", json[String.fromCodePoint(128512)]);
         console.log("json has an encoding issue.", json);
         process.exit(1);
       }

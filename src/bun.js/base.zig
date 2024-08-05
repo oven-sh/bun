@@ -187,17 +187,7 @@ pub fn createError(
     }
 }
 
-pub fn throwTypeError(
-    code: JSC.Node.ErrorCode,
-    comptime fmt: string,
-    args: anytype,
-    ctx: js.JSContextRef,
-    exception: ExceptionValueRef,
-) void {
-    exception.* = toTypeError(code, fmt, args, ctx).asObjectRef();
-}
-
-pub fn toTypeErrorWithCode(
+fn toTypeErrorWithCode(
     code: []const u8,
     comptime fmt: string,
     args: anytype,
@@ -219,31 +209,31 @@ pub fn toTypeErrorWithCode(
 }
 
 pub fn toTypeError(
-    code: JSC.Node.ErrorCode,
-    comptime fmt: string,
+    code: JSC.Error,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
 ) JSC.JSValue {
-    return toTypeErrorWithCode(@tagName(code), fmt, args, ctx);
+    return code.fmt(ctx, fmt, args);
 }
 
 pub fn throwInvalidArguments(
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
     exception: ExceptionValueRef,
 ) void {
     @setCold(true);
-    return throwTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx, exception);
+    exception.* = JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args).asObjectRef();
 }
 
 pub fn toInvalidArguments(
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
     ctx: js.JSContextRef,
 ) JSC.JSValue {
     @setCold(true);
-    return toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, ctx);
+    return JSC.Error.ERR_INVALID_ARG_TYPE.fmt(ctx, fmt, args);
 }
 
 pub fn getAllocator(_: js.JSContextRef) std.mem.Allocator {

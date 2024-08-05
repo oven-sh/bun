@@ -1604,7 +1604,8 @@ pub export fn Bun__canonicalizeIP(
         const size = bun.len(bun.cast([*:0]u8, &ip_addr));
         return JSC.ZigString.init(ip_addr[0..size]).toJS(globalThis);
     } else {
-        globalThis.throwInvalidArguments("address must be a string", .{});
+        if (!globalThis.hasException())
+            globalThis.throwInvalidArguments("address must be a string", .{});
         return .zero;
     }
 }

@@ -1393,17 +1393,21 @@ pub const Blob = struct {
         }
         {
             const name_value_str = bun.String.tryFromJS(args[1], globalThis) orelse {
-                globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
+                if (!globalThis.hasException()) {
+                    globalThis.throwInvalidArguments("new File(bits, name) expects string as the second argument", .{});
+                }
                 return null;
             };
             defer name_value_str.deref();
 
             blob = get(globalThis, args[0], false, true) catch |err| {
-                if (err == error.InvalidArguments) {
-                    globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
-                    return null;
+                if (!globalThis.hasException()) {
+                    if (err == error.InvalidArguments) {
+                        globalThis.throwInvalidArguments("new File(bits, name) expects iterable as the first argument", .{});
+                        return null;
+                    }
+                    globalThis.throwOutOfMemory();
                 }
-                globalThis.throwOutOfMemory();
                 return null;
             };
 

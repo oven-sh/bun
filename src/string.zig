@@ -314,6 +314,10 @@ pub const String = extern struct {
     extern fn BunString__fromLatin1Unitialized(len: usize) String;
     extern fn BunString__fromUTF16Unitialized(len: usize) String;
 
+    pub fn ascii(bytes: []const u8) String {
+        return String{ .tag = .ZigString, .value = .{ .ZigString = ZigString.init(bytes) } };
+    }
+
     pub fn isGlobal(this: String) bool {
         return this.tag == Tag.ZigString and this.value.ZigString.isGloballyAllocated();
     }
@@ -430,7 +434,11 @@ pub const String = extern struct {
         return BunString__fromUTF16(bytes.ptr, bytes.len);
     }
 
-    pub fn createFormat(comptime fmt: []const u8, args: anytype) !String {
+    pub fn createFormat(comptime fmt: [:0]const u8, args: anytype) !String {
+        if (comptime std.meta.fieldNames(@TypeOf(args)).len == 0) {
+            return String.static(fmt);
+        }
+
         var sba = std.heap.stackFallback(16384, bun.default_allocator);
         const alloc = sba.get();
         const buf = try std.fmt.allocPrint(alloc, fmt, args);
@@ -566,7 +574,7 @@ pub const String = extern struct {
         };
     }
 
-    pub fn static(input: []const u8) String {
+    pub fn static(input: [:0]const u8) String {
         return .{
             .tag = .StaticZigString,
             .value = .{ .StaticZigString = ZigString.init(input) },
@@ -585,6 +593,11 @@ pub const String = extern struct {
         ptr: ?*anyopaque,
         callback: ?*const fn (*anyopaque, *anyopaque, u32) callconv(.C) void,
     ) String;
+    extern fn BunString__createStaticExternal(
+        bytes: [*]const u8,
+        len: usize,
+        isLatin1: bool,
+    ) String;
 
     /// ctx is the pointer passed into `createExternal`
     /// buffer is the pointer to the buffer, either [*]u8 or [*]u16
@@ -595,6 +608,16 @@ pub const String = extern struct {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
+    }
+
+    /// This should rarely be used. The WTF::StringImpl* will never be freed.
+    ///
+    /// So this really only makes sense when you need to dynamically allocate a
+    /// string that will never be freed.
+    pub fn createStaticExternal(bytes: []const u8, isLatin1: bool) String {
+        JSC.markBinding(@src());
+        bun.assert(bytes.len > 0);
+        return BunString__createStaticExternal(bytes.ptr, bytes.len, isLatin1);
     }
 
     extern fn BunString__createExternalGloballyAllocatedLatin1(

@@ -155,8 +155,8 @@ pub inline fn containsComptime(self: string, comptime str: string) bool {
 }
 pub const includes = contains;
 
-pub fn inMapCaseInsensitive(self: string, comptime ComptimeStringMap: anytype) ?ComptimeStringMap.Value {
-    return bun.String.static(self).inMapCaseInsensitive(ComptimeStringMap);
+pub fn inMapCaseInsensitive(self: []const u8, comptime ComptimeStringMap: anytype) ?ComptimeStringMap.Value {
+    return bun.String.ascii(self).inMapCaseInsensitive(ComptimeStringMap);
 }
 
 pub inline fn containsAny(in: anytype, target: string) bool {

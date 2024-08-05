@@ -71,7 +71,7 @@ export class UnixSignal extends EventEmitter<UnixSignalEventMap> {
 }
 
 export function randomUnixPath(): string {
-  return join(tmpdir(), `${Math.random().toString(36).slice(2)}.sock`);
+  return join(tmpdir(), `${Math.random().toString(36).slice(2)}.sock`).replaceAll("\\","/");
 }
 
 function parseUnixPath(path: string | URL): string {

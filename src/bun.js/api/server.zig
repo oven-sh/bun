@@ -2504,18 +2504,22 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         },
                         .Fulfilled => {
                             streamLog("promise Fulfilled", .{});
+                            var readable_stream_ref = this.readable_stream_ref;
+                            this.readable_stream_ref = .{};
                             defer {
                                 stream.done(globalThis);
-                                this.readable_stream_ref.deinit();
+                                readable_stream_ref.deinit();
                             }
 
                             this.handleResolveStream();
                         },
                         .Rejected => {
                             streamLog("promise Rejected", .{});
+                            var readable_stream_ref = this.readable_stream_ref;
+                            this.readable_stream_ref = .{};
                             defer {
                                 stream.cancel(globalThis);
-                                this.readable_stream_ref.deinit();
+                                readable_stream_ref.deinit();
                             }
                             this.handleRejectStream(globalThis, promise.result(globalThis.vm()));
                         },
@@ -2542,8 +2546,9 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 response_stream.sink.finalize();
                 return;
             }
-
-            defer this.readable_stream_ref.deinit();
+            var readable_stream_ref = this.readable_stream_ref;
+            this.readable_stream_ref = .{};
+            defer readable_stream_ref.deinit();
 
             const is_in_progress = response_stream.sink.has_backpressure or !(response_stream.sink.wrote == 0 and
                 response_stream.sink.buffer.len == 0);
@@ -2813,19 +2818,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             }
 
             streamLog("onResolve({any})", .{wrote_anything});
-            const resp = req.resp.?;
-
-            const responded = resp.hasResponded();
-            defer req.deref();
-            if (responded) {
-                req.detachResponse();
-                req.endRequestStreamingAndDrain();
-            } else {
-                if (!req.flags.has_written_status) {
-                    req.renderMetadata();
-                }
-                req.endStream(req.shouldCloseConnection());
+            if (!req.flags.has_written_status) {
+                req.renderMetadata();
             }
+            req.endStream(req.shouldCloseConnection());
         }
 
         pub fn onResolveStream(_: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -2881,7 +2877,6 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 req.renderMetadata();
             }
 
-            req.endStream(true);
             if (comptime debug_mode) {
                 if(req.server) |server| {
                     if (!err.isEmptyOrUndefinedOrNull()) {
@@ -2891,6 +2886,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                     }
                 }
             }
+            req.endStream(true);
         }
 
         pub fn doRenderWithBody(this: *RequestContext, value: *JSC.WebCore.Body.Value) void {

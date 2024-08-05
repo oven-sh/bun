@@ -1106,8 +1106,11 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Werror=sometimes-uninitialized
             -Werror=unused
             -Wno-unused-function
+            -Wno-nullability-completeness
             -Werror
+            -fsanitize=null
         )
+        target_link_libraries(${bun} PRIVATE -fsanitize=null)
     else()
         target_compile_options(${bun} PUBLIC /Od /Z7)
     endif()
@@ -1133,6 +1136,7 @@ elseif(CMAKE_BUILD_TYPE STREQUAL "Release")
             -Werror=nonnull
             -Werror=move
             -Werror=sometimes-uninitialized
+            -Wno-nullability-completeness
             -Werror
         )
     else()

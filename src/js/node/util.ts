@@ -8,7 +8,7 @@ const internalErrorName = $newZigFunction("node_util_binding.zig", "internalErro
 
 const NumberIsSafeInteger = Number.isSafeInteger;
 
-var cjs_exports = {};
+var cjs_exports;
 
 function isBuffer(value) {
   return Buffer.isBuffer(value);
@@ -291,7 +291,53 @@ function getSystemErrorName(err: any) {
   return internalErrorName(err);
 }
 
-export default Object.assign(cjs_exports, {
+let lazyAbortedRegistry: FinalizationRegistry<{
+  ref: WeakRef<AbortSignal>;
+  resolve: (...args: any[]) => void;
+}>;
+function aborted(signal: AbortSignal, resource: object) {
+  if (!$isObject(signal) || !(signal instanceof AbortSignal)) {
+    throw ERR_INVALID_ARG_TYPE("signal", "AbortSignal", signal);
+  }
+
+  if (!$isObject(resource)) {
+    throw ERR_INVALID_ARG_TYPE("resource", "object", resource);
+  }
+
+  if (signal.aborted) {
+    return Promise.resolve();
+  }
+
+  const { promise, resolve, reject } = $newPromiseCapability(Promise);
+  signal.addEventListener(
+    "abort",
+    () => {
+      lazyAbortedRegistry.unregister(resolve);
+      resolve();
+    },
+    { once: true },
+  );
+
+  if (!lazyAbortedRegistry) {
+    lazyAbortedRegistry = new FinalizationRegistry(({ ref, resolve }) => {
+      const signal = ref.deref();
+      if (signal) signal.removeEventListener("abort", resolve);
+    });
+  }
+
+  lazyAbortedRegistry.register(
+    resource,
+    {
+      ref: new WeakRef(signal),
+      resolve,
+    },
+    resolve,
+  );
+
+  return promise;
+}
+
+cjs_exports = {
   format,
   formatWithOptions,
   stripVTControlCharacters,
@@ -327,4 +373,7 @@ export default Object.assign(cjs_exports, {
   parseArgs,
   styleText,
   getSystemErrorName,
-});
+  aborted,
+};
+
+export default cjs_exports;

@@ -1764,6 +1764,113 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementFcntlFunction, (JSC::JSGlobalObject * lex
 
     return JSValue::encode(jsNumber(statusCode));
 }
+typedef struct {
+    Strong<JSC::JSGlobalObject> globalObject;
+    Strong<JSC::JSFunction> callback;
+} UpdateHookData;
+
+UpdateHookData * data = nullptr;
+
+void on_update_hook(void * dataPtr, int type, const char * dbName, const char * tableName, sqlite_int64 rowId) {
+    UpdateHookData* data = (UpdateHookData *)dataPtr;
+
+    auto globalObject = data->globalObject.get();
+    auto &vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    RETURN_IF_EXCEPTION(scope, void());
+    auto callback = data->callback.get();
+
+    JSValue typeValue = jsNumber(type);
+    JSValue dbNameValue = jsString(globalObject->vm(), String::fromUTF8(dbName));
+    JSValue tableNameValue = jsString(globalObject->vm(), String::fromUTF8(tableName));
+    JSValue rowIdValue = jsNumber(rowId);
+
+    JSC::CallData callData = JSC::getCallData(callback);
+    JSC::MarkedArgumentBuffer args;
+    args.append(typeValue);
+    args.append(dbNameValue);
+    args.append(tableNameValue);
+    args.append(rowIdValue);
+    call(data->globalObject.get(), callback, callData, JSC::jsUndefined(), args);
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsSQLStatementUpdateHookFunction, (JSC::JSGlobalObject * lexicalGlobalObject, JSC::CallFrame* callFrame))
+{
+    JSC::VM& vm = lexicalGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+    UpdateHookData * tmp = nullptr;
+
+    JSValue thisValue = callFrame->thisValue();
+    JSSQLStatementConstructor* thisObject = jsDynamicCast<JSSQLStatementConstructor*>(thisValue.getObject());
+    if (UNLIKELY(!thisObject)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected SQLStatement"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    if (callFrame->argumentCount() < 2) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected 2 arguments"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSValue dbNumber = callFrame->argument(0);
+    JSValue cb = callFrame->argument(1);
+
+    if (!dbNumber.isNumber()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected number"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    int dbIndex = dbNumber.toInt32(lexicalGlobalObject);
+    if (dbIndex < 0 || dbIndex >= databases().size()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Invalid database handle"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    sqlite3* db = databases()[dbIndex]->db;
+    // no-op if already closed
+    if (!db) {
+        return JSValue::encode(jsUndefined());
+    }
+
+    // A null callback disables the hook
+    if (cb.isNull()) {
+        sqlite3_update_hook(db, nullptr, nullptr);
+        if (data != nullptr) {
+            data->callback.clear();
+            data->globalObject.clear();
+            delete data;
+        } 
+        return JSValue::encode(jsUndefined());
+    }
+
+    // If it wasn't null, it must be a function
+    if (!cb.isCallable()) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Expected callback"_s));
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSFunction* callback = jsCast<JSFunction*>(cb);
+
+    if (data != nullptr) {
+        tmp = data;
+    }
+    data = new UpdateHookData;
+
+    Strong callbackRef = Strong<JSFunction>(vm, callback); 
+    Strong globalObjectRef = Strong<JSGlobalObject>(vm, lexicalGlobalObject);
+    data->callback = callbackRef;
+    data->globalObject = globalObjectRef;
+
+   sqlite3_update_hook(db, on_update_hook, data);
+
+    if (tmp != nullptr) {
+        tmp->callback.clear();
+        tmp->globalObject.clear();
+        delete tmp;
+    }
+
+    return JSValue::encode(jsUndefined());
+}
 
 /* Hash table for constructor */
 static const HashTableValue JSSQLStatementConstructorTableValues[] = {
@@ -1777,6 +1884,7 @@ static const HashTableValue JSSQLStatementConstructorTableValues[] = {
     { "serialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSerialize, 1 } },
     { "deserialize"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementDeserialize, 2 } },
     { "fcntl"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementFcntlFunction, 2 } },
+    { "updateHook"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementUpdateHookFunction, 2 } },
 };
 
 const ClassInfo JSSQLStatementConstructor::s_info = { "SQLStatement"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSSQLStatementConstructor) };

@@ -1,4 +1,4 @@
-import { expect, it, describe } from "bun:test";
+import { expect, it, describe, jest } from "bun:test";
 import { Database, constants, SQLiteError } from "bun:sqlite";
 import { existsSync, fstat, readdirSync, realpathSync, rmSync, writeFileSync } from "fs";
 import { $, spawnSync } from "bun";
@@ -1260,4 +1260,89 @@ it("reports changes in Statement#run", () => {
   expect(db.run(sql).changes).toBe(2);
   expect(db.prepare(sql).run().changes).toBe(2);
   expect(db.query(sql).run().changes).toBe(2);
+});
+
+it("can listen for inserts", () => {
+  const callback = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+
+  db.on("insert", callback);
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+  expect(callback).toHaveBeenCalledTimes(1);
+});
+
+it("can listen for updates", () => {
+  const callback = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+
+  db.on("update", callback);
+  db.run("UPDATE cats SET name = 'Foor' WHERE name = 'Fluffy'");
+  expect(callback).toHaveBeenCalledTimes(1);
+});
+
+it("can listen for deletes", () => {
+  const callback = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+
+  db.on("delete", callback);
+  db.run("DELETE FROM cats WHERE name = 'Fluffy'");
+  expect(callback).toHaveBeenCalledTimes(1);
+});
+
+it("can set multiple listeners ", () => {
+  const callback1 = jest.fn((dbName, tableName, rowId) => {});
+  const callback2 = jest.fn((dbName, tableName, rowId) => {});
+  const callback3 = jest.fn((dbName, tableName, rowId) => {});
+  const callback4 = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.on("insert", callback1);
+  db.on("delete", callback2);
+  db.on("update", callback3);
+  db.on("insert", callback4);
+
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+  db.run("UPDATE cats SET name = 'Foor' WHERE name = 'Fluffy'");
+  db.run("DELETE FROM cats WHERE name = 'Foor'");
+  expect(callback1).toHaveBeenCalledTimes(1);
+  expect(callback2).toHaveBeenCalledTimes(1);
+  expect(callback3).toHaveBeenCalledTimes(1);
+  expect(callback4).toHaveBeenCalledTimes(1);
+});
+
+it("listener is called with the correct row id", () => {
+  const callback = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+  db.run("INSERT INTO cats (name) VALUES ('Foor')");
+
+  db.on("insert", callback);
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+  const rowId = db.query("SELECT last_insert_rowid() as rowId").get().rowId;
+
+  expect(callback).toHaveBeenCalledTimes(1);
+  expect(callback).toHaveBeenCalledWith("main", "cats", rowId);
+});
+
+it("listener is not called if turned off", () => {
+  const callback = jest.fn((dbName, tableName, rowId) => {});
+
+  const db = new Database(":memory:");
+  db.exec("CREATE TABLE cats (id INTEGER PRIMARY KEY, name TEXT)");
+
+  db.on("insert", callback);
+  db.off("insert", callback);
+  db.run("INSERT INTO cats (name) VALUES ('Fluffy')");
+
+  expect(callback).toHaveBeenCalledTimes(0);
 });

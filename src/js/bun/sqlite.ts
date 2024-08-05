@@ -1,3 +1,4 @@
+const { EventEmitter } = require("node:events");
 // Hardcoded module "sqlite"
 
 const kSafeIntegersFlag = 1 << 1;
@@ -90,6 +91,13 @@ const constants = {
   SQLITE_FCNTL_CKSM_FILE: 41,
   SQLITE_FCNTL_RESET_CACHE: 42,
 };
+
+// https://www.sqlite.org/c3ref/c_alter_table.html
+const enum sqliteActionCodes {
+  SQLITE_DELETE = 9,
+  SQLITE_INSERT = 18,
+  SQLITE_UPDATE = 23,
+}
 
 var SQL;
 
@@ -336,6 +344,7 @@ class Database {
   #cachedQueriesValues = [];
   filename;
   #hasClosed = false;
+  #eventEmitter = new EventEmitter();
   get handle() {
     return this.#handle;
   }
@@ -500,6 +509,47 @@ class Database {
 
     // Return the default version of the transaction function
     return properties.default.value;
+  }
+
+  private hasAnyListeners(): boolean {
+    const events = this.#eventEmitter.eventNames();
+    return events.some(event => this.#eventEmitter.listenerCount(event) > 0);
+  }
+
+  private onUpdate(type: number, dbName: string, tableName: string, rowId: number) {
+    if (type === sqliteActionCodes.SQLITE_INSERT) {
+      this.#eventEmitter.emit("insert", dbName, tableName, rowId);
+    }
+    if (type === sqliteActionCodes.SQLITE_UPDATE) {
+      this.#eventEmitter.emit("update", dbName, tableName, rowId);
+    }
+    if (type === sqliteActionCodes.SQLITE_DELETE) {
+      this.#eventEmitter.emit("delete", dbName, tableName, rowId);
+    }
+  }
+
+  on(type, listener) {
+    if (!this.hasAnyListeners()) {
+      SQL.updateHook(this.#handle, this.onUpdate.bind(this));
+    }
+
+    this.#eventEmitter.on(type, listener);
+  }
+
+  off(type, listener) {
+    this.#eventEmitter.off(type, listener);
+
+    if (!this.hasAnyListeners()) {
+      SQL.updateHook(this.#handle, null);
+    }
+  }
+
+  addEventListener(type, listener) {
+    this.on(type, listener);
+  }
+
+  removeEventListener(type, listener) {
+    this.off(type, listener);
   }
 }
 

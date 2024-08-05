@@ -487,6 +487,46 @@ declare module "bun:sqlite" {
      * @link https://www.sqlite.org/c3ref/file_control.html
      */
     fileControl(zDbName: string, op: number, arg?: ArrayBufferView | number): number;
+
+    /**
+     * Registers a listener for the specified update type.
+     * @param {("insert" | "update" | "delete")} updateType - The type of update to listen for.
+     * @param {(dbName: string, tableName: string, rowId: number) => void} listener - The callback function to be invoked when the event occurs.
+     */
+    on(
+      updateType: "insert" | "update" | "delete",
+      listener: (dbName: string, tableName: string, rowId: number) => void,
+    ): void;
+
+    /**
+     * Unregisters a listener for the specified update type.
+     * @param {("insert" | "update" | "delete")} updateType - The type of update the listener was registered for.
+     * @param {(dbName: string, tableName: string, rowId: number) => void} listener - The callback function to be removed.
+     */
+    off(
+      updateType: "insert" | "update" | "delete",
+      listener: (dbName: string, tableName: string, rowId: number) => void,
+    ): void;
+
+    /**
+     * Registers a listener for the specified update type.
+     * @param {("insert" | "update" | "delete")} updateType - The type of update to listen for.
+     * @param {(dbName: string, tableName: string, rowId: number) => void} listener - The callback function to be invoked when the event occurs.
+     */
+    addEventListener(
+      updateType: "insert" | "update" | "delete",
+      listener: (dbName: string, tableName: string, rowId: number) => void,
+    ): void;
+
+    /**
+     * Unregisters a listener for the specified update type.
+     * @param {("insert" | "update" | "delete")} updateType - The type of update the listener was registered for.
+     * @param {(dbName: string, tableName: string, rowId: number) => void} listener - The callback function to be removed.
+     */
+    removeEventListener(
+      updateType: "insert" | "update" | "delete",
+      listener: (dbName: string, tableName: string, rowId: number) => void,
+    ): void;
   }
 
   /**

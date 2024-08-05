@@ -1109,6 +1109,14 @@ if(CMAKE_BUILD_TYPE STREQUAL "Debug")
             -Wno-nullability-completeness
             -Werror
             -fsanitize=null
+            -fsanitize-recover=all
+            -fsanitize=bounds
+            -fsanitize=return
+            -fsanitize=nullability-arg
+            -fsanitize=nullability-assign
+            -fsanitize=nullability-return
+            -fsanitize=returns-nonnull-attribute
+            -fsanitize=unreachable
         )
         target_link_libraries(${bun} PRIVATE -fsanitize=null)
     else()
@@ -1555,6 +1563,7 @@ endif()
 if(NOT WIN32)
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libWTF.a")
     target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libJavaScriptCore.a")
+
     if(NOT APPLE OR EXISTS "${WEBKIT_LIB_DIR}/libbmalloc.a")
         target_link_libraries(${bun} PRIVATE "${WEBKIT_LIB_DIR}/libbmalloc.a")
     endif()

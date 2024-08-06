@@ -161,11 +161,11 @@ pub const StandaloneModuleGraph = struct {
             const head = map.header();
             const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
 
-            // the following aligncast asserts this alignment
+            // the following assertion ensures the following alignCast
             comptime bun.assert(@alignOf(SourceMap.Mapping) == @alignOf(u32));
+
             return .{
                 // @constCast is ok because we never mutate the MultiArrayList
-                // @alignCast is ok since the list is aligned at serialization time
                 .bytes = @constCast(@alignCast(@ptrCast(map.bytes[start..][0..head.map_bytes_length]))),
                 .len = head.mappings_count,
                 .capacity = head.mappings_count,
@@ -293,7 +293,11 @@ pub const StandaloneModuleGraph = struct {
             string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
-                    string_builder.cap += output_file.value.buffer.bytes.len * 2; // this is a wild over-estimate
+                    // This is an over-estimation to ensure that we allocate
+                    // enough memory for the source-map contents. Calculating
+                    // the exact amount is not possible without allocating as it
+                    // involves a JSON parser.
+                    string_builder.cap += output_file.value.buffer.bytes.len * 2;
                 } else {
                     if (entry_point_id == null) {
                         if (output_file.output_kind == .@"entry-point") {
@@ -352,7 +356,7 @@ pub const StandaloneModuleGraph = struct {
                 defer source_map_header_list.clearRetainingCapacity();
                 defer source_map_string_list.clearRetainingCapacity();
                 _ = source_map_arena.reset(.retain_capacity);
-                try SourceMap.serializeJsonSourceMapForStandalone(
+                try serializeJsonSourceMapForStandalone(
                     &source_map_header_list,
                     &source_map_string_list,
                     source_map_arena.allocator(),
@@ -770,6 +774,7 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
 
+        // u32 alignment must be used to satisfy SerializedSourceMap's alignment requirements
         var to_read = try bun.default_allocator.alignedAlloc(u8, @alignOf(u32), offsets.byte_count);
         var to_read_from: []u8 = to_read;
 
@@ -917,5 +922,120 @@ pub const StandaloneModuleGraph = struct {
             },
             else => @compileError("TODO"),
         }
+    }
+
+    pub fn serializeJsonSourceMapForStandalone(
+        header_list: *std.ArrayList(u8),
+        string_payload: *std.ArrayList(u8),
+        arena: std.mem.Allocator,
+        json_source: []const u8,
+    ) !void {
+        const out = header_list.writer();
+        const json_src = bun.logger.Source.initPathString("sourcemap.json", json_source);
+        var log = bun.logger.Log.init(arena);
+        defer log.deinit();
+
+        // the allocator given to the JS parser is not respected for all parts
+        // of the parse, so we need to remember to reset the ast store
+        bun.JSAst.Expr.Data.Store.reset();
+        bun.JSAst.Stmt.Data.Store.reset();
+        defer {
+            bun.JSAst.Expr.Data.Store.reset();
+            bun.JSAst.Stmt.Data.Store.reset();
+        }
+        var json = bun.JSON.ParseJSON(&json_src, &log, arena) catch
+            return error.InvalidSourceMap;
+
+        const mappings_str = json.get("mappings") orelse
+            return error.InvalidSourceMap;
+        if (mappings_str.data != .e_string)
+            return error.InvalidSourceMap;
+        const sources_content = switch ((json.get("sourcesContent") orelse return error.InvalidSourceMap).data) {
+            .e_array => |arr| arr,
+            else => return error.InvalidSourceMap,
+        };
+        const sources_paths = switch ((json.get("sources") orelse return error.InvalidSourceMap).data) {
+            .e_array => |arr| arr,
+            else => return error.InvalidSourceMap,
+        };
+        if (sources_content.items.len != sources_paths.items.len) {
+            return error.InvalidSourceMap;
+        }
+
+        var map_data: SourceMap.ParsedSourceMap = switch (SourceMap.Mapping.parse(
+            arena,
+            mappings_str.data.e_string.slice(arena),
+            null,
+            std.math.maxInt(i32),
+            std.math.maxInt(i32),
+        )) {
+            .success => |x| x,
+            .fail => |fail| return fail.err,
+        };
+
+        try map_data.mappings.setCapacity(arena, map_data.mappings.len);
+        const map_data_slice = map_data.mappings.slice();
+        const map_bytes = map_data.mappings.allocatedBytes();
+
+        try out.writeInt(u32, sources_paths.items.len, .little);
+        try out.writeInt(u32, @intCast(map_data_slice.len), .little);
+        try out.writeInt(u32, @intCast(map_bytes.len), .little);
+
+        const string_payload_start_location = @sizeOf(u32) +
+            @sizeOf(u32) +
+            @sizeOf(u32) +
+            map_bytes.len +
+            @sizeOf(bun.StringPointer) * sources_content.items.len * 2; // path + source
+
+        for (sources_paths.items.slice()) |item| {
+            if (item.data != .e_string)
+                return error.InvalidSourceMap;
+
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
+            defer arena.free(utf16_decode);
+
+            const offset = string_payload.items.len;
+            bun.strings.toUTF8AppendToList(string_payload, utf16_decode) catch
+                return error.InvalidSourceMap;
+
+            const slice = bun.StringPointer{
+                .offset = @intCast(offset + string_payload_start_location),
+                .length = @intCast(string_payload.items.len - offset),
+            };
+            try out.writeInt(u32, slice.offset, .little);
+            try out.writeInt(u32, slice.length, .little);
+        }
+
+        for (sources_content.items.slice()) |item| {
+            if (item.data != .e_string)
+                return error.InvalidSourceMap;
+
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
+            defer arena.free(utf16_decode);
+
+            const offset = string_payload.items.len;
+            const utf8 = bun.strings.toUTF8Alloc(arena, utf16_decode) catch
+                return error.InvalidSourceMap;
+            defer arena.free(utf8);
+
+            const bound = bun.zstd.compressBound(utf8.len);
+            try string_payload.ensureUnusedCapacity(bound);
+
+            const unused = string_payload.unusedCapacitySlice();
+            const compressed_result = bun.zstd.compress(unused, utf8, 1);
+            if (compressed_result == .err) {
+                bun.Output.panic("Unexpected error compressing sourcemap: {s}", .{bun.span(compressed_result.err)});
+            }
+            string_payload.items.len += compressed_result.success;
+
+            const slice = bun.StringPointer{
+                .offset = @intCast(offset + string_payload_start_location),
+                .length = @intCast(string_payload.items.len - offset),
+            };
+            try out.writeInt(u32, slice.offset, .little);
+            try out.writeInt(u32, slice.length, .little);
+        }
+
+        try out.writeAll(map_bytes);
     }
 };

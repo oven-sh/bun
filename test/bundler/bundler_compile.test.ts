@@ -354,20 +354,18 @@ error: Hello World`,
     target: "bun",
     compile: true,
     files: {
-      "/entry.ts": /* js */ `
-        import * as ReactDom from ${JSON.stringify(require.resolve("react-dom/server"))};
+      "/entry.ts": /* js */ `import * as ReactDom from ${JSON.stringify(require.resolve("react-dom/server"))};
 
-        // this file has comments and weird whitespace, intentionally
-        // to make it obvious if sourcemaps were generated and mapped properly
-        if           (true) code();
-        function code() {
-          // hello world
-                  throw   new
-            Error("Hello World");
-        }
+// this file has comments and weird whitespace, intentionally
+// to make it obvious if sourcemaps were generated and mapped properly
+if           (true) code();
+function code() {
+  // hello world
+          throw   new
+    Error("Hello World");
+}
 
-        console.log(ReactDom);
-      `,
+console.log(ReactDom);`,
     },
     sourceMap: "external",
     onAfterBundle(api) {
@@ -386,7 +384,7 @@ error: Hello World`,
                       ^
 error: Hello World`,
         );
-        expect(stderr).toInclude("entry.ts:6:19");
+        expect(stderr).toInclude("entry.ts:8:19");
       },
     },
   });

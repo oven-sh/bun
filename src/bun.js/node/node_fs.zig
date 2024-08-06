@@ -1444,7 +1444,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                if (!uid_value.isInt32()) {
+                if (!uid_value.isNumber()) {
                     ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE(
                         JSC.ZigString.static("uid").toJS(ctx),
                         JSC.ZigString.static("number").toJS(ctx),
@@ -1469,7 +1469,7 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
-                if (!gid_value.isInt32()) {
+                if (!gid_value.isNumber()) {
                     ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE(
                         JSC.ZigString.static("gid").toJS(ctx),
                         JSC.ZigString.static("number").toJS(ctx),

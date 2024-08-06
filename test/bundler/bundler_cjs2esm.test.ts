@@ -347,17 +347,49 @@ describe("bundler", () => {
     minifyIdentifiers: true,
     target: "bun",
   });
-  itBundled("cjs2esm/ModuleExportsRenaming", {
+  itBundled("cjs2esm/ModuleExportsRenamingNoDeopt", {
     files: {
       "/entry.js": /* js */ `
-        let y = () => module.exports.xyz;
-        module.exports = { xyz: 123 };
-        let z = () => module.exports.xyz;
-        console.log(y(), z());
+        eval('exports = { xyz: 123 }; module.exports = { xyz: 456 }');
+        let w = () => [module.exports, module.exports.xyz]; // rewrite to exports, exports.xyz
+        let x = () => [exports, exports.xyz];               // keep as is
+        console.log(JSON.stringify([w(), x()]));
       `,
     },
     run: {
-      stdout: "123 123",
+      stdout: '[[{"xyz":123},123],[{"xyz":123},123]]',
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingAssignDeOpt", {
+    files: {
+      "/entry.js": /* js */ `
+        eval('exports = { xyz: 123 }');
+        let w = () => [module.exports, module.exports.xyz]; // keep as is
+        let x = () => [exports, exports.xyz];               // keep as is
+        module.exports = { xyz: 456 };
+        let y = () => [module.exports, module.exports.xyz]; // keep as is
+        let z = () => [exports, exports.xyz];               // keep as is
+        console.log(JSON.stringify([w(), x(), y(), z()]));
+      `,
+    },
+    run: {
+      stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
+    },
+  });
+  itBundled("cjs2esm/ModuleExportsRenamingAssignExportsDeOpt", {
+    files: {
+      "/entry.js": /* js */ `
+        eval('module.exports = { xyz: 456 }');
+        let w = () => [module.exports, module.exports.xyz];
+        let x = () => [exports, exports.xyz];
+        exports = { xyz: 123 };
+        let y = () => [module.exports, module.exports.xyz];
+        let z = () => [exports, exports.xyz];
+        console.log(JSON.stringify([w(), x(), y(), z()]));
+      `,
+    },
+    run: {
+      stdout: '[[{"xyz":456},456],[{"xyz":123},123],[{"xyz":456},456],[{"xyz":123},123]]',
     },
   });
 });

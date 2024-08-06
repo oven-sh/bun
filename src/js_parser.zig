@@ -16433,33 +16433,39 @@ fn NewParser_(
                     e_.ref = result.ref;
 
                     // Handle assigning to a constant
-                    if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .constant) {
-                        const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
-                        var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
-                        notes[0] = logger.Data{
-                            .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
-                            .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
-                        };
+                    if (in.assign_target != .none) {
+                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) {
+                            const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
+                            var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
+                            notes[0] = logger.Data{
+                                .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
+                                .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                            };
 
-                        const is_error = p.const_values.contains(result.ref) or p.options.bundle;
-                        switch (is_error) {
-                            true => p.log.addRangeErrorFmtWithNotes(
-                                p.source,
-                                r,
-                                p.allocator,
-                                notes,
-                                "Cannot assign to \"{s}\" because it is a constant",
-                                .{name},
-                            ) catch unreachable,
+                            const is_error = p.const_values.contains(result.ref) or p.options.bundle;
+                            switch (is_error) {
+                                true => p.log.addRangeErrorFmtWithNotes(
+                                    p.source,
+                                    r,
+                                    p.allocator,
+                                    notes,
+                                    "Cannot assign to \"{s}\" because it is a constant",
+                                    .{name},
+                                ) catch unreachable,
 
-                            false => p.log.addRangeErrorFmtWithNotes(
-                                p.source,
-                                r,
-                                p.allocator,
-                                notes,
-                                "This assignment will throw because \"{s}\" is a constant",
-                                .{name},
-                            ) catch unreachable,
+                                false => p.log.addRangeErrorFmtWithNotes(
+                                    p.source,
+                                    r,
+                                    p.allocator,
+                                    notes,
+                                    "This assignment will throw because \"{s}\" is a constant",
+                                    .{name},
+                                ) catch unreachable,
+                            }
+                        } else if (p.exports_ref.eql(e_.ref)) {
+                            // Assigning to `exports` in a CommonJS module must be tracked to undo the
+                            // `module.exports` -> `exports` optimization.
+                            p.commonjs_module_exports_assigned_deoptimized = true;
                         }
                     }
 
@@ -18880,7 +18886,7 @@ fn NewParser_(
                             }
 
                             // rewrite `module.exports` to `exports`
-                            return p.newExpr(E.Identifier{ .ref = p.exports_ref }, name_loc);
+                            return .{ .data = .e_module_dot_exports, .loc = name_loc };
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
@@ -19040,6 +19046,50 @@ fn NewParser_(
                         !identifier_opts.is_delete_target)
                     {
                         return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
+                    }
+                },
+                .e_module_dot_exports => {
+                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                        if (!p.is_control_flow_dead) {
+                            if (!p.commonjs_named_exports_deoptimized) {
+                                if (identifier_opts.is_delete_target) {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
+                                const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                if (!named_export_entry.found_existing) {
+                                    const new_ref = p.newSymbol(
+                                        .other,
+                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                    ) catch unreachable;
+                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                    named_export_entry.value_ptr.* = .{
+                                        .loc_ref = LocRef{
+                                            .loc = name_loc,
+                                            .ref = new_ref,
+                                        },
+                                        .needs_decl = true,
+                                    };
+                                    if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                        p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
+                                }
+
+                                const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                                p.recordUsage(ref);
+
+                                return p.newExpr(
+                                    E.CommonJSExportIdentifier{
+                                        .ref = ref,
+                                        // Record this as from module.exports
+                                        .base = .module_dot_exports,
+                                    },
+                                    name_loc,
+                                );
+                            } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
+                                p.has_commonjs_export_names = true;
+                            }
+                        }
                     }
                 },
                 else => {},

@@ -317,18 +317,37 @@ napi_value test_v8_object_template(const Napi::CallbackInfo &info) {
 
   v8::Local<v8::Object> obj1 =
       obj_template->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
-
   obj1->SetInternalField(0, v8::Number::New(isolate, 3.0));
   obj1->SetInternalField(1, v8::Number::New(isolate, 4.0));
 
-  if (v8::Value::Cast(*obj1->GetInternalField(0))
-          ->NumberValue(isolate->GetCurrentContext())
-          .ToChecked() != 3.0) {
+  v8::Local<v8::Object> obj2 =
+      obj_template->NewInstance(isolate->GetCurrentContext()).ToLocalChecked();
+  obj2->SetInternalField(0, v8::Number::New(isolate, 5.0));
+  obj2->SetInternalField(1, v8::Number::New(isolate, 6.0));
+
+  double value = obj1->GetInternalField(0).As<v8::Number>()->Value();
+  if (value != 3.0) {
     return fail_fmt(
         env, "obj1 internal field 0 has wrong value: expected 3.0, got %f",
-        v8::Value::Cast(*obj1->GetInternalField(0))
-            ->NumberValue(isolate->GetCurrentContext())
-            .ToChecked());
+        value);
+  }
+  value = obj1->GetInternalField(1).As<v8::Number>()->Value();
+  if (value != 4.0) {
+    return fail_fmt(
+        env, "obj1 internal field 1 has wrong value: expected 4.0, got %f",
+        value);
+  }
+  value = obj2->GetInternalField(0).As<v8::Number>()->Value();
+  if (value != 5.0) {
+    return fail_fmt(
+        env, "obj2 internal field 0 has wrong value: expected 5.0, got %f",
+        value);
+  }
+  value = obj2->GetInternalField(1).As<v8::Number>()->Value();
+  if (value != 6.0) {
+    return fail_fmt(
+        env, "obj2 internal field 1 has wrong value: expected 6.0, got %f",
+        value);
   }
 
   return ok(env);

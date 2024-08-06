@@ -1666,7 +1666,6 @@ pub const Fetch = struct {
             this.abort_reason.set(this.global_this, reason);
             this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
-            this.clearAbortSignal();
 
             if (this.http != null) {
                 http.http_thread.scheduleShutdown(this.http.?);

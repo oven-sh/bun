@@ -741,9 +741,8 @@ pub const StandaloneModuleGraph = struct {
             return null;
         }
 
-        // u32 alignment must be used to satisfy SerializedSourceMap's alignment requirements
-        var to_read = try bun.default_allocator.alignedAlloc(u8, @alignOf(u32), offsets.byte_count);
-        var to_read_from: []u8 = to_read;
+        var to_read = try bun.default_allocator.alloc(u8, offsets.byte_count);
+        var to_read_from = to_read;
 
         // Reading the data and making sure it's page-aligned + won't crash due
         // to out of bounds using mmap() is very complicated.
@@ -757,7 +756,7 @@ pub const StandaloneModuleGraph = struct {
             if (comptime Environment.allow_assert) {
                 // actually we just want to verify this logic is correct in development
                 if (offsets.byte_count <= 1024 * 3) {
-                    to_read_from = try bun.default_allocator.alignedAlloc(u8, @alignOf(u32), offsets.byte_count);
+                    to_read_from = try bun.default_allocator.alloc(u8, offsets.byte_count);
                 }
             }
 

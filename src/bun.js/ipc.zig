@@ -871,6 +871,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
+                    std.time.sleep(std.time.ns_per_ms * 10);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                         ipc.close();

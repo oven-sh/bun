@@ -79,35 +79,20 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
 }
 
 pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
+    log("onInternalMessageChild", .{});
     const arguments = callframe.arguments(2).ptr;
     child_singleton.worker = JSC.Strong.create(arguments[0], globalThis);
     child_singleton.cb = JSC.Strong.create(arguments[1], globalThis);
+    child_singleton.flush(globalThis);
     return .undefined;
 }
 
+
+
 pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) void {
-    if (message.get(globalThis, "ack")) |p| {
-        if (!p.isUndefined()) {
-            const ack = p.toInt32();
-            if (child_singleton.callbacks.getEntry(ack)) |entry| {
-                var cbstrong = entry.value_ptr.*;
-                defer cbstrong.deinit();
-                _ = child_singleton.callbacks.swapRemove(ack);
-                const cb = cbstrong.get().?;
-                _ = cb.call(globalThis, child_singleton.worker.get().?, &.{
-                    message,
-                    .null, // handle
-                });
-                return;
-            }
-        }
-    }
-    const cb = child_singleton.cb.get().?;
-    _ = cb.call(globalThis, child_singleton.worker.get().?, &.{
-        message,
-        .null, // handle
-    });
-    return;
+    log("handleInternalMessageChild", .{});
+
+    child_singleton.dispatch(message, globalThis);
 }
 
 //
@@ -120,12 +105,75 @@ pub const InternalMsgHolder = struct {
 
     worker: JSC.Strong = .{},
     cb: JSC.Strong = .{},
+    messages: std.ArrayListUnmanaged(JSC.Strong) = .{},
 
-    pub fn deinit(iimh: *InternalMsgHolder) void {
-        for (iimh.callbacks.values()) |*strong| strong.deinit();
-        iimh.callbacks.deinit(bun.default_allocator);
-        iimh.worker.deinit();
-        iimh.cb.deinit();
+    pub fn isReady(this: *InternalMsgHolder) bool {
+        return this.worker.has() and this.cb.has();
+    }
+
+    pub fn enqueue(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+        //TODO: .addOne is workaround for .append causing crash/ dependency loop in zig compiler
+        const new_item_ptr = this.messages.addOne(bun.default_allocator) catch bun.outOfMemory();
+        new_item_ptr.* = JSC.Strong.create(message, globalThis);
+    }
+
+    pub fn dispatch(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+        if (!this.isReady()) {
+            this.enqueue(message, globalThis);
+            return;
+        }
+        this.dispatchUnsafe(message, globalThis);
+    }
+
+    fn dispatchUnsafe(this: *InternalMsgHolder, message: JSC.JSValue, globalThis: *JSC.JSGlobalObject) void {
+        const cb = this.cb.get().?;
+        const worker = this.worker.get().?;
+
+       if (message.get(globalThis, "ack")) |p| {
+            if (!p.isUndefined()) {
+                const ack = p.toInt32();
+                if (this.callbacks.getEntry(ack)) |entry| {
+                    var cbstrong = entry.value_ptr.*;
+                    if(cbstrong.get()) |callback| {
+                        defer cbstrong.deinit();
+                        _ = this.callbacks.swapRemove(ack);
+                        _ = callback.call(globalThis, this.worker.get().?, &.{
+                            message,
+                            .null, // handle
+                        });
+                        return;
+
+                    }
+                    return;
+                }
+            }
+        }
+        _ = cb.call(globalThis, worker, &.{
+            message,
+            .null, // handle
+        });
+    }
+
+    pub fn flush(this: *InternalMsgHolder, globalThis: *JSC.JSGlobalObject) void {
+        bun.assert(this.isReady());
+        var messages = this.messages;
+        this.messages = .{};
+        for (messages.items) |*strong| {
+            if(strong.get()) |message| {
+                this.dispatchUnsafe(message, globalThis);
+            }
+            strong.deinit();
+        }
+        messages.deinit(bun.default_allocator);
+    }
+
+    pub fn deinit(this: *InternalMsgHolder) void {
+        for (this.callbacks.values()) |*strong| strong.deinit();
+        this.callbacks.deinit(bun.default_allocator);
+        this.worker.deinit();
+        this.cb.deinit();
+        for (this.messages.items) |*strong| strong.deinit();
+        this.messages.deinit(bun.default_allocator);
     }
 };
 

@@ -2758,7 +2758,7 @@ it("new Buffer.from()", () => {
 
 describe("fuzzing constructors with new", () => {
   const zeroArray = new Uint32Array(10).fill(0);
-  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz")];
+  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz"), true, () => {}, {}];
   const allocators = [Buffer, SlowBuffer, Buffer.alloc, Buffer.allocUnsafe, Buffer.allocUnsafeSlow];
   for (const allocator of allocators) {
     for (const size of sizes) {
@@ -2776,7 +2776,7 @@ describe("fuzzing constructors with new", () => {
 
 describe("fuzzing constructors with call", () => {
   const zeroArray = new Uint32Array(10).fill(0);
-  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz")];
+  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz"), true, () => {}, {}];
   const allocators = [Buffer, SlowBuffer, Buffer.alloc, Buffer.allocUnsafe, Buffer.allocUnsafeSlow];
   for (const allocator of allocators) {
     for (const size of sizes) {

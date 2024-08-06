@@ -2292,7 +2292,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
             return {};
         }
         return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
-    } else if (distinguishingArg.isUndefinedOrNull()) {
+    } else if (distinguishingArg.isUndefinedOrNull() || distinguishingArg.isBoolean()) {
         auto arg_string = distinguishingArg.toWTFString(globalObject);
         auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received "_s, arg_string);
         throwTypeError(lexicalGlobalObject, throwScope, message);

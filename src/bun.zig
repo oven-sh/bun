@@ -3364,6 +3364,13 @@ pub fn assertWithLocation(value: bool, src: std.builtin.SourceLocation) callconv
 
 /// This has no effect on the real code but capturing 'a' and 'b' into parameters makes assertion failures much easier inspect in a debugger.
 pub inline fn assert_eql(a: anytype, b: anytype) void {
+    if (@inComptime()) {
+        if (a != b) {
+            @compileLog(a);
+            @compileLog(b);
+            @compileError("A != B");
+        }
+    }
     return assert(a == b);
 }
 

@@ -757,7 +757,7 @@ pub const Fetch = struct {
         has_schedule_callback: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
         // must be stored because AbortSignal stores reason weakly
-        abort_reason: JSValue = JSValue.zero,
+        abort_reason: JSC.Strong = .{},
 
         // custom checkServerIdentity
         check_server_identity: JSC.Strong = .{},
@@ -865,17 +865,9 @@ pub const Fetch = struct {
             this.scheduled_response_buffer.deinit();
             this.request_body.detach();
 
-            if (this.abort_reason != .zero) {
-                this.abort_reason.unprotect();
-                this.abort_reason = .zero;
-            }
-
+            this.abort_reason.deinit();
             this.check_server_identity.deinit();
-
-            if (this.signal) |signal| {
-                this.signal = null;
-                signal.detach(this);
-            }
+            this.clearAbortSignal();
         }
 
         fn deinit(this: *FetchTasklet) void {
@@ -1230,10 +1222,7 @@ pub const Fetch = struct {
                         if (check_result.isAnyError()) {
                             // mark to wait until deinit
                             this.is_waiting_abort = this.result.has_more;
-
-                            check_result.ensureStillAlive();
-                            check_result.protect();
-                            this.abort_reason = check_result;
+                            this.abort_reason.set(globalObject, check_result);
                             this.signal_store.aborted.store(true, .monotonic);
                             this.tracker.didCancel(this.global_this);
 
@@ -1252,22 +1241,31 @@ pub const Fetch = struct {
             return false;
         }
 
-        pub fn getAbortError(this: *FetchTasklet) ?JSValue {
-            // If this thread already received a signal we should abort
-            if (this.abort_reason != .zero) {
-                return this.abort_reason;
+        fn getAbortError(this: *FetchTasklet) ?Body.Value.ValueError {
+            if (this.abort_reason.has()) {
+                defer this.clearAbortSignal();
+                const out = this.abort_reason;
+
+                this.abort_reason = .{};
+                return Body.Value.ValueError{ .JSValue = out };
             }
+
             if (this.signal) |signal| {
-                if (signal.aborted()) {
-                    this.abort_reason = signal.abortReason();
-                    if (this.abort_reason.isEmptyOrUndefinedOrNull()) {
-                        return JSC.CommonAbortReason.UserAbort.toJS(this.global_this);
-                    }
-                    this.abort_reason.protect();
-                    return this.abort_reason;
+                if (signal.reasonIfAborted(this.global_this)) |reason| {
+                    defer this.clearAbortSignal();
+                    return reason.toBodyValueError(this.global_this);
                 }
             }
+
             return null;
+        }
+
+        fn clearAbortSignal(this: *FetchTasklet) void {
+            const signal = this.signal orelse return;
+            this.signal = null;
+            defer signal.unref();
+
+            signal.cleanNativeBindings(this);
         }
 
         pub fn onReject(this: *FetchTasklet) Body.Value.ValueError {
@@ -1275,17 +1273,11 @@ pub const Fetch = struct {
             log("onReject", .{});
 
             if (this.getAbortError()) |err| {
-                return .{ .JSValue = JSC.Strong.create(err, this.global_this) };
+                return err;
             }
 
-            if (this.result.isTimeout()) {
-                // Timeout without reason
-                return .{ .Timeout = {} };
-            }
-
-            if (this.result.isAbort()) {
-                // Abort without reason
-                return .{ .Aborted = {} };
+            if (this.result.abortReason()) |reason| {
+                return .{ .AbortReason = reason };
             }
 
             // some times we don't have metadata so we also check http.url
@@ -1438,11 +1430,7 @@ pub const Fetch = struct {
 
         fn toBodyValue(this: *FetchTasklet) Body.Value {
             if (this.getAbortError()) |err| {
-                return .{
-                    .Error = .{
-                        .JSValue = JSC.Strong.create(err, this.global_this),
-                    },
-                };
+                return .{ .Error = err };
             }
             if (this.is_waiting_body) {
                 const response = Body.Value{
@@ -1675,8 +1663,7 @@ pub const Fetch = struct {
         pub fn abortListener(this: *FetchTasklet, reason: JSValue) void {
             log("abortListener", .{});
             reason.ensureStillAlive();
-            this.abort_reason = reason;
-            reason.protect();
+            this.abort_reason.set(this.global_this, reason);
             this.signal_store.aborted.store(true, .monotonic);
             this.tracker.didCancel(this.global_this);
 

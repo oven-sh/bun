@@ -3314,6 +3314,18 @@ pub const HTTPClientResult = struct {
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
 
+    pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
+        if (this.isTimeout()) {
+            return .Timeout;
+        }
+
+        if (this.isAbort()) {
+            return .UserAbort;
+        }
+
+        return null;
+    }
+
     pub const BodySize = union(enum) {
         total_received: usize,
         content_length: usize,

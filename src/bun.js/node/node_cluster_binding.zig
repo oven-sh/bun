@@ -26,16 +26,16 @@ pub fn sendHelperChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFram
         return .false;
     }
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS(ZigString.static("message").toJS(globalThis), .zero, .zero));
+        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
     if (!handle.isNull()) {
         globalThis.throw("passing 'handle' not implemented yet", .{});
         return .zero;
     }
     if (!message.isObject()) {
-        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE(
-            ZigString.static("message").toJS(globalThis),
-            ZigString.static("object").toJS(globalThis),
+        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("object"),
             message,
         ));
     }
@@ -87,8 +87,6 @@ pub fn onInternalMessageChild(globalThis: *JSC.JSGlobalObject, callframe: *JSC.C
     return .undefined;
 }
 
-
-
 pub fn handleInternalMessageChild(globalThis: *JSC.JSGlobalObject, message: JSC.JSValue) void {
     log("handleInternalMessageChild", .{});
 
@@ -129,12 +127,12 @@ pub const InternalMsgHolder = struct {
         const cb = this.cb.get().?;
         const worker = this.worker.get().?;
 
-       if (message.get(globalThis, "ack")) |p| {
+        if (message.get(globalThis, "ack")) |p| {
             if (!p.isUndefined()) {
                 const ack = p.toInt32();
                 if (this.callbacks.getEntry(ack)) |entry| {
                     var cbstrong = entry.value_ptr.*;
-                    if(cbstrong.get()) |callback| {
+                    if (cbstrong.get()) |callback| {
                         defer cbstrong.deinit();
                         _ = this.callbacks.swapRemove(ack);
                         _ = callback.call(globalThis, this.worker.get().?, &.{
@@ -142,7 +140,6 @@ pub const InternalMsgHolder = struct {
                             .null, // handle
                         });
                         return;
-
                     }
                     return;
                 }
@@ -159,7 +156,7 @@ pub const InternalMsgHolder = struct {
         var messages = this.messages;
         this.messages = .{};
         for (messages.items) |*strong| {
-            if(strong.get()) |message| {
+            if (strong.get()) |message| {
                 this.dispatchUnsafe(message, globalThis);
             }
             strong.deinit();
@@ -189,12 +186,12 @@ pub fn sendHelperPrimary(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFr
     const ipc_data = subprocess.ipc_maybe() orelse return .false;
 
     if (message.isUndefined()) {
-        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS(ZigString.static("message").toJS(globalThis), .zero, .zero));
+        return globalThis.throwValueRet(globalThis.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
     if (!message.isObject()) {
-        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE(
-            ZigString.static("message").toJS(globalThis),
-            ZigString.static("object").toJS(globalThis),
+        return globalThis.throwValueRet(globalThis.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("object"),
             message,
         ));
     }
@@ -265,9 +262,9 @@ pub fn setRef(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.
         return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_1(ZigString.static("enabled").toJS(globalObject)));
     }
     if (!arguments[0].isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
-            ZigString.static("enabled").toJS(globalObject),
-            ZigString.static("boolean").toJS(globalObject),
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("enabled"),
+            ZigString.static("boolean"),
             arguments[0],
         ));
     }

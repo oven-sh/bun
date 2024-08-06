@@ -2953,7 +2953,7 @@ pub const JSGlobalObject = opaque {
         return err;
     }
 
-    fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
+    pub fn createTypeErrorInstance(this: *JSGlobalObject, comptime fmt: [:0]const u8, args: anytype) JSValue {
         if (comptime std.meta.fieldNames(@TypeOf(args)).len > 0) {
             var stack_fallback = std.heap.stackFallback(1024 * 4, this.allocator());
             var buf = bun.MutableString.init2048(stack_fallback.get()) catch unreachable;
@@ -3229,7 +3229,7 @@ pub const JSGlobalObject = opaque {
     // returns false if it throws
     pub fn validateObject(
         this: *JSGlobalObject,
-        comptime arg_name: []const u8,
+        comptime arg_name: [:0]const u8,
         value: JSValue,
         opts: struct {
             allowArray: bool = false,
@@ -3241,14 +3241,24 @@ pub const JSGlobalObject = opaque {
             (!opts.allowArray and value.isArray()) or
             (!value.isObject() and (!opts.allowFunction or !value.isFunction())))
         {
-            this.throwValue(this.ERR_INVALID_ARG_TYPE(
-                ZigString.static(arg_name).toJS(this),
-                ZigString.static("object").toJS(this),
+            this.throwValue(this.ERR_INVALID_ARG_TYPE_static(
+                ZigString.static(arg_name),
+                ZigString.static("object"),
                 value,
             ));
             return false;
         }
         return true;
+    }
+
+    extern fn Bun__ERR_INVALID_ARG_TYPE_static(*JSGlobalObject, *const ZigString, *const ZigString, JSValue) JSValue;
+    pub fn ERR_INVALID_ARG_TYPE_static(this: *JSGlobalObject, arg_name: *const ZigString, etype: *const ZigString, atype: JSValue) JSValue {
+        return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
+    }
+
+    extern fn Bun__ERR_MISSING_ARGS_static(*JSGlobalObject, *const ZigString, ?*const ZigString, ?*const ZigString) JSValue;
+    pub fn ERR_MISSING_ARGS_static(this: *JSGlobalObject, arg1: *const ZigString, arg2: ?*const ZigString, arg3: ?*const ZigString) JSValue {
+        return Bun__ERR_MISSING_ARGS_static(this, arg1, arg2, arg3);
     }
 
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;

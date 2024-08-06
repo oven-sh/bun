@@ -470,7 +470,7 @@ pub export fn Bun__Process__send(
     const vm = globalObject.bunVM();
     const zigGlobal: *JSC.ZigGlobalObject = @ptrCast(globalObject);
     const ipc_instance = vm.getIPCInstance() orelse {
-        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED();
+        const ex = globalObject.ERR_IPC_CHANNEL_CLOSED("Channel closed.", .{}).toJS();
         if (callback.isFunction()) {
             process_queueNextTick1(zigGlobal, callback, ex);
         } else {
@@ -483,12 +483,12 @@ pub export fn Bun__Process__send(
     };
 
     if (message.isUndefined()) {
-        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS(ZigString.static("message").toJS(globalObject), .zero, .zero));
+        return globalObject.throwValueRet(globalObject.ERR_MISSING_ARGS_static(ZigString.static("message"), null, null));
     }
     if (!message.isString() and !message.isObject() and !message.isNumber() and !message.isBoolean()) {
-        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE(
-            ZigString.static("message").toJS(globalObject),
-            ZigString.static("string, object, number, or boolean").toJS(globalObject),
+        return globalObject.throwValueRet(globalObject.ERR_INVALID_ARG_TYPE_static(
+            ZigString.static("message"),
+            ZigString.static("string, object, number, or boolean"),
             message,
         ));
     }

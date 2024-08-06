@@ -453,6 +453,12 @@ fn addInternalPackages(b: *Build, obj: *Compile, opts: *BunBuildOptions) void {
         .root_source_file = .{ .cwd_relative = resolved_source_tag_path },
     });
 
+    const error_code_path = b.pathJoin(&.{ opts.generated_code_dir, "ErrorCode.zig" });
+    validateGeneratedPath(error_code_path);
+    obj.root_module.addAnonymousImport("ErrorCode", .{
+        .root_source_file = .{ .cwd_relative = error_code_path },
+    });
+
     if (os == .windows) {
         obj.root_module.addAnonymousImport("bun_shim_impl.exe", .{
             .root_source_file = opts.windowsShim(b).exe.getEmittedBin(),

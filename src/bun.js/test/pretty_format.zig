@@ -677,7 +677,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
                     const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
@@ -712,7 +712,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     this.formatter.writeIndent(Writer, this.writer) catch {};
                     const key_tag = Tag.get(nextValue, globalObject);

@@ -247,7 +247,7 @@ pub const Resolution = extern struct {
 
         pub fn format(formatter: DebugFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("Resolution{ .");
-            try writer.writeAll(std.enums.tagName(Tag, formatter.resolution.tag) orelse "invalid");
+            try writer.writeAll(bun.tagName(Tag, formatter.resolution.tag) orelse "invalid");
             try writer.writeAll(" = ");
             switch (formatter.resolution.tag) {
                 .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),

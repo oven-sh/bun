@@ -1261,11 +1261,11 @@ pub const JSON = @import("./json_parser.zig");
 pub const JSAst = @import("./js_ast.zig");
 pub const bit_set = @import("./bit_set.zig");
 
-pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
+pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) [:0]const u8) {
     const Map = struct {
         const vargs = args;
         const labels = brk: {
-            var vabels_ = std.enums.EnumArray(T, []const u8).initFill("");
+            var vabels_ = std.enums.EnumArray(T, [:0]const u8).initFill("");
             @setEvalBranchQuota(99999);
             for (vargs) |field| {
                 vabels_.set(field.@"0", field.@"1");
@@ -1273,7 +1273,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
             break :brk vabels_;
         };
 
-        pub fn get(input: T) []const u8 {
+        pub fn get(input: T) [:0]const u8 {
             return labels.get(input);
         }
     };
@@ -1282,7 +1282,7 @@ pub fn enumMap(comptime T: type, comptime args: anytype) (fn (T) []const u8) {
 }
 
 pub fn ComptimeEnumMap(comptime T: type) type {
-    var entries: [std.enums.values(T).len]struct { string, T } = undefined;
+    var entries: [std.enums.values(T).len]struct { [:0]const u8, T } = undefined;
     for (std.enums.values(T), &entries) |value, *entry| {
         entry.* = .{ .@"0" = @tagName(value), .@"1" = value };
     }
@@ -3636,3 +3636,10 @@ pub fn memmove(output: []u8, input: []const u8) void {
 
 pub const hmac = @import("./hmac.zig");
 pub const libdeflate = @import("./deps/libdeflate.zig");
+
+/// like std.enums.tagName, except it doesn't lose the sentinel value.
+pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
+    return inline for (@typeInfo(Enum).Enum.fields) |f| {
+        if (@intFromEnum(value) == f.value) break f.name;
+    } else null;
+}

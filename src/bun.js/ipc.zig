@@ -550,7 +550,7 @@ const NamedPipeIPCData = struct {
     }
 
     pub fn configureServer(this: *NamedPipeIPCData, comptime Context: type, instance: *Context, named_pipe: []const u8) JSC.Maybe(void) {
-        log("configureServer", .{});
+        log("configureServer {s}", .{named_pipe});
         const ipc_pipe = bun.default_allocator.create(uv.Pipe) catch bun.outOfMemory();
         this.server = ipc_pipe;
         ipc_pipe.data = this;
@@ -559,7 +559,6 @@ const NamedPipeIPCData = struct {
             this.server = null;
             return .{ .err = err };
         }
-        ipc_pipe.setBlocking(false);
         ipc_pipe.data = @ptrCast(instance);
         this.onClose = .{
             .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
@@ -586,7 +585,6 @@ const NamedPipeIPCData = struct {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
         };
-        ipc_pipe.setBlocking(false);
         this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
@@ -873,8 +871,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
-                    _ = uv.uv_run(uv.Loop.get(), uv.RunMode.once);
-                    client.setBlocking(false);
+                    // _ = uv.uv_run(uv.Loop.get(), uv.RunMode.once);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                         ipc.close();

@@ -197,3 +197,12 @@ test("you can override globalThis.postMessage", async () => {
   expect(message).toBe("Hello from worker!");
   await worker.terminate();
 });
+
+test("support require in eval", async () => {
+  const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+  });
+  expect(result).toBe(Bun.argv[0]);
+  await worker.terminate();
+});

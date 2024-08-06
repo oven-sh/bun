@@ -117,6 +117,9 @@
 #include "JSSQLStatement.h"
 #include "JSStringDecoder.h"
 #include "JSTextEncoder.h"
+#include "JSTextEncoderStream.h"
+#include "JSTextEncoderStreamEncoder.h"
+#include "JSTextDecoderStream.h"
 #include "JSTransformStream.h"
 #include "JSTransformStreamDefaultController.h"
 #include "JSURLSearchParams.h"
@@ -1269,6 +1272,9 @@ WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(ReadableStreamDefaultReader)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(SubtleCrypto);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoder);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStream);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextEncoderStreamEncoder);
+WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TextDecoderStream);
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStream)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(TransformStreamDefaultController)
 WEBCORE_GENERATED_CONSTRUCTOR_GETTER(URLSearchParams);

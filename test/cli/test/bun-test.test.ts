@@ -917,13 +917,18 @@ function runTest({
 } = {}): string {
   cwd ??= createTest(input);
   try {
-    const { stderr } = spawnSync({
+    const { stderr, exitCode, success, signalCode } = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
       env: { ...bunEnv, ...env },
       stderr: "pipe",
-      stdout: "ignore",
+      stdout: "inherit",
     });
+    if (!success) {
+      if (signalCode) {
+        console.log(new Error(`bun test failed with signal ${signalCode}`));
+      }
+    }
     return stderr.toString();
   } finally {
     rmSync(cwd, { recursive: true });

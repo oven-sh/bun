@@ -4127,7 +4127,10 @@ JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
 
     if (!error) return nullptr;
 
-    JSC::StackFrame& frame = error->stackTrace()->first();
+    auto stack = error->stackTrace();
+    if (stack->isEmpty()) return nullptr;
+
+    JSC::StackFrame& frame = stack->first();
     JSC::SourceProvider* provider = frame.codeBlock()->source().provider();
     WTF::StringView view = provider->source();;
 

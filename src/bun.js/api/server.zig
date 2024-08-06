@@ -2618,7 +2618,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                 // User called .blob(), .json(), text(), or .arrayBuffer() on the Request object
                 // but we received nothing or the connection was aborted
                 if (body.value == .Locked) {
-                    body.value.toErrorInstance(.{ .Aborted = {} }, this.server.?.globalThis);
+                    body.value.toErrorInstance(.{ .AbortReason = .ConnectionClosed }, this.server.?.globalThis);
                     return true;
                 }
             }

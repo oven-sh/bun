@@ -1444,6 +1444,14 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
+                if (!uid_value.isInt32()) {
+                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE(
+                        JSC.ZigString.static("uid").toJS(ctx),
+                        JSC.ZigString.static("number").toJS(ctx),
+                        uid_value,
+                    ));
+                    return null;
+                }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
 
@@ -1461,6 +1469,14 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
+                if (!gid_value.isInt32()) {
+                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE(
+                        JSC.ZigString.static("gid").toJS(ctx),
+                        JSC.ZigString.static("number").toJS(ctx),
+                        gid_value,
+                    ));
+                    return null;
+                }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
 

@@ -53,12 +53,9 @@ export function initializeTextEncoderStream() {
     return Promise.$resolve();
   };
 
-  // const [transform, readable, writable] = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
   const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
   $putByIdDirectPrivate(this, "textEncoderStreamTransform", transform);
   $putByIdDirectPrivate(this, "textEncoderStreamEncoder", new TextEncoderStreamEncoder());
-  // $putByIdDirectPrivate(this, "readable", readable);
-  // $putByIdDirectPrivate(this, "writable", writable);
 
   return this;
 }
@@ -76,7 +73,6 @@ export function readable() {
   const transform = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
   if (!transform) throw $makeThisTypeError("TextEncoderStream", "readable");
 
-  // return $getByIdDirectPrivate(this, "readable");
   return $getByIdDirectPrivate(transform, "readable");
 }
 
@@ -85,6 +81,5 @@ export function writable() {
   const transform = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
   if (!transform) throw $makeThisTypeError("TextEncoderStream", "writable");
 
-  // return $getByIdDirectPrivate(this, "writable");
   return $getByIdDirectPrivate(transform, "writable");
 }

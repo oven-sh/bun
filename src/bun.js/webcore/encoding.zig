@@ -408,6 +408,8 @@ pub const EncodingLabel = enum {
 };
 
 pub const TextDecoder = struct {
+
+    // used for utf8 decoding
     buffered: struct {
         buf: [3]u8 = .{0} ** 3,
         len: u2 = 0,
@@ -417,6 +419,7 @@ pub const TextDecoder = struct {
         }
     } = .{},
 
+    // used for utf16 decoding
     lead_byte: ?u8 = null,
     lead_surrogate: ?u16 = null,
 

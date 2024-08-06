@@ -860,7 +860,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             };
-            client.setBlocking(false);
 
             ipc.writer.startWithPipe(client).unwrap() catch {
                 bun.default_allocator.destroy(client);
@@ -874,6 +873,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
+                    std.time.sleep(std.time.ns_per_ms * 10);
+                    client.setBlocking(false);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                         ipc.close();

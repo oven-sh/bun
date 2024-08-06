@@ -6923,6 +6923,11 @@ pub const LinkerContext = struct {
                 j.pushStatic("// @bun\n");
                 line_offset.advance("// @bun\n");
             }
+
+            // Inject `require` definition to support the common use case of
+            // modules expecting it to be defined in the global scope.
+            j.pushStatic("var { require } = import.meta;\n");
+            line_offset.advance("var { require } = import.meta;\n");
         }
 
         // TODO: banner

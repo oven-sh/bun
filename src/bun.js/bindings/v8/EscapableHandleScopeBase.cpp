@@ -9,6 +9,7 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
     // previous one
     auto& handle = prev->buffer->createUninitializedHandle();
     memset(&handle, 0xaa, sizeof(handle));
+    handle.to_v8_object = TaggedPointer(0);
     escape_slot = &handle;
 }
 

@@ -82,6 +82,8 @@ Local<Data> Object::SlowGetInternalField(int index)
             // TODO better conversion from jsvalue to v8 value
             if (field.data.js_value.isCell()) {
                 return handleScope->createLocal<Data>(field.data.js_value.asCell());
+            } else if (field.data.js_value.isUndefined()) {
+                return handleScope->createLocalSmi(0).reinterpret<Data>();
             } else {
                 auto localNumber = handleScope->createLocalSmi(field.data.js_value.asInt32());
                 return localNumber.reinterpret<Data>();

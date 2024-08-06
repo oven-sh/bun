@@ -25,6 +25,11 @@ public:
     BUN_EXPORT static MaybeLocal<String> NewFromUtf8(Isolate* isolate, char const* data, NewStringType type, int length = -1);
     BUN_EXPORT int WriteUtf8(Isolate* isolate, char* buffer, int length = -1, int* nchars_ref = nullptr, int options = NO_OPTIONS) const;
     BUN_EXPORT int Length() const;
+
+    JSC::JSString* localToJSString()
+    {
+        return localToObjectPointer<JSC::JSString>();
+    }
 };
 
 }

@@ -15,8 +15,9 @@ public:
 
     JSC::JSCell* localToCell()
     {
-        RELEASE_ASSERT(localToTagged().type() != TaggedPointer::Type::Smi);
-        return localToHandle()->object;
+        TaggedPointer tagged = localToTagged();
+        RELEASE_ASSERT(tagged.type() != TaggedPointer::Type::Smi);
+        return tagged.getPtr();
     }
 
     template<typename T>
@@ -32,11 +33,12 @@ public:
 
     TaggedPointer localToTagged() const
     {
-        auto* handle = localToHandle();
-        if (handle->to_object.type() == TaggedPointer::Type::Smi) {
-            return handle->to_object;
+        TaggedPointer root = *reinterpret_cast<const TaggedPointer*>(this);
+        if (root.type() == TaggedPointer::Type::Smi) {
+            return root;
         } else {
-            return TaggedPointer(handle->object);
+            JSC::JSCell** v8_object = reinterpret_cast<JSC::JSCell**>(root.getPtr());
+            return TaggedPointer(v8_object[1]);
         }
     }
 
@@ -51,35 +53,6 @@ public:
     {
         return JSC::jsDynamicCast<const T*>(localToCell());
     }
-
-    // static TaggedPointer locationToTagged(const void* location)
-    // {
-    //     return *reinterpret_cast<const TaggedPointer*>(location);
-    // }
-
-    // template<typename T>
-    // T* toObjectPointer()
-    // {
-    //     return JSC::jsDynamicCast<T*>(toTagged().getPtr());
-    // }
-
-    // template<typename T>
-    // const T* toObjectPointer() const
-    // {
-    //     return JSC::jsDynamicCast<const T*>(toTagged().getPtr());
-    // }
-
-    // template<typename T>
-    // static T* locationToObjectPointer(void* location)
-    // {
-    //     return JSC::jsDynamicCast<T*>(locationToTagged(location).getPtr());
-    // }
-
-    // template<typename T>
-    // static const T* locationToObjectPointer(const void* location)
-    // {
-    //     return JSC::jsDynamicCast<const T*>(locationToTagged(location).getPtr());
-    // }
 };
 
 }

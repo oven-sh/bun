@@ -46,7 +46,7 @@ Local<FunctionTemplate> FunctionTemplate::New(
 
     auto globalObject = isolate->globalObject();
     auto& vm = globalObject->vm();
-    JSValue jsc_data = data->localToTagged().getJSValue();
+    JSValue jsc_data = data.IsEmpty() ? JSC::jsUndefined() : data->localToTagged().getJSValue();
 
     Structure* structure = globalObject->V8GlobalInternals()->functionTemplateStructure(globalObject);
     auto* functionTemplate = new (NotNull, JSC::allocateCell<FunctionTemplate>(vm)) FunctionTemplate(
@@ -92,10 +92,39 @@ DEFINE_VISIT_CHILDREN(FunctionTemplate);
 JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
 {
     auto* callee = JSC::jsDynamicCast<Function*>(callFrame->jsCallee());
-    (void)callee;
-    // TODO call callee->__internals.functionTemplate.get()->__internals.callback
-    // with a pointer to some CallbackInfo on the stack
-    return JSValue::encode(JSC::jsNumber(42));
+    auto* functionTemplate = callee->functionTemplate();
+
+    constexpr int MAX_ARGS = 0;
+
+    RELEASE_ASSERT(callFrame->argumentCount() <= MAX_ARGS);
+    // RELEASE_ASSERT(functionTemplate->__internals.data.isUndefined());
+    TaggedPointer args[MAX_ARGS + 1];
+    RELEASE_ASSERT(callFrame->thisValue().isUndefined());
+    // args[0] = TaggedPointer(callFrame->thisValue().asCell());
+
+    HandleScope hs(reinterpret_cast<Isolate*>(globalObject));
+    Local<Object> o = hs.createLocal<Object>(functionTemplate->__internals.data.asCell());
+
+    ImplicitArgs implicit_args = {
+        .holder = nullptr,
+        .isolate = reinterpret_cast<Isolate*>(globalObject),
+        .context = reinterpret_cast<Context*>(globalObject),
+        .return_value = TaggedPointer(),
+        // data may be an object
+        // put it in the handle scope so that it has a map ptr
+        .target = **reinterpret_cast<TaggedPointer**>(&o),
+        .new_target = nullptr,
+    };
+    FunctionCallbackInfo<Value> info = {
+        .implicit_args = &implicit_args,
+        .values = &args[1],
+        .length = callFrame->argumentCount(),
+    };
+
+    functionTemplate->__internals.callback(info);
+
+    Local<Data> local_ret(&implicit_args.return_value);
+    return JSValue::encode(local_ret->localToTagged().getJSValue());
 }
 
 }

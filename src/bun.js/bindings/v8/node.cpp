@@ -57,7 +57,12 @@ void node_module_register(void* opaque_mod)
 
         if (exportsObject && exportsObject.isObject()) {
             strongExportsObject = { vm, exportsObject.getObject() };
-        } // else make an empty object
+        } else {
+            auto* exportsObject = JSC::constructEmptyObject(globalObject);
+            JSC::PutPropertySlot slot(object, false);
+            object->put(object, globalObject, WebCore::builtinNames(vm).exportsPublicName(), exportsObject, slot);
+            strongExportsObject = { vm, exportsObject };
+        }
     }
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
@@ -80,7 +85,7 @@ void node_module_register(void* opaque_mod)
 
     RETURN_IF_EXCEPTION(scope, void());
 
-    globalObject->pendingNapiModule = object;
+    globalObject->pendingNapiModule = *strongExportsObject;
 }
 
 }

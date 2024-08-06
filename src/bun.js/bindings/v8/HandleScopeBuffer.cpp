@@ -55,14 +55,14 @@ TaggedPointer* HandleScopeBuffer::createHandle(JSCell* object)
 
     auto& handle = createUninitializedHandle();
     handle = Handle(&Map::map_map, object);
-    return &handle.to_object;
+    return &handle.to_v8_object;
 }
 
 TaggedPointer* HandleScopeBuffer::createSmiHandle(int32_t smi)
 {
     auto& handle = createUninitializedHandle();
-    handle.to_object = TaggedPointer(smi);
-    return &handle.to_object;
+    handle.to_v8_object = TaggedPointer(smi);
+    return &handle.to_v8_object;
 }
 
 }

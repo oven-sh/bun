@@ -13,7 +13,6 @@ namespace v8 {
 
 class Function;
 
-template<typename T>
 struct ImplicitArgs {
     // v8-function-callback.h:168
     void* holder;
@@ -28,10 +27,9 @@ struct ImplicitArgs {
 
 // T = return value
 template<typename T>
-class FunctionCallbackInfo {
-private:
-    // V8 expects certain values at certain indices
-    uintptr_t* implicit_args;
+struct FunctionCallbackInfo {
+    // V8 treats this as an array of pointers
+    ImplicitArgs* implicit_args;
     // index -1 is this
     TaggedPointer* values;
     size_t length;
@@ -94,6 +92,11 @@ public:
     DECLARE_VISIT_CHILDREN;
 
     friend class Function;
+
+    FunctionCallback callback() const
+    {
+        return __internals.callback;
+    }
 
 private:
     class Internals {

@@ -64,17 +64,45 @@ pub const StandaloneModuleGraph = struct {
 
     pub const CompiledModuleGraphFile = struct {
         name: Schema.StringPointer = .{},
-        loader: bun.options.Loader = .file,
         contents: Schema.StringPointer = .{},
         sourcemap: Schema.StringPointer = .{},
+        encoding: Encoding = .latin1,
+        loader: bun.options.Loader = .file,
+    };
+
+    pub const Encoding = enum(u8) {
+        binary = 0,
+
+        latin1 = 1,
+
+        // Not used yet.
+        utf8 = 2,
     };
 
     pub const File = struct {
         name: []const u8 = "",
         loader: bun.options.Loader,
-        contents: []const u8 = "",
+        contents: [:0]const u8 = "",
         sourcemap: LazySourceMap,
         cached_blob: ?*bun.JSC.WebCore.Blob = null,
+        encoding: Encoding = .binary,
+        wtf_string: bun.String = bun.String.empty,
+
+        pub fn toWTFString(this: *File) bun.String {
+            if (this.wtf_string.isEmpty()) {
+                switch (this.encoding) {
+                    .binary, .utf8 => {
+                        this.wtf_string = bun.String.createUTF8(this.contents);
+                    },
+                    .latin1 => {
+                        this.wtf_string = bun.String.createStaticExternal(this.contents, true);
+                    },
+                }
+            }
+
+            // We don't want this to free.
+            return this.wtf_string.dupeRef();
+        }
 
         pub fn blob(this: *File, globalObject: *bun.JSC.JSGlobalObject) *bun.JSC.WebCore.Blob {
             if (this.cached_blob == null) {
@@ -147,11 +175,11 @@ pub const StandaloneModuleGraph = struct {
         try modules.ensureTotalCapacity(modules_list.len);
         for (modules_list) |module| {
             modules.putAssumeCapacity(
-                sliceTo(raw_bytes, module.name),
+                sliceToZ(raw_bytes, module.name),
                 File{
-                    .name = sliceTo(raw_bytes, module.name),
+                    .name = sliceToZ(raw_bytes, module.name),
                     .loader = module.loader,
-                    .contents = sliceTo(raw_bytes, module.contents),
+                    .contents = sliceToZ(raw_bytes, module.contents),
                     .sourcemap = LazySourceMap{
                         .compressed = sliceTo(raw_bytes, module.sourcemap),
                     },
@@ -172,6 +200,12 @@ pub const StandaloneModuleGraph = struct {
         return bytes[ptr.offset..][0..ptr.length];
     }
 
+    fn sliceToZ(bytes: []const u8, ptr: bun.StringPointer) [:0]const u8 {
+        if (ptr.length == 0) return "";
+
+        return bytes[ptr.offset..][0..ptr.length :0];
+    }
+
     pub fn toBytes(allocator: std.mem.Allocator, prefix: []const u8, output_files: []const bun.options.OutputFile) ![]u8 {
         var serialize_trace = bun.tracy.traceNamed(@src(), "StandaloneModuleGraph.serialize");
         defer serialize_trace.end();
@@ -179,8 +213,8 @@ pub const StandaloneModuleGraph = struct {
         var string_builder = bun.StringBuilder{};
         var module_count: usize = 0;
         for (output_files, 0..) |output_file, i| {
-            string_builder.count(output_file.dest_path);
-            string_builder.count(prefix);
+            string_builder.countZ(output_file.dest_path);
+            string_builder.countZ(prefix);
             if (output_file.value == .buffer) {
                 if (output_file.output_kind == .sourcemap) {
                     string_builder.cap += bun.zstd.compressBound(output_file.value.buffer.bytes.len);
@@ -191,7 +225,7 @@ pub const StandaloneModuleGraph = struct {
                         }
                     }
 
-                    string_builder.count(output_file.value.buffer.bytes);
+                    string_builder.countZ(output_file.value.buffer.bytes);
                     module_count += 1;
                 }
             }
@@ -224,12 +258,16 @@ pub const StandaloneModuleGraph = struct {
             const dest_path = bun.strings.removeLeadingDotSlash(output_file.dest_path);
 
             var module = CompiledModuleGraphFile{
-                .name = string_builder.fmtAppendCount("{s}{s}", .{
+                .name = string_builder.fmtAppendCountZ("{s}{s}", .{
                     prefix,
                     dest_path,
                 }),
                 .loader = output_file.loader,
-                .contents = string_builder.appendCount(output_file.value.buffer.bytes),
+                .contents = string_builder.appendCountZ(output_file.value.buffer.bytes),
+                .encoding = switch (output_file.loader) {
+                    .js, .jsx, .ts, .tsx => .latin1,
+                    else => .binary,
+                },
             };
             if (output_file.source_map_index != std.math.maxInt(u32)) {
                 const remaining_slice = string_builder.allocatedSlice()[string_builder.len..];
@@ -242,7 +280,7 @@ pub const StandaloneModuleGraph = struct {
             modules.appendAssumeCapacity(module);
         }
 
-        var offsets = Offsets{
+        const offsets = Offsets{
             .entry_point_id = @as(u32, @truncate(entry_point_id.?)),
             .modules_ptr = string_builder.appendCount(std.mem.sliceAsBytes(modules.items)),
             .byte_count = string_builder.len,
@@ -251,7 +289,16 @@ pub const StandaloneModuleGraph = struct {
         _ = string_builder.append(std.mem.asBytes(&offsets));
         _ = string_builder.append(trailer);
 
-        return string_builder.ptr.?[0..string_builder.len];
+        const output_bytes = string_builder.ptr.?[0..string_builder.len];
+
+        if (comptime Environment.isDebug) {
+            // An expensive sanity check:
+            var graph = try fromBytes(allocator, output_bytes, offsets);
+            defer graph.files.deinit();
+            bun.assert_eql(graph.files.count(), modules.items.len);
+        }
+
+        return output_bytes;
     }
 
     const page_size = if (Environment.isLinux and Environment.isAarch64)

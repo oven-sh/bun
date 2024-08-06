@@ -1574,7 +1574,7 @@ pub const Crypto = struct {
                     assert(output_slice.len == @as(usize, @intCast(this.pbkdf2.length)));
                     const buffer_value = JSC.JSValue.createBuffer(globalThis, output_slice, bun.default_allocator);
                     if (buffer_value == .zero) {
-                        promise.reject(globalThis, globalThis.createTypeErrorInstance("Failed to create buffer", .{}));
+                        promise.reject(globalThis, ZigString.init("Failed to create buffer").toErrorInstance(globalThis));
                         return;
                     }
 
@@ -1663,8 +1663,7 @@ pub const Crypto = struct {
                             const slice = arguments[4].toSlice(globalThis, bun.default_allocator);
                             defer slice.deinit();
                             const name = slice.slice();
-                            const err = globalThis.createTypeErrorInstanceWithCode(.ERR_CRYPTO_INVALID_DIGEST, "Unsupported algorithm \"{s}\"", .{name});
-                            globalThis.throwValue(err);
+                            globalThis.ERR_CRYPTO_INVALID_DIGEST("Unsupported algorithm \"{s}\"", .{name}).throw();
                         }
                         return null;
                     };
@@ -2355,7 +2354,9 @@ pub const Crypto = struct {
             }
 
             const password_to_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch {
-                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2389,7 +2390,9 @@ pub const Crypto = struct {
             }
 
             var string_or_buffer = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("hash", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2515,19 +2518,21 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    if (!globalObject.hasException()) {
+                        globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    }
                     return JSC.JSValue.undefined;
                 };
             }
 
             const owned_password = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[0], bun.default_allocator) catch |err| {
-                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
             const owned_hash = JSC.Node.StringOrBuffer.fromJSToOwnedSlice(globalObject, arguments[1], bun.default_allocator) catch |err| {
                 bun.default_allocator.free(owned_password);
-                if (err != error.JSError) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                if (err != error.JSError and !globalObject.hasException()) globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
                 return JSC.JSValue.undefined;
             };
 
@@ -2568,19 +2573,25 @@ pub const Crypto = struct {
                 const algorithm_string = arguments[2].getZigString(globalObject);
 
                 algorithm = PasswordObject.Algorithm.label.getWithEql(algorithm_string, JSC.ZigString.eqlComptime) orelse {
-                    globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    if (!globalObject.hasException()) {
+                        globalObject.throwInvalidArgumentType("verify", "algorithm", unknown_password_algorithm_message);
+                    }
                     return JSC.JSValue.undefined;
                 };
             }
 
             var password = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[0]) orelse {
-                globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("verify", "password", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
             var hash_ = JSC.Node.StringOrBuffer.fromJS(globalObject, bun.default_allocator, arguments[1]) orelse {
                 password.deinit();
-                globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                if (!globalObject.hasException()) {
+                    globalObject.throwInvalidArgumentType("verify", "hash", "string or TypedArray");
+                }
                 return JSC.JSValue.undefined;
             };
 
@@ -2782,7 +2793,7 @@ pub const Crypto = struct {
             }
             const encoding = arguments.ptr[1];
             const buffer = JSC.Node.BlobOrStringOrBuffer.fromJSWithEncodingValue(globalThis, globalThis.bunVM().allocator, input, encoding) orelse {
-                globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
+                if (!globalThis.hasException()) globalThis.throwInvalidArguments("expected blob, string or buffer", .{});
                 return JSC.JSValue.zero;
             };
             defer buffer.deinit();

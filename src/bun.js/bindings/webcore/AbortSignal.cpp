@@ -32,6 +32,7 @@
 #include "Event.h"
 #include "EventNames.h"
 #include "JSDOMException.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreOpaqueRoot.h"
 #include "wtf/DebugHeap.h"
@@ -112,6 +113,20 @@ AbortSignal::AbortSignal(ScriptExecutionContext* context, Aborted aborted, JSC::
 
 AbortSignal::~AbortSignal() = default;
 
+JSValue AbortSignal::jsReason(JSC::JSGlobalObject& globalObject)
+{
+    JSValue existingValue = m_reason.getValue(jsUndefined());
+    if (existingValue.isUndefined()) {
+        if (m_commonReason != CommonAbortReason::None) {
+            existingValue = toJS(&globalObject, m_commonReason);
+            m_commonReason = CommonAbortReason::None;
+            m_reason.setWeakly(existingValue);
+        }
+    }
+
+    return existingValue;
+}
+
 void AbortSignal::addSourceSignal(AbortSignal& signal)
 {
     if (signal.isDependent()) {
@@ -164,6 +179,16 @@ void AbortSignal::signalAbort(JSC::JSValue reason)
         dependentSignal->signalAbort(reason);
 }
 
+void AbortSignal::signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason)
+{
+    // 1. If signal's aborted flag is set, then return.
+    if (m_aborted)
+        return;
+
+    m_commonReason = reason;
+    signalAbort(toJS(globalObject, reason));
+}
+
 void AbortSignal::cleanNativeBindings(void* ref)
 {
     auto callbacks = std::exchange(m_native_callbacks, {});
@@ -183,7 +208,7 @@ void AbortSignal::signalFollow(AbortSignal& signal)
         return;
 
     if (signal.aborted()) {
-        signalAbort(signal.reason().getValue());
+        signalAbort(signal.jsReason(*scriptExecutionContext()->jsGlobalObject()));
         return;
     }
 
@@ -203,7 +228,8 @@ void AbortSignal::eventListenersDidChange()
 uint32_t AbortSignal::addAbortAlgorithmToSignal(AbortSignal& signal, Ref<AbortAlgorithm>&& algorithm)
 {
     if (signal.aborted()) {
-        algorithm->handleEvent(signal.m_reason.getValue());
+        // TODO: Null check.
+        algorithm->handleEvent(signal.jsReason(*signal.scriptExecutionContext()->jsGlobalObject()));
         return 0;
     }
     return signal.addAlgorithm([algorithm = WTFMove(algorithm)](JSC::JSValue value) mutable {

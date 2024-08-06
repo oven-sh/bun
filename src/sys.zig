@@ -366,12 +366,12 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
             const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         }
@@ -408,7 +408,7 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
                 if (C.SystemErrno.labels.get(system_errno)) |label| {
                     err.message = bun.String.static(label);

@@ -851,7 +851,7 @@ pub const Api = struct {
             try writer.writeInt(this.length);
         }
 
-        pub fn slice(this: *const @This(), bytes: []const u8) []const u8 {
+        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
             return bytes[this.offset .. this.offset + this.length];
         }
     };

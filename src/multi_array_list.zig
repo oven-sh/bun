@@ -558,7 +558,7 @@ pub fn MultiArrayList(comptime T: type) type {
             return elem_bytes * capacity;
         }
 
-        pub fn allocatedBytes(self: Self) []align(@alignOf(Elem)) u8 {
+        fn allocatedBytes(self: Self) []align(@alignOf(Elem)) u8 {
             return self.bytes[0..capacityInBytes(self.capacity)];
         }
 

@@ -314,7 +314,7 @@ describe("bundler", () => {
     },
     run: { stdout: new Array(7).fill("true").join("\n") },
   });
-  itBundled("bun/SourceMap", {
+  itBundled("compile/SourceMap", {
     target: "bun",
     compile: true,
     files: {
@@ -350,7 +350,7 @@ error: Hello World`,
       },
     },
   });
-  itBundled("bun/SourceMapBigFile", {
+  itBundled("compile/SourceMapBigFile", {
     target: "bun",
     compile: true,
     files: {

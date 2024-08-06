@@ -1,5 +1,3 @@
-//! Originally, we tried using LIEF to inject the module graph into a MachO segment
-//! But this incurred a fixed 350ms overhead on every build, which is unacceptable
 //! so we give up on codesigning support on macOS for now until we can find a better solution
 const bun = @import("root").bun;
 const std = @import("std");
@@ -131,61 +129,8 @@ pub const StandaloneModuleGraph = struct {
         }
     };
 
-    /// Source map serialization in the bundler is specially designed to be
-    /// loaded in memory as is. Source contents are compressed with ZSTD to
-    /// reduce the file size, but mapping and filenames are stored plain.
-    ///
-    /// The main requirement for this to work is that all of the data is loaded
-    /// in at 4-byte alignment, as the MultiArrayList(Mapping) payload must be
-    /// aligned to @alignOf(Mapping), otherwise there will be undefined behavior
-    /// while remapping sources.
-    pub const SerializedSourceMap = struct {
-        bytes: []align(@alignOf(u32)) const u8,
-
-        /// Following the header bytes:
-        /// - source_files_count number of StringPointer, file names
-        /// - source_files_count number of StringPointer, zstd compressed contents
-        /// - all mapping bytes
-        /// - all the StringPointer contents
-        pub const Header = extern struct {
-            source_files_count: u32,
-            mappings_count: u32,
-            map_bytes_length: u32,
-        };
-
-        pub fn header(map: SerializedSourceMap) *const Header {
-            return @ptrCast(map.bytes.ptr);
-        }
-
-        pub fn mappings(map: SerializedSourceMap) SourceMap.Mapping.List {
-            const head = map.header();
-            const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
-
-            // the following assertion ensures the following alignCast
-            comptime bun.assert(@alignOf(SourceMap.Mapping) == @alignOf(u32));
-
-            return .{
-                // @constCast is ok because we never mutate the MultiArrayList
-                .bytes = @constCast(@alignCast(@ptrCast(map.bytes[start..][0..head.map_bytes_length]))),
-                .len = head.mappings_count,
-                .capacity = head.mappings_count,
-            };
-        }
-
-        pub fn sourceFileNames(map: SerializedSourceMap) []const StringPointer {
-            const head = map.header();
-            return @as([*]const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[0..head.source_files_count];
-        }
-
-        pub fn compressedSourceFiles(map: SerializedSourceMap) []const StringPointer {
-            const head = map.header();
-            return @as([*]const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[head.source_files_count..][0..head.source_files_count];
-        }
-    };
-
     pub const LazySourceMap = union(enum) {
-        /// Standalone Module Graph loads all bytes in at once.
-        unparsed: SerializedSourceMap,
+        serialized: SerializedSourceMap,
         parsed: *SourceMap.ParsedSourceMap,
         none,
 
@@ -199,20 +144,43 @@ pub const StandaloneModuleGraph = struct {
             return switch (this.*) {
                 .none => null,
                 .parsed => |map| map,
-                .unparsed => |serialized| {
+                .serialized => |serialized| {
+                    var stored = switch (SourceMap.Mapping.parse(
+                        bun.default_allocator,
+                        serialized.mappingVLQ(),
+                        null,
+                        std.math.maxInt(i32),
+                        std.math.maxInt(i32),
+                    )) {
+                        .success => |x| x,
+                        .fail => {
+                            this.* = .none;
+                            return null;
+                        },
+                    };
+
                     const source_files = serialized.sourceFileNames();
-                    const file_names = bun.default_allocator.alloc([]const u8, source_files.len) catch bun.outOfMemory();
+                    const slices = bun.default_allocator.alloc(?[]u8, source_files.len * 2) catch bun.outOfMemory();
+
+                    const file_names: [][]const u8 = @ptrCast(slices[0..source_files.len]);
+                    const decompressed_contents_slice = slices[source_files.len..][0..source_files.len];
                     for (file_names, source_files) |*dest, src| {
                         dest.* = src.slice(serialized.bytes);
                     }
 
-                    const parsed = SourceMap.ParsedSourceMap.new(.{
-                        .input_line_count = 0,
-                        .mappings = serialized.mappings(),
-                        .external_source_names = file_names,
-                        .underlying_provider = .{ .data = @truncate(@intFromPtr(serialized.bytes.ptr)) },
-                        .standalone_module_graph_len = @intCast(serialized.bytes.len),
+                    @memset(decompressed_contents_slice, null);
+
+                    const data = bun.new(SerializedSourceMap.Loaded, .{
+                        .map = serialized,
+                        .decompressed_files = decompressed_contents_slice,
                     });
+
+                    stored.external_source_names = file_names;
+                    stored.underlying_provider = .{ .data = @truncate(@intFromPtr(data)) };
+                    stored.is_standalone_module_graph = true;
+
+                    const parsed = stored.new(); // allocate this on the heap
+                    parsed.ref(); // never free
                     this.* = .{ .parsed = parsed };
                     return parsed;
                 },
@@ -228,8 +196,7 @@ pub const StandaloneModuleGraph = struct {
 
     const trailer = "\n---- Bun! ----\n";
 
-    /// Alignment requirement on raw_bytes is so that
-    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []align(@alignOf(u32)) const u8, offsets: Offsets) !StandaloneModuleGraph {
+    pub fn fromBytes(allocator: std.mem.Allocator, raw_bytes: []u8, offsets: Offsets) !StandaloneModuleGraph {
         if (raw_bytes.len == 0) return StandaloneModuleGraph{
             .files = bun.StringArrayHashMap(File).init(allocator),
         };
@@ -251,7 +218,7 @@ pub const StandaloneModuleGraph = struct {
                     .loader = module.loader,
                     .contents = sliceToZ(raw_bytes, module.contents),
                     .sourcemap = if (module.sourcemap.length > 0)
-                        .{ .unparsed = .{
+                        .{ .serialized = .{
                             .bytes = @alignCast(sliceTo(raw_bytes, module.sourcemap)),
                         } }
                     else
@@ -924,6 +891,80 @@ pub const StandaloneModuleGraph = struct {
         }
     }
 
+    /// Source map serialization in the bundler is specially designed to be
+    /// loaded in memory as is. Source contents are compressed with ZSTD to
+    /// reduce the file size, and mappings are stored as uncompressed VLQ.
+    pub const SerializedSourceMap = struct {
+        bytes: []const u8,
+
+        /// Following the header bytes:
+        /// - source_files_count number of StringPointer, file names
+        /// - source_files_count number of StringPointer, zstd compressed contents
+        /// - the mapping data, `map_vlq_length` bytes
+        /// - all the StringPointer contents
+        pub const Header = extern struct {
+            source_files_count: u32,
+            map_bytes_length: u32,
+        };
+
+        pub fn header(map: SerializedSourceMap) *align(1) const Header {
+            return @ptrCast(map.bytes.ptr);
+        }
+
+        pub fn mappingVLQ(map: SerializedSourceMap) []const u8 {
+            const head = map.header();
+            const start = @sizeOf(Header) + head.source_files_count * @sizeOf(StringPointer) * 2;
+            return map.bytes[start..][0..head.map_bytes_length];
+        }
+
+        pub fn sourceFileNames(map: SerializedSourceMap) []align(1) const StringPointer {
+            const head = map.header();
+            return @as([*]align(1) const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[0..head.source_files_count];
+        }
+
+        fn compressedSourceFiles(map: SerializedSourceMap) []align(1) const StringPointer {
+            const head = map.header();
+            return @as([*]align(1) const StringPointer, @ptrCast(map.bytes[@sizeOf(Header)..]))[head.source_files_count..][0..head.source_files_count];
+        }
+
+        /// Once loaded, this map stores additional data for keeping track of source code.
+        pub const Loaded = struct {
+            map: SerializedSourceMap,
+
+            /// Only decompress source code once! Once a file is decompressed,
+            /// it is stored here
+            decompressed_files: []?[]u8,
+
+            pub fn sourceFileContents(this: Loaded, index: usize) []const u8 {
+                if (this.decompressed_files[index]) |decompressed|
+                    return decompressed;
+
+                const compressed_codes = this.map.compressedSourceFiles();
+                const compressed_file = compressed_codes[@intCast(index)].slice(this.map.bytes);
+                const size = bun.zstd.getDecompressedSize(compressed_file);
+
+                const bytes = bun.default_allocator.alloc(u8, size) catch bun.outOfMemory();
+                const result = bun.zstd.decompress(bytes, compressed_file);
+
+                if (result == .err) {
+                    bun.Output.warn("Source map decompression error: {s}", .{result.err});
+                    bun.default_allocator.free(bytes);
+                    this.decompressed_files[index] = "";
+                    return "";
+                }
+
+                const data = bytes[0..result.success];
+                if (data.len != bytes.len) {
+                    _ = bun.default_allocator.resize(bytes, data.len);
+                }
+
+                this.decompressed_files[index] = data;
+
+                return data;
+            }
+        };
+    };
+
     pub fn serializeJsonSourceMapForStandalone(
         header_list: *std.ArrayList(u8),
         string_payload: *std.ArrayList(u8),
@@ -962,30 +1003,15 @@ pub const StandaloneModuleGraph = struct {
             return error.InvalidSourceMap;
         }
 
-        var map_data: SourceMap.ParsedSourceMap = switch (SourceMap.Mapping.parse(
-            arena,
-            mappings_str.data.e_string.slice(arena),
-            null,
-            std.math.maxInt(i32),
-            std.math.maxInt(i32),
-        )) {
-            .success => |x| x,
-            .fail => |fail| return fail.err,
-        };
-
-        try map_data.mappings.setCapacity(arena, map_data.mappings.len);
-        const map_data_slice = map_data.mappings.slice();
-        const map_bytes = map_data.mappings.allocatedBytes();
+        const map_vlq: []const u8 = mappings_str.data.e_string.slice(arena);
 
         try out.writeInt(u32, sources_paths.items.len, .little);
-        try out.writeInt(u32, @intCast(map_data_slice.len), .little);
-        try out.writeInt(u32, @intCast(map_bytes.len), .little);
+        try out.writeInt(u32, @intCast(map_vlq.len), .little);
 
         const string_payload_start_location = @sizeOf(u32) +
             @sizeOf(u32) +
-            @sizeOf(u32) +
-            map_bytes.len +
-            @sizeOf(bun.StringPointer) * sources_content.items.len * 2; // path + source
+            @sizeOf(bun.StringPointer) * sources_content.items.len * 2 + // path + source
+            map_vlq.len;
 
         for (sources_paths.items.slice()) |item| {
             if (item.data != .e_string)
@@ -1036,6 +1062,8 @@ pub const StandaloneModuleGraph = struct {
             try out.writeInt(u32, slice.length, .little);
         }
 
-        try out.writeAll(map_bytes);
+        try out.writeAll(map_vlq);
+
+        bun.assert(header_list.items.len == string_payload_start_location);
     }
 };

@@ -272,7 +272,7 @@ pub const Mapping = struct {
 
             const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
 
-            if (source_map.standalone_module_graph_len > 0) {
+            if (source_map.is_standalone_module_graph) {
                 return bun.String.createUTF8(bun.path.joinAbs("/", .auto, name));
             }
 
@@ -303,25 +303,16 @@ pub const Mapping = struct {
 
                 const index = lookup.mapping.source_index;
 
-                if (source_map.standalone_module_graph_len > 0) {
-                    // Standalone module graph source maps are stored (in memory) compressed.
-                    // They are decompressed on demand.
+                // Standalone module graph source maps are stored (in memory) compressed.
+                // They are decompressed on demand.
+                if (source_map.is_standalone_module_graph) {
                     const serialized = source_map.standaloneModuleGraphData();
-                    const compressed_codes = serialized.compressedSourceFiles();
                     if (index >= source_map.external_source_names.len)
                         return null;
-                    const compressed_file = compressed_codes[@intCast(index)].slice(serialized.bytes);
-                    const size = bun.zstd.getDecompressedSize(compressed_file);
-                    const bytes = bun.default_allocator.alloc(u8, size) catch
-                        return null;
-                    const result = bun.zstd.decompress(bytes, compressed_file);
 
-                    if (result == .err) {
-                        bun.Output.warn("Source map decompression error: {s}", .{result.err});
-                    }
+                    const code = serialized.sourceFileContents(@intCast(index));
 
-                    // this relies on the fact that mimalloc does not take .len into account free
-                    return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes[0..result.success]);
+                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code);
                 }
 
                 if (provider.getSourceMap(
@@ -651,9 +642,7 @@ pub const ParsedSourceMap = struct {
 
     ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
-    /// If this is non-zero, this parsed source map is within the standalone module
-    /// graph, and you can read out source code chunks using map.standaloneModuleGraphData()
-    standalone_module_graph_len: u32 = 0,
+    is_standalone_module_graph: bool = false,
 
     pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
 
@@ -690,10 +679,9 @@ pub const ParsedSourceMap = struct {
         this.destroy();
     }
 
-    fn standaloneModuleGraphData(this: *ParsedSourceMap) bun.StandaloneModuleGraph.SerializedSourceMap {
-        bun.assert(this.standalone_module_graph_len > 0);
-        const ptr: [*]const u8 = @ptrFromInt(this.underlying_provider.data);
-        return .{ .bytes = @alignCast(ptr[0..this.standalone_module_graph_len]) };
+    fn standaloneModuleGraphData(this: *ParsedSourceMap) *bun.StandaloneModuleGraph.SerializedSourceMap.Loaded {
+        bun.assert(this.is_standalone_module_graph);
+        return @ptrFromInt(this.underlying_provider.data);
     }
 
     pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {

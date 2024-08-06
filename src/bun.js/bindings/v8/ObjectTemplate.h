@@ -8,11 +8,9 @@
 #include "v8/FunctionTemplate.h"
 #include "v8/MaybeLocal.h"
 #include "v8/Object.h"
+#include "v8/Template.h"
 
 namespace v8 {
-
-// matches V8 class hierarchy
-class Template : public Data {};
 
 class ObjectTemplate : public Template, public JSC::InternalFunction {
 public:
@@ -73,8 +71,6 @@ private:
         ASSERT(this == static_cast<const Data*>(this));
         return localToObjectPointer()->__internals;
     }
-
-    static JSC_HOST_CALL_ATTRIBUTES JSC::EncodedJSValue DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame);
 
     ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)
         : JSC::InternalFunction(vm, structure, DummyCallback, DummyCallback)

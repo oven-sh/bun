@@ -15,17 +15,23 @@ public:
     }
 
     Local(TaggedPointer* slot)
-        : location(reinterpret_cast<T*>(slot))
+        : location(slot)
     {
     }
 
     bool IsEmpty() const { return location == nullptr; }
 
-    T* operator*() const { return location; }
-    T* operator->() const { return location; }
+    T* operator*() const { return reinterpret_cast<T*>(location); }
+    T* operator->() const { return reinterpret_cast<T*>(location); }
+
+    template<class U>
+    Local<U> reinterpret() const
+    {
+        return Local<U>(location);
+    }
 
 private:
-    T* location;
+    TaggedPointer* location;
 };
 
 }

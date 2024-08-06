@@ -75,6 +75,8 @@ public:
         JSCell* object;
     };
 
+    friend class EscapableHandleScopeBase;
+
 private:
     // TODO make resizable
     static constexpr int capacity = 64;

@@ -35,6 +35,7 @@ public:
         return m_ObjectTemplateStructure.getInitializedOnMainThread(globalObject);
     }
 
+    // seems we may not need this as each ObjectTemplate creates a structure for its instances
     // JSC::Structure* internalFieldObjectStructure(JSC::JSGlobalObject* globalObject) const
     // {
     //     return m_InternalFieldObjectStructure.getInitializedOnMainThread(globalObject);
@@ -43,6 +44,16 @@ public:
     JSC::Structure* handleScopeBufferStructure(JSC::JSGlobalObject* globalObject) const
     {
         return m_HandleScopeBufferStructure.getInitializedOnMainThread(globalObject);
+    }
+
+    JSC::Structure* functionTemplateStructure(JSC::JSGlobalObject* globalObject) const
+    {
+        return m_FunctionTemplateStructure.getInitializedOnMainThread(globalObject);
+    }
+
+    JSC::Structure* v8FunctionStructure(JSC::JSGlobalObject* globalObject) const
+    {
+        return m_V8FunctionStructure.getInitializedOnMainThread(globalObject);
     }
 
     HandleScope* currentHandleScope() const { return m_CurrentHandleScope; }
@@ -56,6 +67,8 @@ private:
     JSC::LazyClassStructure m_ObjectTemplateStructure;
     JSC::LazyClassStructure m_InternalFieldObjectStructure;
     JSC::LazyClassStructure m_HandleScopeBufferStructure;
+    JSC::LazyClassStructure m_FunctionTemplateStructure;
+    JSC::LazyClassStructure m_V8FunctionStructure;
     HandleScope* m_CurrentHandleScope;
 
     void finishCreation(JSC::VM& vm);

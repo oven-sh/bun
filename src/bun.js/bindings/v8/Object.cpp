@@ -84,7 +84,7 @@ Local<Data> Object::SlowGetInternalField(int index)
                 return handleScope->createLocal<Data>(field.data.js_value.asCell());
             } else {
                 auto localNumber = handleScope->createLocalSmi(field.data.js_value.asInt32());
-                return *reinterpret_cast<Local<Data>*>(&localNumber);
+                return localNumber.reinterpret<Data>();
             }
         }
     }

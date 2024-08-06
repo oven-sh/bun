@@ -914,6 +914,8 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForInternalFieldObject;
     std::unique_ptr<IsoSubspace> m_subspaceForV8GlobalInternals;
     std::unique_ptr<IsoSubspace> m_subspaceForHandleScopeBuffer;
+    std::unique_ptr<IsoSubspace> m_subspaceForFunctionTemplate;
+    std::unique_ptr<IsoSubspace> m_subspaceForV8Function;
 };
 } // namespace WebCore
 

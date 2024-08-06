@@ -28,7 +28,9 @@ public:
         return Local<Number>(handle);
     }
 
-private:
+    friend class EscapableHandleScopeBase;
+
+protected:
     // must be 24 bytes to match V8 layout
     Isolate* isolate;
     HandleScope* prev;

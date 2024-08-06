@@ -103,10 +103,4 @@ Structure* ObjectTemplate::createStructure(JSC::VM& vm, JSGlobalObject* globalOb
         info());
 }
 
-JSC::EncodedJSValue ObjectTemplate::DummyCallback(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
-{
-    ASSERT_NOT_REACHED();
-    return JSC::JSValue::encode(JSC::jsUndefined());
-}
-
 }

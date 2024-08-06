@@ -220,6 +220,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
                 specifier,
                 std.math.maxInt(u64),
             ) catch "";
+            defer bun.default_allocator.free(source_file);
 
             var bufw = std.io.bufferedWriter(file.writer());
             const w = bufw.writer();

@@ -18095,6 +18095,8 @@ fn NewParser_(
                     return p.classCanBeRemovedIfUnused(ex);
                 },
                 .e_identifier => |ex| {
+                    bun.assert(!ex.ref.isSourceContentsSlice()); // was not visited
+
                     if (ex.must_keep_due_to_with_stmt) {
                         return false;
                     }
@@ -20308,11 +20310,11 @@ fn NewParser_(
                                     ) catch bun.outOfMemory();
                                 },
                                 else => {
-                                    if (enum_value.knownPrimitive() == .string) {
+                                    if (visited.knownPrimitive() == .string) {
                                         has_string_value = true;
                                     }
 
-                                    if (!p.exprCanBeRemovedIfUnused(&enum_value)) {
+                                    if (!p.exprCanBeRemovedIfUnused(&visited)) {
                                         all_values_are_pure = false;
                                     }
                                 },

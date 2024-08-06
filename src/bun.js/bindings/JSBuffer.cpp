@@ -2283,6 +2283,20 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
         return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
+    } else if (distinguishingArg.isDouble()) {
+        double lengthDouble = distinguishingArg.toIntegerWithTruncation(lexicalGlobalObject);
+        size_t length = static_cast<size_t>(lengthDouble);
+
+        if (UNLIKELY(length < 0 || length > 9007199254740991)) {
+            throwNodeRangeError(lexicalGlobalObject, throwScope, "Buffer size must be 0...9007199254740991"_s);
+            return {};
+        }
+        return JSBuffer__bufferFromLength(lexicalGlobalObject, length);
+    } else if (distinguishingArg.isUndefinedOrNull()) {
+        auto arg_string = distinguishingArg.toWTFString(globalObject);
+        auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received "_s, arg_string);
+        throwTypeError(lexicalGlobalObject, throwScope, message);
+        return {};
     } else if (distinguishingArg.isCell()) {
         auto type = distinguishingArg.asCell()->type();
 
@@ -2400,8 +2414,14 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
 
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
         }
-        default: {
+        case ArrayType:
             break;
+        default: {
+            auto arg_string = distinguishingArg.toWTFString(globalObject);
+            RETURN_IF_EXCEPTION(throwScope, {});
+            auto message = makeString("The first argument must be of type string or an instance of Buffer, ArrayBuffer, or Array or an Array-like Object. Received "_s, arg_string);
+            throwTypeError(lexicalGlobalObject, throwScope, message);
+            return {};
         }
         }
     }

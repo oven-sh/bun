@@ -2755,3 +2755,39 @@ it("new Buffer.from()", () => {
   const buf = new Buffer.from("🥶");
   expect(buf.length).toBe(4);
 });
+
+describe("fuzzing constructors with new", () => {
+  const zeroArray = new Uint32Array(10).fill(0);
+  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz")];
+  const allocators = [Buffer, SlowBuffer, Buffer.alloc, Buffer.allocUnsafe, Buffer.allocUnsafeSlow];
+  for (const allocator of allocators) {
+    for (const size of sizes) {
+      it(`${allocator.name}(${String(size)})`, () => {
+        try {
+          // Some of these allocations are known to fail. If they do, Uint32Array should still produce a zeroed out result.
+          new allocator(size);
+        } catch {
+          expect(zeroArray).toEqual(new Uint32Array(10));
+        }
+      });
+    }
+  }
+});
+
+describe("fuzzing constructors with call", () => {
+  const zeroArray = new Uint32Array(10).fill(0);
+  const sizes = [1e20, 0, 0.1, -1, "a", undefined, null, NaN, 5n, Symbol("xyz")];
+  const allocators = [Buffer, SlowBuffer, Buffer.alloc, Buffer.allocUnsafe, Buffer.allocUnsafeSlow];
+  for (const allocator of allocators) {
+    for (const size of sizes) {
+      it(`${allocator.name}(${String(size)})`, () => {
+        try {
+          // Some of these allocations are known to fail. If they do, Uint32Array should still produce a zeroed out result.
+          allocator(size);
+        } catch {
+          expect(zeroArray).toEqual(new Uint32Array(10));
+        }
+      });
+    }
+  }
+});

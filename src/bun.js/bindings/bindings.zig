@@ -3187,25 +3187,6 @@ pub const JSGlobalObject = opaque {
         return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
     }
 
-    pub const Extern = [_][]const u8{
-        "reload",
-        "bunVM",
-        "putCachedObject",
-        "getCachedObject",
-        "createAggregateError",
-
-        "deleteModuleRegistryEntry",
-
-        "vm",
-        "generateHeapSnapshot",
-        "startRemoteInspector",
-        "handleRejectedPromises",
-        "createSyntheticModule_",
-        "queueMicrotaskJob",
-        // "createError",
-        // "throwError",
-    };
-
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 };
 

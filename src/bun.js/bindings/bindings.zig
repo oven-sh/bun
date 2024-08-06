@@ -3240,6 +3240,12 @@ pub const JSGlobalObject = extern struct {
         return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
     }
 
+    extern fn Bun__ERR_INVALID_ARG_TYPE_static(*JSGlobalObject, *const ZigString, *const ZigString, JSValue) JSValue;
+    /// Caller asserts 'arg_name' and 'etype' are utf-8 literals.
+    pub fn ERR_INVALID_ARG_TYPE_static(this: *JSGlobalObject, arg_name: *const ZigString, etype: *const ZigString, atype: JSValue) JSValue {
+        return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
+    }
+
     extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
     pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
         return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);

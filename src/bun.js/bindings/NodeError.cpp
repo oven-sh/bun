@@ -17,6 +17,7 @@ JSC::EncodedJSValue JSC__JSValue__createTypeError(const ZigString* message, cons
 JSC::EncodedJSValue JSC__JSValue__createRangeError(const ZigString* message, const ZigString* arg1, JSC::JSGlobalObject* globalObject);
 
 extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue val_arg_name, JSC::EncodedJSValue val_expected_type, JSC::EncodedJSValue val_actual_value);
+extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value);
 extern "C" JSC::EncodedJSValue Bun__ERR_MISSING_ARGS(JSC::JSGlobalObject* globalObject, JSC::EncodedJSValue arg1, JSC::EncodedJSValue arg2, JSC::EncodedJSValue arg3);
 extern "C" JSC::EncodedJSValue Bun__ERR_IPC_CHANNEL_CLOSED(JSC::JSGlobalObject* globalObject);
 
@@ -112,6 +113,20 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE(JSC::JSGlobalObject* gl
 
     auto expected_type = JSValue::decode(val_expected_type).toWTFString(globalObject);
     RETURN_IF_EXCEPTION(scope, {});
+
+    auto actual_value = JSValueToStringSafe(globalObject, JSValue::decode(val_actual_value));
+    RETURN_IF_EXCEPTION(scope, {});
+
+    auto message = makeString("The \""_s, arg_name, "\" argument must be of type "_s, expected_type, ". Received "_s, actual_value);
+    return JSC::JSValue::encode(createTypeErrorWithCode(globalObject, message, "ERR_INVALID_ARG_TYPE"_s));
+}
+extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObject* globalObject, const ZigString* val_arg_name, const ZigString* val_expected_type, JSC::EncodedJSValue val_actual_value)
+{
+    JSC::VM& vm = globalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+    auto arg_name = std::span<const unsigned char>(val_arg_name->ptr, val_arg_name->len);
+    auto expected_type = std::span<const unsigned char>(val_expected_type->ptr, val_expected_type->len);
 
     auto actual_value = JSValueToStringSafe(globalObject, JSValue::decode(val_actual_value));
     RETURN_IF_EXCEPTION(scope, {});

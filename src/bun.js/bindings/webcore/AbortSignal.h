@@ -79,6 +79,7 @@ public:
     bool aborted() const { return m_aborted; }
     const JSValueInWrappedObject& reason() const { return m_reason; }
     JSValue jsReason(JSC::JSGlobalObject& globalObject);
+    CommonAbortReason commonReason() const { return m_commonReason; }
 
     void cleanNativeBindings(void* ref);
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }

@@ -2073,6 +2073,35 @@ pub const AbortSignal = extern opaque {
         return cppFn("abortReason", .{this});
     }
 
+    extern fn WebCore__AbortSignal__reasonIfAborted(*AbortSignal, *JSC.JSGlobalObject, *u8) JSValue;
+
+    pub const AbortReason = union(enum) {
+        CommonAbortReason: CommonAbortReason,
+        JSValue: JSValue,
+
+        pub fn toBodyValueError(this: AbortReason, globalObject: *JSC.JSGlobalObject) JSC.WebCore.Body.Value.ValueError {
+            return switch (this) {
+                .CommonAbortReason => |reason| .{ .AbortReason = reason },
+                .JSValue => |value| .{ .JSValue = JSC.Strong.create(value, globalObject) },
+            };
+        }
+    };
+
+    pub fn reasonIfAborted(this: *AbortSignal, global: *JSC.JSGlobalObject) ?AbortReason {
+        var reason: u8 = 0;
+        const js_reason = WebCore__AbortSignal__reasonIfAborted(this, global, &reason);
+        if (reason > 0) {
+            bun.debugAssert(js_reason == .undefined);
+            return AbortReason{ .CommonAbortReason = @enumFromInt(reason) };
+        }
+
+        if (js_reason == .zero) {
+            return null;
+        }
+
+        return AbortReason{ .JSValue = js_reason };
+    }
+
     pub fn ref(
         this: *AbortSignal,
     ) *AbortSignal {
@@ -2087,7 +2116,7 @@ pub const AbortSignal = extern opaque {
 
     pub fn detach(this: *AbortSignal, ctx: ?*anyopaque) void {
         this.cleanNativeBindings(ctx);
-        _ = this.unref();
+        this.unref();
     }
 
     pub fn fromJS(value: JSValue) ?*AbortSignal {

@@ -248,6 +248,8 @@ pub const Mapping = struct {
     original: LineColumnOffset,
     source_index: i32,
 
+    pub const List = bun.MultiArrayList(Mapping);
+
     pub const Lookup = struct {
         mapping: Mapping,
         source_map: ?*ParsedSourceMap = null,
@@ -355,8 +357,6 @@ pub const Mapping = struct {
             return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
         }
     };
-
-    pub const List = std.MultiArrayList(Mapping);
 
     pub inline fn generatedLine(mapping: Mapping) i32 {
         return mapping.generated.lines;
@@ -1981,6 +1981,7 @@ pub fn serializeJsonSourceMapForStandalone(
     json_source: []const u8,
 ) !void {
     const SerializedSourceMap = bun.StandaloneModuleGraph.SerializedSourceMap;
+    _ = SerializedSourceMap; // autofix
 
     const out = header_list.writer();
     const json_src = bun.logger.Source.initPathString("sourcemap.json", json_source);
@@ -2028,7 +2029,7 @@ pub fn serializeJsonSourceMapForStandalone(
 
     try map_data.mappings.setCapacity(arena, map_data.mappings.len);
     const map_data_slice = map_data.mappings.slice();
-    const map_bytes = multiArrayListAllocatedBytes(Mapping, map_data.mappings);
+    const map_bytes = map_data.mappings.allocatedBytes();
 
     try out.writeInt(u32, sources_paths.items.len, .little);
     try out.writeInt(u32, @intCast(map_data_slice.len), .little);
@@ -2038,7 +2039,7 @@ pub fn serializeJsonSourceMapForStandalone(
         @sizeOf(u32) +
         @sizeOf(u32) +
         map_bytes.len +
-        @sizeOf(SerializedSourceMap.ByteSlice) * sources_content.items.len * 2; // path + source
+        @sizeOf(bun.StringPointer) * sources_content.items.len * 2; // path + source
 
     for (sources_paths.items.slice()) |item| {
         if (item.data != .e_string)
@@ -2051,12 +2052,12 @@ pub fn serializeJsonSourceMapForStandalone(
         bun.strings.toUTF8AppendToList(string_payload, utf16_decode) catch
             return error.InvalidSourceMap;
 
-        const slice = SerializedSourceMap.ByteSlice{
+        const slice = bun.StringPointer{
             .offset = @intCast(offset + string_payload_start_location),
-            .len = @intCast(string_payload.items.len - offset),
+            .length = @intCast(string_payload.items.len - offset),
         };
         try out.writeInt(u32, slice.offset, .little);
-        try out.writeInt(u32, slice.len, .little);
+        try out.writeInt(u32, slice.length, .little);
     }
 
     for (sources_content.items.slice()) |item| {
@@ -2081,49 +2082,13 @@ pub fn serializeJsonSourceMapForStandalone(
         }
         string_payload.items.len += compressed_result.success;
 
-        const slice = SerializedSourceMap.ByteSlice{
+        const slice = bun.StringPointer{
             .offset = @intCast(offset + string_payload_start_location),
-            .len = @intCast(string_payload.items.len - offset),
+            .length = @intCast(string_payload.items.len - offset),
         };
         try out.writeInt(u32, slice.offset, .little);
-        try out.writeInt(u32, slice.len, .little);
+        try out.writeInt(u32, slice.length, .little);
     }
 
     try out.writeAll(map_bytes);
-}
-
-/// This is taken and modified from the zig standard library as it is private.
-pub fn multiArrayListAllocatedBytes(comptime T: type, self: std.MultiArrayList(T)) []align(@alignOf(T)) u8 {
-    const bytes_per = comptime brk: {
-        const fields = std.meta.fields(T);
-        const Data = struct {
-            size: usize,
-            size_index: usize,
-            alignment: usize,
-        };
-        var data: [fields.len]Data = undefined;
-        for (fields, 0..) |field_info, i| {
-            data[i] = .{
-                .size = @sizeOf(field_info.type),
-                .size_index = i,
-                .alignment = if (@sizeOf(field_info.type) == 0) 1 else field_info.alignment,
-            };
-        }
-        const Sort = struct {
-            fn lessThan(context: void, lhs: Data, rhs: Data) bool {
-                _ = context;
-                return lhs.alignment > rhs.alignment;
-            }
-        };
-        std.mem.sort(Data, &data, {}, Sort.lessThan);
-        var sizes_bytes: [fields.len]usize = undefined;
-        for (data, 0..) |elem, i| {
-            sizes_bytes[i] = elem.size;
-        }
-
-        var elem_bytes: usize = 0;
-        for (sizes_bytes) |size| elem_bytes += size;
-        break :brk elem_bytes;
-    };
-    return self.bytes[0 .. bytes_per * self.capacity];
 }

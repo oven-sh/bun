@@ -2,6 +2,8 @@
 
 #include "v8/Object.h"
 #include "v8/FunctionTemplate.h"
+#include "v8/Local.h"
+#include "v8/String.h"
 
 namespace v8 {
 
@@ -29,11 +31,19 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForV8Function = std::forward<decltype(space)>(space); });
     }
 
+    BUN_EXPORT void SetName(Local<String> name);
+
+    FunctionTemplate* functionTemplate() const
+    {
+        return __internals.functionTemplate.get();
+    }
+
 private:
     class Internals {
     private:
         JSC::WriteBarrier<FunctionTemplate> functionTemplate;
         friend class Function;
+        friend class FunctionTemplate;
     };
 
     Internals __internals;

@@ -55,4 +55,10 @@ void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
     __internals.functionTemplate.set(vm, this, functionTemplate);
 }
 
+void Function::SetName(Local<String> name)
+{
+    auto* thisObj = localToObjectPointer();
+    thisObj->m_originalName.set(Isolate::GetCurrent()->vm(), thisObj, name->localToJSString());
+}
+
 }

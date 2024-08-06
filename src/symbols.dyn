@@ -182,4 +182,5 @@
     _node_module_register;
     __ZN3JSC9CallFrame13describeFrameEv;
     __ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm;
+    __ZN2v88Function7SetNameENS_5LocalINS_6StringEEE;
 };

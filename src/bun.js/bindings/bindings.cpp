@@ -5499,6 +5499,20 @@ extern "C" WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSign
     return arg0;
 }
 
+extern "C" JSC__JSValue WebCore__AbortSignal__reasonIfAborted(WebCore::AbortSignal* signal, JSC::JSGlobalObject* globalObject, CommonAbortReason* reason)
+{
+    if (signal->aborted()) {
+        *reason = signal->commonReason();
+        if (signal->commonReason() != WebCore::CommonAbortReason::None) {
+            return JSValue::encode(jsUndefined());
+        }
+
+        return JSValue::encode(signal->jsReason(*globalObject));
+    }
+
+    return JSValue::encode({});
+}
+
 extern "C" bool WebCore__AbortSignal__aborted(WebCore__AbortSignal* arg0)
 {
     WebCore::AbortSignal* abortSignal = reinterpret_cast<WebCore::AbortSignal*>(arg0);

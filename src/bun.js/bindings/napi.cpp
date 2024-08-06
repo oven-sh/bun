@@ -752,7 +752,8 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     PROPERTY_NAME_FROM_UTF8(name);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    *result = !!target->getIfPropertyExists(globalObject, name);
+    PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
+    *result = target->getPropertySlot(globalObject, name, slot);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();

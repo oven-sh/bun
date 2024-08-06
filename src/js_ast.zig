@@ -2524,7 +2524,7 @@ pub const E = struct {
             if (s.isUTF8()) {
                 return JSC.ZigString.fromUTF8(s.slice(allocator));
             } else {
-                return JSC.ZigString.init16(s.slice16());
+                return JSC.ZigString.initUTF16(s.slice16());
             }
         }
 

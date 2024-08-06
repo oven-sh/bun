@@ -4226,7 +4226,7 @@ pub const Blob = struct {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-                const result = ZigString.init16(external).toJSONObject(global);
+                const result = ZigString.initUTF16(external).toJSONObject(global);
                 allocator.free(external);
                 return result;
             }

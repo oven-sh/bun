@@ -146,6 +146,7 @@
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "ErrorCode.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -348,7 +349,8 @@ static JSValue formatStackTraceToJSValue(JSC::VM& vm, Zig::GlobalObject* globalO
 
 WTF::String Bun::formatStackTrace(
     JSC::VM& vm,
-    JSC::JSGlobalObject* globalObject,
+    Zig::GlobalObject* globalObject,
+    JSC::JSGlobalObject* lexicalGlobalObject,
     const WTF::String& name,
     const WTF::String& message,
     OrdinalNumber& line,
@@ -461,7 +463,7 @@ WTF::String Bun::formatStackTrace(
                         if (callee->isObject()) {
                             JSValue functionNameValue = callee->getObject()->getDirect(vm, vm.propertyNames->name);
                             if (functionNameValue && functionNameValue.isString()) {
-                                functionName = functionNameValue.toWTFString(globalObject);
+                                functionName = functionNameValue.toWTFString(lexicalGlobalObject);
                             }
                         }
                     }
@@ -495,8 +497,31 @@ WTF::String Bun::formatStackTrace(
 
             String sourceURLForFrame = frame.sourceURL(vm);
 
+            // Sometimes, the sourceURL is empty.
+            // For example, pages in Next.js.
+            if (sourceURLForFrame.isEmpty()) {
+                // hasLineAndColumnInfo() checks codeBlock(), so this is safe to access here.
+                const auto& source = frame.codeBlock()->source();
+
+                // source.isNull() is true when the SourceProvider is a null pointer.
+                if (!source.isNull()) {
+                    auto* provider = source.provider();
+                    // I'm not 100% sure we should show sourceURLDirective here.
+                    if (!provider->sourceURLDirective().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURLDirective();
+                    } else if (!provider->sourceURL().isEmpty()) {
+                        sourceURLForFrame = provider->sourceURL();
+                    } else {
+                        const auto& origin = provider->sourceOrigin();
+                        if (!origin.isNull()) {
+                            sourceURLForFrame = origin.string();
+                        }
+                    }
+                }
+            }
+
             // If it's not a Zig::GlobalObject, don't bother source-mapping it.
-            if (globalObject) {
+            if (globalObject == lexicalGlobalObject && globalObject) {
                 // https://github.com/oven-sh/bun/issues/3595
                 if (!sourceURLForFrame.isEmpty()) {
                     remappedFrame.source_url = Bun::toStringRef(sourceURLForFrame);
@@ -545,6 +570,7 @@ WTF::String Bun::formatStackTrace(
 static String computeErrorInfoWithoutPrepareStackTrace(
     JSC::VM& vm,
     Zig::GlobalObject* globalObject,
+    JSC::JSGlobalObject* lexicalGlobalObject,
     Vector<StackFrame>& stackTrace,
     OrdinalNumber& line,
     OrdinalNumber& column,
@@ -558,7 +584,9 @@ static String computeErrorInfoWithoutPrepareStackTrace(
     if (errorInstance) {
         // Note that we are not allowed to allocate memory in here. It's called inside a finalizer.
         if (auto* instance = jsDynamicCast<ErrorInstance*>(errorInstance)) {
-            auto* lexicalGlobalObject = errorInstance->globalObject();
+            if (!lexicalGlobalObject) {
+                lexicalGlobalObject = errorInstance->globalObject();
+            }
             name = instance->sanitizedNameString(lexicalGlobalObject);
             message = instance->sanitizedMessageString(lexicalGlobalObject);
         }
@@ -568,7 +596,7 @@ static String computeErrorInfoWithoutPrepareStackTrace(
         globalObject = Bun__getDefaultGlobalObject();
     }
 
-    return Bun::formatStackTrace(vm, globalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
+    return Bun::formatStackTrace(vm, globalObject, lexicalGlobalObject, name, message, line, column, sourceURL, stackTrace, errorInstance);
 }
 
 static String computeErrorInfoWithPrepareStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, Vector<StackFrame>& stackFrames, OrdinalNumber& line, OrdinalNumber& column, String& sourceURL, JSObject* errorObject, JSObject* prepareStackTrace)
@@ -636,9 +664,10 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, Ordi
     }
 
     Zig::GlobalObject* globalObject = nullptr;
+    JSC::JSGlobalObject* lexicalGlobalObject = nullptr;
 
     if (errorInstance) {
-        auto* lexicalGlobalObject = errorInstance->globalObject();
+        lexicalGlobalObject = errorInstance->globalObject();
         globalObject = jsDynamicCast<Zig::GlobalObject*>(lexicalGlobalObject);
 
         // Error.prepareStackTrace - https://v8.dev/docs/stack-trace-api#customizing-stack-traces
@@ -661,7 +690,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, Ordi
         }
     }
 
-    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, stackTrace, line, column, sourceURL, errorInstance);
+    return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
 }
 
 // TODO: @paperdave: remove this wrapper and make the WTF::Function from JavaScriptCore expeect OrdinalNumber instead of unsigned.
@@ -2695,6 +2724,15 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
         });
 
+    m_nodeErrorCache.initLater(
+        [](const Initializer<JSObject>& init) {
+            auto* structure = ErrorCodeCache::createStructure(
+                init.vm,
+                init.owner);
+
+            init.set(ErrorCodeCache::create(init.vm, structure));
+        });
+
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             JSC::MarkedArgumentBuffer args;
@@ -3552,6 +3590,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
+
+    thisObject->m_nodeErrorCache.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

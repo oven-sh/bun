@@ -1021,7 +1021,10 @@ pub export fn NodeModuleModule__findPath(
     const found = if (paths_maybe) |paths| found: {
         var iter = paths.iterator(global);
         while (iter.next()) |path| {
-            const cur_path = bun.String.tryFromJS(path, global) orelse continue;
+            const cur_path = bun.String.tryFromJS(path, global) orelse {
+                if (global.hasException()) return .zero;
+                continue;
+            };
             defer cur_path.deref();
 
             if (findPathInner(request_bun_str, cur_path, global)) |found| {

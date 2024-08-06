@@ -291,6 +291,15 @@ extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)
     return BunString__fromUTF8(bytes, length);
 }
 
+extern "C" BunString BunString__createStaticExternal(const char* bytes, size_t length, bool isLatin1)
+{
+    Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const LChar*>(bytes), length }) :
+
+                                                 WTF::ExternalStringImpl::createStatic({ reinterpret_cast<const UChar*>(bytes), length });
+
+    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+}
+
 extern "C" BunString BunString__createExternal(const char* bytes, size_t length, bool isLatin1, void* ctx, void (*callback)(void* arg0, void* arg1, size_t arg2))
 {
     Ref<WTF::ExternalStringImpl> impl = isLatin1 ? WTF::ExternalStringImpl::create({ reinterpret_cast<const LChar*>(bytes), length }, ctx, callback) :

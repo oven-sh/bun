@@ -658,12 +658,7 @@ pub const TextDecoder = struct {
                     inline else => |fail_if_invalid| strings.toUTF16AllocMaybeBuffered(bun.default_allocator, input, fail_if_invalid, flush) catch |err| {
                         if (comptime fail_if_invalid) {
                             if (err == error.InvalidByteSequence) {
-                                const type_error = globalThis.createTypeErrorInstanceWithCode(
-                                    .ERR_ENCODING_INVALID_ENCODED_DATA,
-                                    "Invalid byte sequence",
-                                    .{},
-                                );
-                                globalThis.throwValue(type_error);
+                                globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
                                 return .zero;
                             }
                         }
@@ -704,12 +699,7 @@ pub const TextDecoder = struct {
 
                 if (saw_error and this.fatal) {
                     decoded.deinit(bun.default_allocator);
-                    const type_error = globalThis.createTypeErrorInstanceWithCode(
-                        .ERR_ENCODING_INVALID_ENCODED_DATA,
-                        "The encoded data was not valid {s} data",
-                        .{@tagName(utf16_encoding)},
-                    );
-                    globalThis.throwValue(type_error);
+                    globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("The encoded data was not valid {s} data", .{@tagName(utf16_encoding)}).throw();
                     return .zero;
                 }
 

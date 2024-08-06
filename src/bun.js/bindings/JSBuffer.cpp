@@ -2283,7 +2283,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
     if (distinguishingArg.isAnyInt()) {
         throwScope.release();
         return JSBuffer__bufferFromLength(lexicalGlobalObject, distinguishingArg.asAnyInt());
-    } else if (distinguishingArg.isDouble()) {
+    } else if (distinguishingArg.isNumber()) {
         double lengthDouble = distinguishingArg.toIntegerWithTruncation(lexicalGlobalObject);
         size_t length = static_cast<size_t>(lengthDouble);
 

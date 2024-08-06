@@ -927,12 +927,14 @@ pub const StandaloneModuleGraph = struct {
             map: SerializedSourceMap,
 
             /// Only decompress source code once! Once a file is decompressed,
-            /// it is stored here
+            /// it is stored here. Decompression failures are stored as an empty
+            /// string, which will be treated as "no contents".
             decompressed_files: []?[]u8,
 
-            pub fn sourceFileContents(this: Loaded, index: usize) []const u8 {
-                if (this.decompressed_files[index]) |decompressed|
-                    return decompressed;
+            pub fn sourceFileContents(this: Loaded, index: usize) ?[]const u8 {
+                if (this.decompressed_files[index]) |decompressed| {
+                    return if (decompressed.len == 0) null else decompressed;
+                }
 
                 const compressed_codes = this.map.compressedSourceFiles();
                 const compressed_file = compressed_codes[@intCast(index)].slice(this.map.bytes);
@@ -945,16 +947,11 @@ pub const StandaloneModuleGraph = struct {
                     bun.Output.warn("Source map decompression error: {s}", .{result.err});
                     bun.default_allocator.free(bytes);
                     this.decompressed_files[index] = "";
-                    return "";
+                    return null;
                 }
 
                 const data = bytes[0..result.success];
-                if (data.len != bytes.len) {
-                    _ = bun.default_allocator.resize(bytes, data.len);
-                }
-
                 this.decompressed_files[index] = data;
-
                 return data;
             }
         };

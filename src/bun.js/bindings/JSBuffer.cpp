@@ -2415,6 +2415,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
             RELEASE_AND_RETURN(throwScope, JSC::JSValue::encode(uint8Array));
         }
         case ArrayType:
+        case DerivedArrayType:
             break;
         default: {
             auto arg_string = distinguishingArg.toWTFString(globalObject);

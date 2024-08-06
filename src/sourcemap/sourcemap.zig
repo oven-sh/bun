@@ -53,7 +53,7 @@ pub const ParseUrlResultHint = union(enum) {
 
 pub const ParseUrl = struct {
     /// Populated when `mappings_only` or `all`.
-    map: ?*Mapping.ParsedSourceMap = null,
+    map: ?*ParsedSourceMap = null,
     /// Populated when `all`
     /// May be `null` even when requested.
     mapping: ?Mapping = null,
@@ -199,7 +199,7 @@ pub fn parseJSON(
             .fail => |fail| return fail.err,
         };
 
-        const ptr = Mapping.ParsedSourceMap.new(map_data);
+        const ptr = ParsedSourceMap.new(map_data);
         ptr.external_source_names = source_paths_slice.?;
         break :map ptr;
     } else null;
@@ -248,6 +248,8 @@ pub const Mapping = struct {
     original: LineColumnOffset,
     source_index: i32,
 
+    pub const List = bun.MultiArrayList(Mapping);
+
     pub const Lookup = struct {
         mapping: Mapping,
         source_map: ?*ParsedSourceMap = null,
@@ -256,7 +258,10 @@ pub const Mapping = struct {
         prefetched_source_code: ?[]const u8,
 
         /// This creates a bun.String if the source remap *changes* the source url,
-        /// a case that happens only when the source map points to another file.
+        /// which is only possible if the executed file differs from the source file:
+        ///
+        /// - `bun build --sourcemap`, it is another file on disk
+        /// - `bun build --compile --sourcemap`, it is an embedded file.
         pub fn displaySourceURLIfNeeded(lookup: Lookup, base_filename: []const u8) ?bun.String {
             const source_map = lookup.source_map orelse return null;
             // See doc comment on `external_source_names`
@@ -266,6 +271,10 @@ pub const Mapping = struct {
                 return null;
 
             const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
+
+            if (source_map.is_standalone_module_graph) {
+                return bun.String.createUTF8(name);
+            }
 
             if (std.fs.path.isAbsolute(base_filename)) {
                 const dir = bun.path.dirname(base_filename, .auto);
@@ -277,6 +286,9 @@ pub const Mapping = struct {
 
         /// Only valid if `lookup.source_map.isExternal()`
         /// This has the possibility of invoking a call to the filesystem.
+        ///
+        /// This data is freed after printed on the assumption that printing
+        /// errors to the console are rare (this isnt used for error.stack)
         pub fn getSourceCode(lookup: Lookup, base_filename: []const u8) ?bun.JSC.ZigString.Slice {
             const bytes = bytes: {
                 if (lookup.prefetched_source_code) |code| {
@@ -290,6 +302,18 @@ pub const Mapping = struct {
                     return null;
 
                 const index = lookup.mapping.source_index;
+
+                // Standalone module graph source maps are stored (in memory) compressed.
+                // They are decompressed on demand.
+                if (source_map.is_standalone_module_graph) {
+                    const serialized = source_map.standaloneModuleGraphData();
+                    if (index >= source_map.external_source_names.len)
+                        return null;
+
+                    const code = serialized.sourceFileContents(@intCast(index));
+
+                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
+                }
 
                 if (provider.getSourceMap(
                     base_filename,
@@ -324,8 +348,6 @@ pub const Mapping = struct {
             return bun.JSC.ZigString.Slice.init(bun.default_allocator, bytes);
         }
     };
-
-    pub const List = std.MultiArrayList(Mapping);
 
     pub inline fn generatedLine(mapping: Mapping) i32 {
         return mapping.generated.lines;
@@ -578,122 +600,129 @@ pub const Mapping = struct {
             },
         };
     }
+};
 
-    pub const ParseResult = union(enum) {
-        fail: struct {
-            loc: Logger.Loc,
-            err: anyerror,
-            value: i32 = 0,
-            msg: []const u8 = "",
+pub const ParseResult = union(enum) {
+    fail: struct {
+        loc: Logger.Loc,
+        err: anyerror,
+        value: i32 = 0,
+        msg: []const u8 = "",
 
-            pub fn toData(this: @This(), path: []const u8) Logger.Data {
-                return Logger.Data{
-                    .location = Logger.Location{
-                        .file = path,
-                        .offset = this.loc.toUsize(),
-                    },
-                    .text = this.msg,
-                };
-            }
-        },
-        success: ParsedSourceMap,
-    };
+        pub fn toData(this: @This(), path: []const u8) Logger.Data {
+            return Logger.Data{
+                .location = Logger.Location{
+                    .file = path,
+                    .offset = this.loc.toUsize(),
+                },
+                .text = this.msg,
+            };
+        }
+    },
+    success: ParsedSourceMap,
+};
 
-    pub const ParsedSourceMap = struct {
-        input_line_count: usize = 0,
-        mappings: Mapping.List = .{},
-        /// If this is empty, this implies that the source code is a single file
-        /// transpiled on-demand. If there are items, then it means this is a file
-        /// loaded without transpilation but with external sources. This array
-        /// maps `source_index` to the correct filename.
-        external_source_names: []const []const u8 = &.{},
-        /// In order to load source contents from a source-map after the fact,
-        // / a handle to the underlying source provider is stored. Within this pointer,
-        /// a flag is stored if it is known to be an inline or external source map.
-        ///
-        /// Source contents are large, we don't preserve them in memory. This has
-        /// the downside of repeatedly re-decoding sourcemaps if multiple errors
-        /// are emitted (specifically with Bun.inspect / unhandled; the ones that
-        /// rely on source contents)
-        underlying_provider: SourceContentPtr = .{ .data = 0 },
+pub const ParsedSourceMap = struct {
+    input_line_count: usize = 0,
+    mappings: Mapping.List = .{},
+    /// If this is empty, this implies that the source code is a single file
+    /// transpiled on-demand. If there are items, then it means this is a file
+    /// loaded without transpilation but with external sources. This array
+    /// maps `source_index` to the correct filename.
+    external_source_names: []const []const u8 = &.{},
+    /// In order to load source contents from a source-map after the fact,
+    // / a handle to the underlying source provider is stored. Within this pointer,
+    /// a flag is stored if it is known to be an inline or external source map.
+    ///
+    /// Source contents are large, we don't preserve them in memory. This has
+    /// the downside of repeatedly re-decoding sourcemaps if multiple errors
+    /// are emitted (specifically with Bun.inspect / unhandled; the ones that
+    /// rely on source contents)
+    underlying_provider: SourceContentPtr = .{ .data = 0 },
 
-        ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
+    ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
-        pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
+    is_standalone_module_graph: bool = false,
 
-        const SourceContentPtr = packed struct(u64) {
-            load_hint: SourceMapLoadHint = .none,
-            data: u62,
+    pub usingnamespace bun.NewThreadSafeRefCounted(ParsedSourceMap, deinitFn);
 
-            fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
-                return .{ .data = @intCast(@intFromPtr(p)) };
-            }
+    const SourceContentPtr = packed struct(u64) {
+        load_hint: SourceMapLoadHint = .none,
+        data: u62,
 
-            pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
-                return @ptrFromInt(sc.data);
-            }
-        };
-
-        pub fn isExternal(psm: *ParsedSourceMap) bool {
-            return psm.external_source_names.len != 0;
+        fn fromProvider(p: *SourceProviderMap) SourceContentPtr {
+            return .{ .data = @intCast(@intFromPtr(p)) };
         }
 
-        fn deinitFn(this: *ParsedSourceMap) void {
-            this.deinitWithAllocator(bun.default_allocator);
-        }
-
-        fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
-            this.mappings.deinit(allocator);
-
-            if (this.external_source_names.len > 0) {
-                for (this.external_source_names) |name|
-                    allocator.free(name);
-                allocator.free(this.external_source_names);
-            }
-
-            this.destroy();
-        }
-
-        pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
-            var last_col: i32 = 0;
-            var last_src: i32 = 0;
-            var last_ol: i32 = 0;
-            var last_oc: i32 = 0;
-            var current_line: i32 = 0;
-            for (
-                map.mappings.items(.generated),
-                map.mappings.items(.original),
-                map.mappings.items(.source_index),
-                0..,
-            ) |gen, orig, source_index, i| {
-                if (current_line != gen.lines) {
-                    assert(gen.lines > current_line);
-                    const inc = gen.lines - current_line;
-                    try writer.writeByteNTimes(';', @intCast(inc));
-                    current_line = gen.lines;
-                    last_col = 0;
-                } else if (i != 0) {
-                    try writer.writeByte(',');
-                }
-                try encodeVLQ(gen.columns - last_col).writeTo(writer);
-                last_col = gen.columns;
-                try encodeVLQ(source_index - last_src).writeTo(writer);
-                last_src = source_index;
-                try encodeVLQ(orig.lines - last_ol).writeTo(writer);
-                last_ol = orig.lines;
-                try encodeVLQ(orig.columns - last_oc).writeTo(writer);
-                last_oc = orig.columns;
-            }
-        }
-
-        pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
-            return .{ .data = map };
-        }
-
-        fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
-            try map.writeVLQs(w);
+        pub fn provider(sc: SourceContentPtr) ?*SourceProviderMap {
+            return @ptrFromInt(sc.data);
         }
     };
+
+    pub fn isExternal(psm: *ParsedSourceMap) bool {
+        return psm.external_source_names.len != 0;
+    }
+
+    fn deinitFn(this: *ParsedSourceMap) void {
+        this.deinitWithAllocator(bun.default_allocator);
+    }
+
+    fn deinitWithAllocator(this: *ParsedSourceMap, allocator: std.mem.Allocator) void {
+        this.mappings.deinit(allocator);
+
+        if (this.external_source_names.len > 0) {
+            for (this.external_source_names) |name|
+                allocator.free(name);
+            allocator.free(this.external_source_names);
+        }
+
+        this.destroy();
+    }
+
+    fn standaloneModuleGraphData(this: *ParsedSourceMap) *bun.StandaloneModuleGraph.SerializedSourceMap.Loaded {
+        bun.assert(this.is_standalone_module_graph);
+        return @ptrFromInt(this.underlying_provider.data);
+    }
+
+    pub fn writeVLQs(map: ParsedSourceMap, writer: anytype) !void {
+        var last_col: i32 = 0;
+        var last_src: i32 = 0;
+        var last_ol: i32 = 0;
+        var last_oc: i32 = 0;
+        var current_line: i32 = 0;
+        for (
+            map.mappings.items(.generated),
+            map.mappings.items(.original),
+            map.mappings.items(.source_index),
+            0..,
+        ) |gen, orig, source_index, i| {
+            if (current_line != gen.lines) {
+                assert(gen.lines > current_line);
+                const inc = gen.lines - current_line;
+                try writer.writeByteNTimes(';', @intCast(inc));
+                current_line = gen.lines;
+                last_col = 0;
+            } else if (i != 0) {
+                try writer.writeByte(',');
+            }
+            try encodeVLQ(gen.columns - last_col).writeTo(writer);
+            last_col = gen.columns;
+            try encodeVLQ(source_index - last_src).writeTo(writer);
+            last_src = source_index;
+            try encodeVLQ(orig.lines - last_ol).writeTo(writer);
+            last_ol = orig.lines;
+            try encodeVLQ(orig.columns - last_oc).writeTo(writer);
+            last_oc = orig.columns;
+        }
+    }
+
+    pub fn formatVLQs(map: *const ParsedSourceMap) std.fmt.Formatter(formatVLQsImpl) {
+        return .{ .data = map };
+    }
+
+    fn formatVLQsImpl(map: *const ParsedSourceMap, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) !void {
+        try map.writeVLQs(w);
+    }
 };
 
 /// For some sourcemap loading code, this enum is used as a hint if it should
@@ -826,7 +855,7 @@ pub const SourceProviderMap = opaque {
             return null;
         };
         if (parsed.map) |ptr| {
-            ptr.underlying_provider = Mapping.ParsedSourceMap.SourceContentPtr.fromProvider(provider);
+            ptr.underlying_provider = ParsedSourceMap.SourceContentPtr.fromProvider(provider);
             ptr.underlying_provider.load_hint = new_load_hint;
         }
         return parsed;
@@ -1930,3 +1959,5 @@ pub const DebugIDFormatter = struct {
 };
 
 const assert = bun.assert;
+
+pub usingnamespace @import("./CodeCoverage.zig");

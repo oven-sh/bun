@@ -104,6 +104,17 @@ pub fn append(this: *StringBuilder, slice: string) string {
     return result;
 }
 
+pub fn addConcat(this: *StringBuilder, slices: []const string) bun.StringPointer {
+    var remain = this.allocatedSlice()[this.len..];
+    var len: usize = 0;
+    for (slices) |slice| {
+        @memcpy(remain[0..slice.len], slice);
+        remain = remain[slice.len..];
+        len += slice.len;
+    }
+    return this.add(len);
+}
+
 pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything

@@ -6,6 +6,8 @@ namespace v8 {
 
 class InternalFieldObject : public JSC::JSDestructibleObject {
 public:
+    using Base = JSC::JSDestructibleObject;
+
     DECLARE_INFO;
 
     struct InternalField {
@@ -54,7 +56,7 @@ public:
 
 protected:
     InternalFieldObject(JSC::VM& vm, JSC::Structure* structure, int internalFieldCount)
-        : JSC::JSDestructibleObject(vm, structure)
+        : Base(vm, structure)
         , fields(internalFieldCount)
     {
     }

@@ -14,6 +14,8 @@ namespace v8 {
 
 class ObjectTemplate : public Template, public JSC::InternalFunction {
 public:
+    using Base = JSC::InternalFunction;
+
     DECLARE_INFO;
 
     BUN_EXPORT static Local<ObjectTemplate> New(Isolate* isolate, Local<FunctionTemplate> constructor = Local<FunctionTemplate>());
@@ -73,7 +75,7 @@ private:
     }
 
     ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)
-        : JSC::InternalFunction(vm, structure, DummyCallback, DummyCallback)
+        : Base(vm, structure, DummyCallback, DummyCallback)
     {
     }
 

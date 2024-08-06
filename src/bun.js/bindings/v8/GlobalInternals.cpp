@@ -35,9 +35,6 @@ void GlobalInternals::finishCreation(VM& vm)
     m_ObjectTemplateStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(ObjectTemplate::createStructure(init.vm, init.global, init.global->functionPrototype()));
     });
-    m_InternalFieldObjectStructure.initLater([](LazyClassStructure::Initializer& init) {
-        init.setStructure(InternalFieldObject::createStructure(init.vm, init.global, init.global->objectPrototype()));
-    });
     m_HandleScopeBufferStructure.initLater([](LazyClassStructure::Initializer& init) {
         init.setStructure(HandleScopeBuffer::createStructure(init.vm, init.global));
     });
@@ -57,7 +54,9 @@ void GlobalInternals::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     thisObject->m_ObjectTemplateStructure.visit(visitor);
-    thisObject->m_InternalFieldObjectStructure.visit(visitor);
+    thisObject->m_HandleScopeBufferStructure.visit(visitor);
+    thisObject->m_FunctionTemplateStructure.visit(visitor);
+    thisObject->m_V8FunctionStructure.visit(visitor);
 }
 
 DEFINE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE, GlobalInternals);

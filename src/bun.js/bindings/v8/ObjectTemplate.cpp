@@ -15,7 +15,7 @@ namespace v8 {
 
 void ObjectTemplate::finishCreation(JSC::VM& vm)
 {
-    JSC::InternalFunction::finishCreation(vm);
+    Base::finishCreation(vm);
     __internals.objectStructure.initLater([](const LazyProperty<ObjectTemplate, Structure>::Initializer& init) {
         init.set(JSC::Structure::create(
             init.vm,
@@ -31,7 +31,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 const JSC::ClassInfo ObjectTemplate::s_info = {
     "ObjectTemplate"_s,
-    &JSC::InternalFunction::s_info,
+    &Base::s_info,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(ObjectTemplate)
@@ -76,7 +76,7 @@ void ObjectTemplate::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 {
     ObjectTemplate* fn = jsCast<ObjectTemplate*>(cell);
     ASSERT_GC_OBJECT_INHERITS(fn, info());
-    JSC::InternalFunction::visitChildren(fn, visitor);
+    Base::visitChildren(fn, visitor);
 
     fn->__internals.objectStructure.visit(visitor);
 }

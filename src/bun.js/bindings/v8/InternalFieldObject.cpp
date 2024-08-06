@@ -7,7 +7,7 @@ namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
 const JSC::ClassInfo InternalFieldObject::s_info = {
     "InternalFieldObject"_s,
-    &JSC::JSDestructibleObject::s_info,
+    &Base::s_info,
     nullptr,
     nullptr,
     CREATE_METHOD_TABLE(InternalFieldObject)

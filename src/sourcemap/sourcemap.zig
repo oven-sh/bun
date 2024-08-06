@@ -312,7 +312,7 @@ pub const Mapping = struct {
 
                     const code = serialized.sourceFileContents(@intCast(index));
 
-                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code);
+                    return bun.JSC.ZigString.Slice.fromUTF8NeverFree(code orelse return null);
                 }
 
                 if (provider.getSourceMap(

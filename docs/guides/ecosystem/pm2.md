@@ -6,10 +6,10 @@ name: Run Bun as a daemon with PM2
 
 It offers features like process monitoring, automatic restarts, and easy scaling. Using a process manager is common when deploying a Bun application on a cloud-hosted virtual private server (VPS), as it:
 
-- Keeps your Node.js application running continuously.
-- Ensure high availability and reliability of your application.
-- Monitor and manage multiple processes with ease.
-- Simplify the deployment process.
+- Keeps your Bun application running continuously.
+- Ensures high availability and reliability of your application.
+- Allows monitoring and management of multiple processes with ease.
+- Simplifies the deployment process.
 
 ---
 

@@ -76,7 +76,6 @@
   SubtleCrypto                    SubtleCryptoConstructorCallback                      PropertyCallback
   TextEncoder                     TextEncoderConstructorCallback                       PropertyCallback
   TextEncoderStream               TextEncoderStreamConstructorCallback                 PropertyCallback
-  TextEncoderStreamEncoder        TextEncoderStreamEncoderConstructorCallback          PropertyCallback
   TextDecoderStream               TextDecoderStreamConstructorCallback                 PropertyCallback
   TransformStream                 TransformStreamConstructorCallback                   PropertyCallback
   TransformStreamDefaultController TransformStreamDefaultControllerConstructorCallback PropertyCallback

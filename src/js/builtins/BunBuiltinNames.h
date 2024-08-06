@@ -224,6 +224,7 @@ using namespace JSC;
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
+    macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
     macro(toNamespacedPath) \
     macro(trace) \

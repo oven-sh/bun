@@ -55,7 +55,7 @@ export function initializeTextEncoderStream() {
 
   const transform = $createTransformStream(startAlgorithm, transformAlgorithm, flushAlgorithm);
   $putByIdDirectPrivate(this, "textEncoderStreamTransform", transform);
-  $putByIdDirectPrivate(this, "textEncoderStreamEncoder", new TextEncoderStreamEncoder());
+  $putByIdDirectPrivate(this, "textEncoderStreamEncoder", new $TextEncoderStreamEncoder());
 
   return this;
 }

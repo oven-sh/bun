@@ -4356,6 +4356,11 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
+        if (this.isClosed() and !publish_to_self) {
+            // We can't access the socket context on a closed socket.
+            return JSValue.jsNumber(0);
+        }
+
         if (message_value.asArrayBuffer(globalThis)) |array_buffer| {
             const buffer = array_buffer.slice();
 
@@ -4438,6 +4443,11 @@ pub const ServerWebSocket = struct {
             return .zero;
         }
 
+        if (this.isClosed() and !publish_to_self) {
+            // Can't publish on a closed socket.
+            return JSValue.jsNumber(0);
+        }
+
         var string_slice = message_value.toSlice(globalThis, bun.default_allocator);
         defer string_slice.deinit();
 
@@ -4503,6 +4513,12 @@ pub const ServerWebSocket = struct {
             globalThis.throw("publishBinary requires a non-empty message", .{});
             return .zero;
         }
+
+        if (this.isClosed() and !publish_to_self) {
+            // Can't publish on a closed socket.
+            return JSValue.jsNumber(0);
+        }
+
         const array_buffer = message_value.asArrayBuffer(globalThis) orelse {
             globalThis.throw("publishBinary expects an ArrayBufferView", .{});
             return .zero;
@@ -4549,6 +4565,11 @@ pub const ServerWebSocket = struct {
             return JSC.JSValue.jsNumber(0);
         }
 
+        if (this.isClosed() and !publish_to_self) {
+            // We can't access the socket context on a closed socket.
+            return JSValue.jsNumber(0);
+        }
+
         const result = if (!publish_to_self)
             this.websocket().publish(topic_slice.slice(), buffer, .binary, compress)
         else
@@ -4591,6 +4612,12 @@ pub const ServerWebSocket = struct {
         if (buffer.len == 0) {
             return JSC.JSValue.jsNumber(0);
         }
+
+        if (this.isClosed() and !publish_to_self) {
+            // We can't access the socket context on a closed socket.
+            return JSValue.jsNumber(0);
+        }
+
         const result = if (!publish_to_self)
             this.websocket().publish(topic_slice.slice(), buffer, .text, compress)
         else

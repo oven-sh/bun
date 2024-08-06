@@ -4079,7 +4079,7 @@ static void populateStackFrameMetadata(JSC::VM& vm, const JSC::StackFrame* stack
 
 static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunString* source_lines,
     OrdinalNumber* source_line_numbers, uint8_t source_lines_count,
-    ZigStackFramePosition* position, JSC::SourceProvider** referenced_source_provider)
+    ZigStackFramePosition* position)
 {
     auto code = stackFrame->codeBlock();
     if (!code)
@@ -4107,76 +4107,98 @@ static void populateStackFramePosition(const JSC::StackFrame* stackFrame, BunStr
 
     auto location = Bun::getAdjustedPositionForBytecode(code, stackFrame->bytecodeIndex());
     *position = location;
+}
 
-    if (source_lines_count > 1 && source_lines != nullptr && sourceString.is8Bit()) {
-        // Search for the beginning of the line
-        unsigned int lineStart = location.byte_position;
-        while (lineStart > 0 && sourceString[lineStart] != '\n') {
-            lineStart--;
+JSC::SourceProvider* Bun__getSourceCodeViewFromErrorInstance(
+    JSValue exceptionValue,
+    BunString* source_lines,
+    int32_t* source_line_numbers,
+    uint8_t source_lines_count
+) {
+    JSC::ErrorInstance* error = nullptr;
+
+    if (JSC::ErrorInstance* e = JSC::jsDynamicCast<JSC::ErrorInstance*>(exceptionValue)) {
+        error = e;
+    } else if (JSC::Exception* jscException = JSC::jsDynamicCast<JSC::Exception*>(exceptionValue)) {
+        if (JSC::ErrorInstance* e = JSC::jsDynamicCast<JSC::ErrorInstance*>(jscException->value())) {
+            error = e;
         }
+    } 
 
-        // Search for the end of the line
-        unsigned int lineEnd = location.byte_position;
-        unsigned int maxSearch = sourceString.length();
-        while (lineEnd < maxSearch && sourceString[lineEnd] != '\n') {
-            lineEnd++;
-        }
+    if (!error) return nullptr;
 
-        const unsigned char* bytes = sourceString.span8().data();
+    JSC::StackFrame& frame = error->stackTrace()->first();
+    JSC::SourceProvider* provider = frame.codeBlock()->source().provider();
+    WTF::StringView view = provider->source();;
 
-        // Most of the time, when you look at a stack trace, you want a couple lines above.
+    if(!view.is8Bit()) return nullptr;
 
-        // It is key to not clone this data because source code strings are large.
-        // Usage of toStringView (non-owning) is safe as we ref the provider.
-        provider->ref();
-        ASSERT(*referenced_source_provider == nullptr);
-        *referenced_source_provider = provider;
-        source_lines[0] = Bun::toStringView(sourceString.substring(lineStart, lineEnd - lineStart));
-        source_line_numbers[0] = location.line();
+    if (source_lines_count <= 1 || source_lines == nullptr) return nullptr;
 
-        if (lineStart > 0) {
-            auto byte_offset_in_source_string = lineStart - 1;
-            uint8_t source_line_i = 1;
-            auto remaining_lines_to_grab = source_lines_count - 1;
+    auto location = Bun::getAdjustedPositionForBytecode(frame.codeBlock(), frame.bytecodeIndex());
 
-            {
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
+    // It is key to not clone this data because source code strings are large.
+    // Usage of toStringView (non-owning) is safe as we ref the provider.
+    provider->ref();
 
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
+    // Search for the beginning of the line
+    unsigned int lineStart = location.byte_position;
+    while (lineStart > 0 && view[lineStart] != '\n') {
+        lineStart--;
+    }
+
+    // Search for the end of the line
+    unsigned int lineEnd = location.byte_position;
+    unsigned int maxSearch = view.length();
+    while (lineEnd < maxSearch && view[lineEnd] != '\n') {
+        lineEnd++;
+    }
+
+    const unsigned char* bytes = view.span8().data();
+
+    // Most of the time, when you look at a stack trace, you want a couple lines above.
+    source_lines[0] = Bun::toStringView(view.substring(lineStart, lineEnd - lineStart));
+    int line = location.line().oneBasedInt();
+    source_line_numbers[0] = line;
+
+    if (lineStart > 0) {
+        auto byte_offset_in_source_string = lineStart - 1;
+        uint8_t source_line_i = 1;
+        auto remaining_lines_to_grab = source_lines_count - 1;
+
+
+        while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
+            --line;
+
+            unsigned int end_of_line_offset = byte_offset_in_source_string;
+
+            // This should probably be code points instead of newlines
+            while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
+                byte_offset_in_source_string--;
             }
 
-            while (byte_offset_in_source_string > 0 && remaining_lines_to_grab > 0) {
-                unsigned int end_of_line_offset = byte_offset_in_source_string;
+            // We are at the beginning of the line
+            source_lines[source_line_i] = Bun::toStringView(view.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
 
-                // This should probably be code points instead of newlines
-                while (byte_offset_in_source_string > 0 && bytes[byte_offset_in_source_string] != '\n') {
-                    byte_offset_in_source_string--;
-                }
+            source_line_numbers[source_line_i] = line;
+            source_line_i++;
 
-                // We are at the beginning of the line
-                source_lines[source_line_i] = Bun::toStringView(sourceString.substring(byte_offset_in_source_string, end_of_line_offset - byte_offset_in_source_string + 1));
+            remaining_lines_to_grab--;
 
-                source_line_numbers[source_line_i] = location.line().fromZeroBasedInt(location.line().zeroBasedInt() - source_line_i);
-                source_line_i++;
-
-                remaining_lines_to_grab--;
-
-                byte_offset_in_source_string -= byte_offset_in_source_string > 0;
-            }
+            byte_offset_in_source_string -= byte_offset_in_source_string > 0;
         }
     }
+
+    return provider;
 }
 
 static void populateStackFrame(JSC::VM& vm, ZigStackTrace* trace, const JSC::StackFrame* stackFrame,
-    ZigStackFrame* frame, bool is_top, JSC::SourceProvider** referenced_source_provider)
+    ZigStackFrame* frame, bool is_top)
 {
     populateStackFrameMetadata(vm, stackFrame, frame);
     populateStackFramePosition(stackFrame, is_top ? trace->source_lines_ptr : nullptr,
         is_top ? trace->source_lines_numbers : nullptr,
-        is_top ? trace->source_lines_to_collect : 0, &frame->position, referenced_source_provider);
+        is_top ? trace->source_lines_to_collect : 0, &frame->position);
 }
 
 class V8StackTraceIterator {
@@ -4362,7 +4384,7 @@ static void populateStackTrace(JSC::VM& vm, const WTF::Vector<JSC::StackFrame>& 
             break;
 
         ZigStackFrame* frame = &trace->frames_ptr[frame_i];
-        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0, &trace->referenced_source_provider);
+        populateStackFrame(vm, trace, &frames[stack_frame_i], frame, frame_i == 0);
         stack_frame_i++;
         frame_i++;
     }

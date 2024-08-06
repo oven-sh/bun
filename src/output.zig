@@ -701,7 +701,7 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "yellow", ED ++ "33m" },
 });
 const RESET: string = "\x1b[0m";
-pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
+pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
     if (comptime bun.fast_debug_build_mode)
         return fmt;
 
@@ -779,8 +779,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         }
     };
 
-    const fmt_data = comptime new_fmt[0..new_fmt_i].*;
-    return &fmt_data;
+    return comptime (new_fmt[0..new_fmt_i].* ++ .{0})[0..new_fmt_i :0];
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {

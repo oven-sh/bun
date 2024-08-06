@@ -660,7 +660,7 @@ pub const DrainResult = union(enum) {
 
 pub const StreamResult = union(Tag) {
     pending: *Pending,
-    err: union(Err) { Error: Syscall.Error, JSValue: JSC.JSValue },
+    err: StreamError,
     done: void,
     owned: bun.ByteList,
     owned_and_done: bun.ByteList,
@@ -682,9 +682,32 @@ pub const StreamResult = union(Tag) {
         }
     }
 
-    pub const Err = enum {
-        Error,
-        JSValue,
+    pub const StreamError = union(enum) {
+        Error: Syscall.Error,
+        AbortReason: JSC.CommonAbortReason,
+
+        // TODO: use an explicit JSC.Strong here.
+        JSValue: JSC.JSValue,
+        WeakJSValue: JSC.JSValue,
+
+        const WasStrong = enum {
+            Strong,
+            Weak,
+        };
+
+        pub fn toJSWeak(this: *const @This(), globalObject: *JSC.JSGlobalObject) struct { JSC.JSValue, WasStrong } {
+            return switch (this.*) {
+                .Error => |err| {
+                    return .{ err.toJSC(globalObject), WasStrong.Weak };
+                },
+                .JSValue => .{ this.JSValue, WasStrong.Strong },
+                .WeakJSValue => .{ this.WeakJSValue, WasStrong.Weak },
+                .AbortReason => |reason| {
+                    const value = reason.toJS(globalObject);
+                    return .{ value, WasStrong.Weak };
+                },
+            };
+        }
     };
 
     pub const Tag = enum {
@@ -943,13 +966,12 @@ pub const StreamResult = union(Tag) {
         defer loop.exit();
 
         switch (result.*) {
-            .err => |err| {
+            .err => |*err| {
                 const value = brk: {
-                    if (err == .Error) break :brk err.Error.toJSC(globalThis);
-
-                    const js_err = err.JSValue;
+                    const js_err, const was_strong = err.toJSWeak(globalThis);
                     js_err.ensureStillAlive();
-                    js_err.unprotect();
+                    if (was_strong == .Strong)
+                        js_err.unprotect();
 
                     break :brk js_err;
                 };
@@ -1010,12 +1032,11 @@ pub const StreamResult = union(Tag) {
             },
 
             .err => |err| {
-                if (err == .Error) {
-                    return JSC.JSPromise.rejectedPromise(globalThis, JSValue.c(err.Error.toJS(globalThis))).asValue(globalThis);
+                const js_err, const was_strong = err.toJSWeak(globalThis);
+                if (was_strong == .Strong) {
+                    js_err.unprotect();
                 }
-                const js_err = err.JSValue;
                 js_err.ensureStillAlive();
-                js_err.unprotect();
                 return JSC.JSPromise.rejectedPromise(globalThis, js_err).asValue(globalThis);
             },
 
@@ -1637,7 +1658,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 };
                 const err = JSC.SystemError{
                     .message = bun.String.static(Static.message),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_ILLEGAL_CONSTRUCTOR))),
+                    .code = bun.String.static(@tagName(.ERR_ILLEGAL_CONSTRUCTOR)),
                 };
                 globalThis.throwValue(err.toErrorInstance(globalThis));
                 return .undefined;
@@ -1690,7 +1711,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
         }
 
         fn invalidThis(globalThis: *JSGlobalObject) JSValue {
-            const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
+            const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Sink", .{}, globalThis);
             globalThis.vm().throwError(globalThis, err);
             return .undefined;
         }
@@ -1716,7 +1737,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (args.len == 0) {
                 globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_MISSING_ARGS,
+                    .ERR_MISSING_ARGS,
                     "write() expects a string, ArrayBufferView, or ArrayBuffer",
                     .{},
                     globalThis,
@@ -1730,7 +1751,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (arg.isEmptyOrUndefinedOrNull()) {
                 globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_STREAM_NULL_VALUES,
+                    .ERR_STREAM_NULL_VALUES,
                     "write() expects a string, ArrayBufferView, or ArrayBuffer",
                     .{},
                     globalThis,
@@ -1749,7 +1770,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 
             if (!arg.isString()) {
                 globalThis.vm().throwError(globalThis, JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                    .ERR_INVALID_ARG_TYPE,
                     "write() expects a string, ArrayBufferView, or ArrayBuffer",
                     .{},
                     globalThis,
@@ -1785,7 +1806,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             const args = args_list.ptr[0..args_list.len];
             if (args.len == 0 or !args[0].isString()) {
                 const err = JSC.toTypeError(
-                    if (args.len == 0) JSC.Node.ErrorCode.ERR_MISSING_ARGS else JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                    if (args.len == 0) .ERR_MISSING_ARGS else .ERR_INVALID_ARG_TYPE,
                     "writeUTF8() expects a string",
                     .{},
                     globalThis,
@@ -1974,7 +1995,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
 //             JSC.markBinding(@src());
 
 //             var this = @ptrCast(*ThisSocket, @alignCast( fromJS(globalThis, callframe.this()) orelse {
-//                 const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
+//                 const err = JSC.toTypeError(.ERR_INVALID_THIS, "Expected Socket", .{}, globalThis);
 //                 globalThis.vm().throwError(globalThis, err);
 //                 return .undefined;
 //             }));
@@ -4332,13 +4353,9 @@ pub const ByteStream = struct {
 
                 if (to_copy.len == 0) {
                     if (stream == .err) {
-                        if (stream.err == .Error) {
-                            this.pending.result = .{ .err = .{ .Error = stream.err.Error } };
-                        }
-                        const js_err = stream.err.JSValue;
-                        js_err.ensureStillAlive();
-                        js_err.protect();
-                        this.pending.result = .{ .err = .{ .JSValue = js_err } };
+                        this.pending.result = .{
+                            .err = stream.err,
+                        };
                     } else {
                         this.pending.result = .{
                             .done = {},

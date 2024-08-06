@@ -2377,6 +2377,21 @@ fn NewPrinter(
                         }
                     }
                 },
+                .e_module_dot_exports => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                        if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
+                        p.print(".exports");
+                    } else {
+                        p.printSymbol(p.options.commonjs_named_exports_ref);
+                    }
+                },
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2385,6 +2400,7 @@ fn NewPrinter(
                         if (value.loc_ref.ref.?.eql(id.ref)) {
                             if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
                                 if (p.options.commonjs_module_exports_assigned_deoptimized and
+                                    id.base == .module_dot_exports and
                                     p.options.commonjs_module_ref.isValid())
                                 {
                                     p.printSymbol(p.options.commonjs_module_ref);

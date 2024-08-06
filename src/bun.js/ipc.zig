@@ -87,7 +87,7 @@ const advanced = struct {
 
         log("Received IPC message type {d} ({s}) len {d}", .{
             @intFromEnum(message_type),
-            std.enums.tagName(IPCMessageType, message_type) orelse "unknown",
+            bun.tagName(IPCMessageType, message_type) orelse "unknown",
             message_len,
         });
 

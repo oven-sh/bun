@@ -170,7 +170,7 @@ fn dumpSourceStringFailiable(vm: *VirtualMachine, specifier: string, written: []
 
     const BunDebugHolder = struct {
         pub var dir: ?std.fs.Dir = null;
-        pub var lock: bun.Lock = bun.Lock.init();
+        pub var lock: bun.Lock = .{};
     };
 
     BunDebugHolder.lock.lock();
@@ -1779,7 +1779,7 @@ pub const ModuleLoader = struct {
                         .allocator = null,
                         .source_code = switch (comptime flags) {
                             .print_source_and_clone => bun.String.init(jsc_vm.allocator.dupe(u8, parse_result.source.contents) catch unreachable),
-                            .print_source => bun.String.static(parse_result.source.contents),
+                            .print_source => bun.String.init(parse_result.source.contents),
                             else => @compileError("unreachable"),
                         },
                         .specifier = input_specifier,
@@ -2533,7 +2533,7 @@ pub const ModuleLoader = struct {
         } else if (jsc_vm.standalone_module_graph) |graph| {
             const specifier_utf8 = specifier.toUTF8(bun.default_allocator);
             defer specifier_utf8.deinit();
-            if (graph.files.get(specifier_utf8.slice())) |file| {
+            if (graph.files.getPtr(specifier_utf8.slice())) |file| {
                 if (file.loader == .sqlite or file.loader == .sqlite_embedded) {
                     const code =
                         \\/* Generated code */
@@ -2546,7 +2546,7 @@ pub const ModuleLoader = struct {
                     ;
                     return ResolvedSource{
                         .allocator = null,
-                        .source_code = bun.String.init(code),
+                        .source_code = bun.String.static(code),
                         .specifier = specifier,
                         .source_url = specifier.dupeRef(),
                         .hash = 0,
@@ -2556,7 +2556,7 @@ pub const ModuleLoader = struct {
 
                 return ResolvedSource{
                     .allocator = null,
-                    .source_code = bun.String.static(file.contents),
+                    .source_code = file.toWTFString(),
                     .specifier = specifier,
                     .source_url = specifier.dupeRef(),
                     .hash = 0,

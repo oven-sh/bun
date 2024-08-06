@@ -107,8 +107,8 @@ pub const kFSEventsSystem: c_int =
     kFSEventStreamEventFlagUnmount |
     kFSEventStreamEventFlagRootChanged;
 
-var fsevents_mutex: Mutex = Mutex.init();
-var fsevents_default_loop_mutex: Mutex = Mutex.init();
+var fsevents_mutex: Mutex = .{};
+var fsevents_default_loop_mutex: Mutex = .{};
 var fsevents_default_loop: ?*FSEventsLoop = null;
 
 fn dlsym(handle: ?*anyopaque, comptime Type: type, comptime symbol: [:0]const u8) ?Type {
@@ -331,7 +331,7 @@ pub const FSEventsLoop = struct {
             return error.FailedToCreateCoreFoudationSourceLoop;
         }
 
-        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = Mutex.init(), .signal_source = signal_source };
+        const fs_loop = FSEventsLoop{ .sem = Semaphore.init(0), .mutex = .{}, .signal_source = signal_source };
 
         this.* = fs_loop;
         this.thread = try std.Thread.spawn(.{}, FSEventsLoop.CFThreadLoop, .{this});

@@ -772,7 +772,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
 
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
-    queued_shutdowns_lock: bun.Lock = bun.Lock.init(),
+    queued_shutdowns_lock: bun.Lock = .{},
 
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
@@ -3313,6 +3313,18 @@ pub const HTTPClientResult = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
+
+    pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
+        if (this.isTimeout()) {
+            return .Timeout;
+        }
+
+        if (this.isAbort()) {
+            return .UserAbort;
+        }
+
+        return null;
+    }
 
     pub const BodySize = union(enum) {
         total_received: usize,

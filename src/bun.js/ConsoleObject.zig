@@ -71,8 +71,8 @@ pub const MessageType = enum(u32) {
     _,
 };
 
-var stderr_mutex: bun.Lock = bun.Lock.init();
-var stdout_mutex: bun.Lock = bun.Lock.init();
+var stderr_mutex: bun.Lock = .{};
+var stdout_mutex: bun.Lock = .{};
 
 threadlocal var stderr_lock_count: u16 = 0;
 threadlocal var stdout_lock_count: u16 = 0;
@@ -1567,7 +1567,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             count: usize = 0,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (single_line and this.count > 0) {
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
@@ -1631,7 +1631,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             is_first: bool = true,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (single_line) {
                     if (!this.is_first) {

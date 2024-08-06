@@ -112,3 +112,5 @@ pub const conv = if (bun.Environment.isWindows and bun.Environment.isX64)
     std.builtin.CallingConvention.SysV
 else
     std.builtin.CallingConvention.C;
+
+pub const Error = @import("ErrorCode").Error;

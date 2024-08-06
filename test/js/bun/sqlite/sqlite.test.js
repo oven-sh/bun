@@ -1261,3 +1261,28 @@ it("reports changes in Statement#run", () => {
   expect(db.prepare(sql).run().changes).toBe(2);
   expect(db.query(sql).run().changes).toBe(2);
 });
+
+it("#13082", async () => {
+  async function run() {
+    const stmt = (() => {
+      const db = new Database(":memory:");
+      let stmt = db.prepare("select 1");
+      db.close();
+      return stmt;
+    })();
+    Bun.gc(true);
+    await Bun.sleep(100);
+    Bun.gc(true);
+    stmt.all();
+    stmt.get();
+    stmt.run();
+  }
+
+  const count = 100;
+  const runs = new Array(count);
+  for (let i = 0; i < count; i++) {
+    runs[i] = run();
+  }
+
+  await Promise.allSettled(runs);
+});

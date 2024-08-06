@@ -1979,7 +1979,8 @@ fn NewSocket(comptime ssl: bool) type {
                     },
                 };
             } else {
-                globalObject.throw("Expected ArrayBufferView, a string, or a Blob", .{});
+                if (!globalObject.hasException())
+                    globalObject.throw("Expected ArrayBufferView, a string, or a Blob", .{});
                 return .{ .fail = {} };
             }
         }

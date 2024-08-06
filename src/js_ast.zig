@@ -1686,8 +1686,23 @@ pub const E = struct {
         was_originally_identifier: bool = false,
     };
 
+    /// This is a dot expression on exports, such as `exports.<ref>`. It is given
+    /// it's own AST node to allow CommonJS unwrapping, in which this can just be
+    /// the identifier in the Ref
     pub const CommonJSExportIdentifier = struct {
         ref: Ref = Ref.None,
+        base: Base = .exports,
+
+        /// The original variant of the dot expression must be known so that in the case that we
+        /// - fail to convert this to ESM
+        /// - ALSO see an assignment to `module.exports` (commonjs_module_exports_assigned_deoptimized)
+        /// It must be known if `exports` or `module.exports` was written in source
+        /// code, as the distinction will alter behavior. The fixup happens in the printer when
+        /// printing this node.
+        pub const Base = enum {
+            exports,
+            module_dot_exports,
+        };
     };
 
     // This is similar to EIdentifier but it represents class-private fields and
@@ -2479,6 +2494,12 @@ pub const E = struct {
             }
         }
 
+        pub fn stringDecodedUTF8(s: *const String, allocator: std.mem.Allocator) !bun.string {
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(try s.string(allocator), allocator);
+            defer allocator.free(utf16_decode);
+            return try bun.strings.toUTF8Alloc(allocator, utf16_decode);
+        }
+
         pub fn hash(s: *const String) u64 {
             if (s.isBlank()) return 0;
 
@@ -2769,8 +2790,7 @@ pub const E = struct {
     pub const RequireResolveString = struct {
         import_record_index: u32 = 0,
 
-        /// TODO:
-        close_paren_loc: logger.Loc = logger.Loc.Empty,
+        // close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const InlinedEnum = struct {
@@ -4263,6 +4283,7 @@ pub const Expr = struct {
                     .data = Data{
                         .e_commonjs_export_identifier = .{
                             .ref = st.ref,
+                            .base = st.base,
                         },
                     },
                 };
@@ -4459,6 +4480,7 @@ pub const Expr = struct {
         e_import_identifier,
         e_private_identifier,
         e_commonjs_export_identifier,
+        e_module_dot_exports,
         e_boolean,
         e_number,
         e_big_int,
@@ -5153,6 +5175,7 @@ pub const Expr = struct {
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
         e_commonjs_export_identifier: E.CommonJSExportIdentifier,
+        e_module_dot_exports,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -5171,11 +5194,16 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
+
         e_import_meta_main: E.ImportMetaMain,
         e_require_main,
 
         e_inlined_enum: *E.InlinedEnum,
         e_utf8_string: *E.UTF8String,
+
+        comptime {
+            bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
+        }
 
         pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
             return if (data == tag) @field(data, @tagName(tag)) else null;

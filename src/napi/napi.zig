@@ -1389,7 +1389,7 @@ pub const ThreadSafeFunction = struct {
     poll_ref: Async.KeepAlive,
 
     thread_count: usize = 0,
-    owning_thread_lock: Lock = Lock.init(),
+    owning_thread_lock: Lock = .{},
     event_loop: *JSC.EventLoop,
     tracker: JSC.AsyncTaskTracker,
 

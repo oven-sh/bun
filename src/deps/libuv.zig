@@ -2847,6 +2847,10 @@ fn StreamMixin(comptime Type: type) type {
             }
             return .{ .result = {} };
         }
+        /// Be aware that this only works with pipes on Windows.
+        pub fn setBlocking(this: *Type, blocking: bool) void {
+            _ = uv_stream_set_blocking(@ptrCast(this), @intFromBool(blocking));
+        }
 
         pub fn readStart(
             this: *Type,

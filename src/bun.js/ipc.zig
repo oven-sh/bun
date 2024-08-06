@@ -559,6 +559,7 @@ const NamedPipeIPCData = struct {
             this.server = null;
             return .{ .err = err };
         }
+        ipc_pipe.setBlocking(false);
         ipc_pipe.data = @ptrCast(instance);
         this.onClose = .{
             .callback = @ptrCast(&NewNamedPipeIPCHandler(Context).onClose),
@@ -585,6 +586,7 @@ const NamedPipeIPCData = struct {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
         };
+        ipc_pipe.setBlocking(false);
         this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
@@ -858,6 +860,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             };
+            client.setBlocking(false);
 
             ipc.writer.startWithPipe(client).unwrap() catch {
                 bun.default_allocator.destroy(client);
@@ -871,7 +874,6 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
-                    std.time.sleep(std.time.ns_per_ms * 10);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                         ipc.close();

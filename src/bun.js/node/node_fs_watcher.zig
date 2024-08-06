@@ -535,7 +535,7 @@ pub const FSWatcher = struct {
                 listener.ensureStillAlive();
                 var args = [_]JSC.JSValue{
                     EventType.@"error".toJS(this.globalThis),
-                    JSC.CommonAbortReason.UserAbort.toJS(this.globalThis),
+                    if (err.isEmptyOrUndefinedOrNull()) JSC.CommonAbortReason.UserAbort.toJS(this.globalThis) else err,
                 };
                 _ = listener.callWithGlobalThis(
                     this.globalThis,

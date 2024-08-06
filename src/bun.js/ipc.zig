@@ -873,7 +873,7 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
-                    std.time.sleep(std.time.ns_per_ms * 10);
+                    _ = uv.uv_run(uv.Loop.get(), uv.RunMode.once);
                     client.setBlocking(false);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {

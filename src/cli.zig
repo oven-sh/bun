@@ -848,6 +848,13 @@ pub const Arguments = struct {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
                 }
+
+                // when using --compile, only `external` works, as we do not
+                // look at the source map comment. so after we validate the
+                // user's choice was in the list, we secretly override it
+                if (ctx.bundler_options.compile) {
+                    opts.source_map = .external;
+                }
             }
         }
 

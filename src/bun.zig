@@ -1530,10 +1530,8 @@ pub const StringJoiner = @import("./StringJoiner.zig");
 pub const NullableAllocator = @import("./NullableAllocator.zig");
 
 pub const renamer = @import("./renamer.zig");
-pub const sourcemap = struct {
-    pub usingnamespace @import("./sourcemap/sourcemap.zig");
-    pub usingnamespace @import("./sourcemap/CodeCoverage.zig");
-};
+// TODO: Rename to SourceMap as this is a struct.
+pub const sourcemap = @import("./sourcemap/sourcemap.zig");
 
 pub fn asByteSlice(buffer: anytype) []const u8 {
     return switch (@TypeOf(buffer)) {
@@ -3263,7 +3261,7 @@ pub fn selfExePath() ![:0]u8 {
             4096 + 1 // + 1 for the null terminator
         ]u8 = undefined;
         var len: usize = 0;
-        var lock = Lock.init();
+        var lock: Lock = .{};
 
         pub fn load() ![:0]u8 {
             const init = try std.fs.selfExePath(&value);

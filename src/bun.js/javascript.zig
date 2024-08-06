@@ -114,7 +114,7 @@ pub const bun_file_import_path = "/node_modules.server.bun";
 export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
-const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 const SourceProviderMap = SourceMap.SourceProviderMap;
 
@@ -123,14 +123,14 @@ const uv = bun.windows.libuv;
 pub const SavedSourceMap = struct {
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
-    mutex: bun.Lock = bun.Lock.init(),
+    mutex: bun.Lock = .{},
 
     pub const vlq_offset = 24;
 
     pub fn init(this: *SavedSourceMap, map: *HashTable) void {
         this.* = .{
             .map = map,
-            .mutex = bun.Lock.init(),
+            .mutex = .{},
         };
 
         this.map.lockPointers();
@@ -340,7 +340,7 @@ pub const SavedSourceMap = struct {
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
-                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
                 this.unlock();
 
                 // Do not lock the mutex while we're parsing JSON!
@@ -369,6 +369,7 @@ pub const SavedSourceMap = struct {
                 if (Environment.allow_assert) {
                     @panic("Corrupt pointer tag");
                 }
+                this.unlock();
                 return .{};
             },
         }
@@ -1529,7 +1530,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1638,7 +1639,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
@@ -1779,7 +1780,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -3042,7 +3043,7 @@ pub const VirtualMachine = struct {
             var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
             defer sourceURL.deinit();
 
-            if (this.source_mappings.resolveMapping(
+            if (this.resolveSourceMapping(
                 sourceURL.slice(),
                 @max(frame.position.line.zeroBased(), 0),
                 @max(frame.position.column.zeroBased(), 0),
@@ -3165,7 +3166,7 @@ pub const VirtualMachine = struct {
                 .prefetched_source_code = null,
             }
         else
-            this.source_mappings.resolveMapping(
+            this.resolveSourceMapping(
                 top_source_url.slice(),
                 @max(top.position.line.zeroBased(), 0),
                 @max(top.position.column.zeroBased(), 0),
@@ -3237,7 +3238,7 @@ pub const VirtualMachine = struct {
                 if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
-                if (this.source_mappings.resolveMapping(
+                if (this.resolveSourceMapping(
                     source_url.slice(),
                     @max(frame.position.line.zeroBased(), 0),
                     @max(frame.position.column.zeroBased(), 0),
@@ -3685,6 +3686,37 @@ pub const VirtualMachine = struct {
         }
 
         writer.print("\n", .{}) catch {};
+    }
+
+    pub fn resolveSourceMapping(
+        this: *VirtualMachine,
+        path: []const u8,
+        line: i32,
+        column: i32,
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
+        return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
+            if (this.standalone_module_graph) |graph| {
+                const file = graph.find(path) orelse return null;
+                const map = file.sourcemap.load() orelse return null;
+
+                map.ref();
+
+                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
+                    bun.outOfMemory();
+
+                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+                    return null;
+
+                return .{
+                    .mapping = mapping,
+                    .source_map = map,
+                    .prefetched_source_code = null,
+                };
+            }
+
+            return null;
+        };
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;

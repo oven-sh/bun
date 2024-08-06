@@ -45,7 +45,7 @@ mime_types: ?bun.http.MimeType.Map = null,
 node_fs_stat_watcher_scheduler: ?*StatWatcherScheduler = null,
 
 listening_sockets_for_watch_mode: std.ArrayListUnmanaged(bun.FileDescriptor) = .{},
-listening_sockets_for_watch_mode_lock: bun.Lock = bun.Lock.init(),
+listening_sockets_for_watch_mode_lock: bun.Lock = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 

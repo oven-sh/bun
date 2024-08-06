@@ -285,7 +285,7 @@ export interface SourceMapTests {
   mappingsExactMatch?: string;
 }
 
-/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more consise */
+/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more concise */
 export type MappingSnapshot = [
   // format a string like "file:line:col", for example
   //    "index.ts:5:2"
@@ -302,6 +302,7 @@ export interface BundlerTestBundleAPI {
   outfile: string;
   outdir: string;
 
+  join(subPath: string): string;
   readFile(file: string): string;
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
@@ -1100,6 +1101,7 @@ for (const [key, blob] of build.outputs) {
       root,
       outfile: outfile!,
       outdir: outdir!,
+      join: (...paths: string[]) => path.join(root, ...paths),
       readFile,
       writeFile,
       expectFile: file => expect(readFile(file)),

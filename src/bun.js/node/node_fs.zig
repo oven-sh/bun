@@ -757,7 +757,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     root_path: PathString = PathString.empty,
 
     pending_err: ?Syscall.Error = null,
-    pending_err_mutex: bun.Lock = bun.Lock.init(),
+    pending_err_mutex: bun.Lock = .{},
 
     pub usingnamespace bun.New(@This());
 

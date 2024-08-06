@@ -329,14 +329,10 @@ pub const StandaloneModuleGraph = struct {
                     source_map_arena.allocator(),
                     output_files[output_file.source_map_index].value.buffer.bytes,
                 );
-                string_builder.ensureNextAligned(@alignOf(u32));
-                var bytes = string_builder.allocatedSlice()[string_builder.len..];
-                @memcpy(bytes[0..source_map_header_list.items.len], source_map_header_list.items);
-                bytes = bytes[source_map_header_list.items.len..];
-                @memcpy(bytes[0..source_map_string_list.items.len], source_map_string_list.items);
-                module.sourcemap = string_builder.add(
-                    source_map_string_list.items.len + source_map_header_list.items.len,
-                );
+                module.sourcemap = string_builder.addConcat(&.{
+                    source_map_header_list.items,
+                    source_map_string_list.items,
+                });
             }
             modules.appendAssumeCapacity(module);
         }
@@ -1016,12 +1012,10 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
-            defer arena.free(utf16_decode);
+            const decoded = try item.data.e_string.stringDecodedUTF8(arena);
 
             const offset = string_payload.items.len;
-            bun.strings.toUTF8AppendToList(string_payload, utf16_decode) catch
-                return error.InvalidSourceMap;
+            try string_payload.appendSlice(decoded);
 
             const slice = bun.StringPointer{
                 .offset = @intCast(offset + string_payload_start_location),
@@ -1035,13 +1029,10 @@ pub const StandaloneModuleGraph = struct {
             if (item.data != .e_string)
                 return error.InvalidSourceMap;
 
-            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(item.data.e_string.string(arena) catch bun.outOfMemory(), arena);
-            defer arena.free(utf16_decode);
+            const utf8 = try item.data.e_string.stringDecodedUTF8(arena);
+            defer arena.free(utf8);
 
             const offset = string_payload.items.len;
-            const utf8 = bun.strings.toUTF8Alloc(arena, utf16_decode) catch
-                return error.InvalidSourceMap;
-            defer arena.free(utf8);
 
             const bound = bun.zstd.compressBound(utf8.len);
             try string_payload.ensureUnusedCapacity(bound);

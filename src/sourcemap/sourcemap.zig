@@ -273,7 +273,7 @@ pub const Mapping = struct {
             const name = source_map.external_source_names[@intCast(lookup.mapping.source_index)];
 
             if (source_map.is_standalone_module_graph) {
-                return bun.String.createUTF8(bun.path.joinAbs("/", .auto, name));
+                return bun.String.createUTF8(name);
             }
 
             if (std.fs.path.isAbsolute(base_filename)) {

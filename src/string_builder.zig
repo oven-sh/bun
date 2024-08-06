@@ -104,6 +104,17 @@ pub fn append(this: *StringBuilder, slice: string) string {
     return result;
 }
 
+pub fn addConcat(this: *StringBuilder, slices: []const string) bun.StringPointer {
+    var remain = this.allocatedSlice()[this.len..];
+    var len: usize = 0;
+    for (slices) |slice| {
+        @memcpy(remain[0..slice.len], slice);
+        remain = remain[slice.len..];
+        len += slice.len;
+    }
+    return this.add(len);
+}
+
 pub fn add(this: *StringBuilder, len: usize) bun.StringPointer {
     if (comptime Environment.allow_assert) {
         assert(this.len <= this.cap); // didn't count everything
@@ -225,13 +236,4 @@ pub fn writable(this: *StringBuilder) []u8 {
         assert(this.cap > 0);
     }
     return ptr[this.len..this.cap];
-}
-
-pub fn ensureNextAligned(this: *StringBuilder, comptime alignment: usize) void {
-    const aligned = std.mem.alignForward(usize, this.len, alignment);
-    const diff = aligned - this.len;
-    if (diff > 0) {
-        @memset(this.ptr.?[this.len..][0..diff], 0);
-        this.len = aligned;
-    }
 }

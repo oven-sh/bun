@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
-import tls from "tls";
+import tls from "node:tls";
 import { join } from "node:path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 type TLSOptions = {
   cert: string;
@@ -256,5 +256,57 @@ it("fetch timeout works on tls", async () => {
     const total = performance.now() - start;
     expect(total).toBeGreaterThanOrEqual(TIMEOUT - THRESHOLD);
     expect(total).toBeLessThanOrEqual(TIMEOUT + THRESHOLD);
+  }
+});
+
+it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
+  const server = Bun.serve({
+    port: 0,
+    tls: cert1,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  const cert_path = join(tmpdirSync(), "cert.pem");
+  await Bun.write(cert_path, cert1.cert);
+
+  const proc = Bun.spawn({
+    env: {
+      ...bunEnv,
+      SERVER: server.url,
+      NODE_EXTRA_CA_CERTS: cert_path,
+    },
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+    cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
+it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
+  const server = Bun.serve({
+    port: 0,
+    tls: cert1,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  for (const invalid of ["invalid.pem", "", " "]) {
+    const proc = Bun.spawn({
+      env: {
+        ...bunEnv,
+        SERVER: server.url,
+        NODE_EXTRA_CA_CERTS: invalid,
+      },
+      stderr: "pipe",
+      stdout: "inherit",
+      stdin: "inherit",
+      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+    });
+
+    expect(await proc.exited).toBe(1);
+    expect(await Bun.readableStreamToText(proc.stderr)).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
   }
 });

@@ -541,9 +541,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             return;
                         }
                         // if handshake_success it self is false, this means that the connection was rejected
-                        closeSocket(socket);
-                        if (client.state.stage != .done and client.state.stage != .fail)
-                            client.fail(error.ConnectionRefused);
+                        client.closeAndFail(error.ConnectionRefused);
                         return;
                     }
                 

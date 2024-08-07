@@ -741,7 +741,7 @@ pub const FSWatcher = struct {
                 .ctx = undefined,
                 .count = 0,
             },
-            .mutex = Mutex.init(),
+            .mutex = .{},
             .signal = if (args.signal) |s| s.ref() else null,
             .persistent = args.persistent,
             .path_watcher = null,

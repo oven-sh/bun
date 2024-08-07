@@ -1184,3 +1184,25 @@ export function readableStreamFromArray(array) {
     },
   });
 }
+
+let hasGuardMalloc = -1;
+export function forceGuardMalloc(env) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  if (hasGuardMalloc === -1) {
+    hasGuardMalloc = Number(fs.existsSync("/usr/lib/libgmalloc.dylib"));
+  }
+
+  if (hasGuardMalloc === 1) {
+    env.DYLD_INSERT_LIBRARIES = "/usr/lib/libgmalloc.dylib";
+    env.MALLOC_PROTECT_BEFORE = "1";
+    env.MallocScribble = "1";
+    env.MallocGuardEdges = "1";
+    env.MALLOC_FILL_SPACE = "1";
+    env.MALLOC_STRICT_SIZE = "1";
+  } else {
+    console.warn("Guard malloc is not available on this platform for some reason.");
+  }
+}

@@ -2494,6 +2494,12 @@ pub const E = struct {
             }
         }
 
+        pub fn stringDecodedUTF8(s: *const String, allocator: std.mem.Allocator) !bun.string {
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(try s.string(allocator), allocator);
+            defer allocator.free(utf16_decode);
+            return try bun.strings.toUTF8Alloc(allocator, utf16_decode);
+        }
+
         pub fn hash(s: *const String) u64 {
             if (s.isBlank()) return 0;
 

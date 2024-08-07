@@ -3,6 +3,10 @@
 set -eo pipefail
 
 function assert_main() {
+  if [ "$RELEASE" == "1" ]; then
+    echo "info: Skipping canary release because this is a release build"
+    exit 0
+  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1

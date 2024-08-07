@@ -504,20 +504,26 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 success: i32,
                 ssl_error: uws.us_bun_verify_error_t,
             ) void {
-                const authorized = if (success == 1) true else false;
+                const handshake_success = if (success == 1) true else false;
 
                 const handshake_error = HTTPCertError{
                     .error_no = ssl_error.error_no,
                     .code = if (ssl_error.code == null) "" else ssl_error.code[0..bun.len(ssl_error.code) :0],
                     .reason = if (ssl_error.code == null) "" else ssl_error.reason[0..bun.len(ssl_error.reason) :0],
                 };
-                // log("onHandshake(0x{}) authorized: {} error: {s}", .{ bun.fmt.hexIntUpper(@intFromPtr(socket.socket)), authorized, handshake_error.code });
 
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    if(client.flags.reject_unauthorized) {
-                        if (authorized) {
-                            client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
+                    if (handshake_success) {
+                        // handshake_success means we dd the handshake but may have ssl errors
+                        client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
+
+                        if(client.flags.reject_unauthorized) {
+                            // only reject the connection if reject_unauthorized == true
+                            if(client.flags.did_have_handshaking_error) {
+                                client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
+                                return;
+                            }
 
                             // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
@@ -526,16 +532,17 @@ fn NewHTTPContext(comptime ssl: bool) type {
                                 if (!socket.isClosed()) terminateSocket(socket);
                                 return;
                             }
-
-                            return client.firstCall(comptime ssl, socket);
-                        } else {
-                            // if authorized it self is false, this means that the connection was rejected
-                            terminateSocket(socket);
-                            if (client.state.stage != .done and client.state.stage != .fail)
-                                client.fail(error.ConnectionRefused);
-                            return;
                         }
+
+                        return client.firstCall(comptime ssl, socket);
+                    } else {
+                        // if handshake_success it self is false, this means that the connection was rejected
+                        terminateSocket(socket);
+                        if (client.state.stage != .done and client.state.stage != .fail)
+                            client.fail(error.ConnectionRefused);
+                        return;
                     }
+                
                 }
 
                 if (socket.isClosed()) {
@@ -547,7 +554,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     return;
                 }
 
-                if (authorized) {
+                if (handshake_success) {
                     if (active.is(PooledSocket)) {
                         // Allow pooled sockets to be reused if the handshake was successful.
                         socket.setTimeout(0);

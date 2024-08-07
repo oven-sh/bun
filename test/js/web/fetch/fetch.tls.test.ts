@@ -260,7 +260,7 @@ it("fetch timeout works on tls", async () => {
 });
 
 it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     tls: cert1,
     fetch() {
@@ -286,7 +286,7 @@ it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
 });
 
 it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     tls: cert1,
     fetch() {

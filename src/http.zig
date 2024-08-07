@@ -504,7 +504,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 success: i32,
                 ssl_error: uws.us_bun_verify_error_t,
             ) void {
-                const authorized = if (success == 1) true else false;
+                var authorized = if (success == 1) true else false;
 
                 const handshake_error = HTTPCertError{
                     .error_no = ssl_error.error_no,
@@ -515,7 +515,8 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    if (handshake_error.error_no != 0 and (client.flags.reject_unauthorized or !authorized)) {
+                    authorized = authorized or !client.flags.reject_unauthorized;
+                    if (handshake_error.error_no != 0 and !authorized) {
                         client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                         return;
                     }

@@ -396,7 +396,7 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
             if (this.outgoing_websocket) |ws| {
                 reject_unauthorized = ws.rejectUnauthorized();
             }
-            if (ssl_error.error_no != 0 and (reject_unauthorized or !authorized)) {
+            if (ssl_error.error_no != 0 and (reject_unauthorized and !authorized)) {
                 this.fail(ErrorCode.tls_handshake_failed);
                 return;
             }

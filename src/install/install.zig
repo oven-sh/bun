@@ -7804,7 +7804,7 @@ pub const PackageManager = struct {
 
                                 if (query.expr.asProperty(name)) |value| {
                                     if (value.expr.data == .e_string) {
-                                        if (!request.resolved_name.isEmpty() and strings.eqlLong(list, dependency_list, true)) {
+                                        if (request.package_id != invalid_package_id and strings.eqlLong(list, dependency_list, true)) {
                                             replacing += 1;
                                         } else {
                                             if (manager.subcommand == .update and options.before_install) add_packages_to_update: {
@@ -7922,9 +7922,9 @@ pub const PackageManager = struct {
                     var k: usize = 0;
                     while (k < new_dependencies.len) : (k += 1) {
                         if (new_dependencies[k].key) |key| {
-                            if (!request.is_aliased and !request.resolved_name.isEmpty() and key.data.e_string.eql(
+                            if (!request.is_aliased and request.package_id != invalid_package_id and key.data.e_string.eql(
                                 string,
-                                request.resolved_name.slice(request.version_buf),
+                                manager.lockfile.packages.items(.name)[request.package_id].slice(request.version_buf),
                             )) {
                                 // This actually is a duplicate which we did not
                                 // pick up before dependency resolution.
@@ -7944,7 +7944,7 @@ pub const PackageManager = struct {
                                 else
                                     request.version.literal.slice(request.version_buf),
                             )) {
-                                if (request.resolved_name.isEmpty()) {
+                                if (request.package_id == invalid_package_id) {
                                     // This actually is a duplicate like "react"
                                     // appearing in both "dependencies" and "optionalDependencies".
                                     // For this case, we'll just swap remove it
@@ -7962,14 +7962,12 @@ pub const PackageManager = struct {
                         }
 
                         if (new_dependencies[k].key == null) {
-                            new_dependencies[k].key = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
-                                .data = try allocator.dupe(u8, if (request.is_aliased)
-                                    request.name
-                                else if (request.resolved_name.isEmpty())
-                                    request.version.literal.slice(request.version_buf)
-                                else
-                                    request.resolved_name.slice(request.version_buf)),
-                            }, logger.Loc.Empty);
+                            new_dependencies[k].key = JSAst.Expr.allocate(
+                                allocator,
+                                JSAst.E.String,
+                                .{ .data = try allocator.dupe(u8, request.getResolvedName(manager.lockfile)) },
+                                logger.Loc.Empty,
+                            );
 
                             new_dependencies[k].value = JSAst.Expr.allocate(allocator, JSAst.E.String, .{
                                 // we set it later
@@ -8083,16 +8081,30 @@ pub const PackageManager = struct {
                 }
             }
 
+            const resolutions = if (!options.before_install) manager.lockfile.packages.items(.resolution) else &.{};
             for (updates) |*request| {
                 if (request.e_string) |e_string| {
-                    e_string.data = switch (request.resolution.tag) {
+                    e_string.data = if (request.package_id == invalid_package_id) brk: {
+                        if (manager.subcommand == .update and manager.options.do.update_to_latest) {
+                            break :brk try allocator.dupe(u8, "latest");
+                        }
+
+                        if (manager.subcommand != .update or !options.before_install or e_string.isBlank() or request.version.tag == .npm) {
+                            break :brk switch (request.version.tag) {
+                                .uninitialized => try allocator.dupe(u8, "latest"),
+                                else => try allocator.dupe(u8, request.version.literal.slice(request.version_buf)),
+                            };
+                        } else {
+                            break :brk e_string.data;
+                        }
+                    } else switch (resolutions[request.package_id].tag) {
                         .npm => brk: {
                             if (manager.subcommand == .update and (request.version.tag == .dist_tag or request.version.tag == .npm)) {
                                 if (manager.updating_packages.fetchSwapRemove(request.name)) |entry| {
                                     var alias_at_index: ?usize = null;
 
                                     const new_version = new_version: {
-                                        const version_fmt = request.resolution.value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
+                                        const version_fmt = resolutions[request.package_id].value.npm.version.fmt(manager.lockfile.buffers.string_bytes.items);
                                         if (options.exact_versions) {
                                             break :new_version try std.fmt.allocPrint(allocator, "{}", .{version_fmt});
                                         }
@@ -8137,7 +8149,7 @@ pub const PackageManager = struct {
                                         allocator,
                                         if (comptime exact_versions) "{}" else "^{}",
                                         .{
-                                            request.resolution.value.npm.version.fmt(request.version_buf),
+                                            resolutions[request.package_id].value.npm.version.fmt(request.version_buf),
                                         },
                                     ),
                                 };
@@ -8861,7 +8873,6 @@ pub const PackageManager = struct {
                         Global.crash();
                     },
                     .global_bin_path = manager.options.bin_path,
-                    .global_bin_dir = manager.options.global_bin_dir,
 
                     // .destination_dir_subpath = destination_dir_subpath,
                     .package_name = strings.StringOrTinyString.init(name),
@@ -9007,7 +9018,6 @@ pub const PackageManager = struct {
                         Global.crash();
                     },
                     .global_bin_path = manager.options.bin_path,
-                    .global_bin_dir = manager.options.global_bin_dir,
                     .package_name = strings.StringOrTinyString.init(name),
                     .string_buf = lockfile.buffers.string_bytes.items,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
@@ -9554,8 +9564,7 @@ pub const PackageManager = struct {
         name_hash: PackageNameHash = 0,
         version: Dependency.Version = .{},
         version_buf: []const u8 = "",
-        resolution: Resolution = .{},
-        resolved_name: String = .{},
+        package_id: PackageID = invalid_package_id,
         is_aliased: bool = false,
         failed: bool = false,
         // This must be cloned to handle when the AST store resets
@@ -9575,13 +9584,13 @@ pub const PackageManager = struct {
         ///
         /// `this` needs to be a pointer! If `this` is a copy and the name returned from
         /// resolved_name is inlined, you will return a pointer to stack memory.
-        pub fn getResolvedName(this: *UpdateRequest) string {
+        pub fn getResolvedName(this: *const UpdateRequest, lockfile: *const Lockfile) string {
             return if (this.is_aliased)
                 this.name
-            else if (this.resolved_name.isEmpty())
+            else if (this.package_id == invalid_package_id)
                 this.version.literal.slice(this.version_buf)
             else
-                this.resolved_name.slice(this.version_buf);
+                lockfile.packages.items(.name)[this.package_id].slice(this.version_buf);
         }
 
         pub fn parse(
@@ -11547,6 +11556,8 @@ pub const PackageManager = struct {
         /// Number of installed dependencies. Could be successful or failure.
         install_count: usize = 0,
 
+        pub const Id = Lockfile.Tree.Id;
+
         pub fn deinit(this: *TreeContext, allocator: std.mem.Allocator) void {
             this.pending_installs.deinit(allocator);
             this.binaries.deinit();
@@ -11643,7 +11654,7 @@ pub const PackageManager = struct {
                     var link_target_buf: bun.PathBuffer = undefined;
                     var link_dest_buf: bun.PathBuffer = undefined;
                     var link_rel_buf: bun.PathBuffer = undefined;
-                    this.linkTreeBins(tree, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                    this.linkTreeBins(tree, tree_id, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
                 }
             }
 
@@ -11657,6 +11668,7 @@ pub const PackageManager = struct {
         pub fn linkTreeBins(
             this: *PackageInstaller,
             tree: *TreeContext,
+            tree_id: TreeContext.Id,
             destination_dir: std.fs.Dir,
             link_target_buf: []u8,
             link_dest_buf: []u8,
@@ -11677,7 +11689,6 @@ pub const PackageManager = struct {
                 var bin_linker: Bin.Linker = .{
                     .bin = bin,
                     .global_bin_path = this.options.bin_path,
-                    .global_bin_dir = this.options.global_bin_dir,
                     .package_name = strings.StringOrTinyString.init(alias),
                     .string_buf = string_buf,
                     .extern_string_buf = lockfile.buffers.extern_strings.items,
@@ -11689,7 +11700,24 @@ pub const PackageManager = struct {
                     .rel_buf = link_rel_buf,
                 };
 
-                bin_linker.link(this.manager.options.global);
+                // globally linked packages shouls always belong to the root
+                // tree (0).
+                const global = if (!this.manager.options.global)
+                    false
+                else if (tree_id != 0)
+                    false
+                else global: {
+                    for (this.manager.update_requests) |request| {
+                        if (request.package_id == package_id) {
+                            break :global true;
+                        }
+                    }
+
+                    break :global false;
+                };
+
+                bin_linker.link(global);
+
                 if (bin_linker.err) |err| {
                     if (log_level != .silent) {
                         this.manager.log.addErrorFmtNoLoc(
@@ -11740,7 +11768,7 @@ pub const PackageManager = struct {
                     };
                     defer destination_dir.close();
 
-                    this.linkTreeBins(tree, destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
+                    this.linkTreeBins(tree, @intCast(tree_id), destination_dir, &link_target_buf, &link_dest_buf, &link_rel_buf, log_level);
                 }
             }
         }

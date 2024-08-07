@@ -15,7 +15,8 @@ import wt, {
   MessagePort,
   Worker,
 } from "worker_threads";
-import { resolve, relative, sep } from "node:path";
+import { resolve, relative, join } from "node:path";
+import fs from "node:fs";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -215,6 +216,7 @@ test("support require in eval for a file", async () => {
   const testfile = resolve(dir, "fixture-argv.js");
   const realpath = relative(cwd, testfile).replaceAll("\\", "/");
   console.log("realpath", realpath);
+  expect(() => fs.accessSync(join(cwd, realpath))).not.toThrow();
   const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);

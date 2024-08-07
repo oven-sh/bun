@@ -3715,18 +3715,15 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
 {
 
     JSValue value = JSC::JSValue::decode(JSValue0);
-    if (UNLIKELY(!value)) {
-        return JSValue::encode({});
-    }
+    ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
 
     JSC::VM& vm = globalObject->vm();
     JSC::JSObject* object = value.getObject();
     if (UNLIKELY(!object))
         return JSValue::encode({});
 
-    // Since Identifier might not ref' the string, we need to make a copy
+    // Since Identifier might not ref' the string, we need to enusre it doesn't get deref'd until this function returns
     const auto propertyString = String(StringImpl::createWithoutCopying({ arg1, arg2 }));
-
     const auto identifier = JSC::Identifier::fromString(vm, propertyString);
     const auto property = JSC::PropertyName(identifier);
 

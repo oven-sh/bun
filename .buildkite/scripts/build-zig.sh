@@ -26,10 +26,13 @@ function assert_target() {
   local os="${1-$(uname -s)}"
   case "$(echo "$os" | tr '[:upper:]' '[:lower:]')" in
     linux)
+      export ZIG_OS="linux"
       export ZIG_TARGET="$ZIG_ARCH-linux-gnu" ;;
     darwin)
+      export ZIG_OS="macos"
       export ZIG_TARGET="$ZIG_ARCH-macos-none" ;;
     windows)
+      export ZIG_OS="windows"
       export ZIG_TARGET="$ZIG_ARCH-windows-msvc" ;;
     *)
       echo "error: Unsupported operating system: $os" 1>&2
@@ -57,6 +60,14 @@ cwd="$(pwd)"
 mkdir -p build
 cd build
 
+# in buildkite this script to compile for windows is run on a macos machine
+# so the cmake windows detection for this logic is not ran
+ZIG_OPTIMIZE="ReleaseFast"
+if [[ "$ZIG_OS" == "windows" ]]
+then
+  ZIG_OPTIMIZE="ReleaseSafe"
+fi
+
 run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -GNinja \
   -DNO_CONFIGURE_DEPENDS="1" \
@@ -71,6 +82,7 @@ run_command cmake .. "${CMAKE_FLAGS[@]}" \
   -DUSE_LTO="$USE_LTO" \
   -DUSE_DEBUG_JSC="$USE_DEBUG_JSC" \
   -DCANARY="$CANARY" \
+  -DZIG_OPTIMIZE="$ZIG_OPTIMIZE" \
   -DGIT_SHA="$GIT_SHA"
 
 export ONLY_ZIG="1"

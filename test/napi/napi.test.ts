@@ -3,21 +3,23 @@ import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
 import { join } from "path";
 
-describe("napi", () => {
-  beforeAll(() => {
-    // build gyp
-    const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
-      cwd: join(__dirname, "napi-app"),
-      stderr: "inherit",
-      env: bunEnv,
-      stdout: "inherit",
-      stdin: "inherit",
-    });
-    if (!install.success) {
-      throw new Error("build failed");
-    }
+beforeAll(() => {
+  // build gyp
+  const install = spawnSync({
+    cmd: [bunExe(), "install", "--verbose"],
+    cwd: join(__dirname, "napi-app"),
+    stderr: "inherit",
+    env: bunEnv,
+    stdout: "inherit",
+    stdin: "inherit",
   });
+  console.log('bun install exited with', install.exitCode);
+  if (!install.success) {
+    throw new Error("build failed");
+  }
+});
+
+describe("napi", () => {
   describe("issue_7685", () => {
     it("works", () => {
       const args = [...Array(20).keys()];

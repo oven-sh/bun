@@ -6,6 +6,7 @@
 namespace v8 {
 
 class Value : public Data {
+public:
     BUN_EXPORT bool IsBoolean() const;
 
     // non-inlined versions of these

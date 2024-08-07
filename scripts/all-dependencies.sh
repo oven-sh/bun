@@ -23,6 +23,10 @@ while getopts "f" opt; do
     esac
 done
 
+if [ "$RELEASE" == "1" ]; then
+  FORCE=1
+fi
+
 BUILT_ANY=0
 SUBMODULES=
 CACHE_DIR=

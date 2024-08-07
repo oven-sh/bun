@@ -1447,6 +1447,7 @@ pub const VirtualMachine = struct {
             this.has_enabled_macro_mode = true;
             this.macro_event_loop.tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.immediate_tasks = EventLoop.Queue.init(default_allocator);
+            this.macro_event_loop.napi_finalizer_queue = JSC.napi.Finalizer.Queue.init(default_allocator);
             this.macro_event_loop.next_immediate_tasks = EventLoop.Queue.init(default_allocator);
             this.macro_event_loop.tasks.ensureTotalCapacity(16) catch unreachable;
             this.macro_event_loop.global = this.global;
@@ -1541,6 +1542,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.napi_finalizer_queue = JSC.napi.Finalizer.Queue.init(default_allocator);
         vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1646,6 +1648,7 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );
+        vm.regular_event_loop.napi_finalizer_queue = JSC.napi.Finalizer.Queue.init(default_allocator);
         vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
             default_allocator,
         );
@@ -1786,6 +1789,7 @@ pub const VirtualMachine = struct {
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
+        vm.regular_event_loop.napi_finalizer_queue = JSC.napi.Finalizer.Queue.init(default_allocator);
         vm.regular_event_loop.tasks = EventLoop.Queue.init(
             default_allocator,
         );

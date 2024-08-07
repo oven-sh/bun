@@ -56,9 +56,9 @@ static inline napi_env toNapi(JSC::JSGlobalObject* val)
 class NapiFinalizer {
 public:
     void* finalize_hint = nullptr;
-    napi_finalize finalize_cb;
+    napi_finalize finalize_cb = nullptr;
 
-    void call(JSC::JSGlobalObject* globalObject, void* data);
+    void call(void* data);
 };
 
 class NapiRef {
@@ -115,6 +115,7 @@ public:
     NapiFinalizer finalizer;
     void* data = nullptr;
     uint32_t refCount = 0;
+    bool isOwnedByRuntime = false;
 };
 
 static inline napi_ref toNapi(NapiRef* val)

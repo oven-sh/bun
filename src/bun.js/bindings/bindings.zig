@@ -4882,7 +4882,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
-        return if (@intFromEnum(value) != 0) value else return null;
+        return if (value.isEmpty()) null else value;
     }
 
     extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;

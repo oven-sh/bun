@@ -2312,7 +2312,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
-                
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {
@@ -2725,10 +2724,11 @@ pub const SendStatus = enum(c_uint) {
     dropped = 2,
 };
 pub const uws_app_listen_config_t = extern struct {
-    port: i32,
-    host: [*c]const u8 = null,
-    options: i32,
+    port: c_int,
+    host: ?[*:0]const u8 = null,
+    options: c_int = 0,
 };
+pub const AppListenConfig = uws_app_listen_config_t;
 
 extern fn us_socket_mark_needs_more_not_ssl(socket: ?*uws_res) void;
 

@@ -1188,6 +1188,52 @@ pub const BundleV2 = struct {
         return completion.promise.value();
     }
 
+    pub fn generateFromKit(
+        config: bun.JSC.API.JSBundler.Config,
+        plugins: ?*bun.JSC.API.JSBundler.Plugin,
+        globalThis: *JSC.JSGlobalObject,
+        event_loop: *bun.JSC.EventLoop,
+        allocator: std.mem.Allocator,
+    ) !bun.JSC.JSValue {
+        var completion = try allocator.create(JSBundleCompletionTask);
+        completion.* = JSBundleCompletionTask{
+            .config = config,
+            .jsc_event_loop = event_loop,
+            .promise = JSC.JSPromise.Strong.init(globalThis),
+            .globalThis = globalThis,
+            .poll_ref = Async.KeepAlive.init(),
+            .env = globalThis.bunVM().bundler.env,
+            .plugins = plugins,
+            .log = Logger.Log.init(bun.default_allocator),
+            .task = JSBundleCompletionTask.TaskCompletion.init(completion),
+        };
+
+        if (plugins) |plugin|
+            plugin.setConfig(completion);
+
+        // Ensure this exists before we spawn the thread to prevent any race
+        // conditions from creating two
+        _ = JSC.WorkPool.get();
+
+        if (BundleThread.instance) |existing| {
+            existing.queue.push(completion);
+            existing.waker.?.wake();
+        } else {
+            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
+            instance.queue = .{};
+            instance.waker = null;
+            instance.queue.push(completion);
+            BundleThread.instance = instance;
+
+            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
+            thread.detach();
+        }
+
+        completion.poll_ref.ref(globalThis.bunVM());
+
+        return completion.promise.value();
+    }
+
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
     };
@@ -2500,7 +2546,8 @@ pub const ParseTask = struct {
     }
 
     pub const Result = struct {
-        task: EventLoop.Task = undefined,
+        task: EventLoop.Task,
+        ctx: *BundleV2,
 
         value: union(Tag) {
             success: Success,
@@ -2970,6 +3017,8 @@ pub const ParseTask = struct {
 
         const result = bun.default_allocator.create(Result) catch unreachable;
         result.* = .{
+            .ctx = this.ctx,
+            .task = undefined,
             .value = brk: {
                 if (run_(
                     this,
@@ -3015,13 +3064,24 @@ pub const ParseTask = struct {
             },
         };
 
-        worker.ctx.loop().enqueueTaskConcurrent(
-            Result,
-            BundleV2,
-            result,
-            BundleV2.onParseTaskComplete,
-            .task,
-        );
+        switch (worker.ctx.loop().*) {
+            .js => |jsc_event_loop| {
+                jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.fromCallback(result, onComplete));
+            },
+            .mini => |*mini| {
+                mini.enqueueTaskConcurrentWithExtraCtx(
+                    Result,
+                    BundleV2,
+                    result,
+                    BundleV2.onParseTaskComplete,
+                    .task,
+                );
+            },
+        }
+    }
+
+    pub fn onComplete(result: *Result) void {
+        BundleV2.onParseTaskComplete(result, result.ctx);
     }
 };
 

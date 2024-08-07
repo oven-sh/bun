@@ -194,3 +194,6 @@ pub fn isLibdeflateEnabled() bool {
 
     return !bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_NO_LIBDEFLATE");
 }
+
+/// Enable experimental application building tools
+pub const kit = env.is_canary or env.isDebug;

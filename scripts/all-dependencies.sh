@@ -23,22 +23,18 @@ while getopts "f" opt; do
     esac
 done
 
-if [ "$RELEASE" == "1" ]; then
-  FORCE=1
-fi
-
 BUILT_ANY=0
 SUBMODULES=
 CACHE_DIR=
 CACHE=0
-if [ -n "$BUN_DEPS_CACHE_DIR" ]; then
-    CACHE_DIR="$BUN_DEPS_CACHE_DIR"
-    mkdir -p "$CACHE_DIR"
-    CACHE=1
-    SUBMODULES="$(git submodule status)"
-fi
 
-mkdir -p "$BUN_DEPS_OUT_DIR"
+if [ "$RELEASE" == "1" ]; then
+  FORCE=1
+elif [ -n "$BUN_DEPS_CACHE_DIR" ]; then
+  CACHE_DIR="$BUN_DEPS_CACHE_DIR"
+  CACHE=1
+  SUBMODULES="$(git submodule status)"
+fi
 
 dep() {
     local submodule="$1"

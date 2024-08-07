@@ -204,7 +204,7 @@ pub const FileSystem = struct {
                     .base_ = name,
                     .base_lowercase_ = name_lowercased,
                     .dir = dir.dir,
-                    .mutex = Mutex.init(),
+                    .mutex = .{},
                     // Call "stat" lazily for performance. The "@material-ui/icons" package
                     // contains a directory with over 11,000 entries in it and running "stat"
                     // for each entry was a big performance issue for that package.
@@ -533,7 +533,7 @@ pub const FileSystem = struct {
     }
 
     pub const RealFS = struct {
-        entries_mutex: Mutex = Mutex.init(),
+        entries_mutex: Mutex = .{},
         entries: *EntriesOption.Map,
         cwd: string,
         parent_fs: *FileSystem = undefined,
@@ -1616,7 +1616,7 @@ pub const PathName = struct {
             dir = _path[0 .. dir.len + 2];
         }
 
-        return PathName{
+        return .{
             .dir = dir,
             .base = base,
             .ext = ext,

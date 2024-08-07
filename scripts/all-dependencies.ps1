@@ -9,6 +9,10 @@ if ($env:CI -eq "true") {
   & (Join-Path $PSScriptRoot "update-submodules.ps1")
 }
 
+if ($env:RELEASE -eq "1") {
+  $Force = $true
+}
+
 $DidAnything = $false;
 
 function Build-Dependency {

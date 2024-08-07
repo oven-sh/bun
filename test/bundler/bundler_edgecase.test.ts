@@ -1798,13 +1798,25 @@ describe("bundler", () => {
         export const other = [capture(require.main === module), capture(import.meta.main)];
       `,
     },
-    target: 'node',
+    target: "node",
     capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
     onAfterBundle(api) {
       // This should not be marked as a CommonJS module
       api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
       api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
     },
+  });
+  itBundled("edgecase/IdentifierInEnum#13081", {
+    files: {
+      "/entry.ts": `
+        let ZZZZZZZZZ = 1;
+        enum B {
+          C = ZZZZZZZZZ,
+        }
+        console.log(B.C);
+      `,
+    },
+    run: { stdout: "1" },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

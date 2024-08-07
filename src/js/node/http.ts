@@ -1757,9 +1757,9 @@ class ClientRequest extends OutgoingMessage {
       this.setTimeout(timeout, undefined);
     }
 
+    const { headers } = options;
     const headersArray = $isJSArray(headers);
     if (!headersArray) {
-      var headers = options.headers;
       if (headers) {
         for (let key in headers) {
           this.setHeader(key, headers[key]);

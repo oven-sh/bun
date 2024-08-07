@@ -146,6 +146,7 @@
 #include "UtilInspect.h"
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
+#include "ErrorCode.h"
 #include "v8/GlobalInternals.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
@@ -2733,6 +2734,15 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(Bun::createUtilInspectOptionsStructure(init.vm, init.owner));
         });
 
+    m_nodeErrorCache.initLater(
+        [](const Initializer<JSObject>& init) {
+            auto* structure = ErrorCodeCache::createStructure(
+                init.vm,
+                init.owner);
+
+            init.set(ErrorCodeCache::create(init.vm, structure));
+        });
+
     m_utilInspectStylizeColorFunction.initLater(
         [](const Initializer<JSFunction>& init) {
             JSC::MarkedArgumentBuffer args;
@@ -3594,6 +3604,8 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->mockModule.mockResultStructure.visit(visitor);
     thisObject->mockModule.mockWithImplementationCleanupDataStructure.visit(visitor);
     thisObject->mockModule.withImplementationCleanupFunction.visit(visitor);
+
+    thisObject->m_nodeErrorCache.visit(visitor);
 
     for (auto& barrier : thisObject->m_thenables) {
         visitor.append(barrier);

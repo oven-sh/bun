@@ -18,7 +18,7 @@ const GenericWatcher = @import("../../watcher.zig");
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
 
-var default_manager_mutex: Mutex = Mutex.init();
+var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
 
 const FSWatcher = bun.JSC.Node.FSWatcher;
@@ -154,7 +154,7 @@ pub const PathWatcherManager = struct {
             ),
             .vm = vm,
             .watcher_count = 0,
-            .mutex = Mutex.init(),
+            .mutex = .{},
         };
 
         this.* = manager;
@@ -795,7 +795,7 @@ pub const PathWatcher = struct {
                     .flushCallback = updateEndCallback,
                     .file_paths = .{},
                     .ctx = ctx,
-                    .mutex = Mutex.init(),
+                    .mutex = .{},
                 };
 
                 errdefer this.deinit();
@@ -815,7 +815,7 @@ pub const PathWatcher = struct {
             .recursive = recursive,
             .flushCallback = updateEndCallback,
             .ctx = ctx,
-            .mutex = Mutex.init(),
+            .mutex = .{},
             .file_paths = bun.BabyList([:0]const u8).initCapacity(bun.default_allocator, 1) catch |err| {
                 bun.default_allocator.destroy(this);
                 return err;

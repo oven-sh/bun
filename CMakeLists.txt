@@ -705,6 +705,32 @@ add_custom_command(
 )
 list(APPEND BUN_RAW_SOURCES "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.cpp")
 
+if(NOT NO_CODEGEN)
+    # --- ErrorCode Generator ---
+    file(GLOB NODE_ERRORS_TS ${CONFIGURE_DEPENDS}
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.ts"
+    )
+    add_custom_command(
+        OUTPUT "${BUN_WORKDIR}/codegen/ErrorCode+List.h" "${BUN_WORKDIR}/codegen/ErrorCode+Data.h" "${BUN_WORKDIR}/codegen/ErrorCode.zig"
+        COMMAND ${BUN_EXECUTABLE} run "${BUN_CODEGEN_SRC}/generate-node-errors.ts" "${BUN_WORKDIR}/codegen"
+        WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
+        MAIN_DEPENDENCY "${BUN_CODEGEN_SRC}/generate-node-errors.ts"
+        DEPENDS ${NODE_ERRORS_TS}
+        VERBATIM
+        COMMENT "Generating ErrorCode.zig"
+    )
+
+    # This needs something to force it to be regenerated
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.cpp"
+        "${BUN_WORKDIR}/codegen/ErrorCode+List.h"
+    )
+    WEBKIT_ADD_SOURCE_DEPENDENCIES(
+        "${BUN_SRC}/bun.js/bindings/ErrorCode.h"
+        "${BUN_WORKDIR}/codegen/ErrorCode+Data.h"
+    )
+endif()
+
 # --- JSSink Generator ---
 add_custom_command(
     OUTPUT "${BUN_WORKDIR}/codegen/JSSink.cpp"
@@ -933,6 +959,7 @@ if(NOT BUN_LINK_ONLY AND NOT BUN_CPP_ONLY)
         "${CMAKE_CURRENT_SOURCE_DIR}/build.zig"
         "${ZIG_FILES}"
         "${BUN_WORKDIR}/codegen/ZigGeneratedClasses.zig"
+        "${BUN_WORKDIR}/codegen/ErrorCode.zig"
         "${BUN_WORKDIR}/codegen/ResolvedSourceTag.zig"
         "${BUN_IDENTIFIER_CACHE_OUT}"
         "${BUN_SRC}/api/schema.zig"

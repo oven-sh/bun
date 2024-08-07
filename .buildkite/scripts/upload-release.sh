@@ -3,6 +3,10 @@
 set -eo pipefail
 
 function assert_main() {
+  if [ "$RELEASE" == "1" ]; then
+    echo "info: Skipping canary release because this is a release build"
+    exit 0
+  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1
@@ -146,6 +150,7 @@ function update_github_release() {
   local version="$1"
   local tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
+    sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
   fi
@@ -185,15 +190,19 @@ function create_release() {
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
-    upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    if [ "$tag" == "canary" ]; then
+      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
+    else
+      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    fi
     upload_s3_file "releases/$tag" "$artifact" &
     upload_github_asset "$tag" "$artifact" &
+    wait
   }
 
   for artifact in "${artifacts[@]}"; do
-    upload_artifact "$artifact" &
+    upload_artifact "$artifact"
   done
-  wait
 
   update_github_release "$tag"
   create_sentry_release "$tag"

@@ -15,6 +15,8 @@ import wt, {
   MessagePort,
   Worker,
 } from "worker_threads";
+import { resolve, relative, join } from "node:path";
+import fs from "node:fs";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -195,5 +197,52 @@ test("you can override globalThis.postMessage", async () => {
     worker.postMessage("Hello from worker!");
   });
   expect(message).toBe("Hello from worker!");
+  await worker.terminate();
+});
+
+test("support require in eval", async () => {
+  const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result).toBe(Bun.argv[0]);
+  await worker.terminate();
+});
+
+test("support require in eval for a file", async () => {
+  const cwd = process.cwd();
+  console.log("cwd", cwd);
+  const dir = import.meta.dir;
+  const testfile = resolve(dir, "fixture-argv.js");
+  const realpath = relative(cwd, testfile).replaceAll("\\", "/");
+  console.log("realpath", realpath);
+  expect(() => fs.accessSync(join(cwd, realpath))).not.toThrow();
+  const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result).toBe(Bun.argv[0]);
+  await worker.terminate();
+});
+
+test("support require in eval for a file that doesnt exist", async () => {
+  const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result.toString()).toInclude(`error: Cannot find module "./fixture-invalid.js" from "blob:`);
+  await worker.terminate();
+});
+
+test("support worker eval that throws", async () => {
+  const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
+  const result = await new Promise(resolve => {
+    worker.on("message", resolve);
+    worker.on("error", resolve);
+  });
+  expect(result.toString()).toInclude(`error: Unexpected throw`);
   await worker.terminate();
 });

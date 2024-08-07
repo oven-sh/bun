@@ -315,16 +315,25 @@ pub const Body = struct {
 
         pub const heap_breakdown_label = "BodyValue";
         pub const ValueError = union(enum) {
-            Aborted: void,
-            Timeout: void,
+            AbortReason: JSC.CommonAbortReason,
             SystemError: JSC.SystemError,
             Message: bun.String,
             JSValue: JSC.Strong,
 
+            pub fn toStreamError(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.WebCore.StreamResult.StreamError {
+                return switch (this.*) {
+                    .AbortReason => .{
+                        .AbortReason = this.AbortReason,
+                    },
+                    else => .{
+                        .JSValue = this.toJS(globalObject),
+                    },
+                };
+            }
+
             pub fn toJS(this: *@This(), globalObject: *JSC.JSGlobalObject) JSC.JSValue {
                 const js_value = switch (this.*) {
-                    .Timeout => JSC.WebCore.AbortSignal.createTimeoutError(JSC.ZigString.static("The operation timed out"), &JSC.ZigString.Empty, globalObject),
-                    .Aborted => JSC.WebCore.AbortSignal.createAbortError(JSC.ZigString.static("The user aborted a request"), &JSC.ZigString.Empty, globalObject),
+                    .AbortReason => |reason| reason.toJS(globalObject),
                     .SystemError => |system_error| system_error.toErrorInstance(globalObject),
                     .Message => |message| message.toErrorInstance(globalObject),
                     // do a early return in this case we don't need to create a new Strong
@@ -345,7 +354,7 @@ pub const Body = struct {
                         }
                         return .{ .JSValue = .{} };
                     },
-                    .Aborted, .Timeout => {},
+                    .AbortReason => {},
                 }
                 return value;
             }
@@ -355,7 +364,7 @@ pub const Body = struct {
                     .SystemError => |system_error| system_error.deref(),
                     .Message => |message| message.deref(),
                     .JSValue => this.JSValue.deinit(),
-                    .Aborted, .Timeout => {},
+                    .AbortReason => {},
                 }
                 // safe empty value after deinit
                 this.* = .{ .JSValue = .{} };
@@ -648,12 +657,15 @@ pub const Body = struct {
 
             return Body.Value{
                 .Blob = Blob.get(globalThis, value, true, false) catch |err| {
-                    if (err == error.InvalidArguments) {
-                        globalThis.throwInvalidArguments("Expected an Array", .{});
-                        return null;
+                    if (!globalThis.hasException()) {
+                        if (err == error.InvalidArguments) {
+                            globalThis.throwInvalidArguments("Expected an Array", .{});
+                            return null;
+                        }
+
+                        globalThis.throwInvalidArguments("Invalid Body object", .{});
                     }
 
-                    globalThis.throwInvalidArguments("Invalid Body object", .{});
                     return null;
                 },
             };
@@ -927,12 +939,12 @@ pub const Body = struct {
                     }
                 }
 
+                // The Promise version goes before the ReadableStream version incase the Promise version is used too.
+                // Avoid creating unnecessary duplicate JSValue.
                 if (strong_readable.get()) |readable| {
                     if (readable.ptr == .Bytes) {
                         readable.ptr.Bytes.onData(
-                            .{
-                                .err = .{ .JSValue = this.Error.toJS(global) },
-                            },
+                            .{ .err = this.Error.toStreamError(global) },
                             bun.default_allocator,
                         );
                     } else {
@@ -1186,11 +1198,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             var encoder = this.getFormDataEncoding() orelse {
                 // TODO: catch specific errors from getFormDataEncoding
-                const err = globalObject.createTypeErrorInstance("Can't decode form data from body because of incorrect MIME type/boundary", .{});
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    err,
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR("Can't decode form data from body because of incorrect MIME type/boundary", .{}).reject();
             };
 
             if (value.* == .Locked) {
@@ -1206,15 +1214,12 @@ pub fn BodyMixin(comptime Type: type) type {
                 blob.slice(),
                 encoder.encoding,
             ) catch |err| {
-                return JSC.JSPromise.rejectedPromiseValue(
-                    globalObject,
-                    globalObject.createTypeErrorInstance(
-                        "FormData parse error {s}",
-                        .{
-                            @errorName(err),
-                        },
-                    ),
-                );
+                return globalObject.ERR_FORMDATA_PARSE_ERROR(
+                    "FormData parse error {s}",
+                    .{
+                        @errorName(err),
+                    },
+                ).reject();
             };
 
             return JSC.JSPromise.wrap(

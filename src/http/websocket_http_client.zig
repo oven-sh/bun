@@ -414,6 +414,8 @@ pub fn NewHTTPUpgradeClient(comptime ssl: bool) type {
                     }
                 }
             } else {
+                // if we are here is because server rejected us, and the error_no is the cause of this
+                // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS    
                 this.fail(ErrorCode.tls_handshake_failed);
             }
             

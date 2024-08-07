@@ -81,6 +81,8 @@ private:
     HandleScope* m_CurrentHandleScope;
     Oddball undefinedValue;
     Oddball nullValue;
+    Oddball trueValue;
+    Oddball falseValue;
 
     Roots roots;
 
@@ -88,8 +90,10 @@ private:
     GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject_)
         : Base(vm, structure)
         , m_CurrentHandleScope(nullptr)
-        , undefinedValue(Oddball::Kind::undefined)
-        , nullValue(Oddball::Kind::null)
+        , undefinedValue(Oddball::Kind::kUndefined)
+        , nullValue(Oddball::Kind::kNull)
+        , trueValue(Oddball::Kind::kTrue, &Map::boolean_map)
+        , falseValue(Oddball::Kind::kFalse, &Map::boolean_map)
         , roots(this)
         , globalObject(globalObject_)
     {

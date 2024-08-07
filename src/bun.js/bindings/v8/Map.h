@@ -30,6 +30,8 @@ public:
     static const Map raw_ptr_map;
     // the map used by oddballs (null, undefined)
     static const Map oddball_map;
+    // the map used by booleans
+    static const Map boolean_map;
 
     Map(InstanceType instance_type_)
         : meta_map(const_cast<Map*>(&map_map))

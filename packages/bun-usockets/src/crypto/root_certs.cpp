@@ -5,7 +5,7 @@
 #include <atomic>
 #include <openssl/pem.h>
 #include <openssl/x509.h>
-
+#include <string.h>
 static const int root_certs_size = sizeof(root_certs) / sizeof(root_certs[0]);
 static X509 *root_cert_instances[sizeof(root_certs) / sizeof(root_certs[0])] = {
     NULL};

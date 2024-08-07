@@ -3,7 +3,7 @@
   "version": "1.0.0",
   "gypfile": true,
   "scripts": {
-    "build": "node-gyp rebuild",
+    "build": "node-gyp rebuild --verbose",
     "clean": "node-gyp clean"
   },
   "devDependencies": {

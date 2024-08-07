@@ -33,9 +33,12 @@ CACHE_DIR=
 CACHE=0
 if [ -n "$BUN_DEPS_CACHE_DIR" ]; then
     CACHE_DIR="$BUN_DEPS_CACHE_DIR"
+    mkdir -p "$CACHE_DIR"
     CACHE=1
     SUBMODULES="$(git submodule status)"
 fi
+
+mkdir -p "$BUN_DEPS_OUT_DIR"
 
 dep() {
     local submodule="$1"
@@ -45,6 +48,7 @@ dep() {
         local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
         local arch="$(uname -m)"
         CACHE_KEY="$submodule/$hash-$os-$arch-$CPU_TARGET"
+        mkdir -p "$CACHE_DIR/$CACHE_KEY"
     fi
     if [ -z "$FORCE" ]; then
         HAS_ALL_DEPS=1

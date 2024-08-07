@@ -15,7 +15,7 @@ import wt, {
   MessagePort,
   Worker,
 } from "worker_threads";
-import { resolve, relative } from "node:path";
+import { resolve, relative, sep } from "node:path";
 
 test("support eval in worker", async () => {
   const worker = new Worker(`postMessage(1 + 1)`, {
@@ -213,7 +213,7 @@ test("support require in eval for a file", async () => {
   const dir = import.meta.dir;
   const testfile = resolve(dir, "fixture-argv.js");
   const realpath = relative(cwd, testfile);
-  const worker = new Worker(`postMessage(require('${realpath}').argv[0])`, { eval: true });
+  const worker = new Worker(`postMessage(require('.${sep}${realpath}').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
   });

@@ -3,6 +3,8 @@ const EventEmitter = require("node:events");
 const { isTypedArray } = require("node:util/types");
 const { Duplex, Readable, Writable } = require("node:stream");
 const { ERR_INVALID_ARG_TYPE } = require("internal/errors");
+const { isPrimary } = require("internal/cluster/isPrimary");
+const { kAutoDestroyed } = require("internal/shared");
 
 const {
   getHeader,
@@ -23,6 +25,9 @@ const {
   Blob: (typeof globalThis)["Blob"];
   headersTuple: any;
 };
+
+let cluster;
+const sendHelper = $newZigFunction("node_cluster_binding.zig", "sendHelperChild", 3);
 
 // TODO: make this more robust.
 function isAbortError(err) {
@@ -78,6 +83,7 @@ const kEmptyObject = Object.freeze(Object.create(null));
 const kEndCalled = Symbol.for("kEndCalled");
 const kAbortController = Symbol.for("kAbortController");
 const kClearTimeout = Symbol("kClearTimeout");
+const kRealListen = Symbol("kRealListen");
 
 // Primordials
 const StringPrototypeSlice = String.prototype.slice;
@@ -93,6 +99,7 @@ const NODE_HTTP_WARNING =
 var _defaultHTTPSAgent;
 var kInternalRequest = Symbol("kInternalRequest");
 const kInternalSocketData = Symbol.for("::bunternal::");
+const serverSymbol = Symbol.for("::bunternal::");
 const kfakeSocket = Symbol("kfakeSocket");
 
 const kEmptyBuffer = Buffer.alloc(0);
@@ -127,7 +134,7 @@ function validateFunction(callable: any, field: string) {
 
 type FakeSocket = InstanceType<typeof FakeSocket>;
 var FakeSocket = class Socket extends Duplex {
-  [kInternalSocketData]!: [import("bun").Server, typeof OutgoingMessage, typeof Request];
+  [kInternalSocketData]!: [typeof Server, typeof OutgoingMessage, typeof Request];
   bytesRead = 0;
   bytesWritten = 0;
   connecting = false;
@@ -138,7 +145,8 @@ var FakeSocket = class Socket extends Duplex {
   address() {
     // Call server.requestIP() without doing any propety getter twice.
     var internalData;
-    return (this.#address ??= (internalData = this[kInternalSocketData])?.[0]?.requestIP(internalData[2]) ?? {});
+    return (this.#address ??=
+      (internalData = this[kInternalSocketData])?.[0]?.[serverSymbol].requestIP(internalData[2]) ?? {});
   }
 
   get bufferSize() {
@@ -149,7 +157,12 @@ var FakeSocket = class Socket extends Duplex {
     return this;
   }
 
-  _destroy(err, callback) {}
+  _destroy(err, callback) {
+    if (!this[kInternalSocketData]) return; // sometimes 'this' is Socket not FakeSocket
+    this[kInternalSocketData][0][connectionsSymbol]--;
+    if (!this[kInternalSocketData][1]["req"][kAutoDestroyed]) this[kInternalSocketData][1].end();
+    this[kInternalSocketData][0]._emitCloseIfDrained();
+  }
 
   _final(callback) {}
 
@@ -329,14 +342,16 @@ function emitListeningNextTick(self, hostname, port) {
 var tlsSymbol = Symbol("tls");
 var isTlsSymbol = Symbol("is_tls");
 var optionsSymbol = Symbol("options");
-var serverSymbol = Symbol("server");
+const connectionsSymbol = Symbol("connections");
+
 function Server(options, callback) {
   if (!(this instanceof Server)) return new Server(options, callback);
   EventEmitter.$call(this);
 
   this.listening = false;
   this._unref = false;
-  this[serverSymbol] = undefined;
+  this[kInternalSocketData] = undefined;
+  this[connectionsSymbol] = 0;
 
   if (typeof options === "function") {
     callback = options;
@@ -429,7 +444,7 @@ Server.prototype = {
     }
     this[serverSymbol] = undefined;
     server.stop(true);
-    process.nextTick(emitCloseNT, this);
+    this._emitCloseIfDrained();
   },
 
   closeIdleConnections() {
@@ -446,7 +461,16 @@ Server.prototype = {
     this[serverSymbol] = undefined;
     if (typeof optionalCallback === "function") this.once("close", optionalCallback);
     server.stop();
-    process.nextTick(emitCloseNT, this);
+    this._emitCloseIfDrained();
+  },
+
+  _emitCloseIfDrained() {
+    if (this[serverSymbol] || this[connectionsSymbol] > 0) {
+      return;
+    }
+    process.nextTick(() => {
+      this.emit("close");
+    });
   },
 
   [Symbol.asyncDispose]() {
@@ -500,15 +524,73 @@ Server.prototype = {
       port = 0;
     }
 
+    if (typeof port === "string" && !Number.isNaN(parseInt(port))) {
+      port = parseInt(port);
+    }
+
     if ($isCallable(arguments[arguments.length - 1])) {
       onListen = arguments[arguments.length - 1];
     }
 
-    const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
-    const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
-    let isHTTPS = false;
-
     try {
+      // listenInCluster
+
+      if (isPrimary) {
+        server[kRealListen](tls, port, host, socketPath, false, onListen);
+        return this;
+      }
+
+      if (cluster === undefined) cluster = require("node:cluster");
+
+      // TODO: our net.Server and http.Server use different Bun APIs and our IPC doesnt support sending and receiving handles yet. use reusePort instead for now.
+
+      // const serverQuery = {
+      //   // address: address,
+      //   port: port,
+      //   addressType: 4,
+      //   // fd: fd,
+      //   // flags,
+      //   // backlog,
+      //   // ...options,
+      // };
+      // cluster._getServer(server, serverQuery, function listenOnPrimaryHandle(err, handle) {
+      //   // err = checkBindError(err, port, handle);
+      //   // if (err) {
+      //   //   throw new ExceptionWithHostPort(err, "bind", address, port);
+      //   // }
+      //   if (err) {
+      //     throw err;
+      //   }
+      //   server[kRealListen](port, host, socketPath, onListen);
+      // });
+
+      server.once("listening", () => {
+        cluster.worker.state = "listening";
+        const address = server.address();
+        const message = {
+          act: "listening",
+          port: (address && address.port) || port,
+          data: null,
+          addressType: 4,
+        };
+        sendHelper(message, null);
+      });
+
+      server[kRealListen](tls, port, host, socketPath, true, onListen);
+    } catch (err) {
+      setTimeout(() => server.emit("error", err), 1);
+    }
+
+    return this;
+  },
+
+  [kRealListen](tls, port, host, socketPath, reusePort, onListen) {
+    {
+      const ResponseClass = this[optionsSymbol].ServerResponse || ServerResponse;
+      const RequestClass = this[optionsSymbol].IncomingMessage || IncomingMessage;
+      let isHTTPS = false;
+      let server = this;
+
       if (tls) {
         this.serverName = tls.serverName || host || "localhost";
       }
@@ -517,16 +599,20 @@ Server.prototype = {
         port,
         hostname: host,
         unix: socketPath,
+        reusePort,
         // Bindings to be used for WS Server
         websocket: {
           open(ws) {
+            server[connectionsSymbol]++;
             ws.data.open(ws);
           },
           message(ws, message) {
             ws.data.message(ws, message);
           },
           close(ws, code, reason) {
+            server[connectionsSymbol]--;
             ws.data.close(ws, code, reason);
+            server._emitCloseIfDrained();
           },
           drain(ws) {
             ws.data.drain(ws);
@@ -570,7 +656,7 @@ Server.prototype = {
 
           const http_res = new ResponseClass(http_req, reply);
 
-          http_req.socket[kInternalSocketData] = [_server, http_res, req];
+          http_req.socket[kInternalSocketData] = [server, http_res, req];
           server.emit("connection", http_req.socket);
 
           const rejectFn = err => reject(err);
@@ -591,8 +677,12 @@ Server.prototype = {
             return pendingResponse;
           }
 
+          server[connectionsSymbol]++;
           var { promise, resolve: resolveFunction, reject: rejectFunction } = $newPromiseCapability(GlobalPromise);
-          return promise;
+          return promise.finally(() => {
+            server[connectionsSymbol]--;
+            server._emitCloseIfDrained();
+          });
         },
       });
       isHTTPS = this[serverSymbol].protocol === "https";
@@ -606,11 +696,7 @@ Server.prototype = {
       }
 
       setTimeout(emitListeningNextTick, 1, this, this[serverSymbol].hostname, this[serverSymbol].port);
-    } catch (err) {
-      server.emit("error", err);
     }
-
-    return this;
   },
 
   setTimeout(msecs, callback) {
@@ -1411,10 +1497,12 @@ class ClientRequest extends OutgoingMessage {
     this.#bodyChunks.push(...chunks);
     callback();
   }
+
   _destroy(err, callback) {
     this.destroyed = true;
     // If request is destroyed we abort the current response
     this[kAbortController]?.abort?.();
+    this.socket.destroy();
     emitErrorNextTick(this, err, callback);
   }
 

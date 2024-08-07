@@ -872,7 +872,7 @@ pub const Listener = struct {
     }
 
     pub fn finalize(this: *Listener) callconv(.C) void {
-        log("Finalize", .{});
+        log("finalize", .{});
         if (this.listener) |listener| {
             this.listener = null;
             listener.close(this.ssl);
@@ -882,6 +882,7 @@ pub const Listener = struct {
     }
 
     pub fn deinit(this: *Listener) void {
+        log("deinit", .{});
         this.strong_self.deinit();
         this.strong_data.deinit();
         this.poll_ref.unref(this.handlers.vm);

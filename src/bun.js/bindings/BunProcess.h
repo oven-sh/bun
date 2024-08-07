@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "ZigGlobalObject.h"
 #include "BunBuiltinNames.h"
 #include "BunClientData.h"
 #include "JSEventEmitter.h"
@@ -21,6 +22,7 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
     WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
+    WriteBarrier<JSObject> m_nextTickFunction;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
@@ -40,6 +42,11 @@ public:
     bool m_isExitCodeObservable = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
+
+    JSValue constructNextTickFn(JSC::VM& vm, Zig::GlobalObject* globalObject);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const ArgList& args);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue);
+    void queueNextTick(JSC::VM& vm, JSC::JSGlobalObject* globalObject, JSValue, JSValue);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject,
         JSC::JSValue prototype)

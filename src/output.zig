@@ -562,6 +562,8 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
     }
 }
 
+var lock = std.Thread.Mutex{};
+
 /// Debug-only logs which should not appear in release mode
 /// To enable a specific log at runtime, set the environment variable
 ///   BUN_DEBUG_${TAG} to 1
@@ -593,7 +595,6 @@ pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
         var out_set = false;
         var really_disable = disabled;
         var evaluated_disable = false;
-        var lock = std.Thread.Mutex{};
 
         pub fn isVisible() bool {
             if (!evaluated_disable) {

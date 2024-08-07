@@ -17,10 +17,17 @@ using JSC::VM;
 
 namespace v8 {
 
+Roots::Roots(GlobalInternals* parent_)
+    : parent(parent_)
+{
+    roots[kUndefinedValueRootIndex] = TaggedPointer(&parent->undefinedValue);
+    roots[kNullValueRootIndex] = TaggedPointer(&parent->nullValue);
+}
+
 // for CREATE_METHOD_TABLE
 namespace JSCastingHelpers = JSC::JSCastingHelpers;
 
-const ClassInfo GlobalInternals::s_info = { "GlobalInternals"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalInternals) };
+const ClassInfo GlobalInternals::s_info = { "GlobalInternals"_s, nullptr, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalInternals) };
 
 GlobalInternals* GlobalInternals::create(VM& vm, Structure* structure)
 {

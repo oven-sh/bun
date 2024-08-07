@@ -686,6 +686,8 @@ pub const TextDecoder = struct {
                     return ZigString.toExternalU16(decoded.ptr, decoded.len, globalThis);
                 }
 
+                bun.assertWithLocation(input.len == 0 or !deinit, @src());
+
                 // Experiment: using mimalloc directly is slightly slower
                 return ZigString.init(input).toJS(globalThis);
             },

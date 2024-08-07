@@ -231,7 +231,10 @@ extern "C" JSC::EncodedJSValue Bun__ERR_INVALID_ARG_TYPE_static(JSC::JSGlobalObj
     auto scope = DECLARE_THROW_SCOPE(vm);
 
     auto arg_name = std::span<const unsigned char>(val_arg_name->ptr, val_arg_name->len);
+    ASSERT(WTF::charactersAreAllASCII(arg_name));
+
     auto expected_type = std::span<const unsigned char>(val_expected_type->ptr, val_expected_type->len);
+    ASSERT(WTF::charactersAreAllASCII(expected_type));
 
     auto actual_value = JSValueToStringSafe(globalObject, JSValue::decode(val_actual_value));
     RETURN_IF_EXCEPTION(scope, {});

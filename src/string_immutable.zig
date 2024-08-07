@@ -1340,7 +1340,15 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
         var remaining = bytes[i..];
 
         {
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
                     if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
@@ -1367,7 +1375,15 @@ pub fn toUTF16Alloc(allocator: std.mem.Allocator, bytes: []const u8, comptime fa
             strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
             remaining = remaining[j..];
 
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
                     if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
@@ -1420,101 +1436,6 @@ pub fn toUTF16AllocForReal(allocator: std.mem.Allocator, bytes: []const u8, comp
     };
 }
 
-pub fn toUTF16AllocMaybeBuffered(
-    allocator: std.mem.Allocator,
-    bytes: []const u8,
-    comptime fail_if_invalid: bool,
-    comptime flush: bool,
-) error{ OutOfMemory, InvalidByteSequence }!?struct { []u16, [3]u8, u2 } {
-    const first_non_ascii = strings.firstNonASCII(bytes) orelse return null;
-
-    var output: std.ArrayListUnmanaged(u16) = if (comptime bun.FeatureFlags.use_simdutf) output: {
-        const out_length = bun.simdutf.length.utf16.from.utf8(bytes);
-
-        if (out_length == 0) {
-            break :output .{};
-        }
-
-        var out = try allocator.alloc(u16, out_length);
-
-        const res = bun.simdutf.convert.utf8.to.utf16.with_errors.le(bytes, out);
-        if (res.status == .success) {
-            log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, out_length });
-            return .{ out, .{0} ** 3, 0 };
-        }
-
-        var list = std.ArrayListUnmanaged(u16).fromOwnedSlice(out[0..first_non_ascii]);
-        list.capacity = out.len;
-
-        break :output list;
-    } else .{};
-    errdefer output.deinit(allocator);
-
-    const start = if (output.items.len > 0) first_non_ascii else 0;
-    var remaining = bytes[start..];
-
-    var non_ascii: ?u32 = 0;
-    while (non_ascii) |i| : (non_ascii = strings.firstNonASCII(remaining)) {
-        {
-            const end = output.items.len;
-            try output.ensureUnusedCapacity(allocator, i + 2); // +2 for UTF16 codepoint
-            output.items.len += i;
-            strings.copyU8IntoU16(output.items[end..][0..i], remaining[0..i]);
-            remaining = remaining[i..];
-        }
-
-        const sequence: [4]u8 = switch (remaining.len) {
-            0 => unreachable,
-            1 => .{ remaining[0], 0, 0, 0 },
-            2 => .{ remaining[0], remaining[1], 0, 0 },
-            3 => .{ remaining[0], remaining[1], remaining[2], 0 },
-            else => remaining[0..4].*,
-        };
-
-        const converted_length = strings.nonASCIISequenceLength(sequence[0]);
-
-        const converted = strings.convertUTF8BytesIntoUTF16WithLength(&sequence, converted_length, remaining.len);
-
-        if (comptime !flush) {
-            if (converted.fail and converted.can_buffer and converted_length > remaining.len) {
-                const buffered: [3]u8 = switch (remaining.len) {
-                    else => unreachable,
-                    1 => .{ remaining[0], 0, 0 },
-                    2 => .{ remaining[0], remaining[1], 0 },
-                    3 => .{ remaining[0], remaining[1], remaining[2] },
-                };
-                return .{ output.items, buffered, @intCast(remaining.len) };
-            }
-        }
-
-        if (comptime fail_if_invalid) {
-            if (converted.fail) {
-                if (comptime Environment.allow_assert) {
-                    bun.assert(converted.code_point == unicode_replacement);
-                }
-                return error.InvalidByteSequence;
-            }
-        }
-
-        remaining = remaining[@max(converted.len, 1)..];
-
-        // #define U16_LENGTH(c) ((uint32_t)(c)<=0xffff ? 1 : 2)
-        switch (converted.code_point) {
-            0...0xffff => |c| output.appendAssumeCapacity(@intCast(c)),
-            else => |c| output.appendSliceAssumeCapacity(&.{ strings.u16Lead(c), strings.u16Trail(c) }),
-        }
-    }
-
-    if (remaining.len > 0) {
-        try output.ensureTotalCapacityPrecise(allocator, output.items.len + remaining.len);
-        output.items.len += remaining.len;
-        strings.copyU8IntoU16(output.items[output.items.len - remaining.len ..], remaining);
-    }
-
-    log("toUTF16 {d} UTF8 -> {d} UTF16", .{ bytes.len, output.items.len });
-    return .{ output.items, .{0} ** 3, 0 };
-}
-
 pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, comptime fail_if_invalid: bool, comptime _: bool) !?[]u16 {
     if (strings.firstNonASCII(bytes)) |i| {
         const output_: ?std.ArrayList(u16) = if (comptime bun.FeatureFlags.use_simdutf) simd: {
@@ -1553,7 +1474,15 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
         var remaining = bytes[i..];
 
         {
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
                     if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
@@ -1580,7 +1509,15 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
             strings.copyU8IntoU16(output.items[end..][0..j], remaining[0..j]);
             remaining = remaining[j..];
 
-            const replacement = strings.convertUTF8BytesIntoUTF16(remaining);
+            const sequence: [4]u8 = switch (remaining.len) {
+                0 => unreachable,
+                1 => [_]u8{ remaining[0], 0, 0, 0 },
+                2 => [_]u8{ remaining[0], remaining[1], 0, 0 },
+                3 => [_]u8{ remaining[0], remaining[1], remaining[2], 0 },
+                else => remaining[0..4].*,
+            };
+
+            const replacement = strings.convertUTF8BytesIntoUTF16(&sequence);
             if (comptime fail_if_invalid) {
                 if (replacement.fail) {
                     if (comptime Environment.allow_assert) assert(replacement.code_point == unicode_replacement);
@@ -2139,8 +2076,6 @@ pub const UTF16Replacement = struct {
     /// and a genuine error.
     fail: bool = false,
 
-    can_buffer: bool = true,
-
     pub inline fn utf8Width(replacement: UTF16Replacement) usize {
         return switch (replacement.code_point) {
             0...0x7F => 1,
@@ -2151,8 +2086,10 @@ pub const UTF16Replacement = struct {
     }
 };
 
-fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remaining_len: usize) UTF16Replacement {
+// This variation matches WebKit behavior.
+fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8) UTF16Replacement {
     if (comptime Environment.allow_assert) assert(sequence[0] > 127);
+    const len = nonASCIISequenceLength(sequence[0]);
     switch (len) {
         2 => {
             if (comptime Environment.allow_assert) {
@@ -2160,7 +2097,7 @@ fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remainin
                 bun.assert(sequence[0] <= 0xDF);
             }
             if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                return .{ .len = 1, .fail = true };
             }
             return .{ .len = len, .code_point = ((@as(u32, sequence[0]) << 6) + @as(u32, sequence[1])) - 0x00003080 };
         },
@@ -2172,22 +2109,22 @@ fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remainin
             switch (sequence[0]) {
                 0xE0 => {
                     if (sequence[1] < 0xA0 or sequence[1] > 0xBF) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 0xED => {
                     if (sequence[1] < 0x80 or sequence[1] > 0x9F) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 else => {
                     if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
             }
             if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
-                return .{ .len = 2, .fail = true, .can_buffer = remaining_len < 3 };
+                return .{ .len = 2, .fail = true };
             }
             return .{
                 .len = len,
@@ -2198,36 +2135,36 @@ fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remainin
             switch (sequence[0]) {
                 0xF0 => {
                     if (sequence[1] < 0x90 or sequence[1] > 0xBF) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
                 0xF4 => {
                     if (sequence[1] < 0x80 or sequence[1] > 0x8F) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
 
                 // invalid code point
                 // this used to be an assertion
                 0...(0xF0 - 1), 0xF4 + 1...std.math.maxInt(@TypeOf(sequence[0])) => {
-                    return .{ .len = 1, .fail = true, .can_buffer = false };
+                    return UTF16Replacement{ .len = 1, .fail = true };
                 },
 
                 else => {
                     if (sequence[1] < 0x80 or sequence[1] > 0xBF) {
-                        return .{ .len = 1, .fail = true, .can_buffer = remaining_len < 2 };
+                        return .{ .len = 1, .fail = true };
                     }
                 },
             }
 
             if (sequence[2] < 0x80 or sequence[2] > 0xBF) {
-                return .{ .len = 2, .fail = true, .can_buffer = remaining_len < 3 };
+                return .{ .len = 2, .fail = true };
             }
             if (sequence[3] < 0x80 or sequence[3] > 0xBF) {
-                return .{ .len = 3, .fail = true, .can_buffer = remaining_len < 4 };
+                return .{ .len = 3, .fail = true };
             }
             return .{
-                .len = len,
+                .len = 4,
                 .code_point = ((@as(u32, sequence[0]) << 18) +
                     (@as(u32, sequence[1]) << 12) +
                     (@as(u32, sequence[2]) << 6) + @as(u32, sequence[3])) - 0x03C82080,
@@ -2237,21 +2174,6 @@ fn convertUTF8BytesIntoUTF16WithLength(sequence: *const [4]u8, len: u3, remainin
         // 1 or 0 are both invalid here
         else => return UTF16Replacement{ .len = 1, .fail = true },
     }
-}
-
-// This variation matches WebKit behavior.
-// fn convertUTF8BytesIntoUTF16(sequence: *const [4]u8, remaining_len: usize) UTF16Replacement {
-fn convertUTF8BytesIntoUTF16(bytes: []const u8) UTF16Replacement {
-    const sequence: [4]u8 = switch (bytes.len) {
-        0 => unreachable,
-        1 => [_]u8{ bytes[0], 0, 0, 0 },
-        2 => [_]u8{ bytes[0], bytes[1], 0, 0 },
-        3 => [_]u8{ bytes[0], bytes[1], bytes[2], 0 },
-        else => bytes[0..4].*,
-    };
-    if (comptime Environment.allow_assert) assert(sequence[0] > 127);
-    const sequence_length = nonASCIISequenceLength(sequence[0]);
-    return convertUTF8BytesIntoUTF16WithLength(&sequence, sequence_length, bytes.len);
 }
 
 pub fn copyLatin1IntoUTF8(buf_: []u8, comptime Type: type, latin1_: Type) EncodeIntoResult {
@@ -3599,35 +3521,15 @@ pub fn isAllASCII(slice: []const u8) bool {
     return true;
 }
 
-// #define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
+//#define U16_LEAD(supplementary) (UChar)(((supplementary)>>10)+0xd7c0)
 pub inline fn u16Lead(supplementary: anytype) u16 {
-    return @intCast((supplementary >> 10) + 0xd7c0);
+    return @as(u16, @intCast((supplementary >> 10) + 0xd7c0));
 }
 
-// #define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
+//#define U16_TRAIL(supplementary) (UChar)(((supplementary)&0x3ff)|0xdc00)
 pub inline fn u16Trail(supplementary: anytype) u16 {
-    return @intCast((supplementary & 0x3ff) | 0xdc00);
+    return @as(u16, @intCast((supplementary & 0x3ff) | 0xdc00));
 }
-
-// #define U16_IS_TRAIL(c) (((c)&0xfffffc00)==0xdc00)
-pub inline fn u16IsTrail(supplementary: u16) bool {
-    return (@as(u32, @intCast(supplementary)) & 0xfffffc00) == 0xdc00;
-}
-
-// #define U16_IS_LEAD(c) (((c)&0xfffffc00)==0xd800)
-pub inline fn u16IsLead(supplementary: u16) bool {
-    return (@as(u32, @intCast(supplementary)) & 0xfffffc00) == 0xd800;
-}
-
-// #define U16_GET_SUPPLEMENTARY(lead, trail) \
-//     (((UChar32)(lead)<<10UL)+(UChar32)(trail)-U16_SURROGATE_OFFSET)
-pub inline fn u16GetSupplementary(lead: u32, trail: u32) u32 {
-    const shifted = lead << 10;
-    return (shifted + trail) - u16_surrogate_offset;
-}
-
-// #define U16_SURROGATE_OFFSET ((0xd800<<10UL)+0xdc00-0x10000)
-pub const u16_surrogate_offset = 56613888;
 
 pub fn firstNonASCII(slice: []const u8) ?u32 {
     return firstNonASCIIWithType([]const u8, slice);

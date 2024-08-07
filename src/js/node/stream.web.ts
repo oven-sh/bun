@@ -13,8 +13,8 @@ export default {
   WritableStreamDefaultController,
   ByteLengthQueuingStrategy,
   CountQueuingStrategy,
-  TextEncoderStream,
-  TextDecoderStream,
+  TextEncoderStream: undefined,
+  TextDecoderStream: undefined,
   CompressionStream: undefined,
   DecompressionStream: undefined,
 };

@@ -62,7 +62,6 @@
 #include <JavaScriptCore/JSArrayBuffer.h>
 #include <JavaScriptCore/FunctionPrototype.h>
 #include "CommonJSModuleRecord.h"
-#include "wtf/text/ASCIIFastPath.h"
 
 // #include <iostream>
 using namespace JSC;
@@ -724,15 +723,12 @@ extern "C" napi_status napi_create_arraybuffer(napi_env env,
 // it doesn't copy the string
 // but it's only safe to use if we are not setting a property
 // because we can't guarantee the lifetime of it
-#define PROPERTY_NAME_FROM_UTF8(identifierName)                                                                                  \
-    size_t utf8Len = strlen(utf8Name);                                                                                           \
-    WTF::String nameString = LIKELY(WTF::charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8Name), utf8Len })) \
-        ? WTF::String(WTF::StringImpl::createWithoutCopying({ utf8Name, utf8Len }))                                              \
-        : WTF::String::fromUTF8(utf8Name);                                                                                       \
-    JSC::PropertyName identifierName = JSC::Identifier::fromString(vm, nameString);
+#define PROPERTY_NAME_FROM_UTF8(identifierName) \
+    size_t utf8Len = strlen(utf8name);          \
+    JSC::PropertyName identifierName = LIKELY(charactersAreAllASCII(std::span { reinterpret_cast<const LChar*>(utf8name), utf8Len })) ? JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String(WTF::StringImpl::createWithoutCopying({ utf8name, utf8Len })))) : JSC::PropertyName(JSC::Identifier::fromString(vm, WTF::String::fromUTF8(utf8name)));
 
 extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
-    const char* utf8Name,
+    const char* utf8name,
     bool* result)
 {
     NAPI_PREMABLE
@@ -744,7 +740,7 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    JSObject* target = toJS(object).getObject();
+    auto* target = toJS(object).getObject();
     if (UNLIKELY(!target)) {
         return napi_object_expected;
     }
@@ -752,15 +748,14 @@ extern "C" napi_status napi_has_named_property(napi_env env, napi_value object,
     PROPERTY_NAME_FROM_UTF8(name);
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
-    PropertySlot slot(target, PropertySlot::InternalMethodType::HasProperty);
-    *result = target->getPropertySlot(globalObject, name, slot);
+    *result = !!target->getIfPropertyExists(globalObject, name);
     RETURN_IF_EXCEPTION(scope, napi_generic_failure);
 
     scope.clearException();
     return napi_ok;
 }
 extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
-    const char* utf8Name,
+    const char* utf8name,
     napi_value* result)
 {
     NAPI_PREMABLE
@@ -772,7 +767,7 @@ extern "C" napi_status napi_get_named_property(napi_env env, napi_value object,
     auto globalObject = toJS(env);
     auto& vm = globalObject->vm();
 
-    JSObject* target = toJS(object).getObject();
+    auto* target = toJS(object).getObject();
     if (UNLIKELY(!target)) {
         return napi_object_expected;
     }

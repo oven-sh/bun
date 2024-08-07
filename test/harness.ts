@@ -1174,17 +1174,6 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
   return parseFloat(macOSVersion) >= minVersion;
 }
 
-export function readableStreamFromArray(array) {
-  return new ReadableStream({
-    start(controller) {
-      for (let entry of array) {
-        controller.enqueue(entry);
-      }
-      controller.close();
-    },
-  });
-}
-
 let hasGuardMalloc = -1;
 export function forceGuardMalloc(env) {
   if (process.platform !== "darwin") {

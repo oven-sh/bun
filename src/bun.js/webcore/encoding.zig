@@ -637,7 +637,7 @@ pub const TextDecoder = struct {
                 return ZigString.toExternalU16(bytes.ptr, out.written, globalThis);
             },
             EncodingLabel.@"UTF-8" => {
-                const input = input: {
+                const input, const deinit = input: {
                     const maybe_without_bom = if (!this.ignore_bom and strings.hasPrefixComptime(buffer_slice, "\xef\xbb\xbf"))
                         buffer_slice[3..]
                     else
@@ -651,14 +651,15 @@ pub const TextDecoder = struct {
                         };
                         @memcpy(joined[0..this.buffered.len], this.buffered.slice());
                         @memcpy(joined[this.buffered.len..][0..maybe_without_bom.len], maybe_without_bom);
-                        break :input joined;
+                        break :input .{ joined, true };
                     }
 
-                    break :input maybe_without_bom;
+                    break :input .{ maybe_without_bom, false };
                 };
 
                 const maybe_decode_result = switch (this.fatal) {
                     inline else => |fail_if_invalid| strings.toUTF16AllocMaybeBuffered(bun.default_allocator, input, fail_if_invalid, flush) catch |err| {
+                        if (deinit) bun.default_allocator.free(input);
                         if (comptime fail_if_invalid) {
                             if (err == error.InvalidByteSequence) {
                                 globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
@@ -673,6 +674,7 @@ pub const TextDecoder = struct {
                 };
 
                 if (maybe_decode_result) |decode_result| {
+                    if (deinit) bun.default_allocator.free(input);
                     const decoded, const leftover, const leftover_len = decode_result;
                     bun.assert(this.buffered.len == 0);
                     if (comptime !flush) {

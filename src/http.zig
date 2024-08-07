@@ -535,8 +535,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                         return client.firstCall(comptime ssl, socket);
                     } else {
-                        // only throw the ssl error if reject_unauthorized, if not this is a connection rejection
-                        if(client.flags.reject_unauthorized and client.flags.did_have_handshaking_error) {
+                        // if we are here is because server rejected us, and the error_no is the cause of this
+                        // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
+                        if(client.flags.did_have_handshaking_error) {
                             client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                             return;
                         }

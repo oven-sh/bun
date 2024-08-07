@@ -27,12 +27,20 @@ struct ImplicitArgs {
 
 // T = return value
 template<typename T>
-struct FunctionCallbackInfo {
+class FunctionCallbackInfo {
     // V8 treats this as an array of pointers
     ImplicitArgs* implicit_args;
     // index -1 is this
     TaggedPointer* values;
     size_t length;
+
+public:
+    FunctionCallbackInfo(ImplicitArgs* implicit_args_, TaggedPointer* values_, size_t length_)
+        : implicit_args(implicit_args_)
+        , values(values_)
+        , length(length_)
+    {
+    }
 };
 
 using FunctionCallback = void (*)(const FunctionCallbackInfo<Value>&);

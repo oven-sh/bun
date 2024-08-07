@@ -96,13 +96,16 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
     auto* functionTemplate = callee->functionTemplate();
     auto* isolate = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(globalObject));
 
-    constexpr int MAX_ARGS = 0;
-    RELEASE_ASSERT(callFrame->argumentCount() <= MAX_ARGS);
+    WTF::Vector<TaggedPointer, 8> args(callFrame->argumentCount() + 1);
 
     HandleScope hs(isolate);
-    TaggedPointer args[MAX_ARGS + 1];
     Local<Value> thisValue = hs.createLocal<Value>(callFrame->thisValue());
     args[0] = thisValue.tagged();
+
+    for (size_t i = 0; i < callFrame->argumentCount(); i++) {
+        Local<Value> argValue = hs.createLocal<Value>(callFrame->argument(i));
+        args[i + 1] = argValue.tagged();
+    }
 
     Local<Value> data = hs.createLocal<Value>(functionTemplate->__internals.data);
 
@@ -116,11 +119,8 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         .target = data.tagged(),
         .new_target = nullptr,
     };
-    FunctionCallbackInfo<Value> info = {
-        .implicit_args = &implicit_args,
-        .values = &args[1],
-        .length = callFrame->argumentCount(),
-    };
+
+    FunctionCallbackInfo<Value> info(&implicit_args, &args[1], callFrame->argumentCount());
 
     functionTemplate->__internals.callback(info);
 

@@ -204,6 +204,7 @@ test("support require in eval", async () => {
   const worker = new Worker(`postMessage(require('process').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
+    worker.on("error", resolve);
   });
   expect(result).toBe(Bun.argv[0]);
   await worker.terminate();
@@ -220,6 +221,7 @@ test("support require in eval for a file", async () => {
   const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
+    worker.on("error", resolve);
   });
   expect(result).toBe(Bun.argv[0]);
   await worker.terminate();
@@ -228,6 +230,7 @@ test("support require in eval for a file", async () => {
 test("support require in eval for a file that doesnt exist", async () => {
   const worker = new Worker(`postMessage(require('./fixture-invalid.js').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
+    worker.on("message", resolve);
     worker.on("error", resolve);
   });
   expect(result.toString()).toInclude(`error: Cannot find module "./fixture-invalid.js" from "blob:`);
@@ -237,6 +240,7 @@ test("support require in eval for a file that doesnt exist", async () => {
 test("support worker eval that throws", async () => {
   const worker = new Worker(`postMessage(throw new Error("boom"))`, { eval: true });
   const result = await new Promise(resolve => {
+    worker.on("message", resolve);
     worker.on("error", resolve);
   });
   expect(result.toString()).toInclude(`error: Unexpected throw`);

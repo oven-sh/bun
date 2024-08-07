@@ -105,14 +105,17 @@ test(
     const nextPath = "node_modules/next/dist/bin/next";
 
     console.time("[bun] next build");
-    const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build"], {
+    const bunBuild = Bun.spawn([bunExe(), "--bun", nextPath, "build", "--debug"], {
       cwd: bunDir,
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: ["ignore", "inherit", "inherit"],
       env: {
         ...bunEnv,
         NODE_ENV: "production",
       },
     });
+    await bunBuild.exited;
+    console.timeEnd("[bun] next build");
+    expect(bunBuild.exitCode).toBe(0);
 
     console.time("[node] next build");
     const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
@@ -120,18 +123,9 @@ test(
       env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
       stdio: ["ignore", "pipe", "inherit"],
     });
-    await Promise.all([
-      bunBuild.exited.then(a => {
-        console.timeEnd("[bun] next build");
-        return a;
-      }),
-      nodeBuild.exited.then(a => {
-        console.timeEnd("[node] next build");
-        return a;
-      }),
-    ]);
+    await nodeBuild.exited;
+    console.timeEnd("[node] next build");
     expect(nodeBuild.exitCode).toBe(0);
-    expect(bunBuild.exitCode).toBe(0);
 
     const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
     const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());

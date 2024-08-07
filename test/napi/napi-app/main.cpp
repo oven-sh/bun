@@ -105,13 +105,14 @@ napi_value test_v8_primitives(const Napi::CallbackInfo &info) {
 
   v8::Local<v8::Boolean> v8_true = v8::Boolean::New(isolate, true);
   if (!v8_true->IsBoolean() || v8_true->Value() != true || v8_true->IsFalse() ||
-      !v8_true->IsTrue()) {
+      !v8_true->IsTrue() || v8_true->IsUndefined() || v8_true->IsNull()) {
     return fail(env, "true is not true");
   }
 
   v8::Local<v8::Boolean> v8_false = v8::Boolean::New(isolate, false);
   if (!v8_false->IsBoolean() || v8_false->Value() != false ||
-      v8_false->IsTrue() || !v8_false->IsFalse()) {
+      v8_false->IsTrue() || !v8_false->IsFalse() || v8_false->IsUndefined() ||
+      v8_false->IsNull()) {
     return fail(env, "false is not false");
   }
 

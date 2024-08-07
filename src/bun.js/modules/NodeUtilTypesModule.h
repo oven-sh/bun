@@ -424,7 +424,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsCryptoKey,
 
 namespace Zig {
 DEFINE_NATIVE_MODULE(NodeUtilTypes) {
-  INIT_NATIVE_MODULE(42);
+  INIT_NATIVE_MODULE(43);
 
   putNativeFn(Identifier::fromString(vm, "isExternal"_s), jsFunctionIsExternal);
   putNativeFn(Identifier::fromString(vm, "isDate"_s), jsFunctionIsDate);

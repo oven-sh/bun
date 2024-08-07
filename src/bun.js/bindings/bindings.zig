@@ -3507,6 +3507,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         pub fn toC(this: JSType) C_API.JSTypedArrayType {
+            bun.debugAssert(this != .Float16Array);
             return switch (this) {
                 .Int8Array => .kJSTypedArrayTypeInt8Array,
                 .Int16Array => .kJSTypedArrayTypeInt16Array,
@@ -3515,7 +3516,6 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Uint8ClampedArray => .kJSTypedArrayTypeUint8ClampedArray,
                 .Uint16Array => .kJSTypedArrayTypeUint16Array,
                 .Uint32Array => .kJSTypedArrayTypeUint32Array,
-                .Float16Array => .kJSTypedArrayTypeFloat16Array,
                 .Float32Array => .kJSTypedArrayTypeFloat32Array,
                 .Float64Array => .kJSTypedArrayTypeFloat64Array,
                 .ArrayBuffer => .kJSTypedArrayTypeArrayBuffer,

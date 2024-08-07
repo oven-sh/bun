@@ -412,6 +412,7 @@ const NamedPipeIPCData = struct {
     incoming: bun.ByteList = .{}, // Maybe we should use IPCBuffer here as well
     connected: bool = false,
     disconnected: bool = false,
+    has_sended_first_message: bool = false,
     connect_req: uv.uv_connect_t = std.mem.zeroes(uv.uv_connect_t),
     server: ?*uv.Pipe = null,
     onClose: ?CloseHandler = null,
@@ -569,7 +570,7 @@ const NamedPipeIPCData = struct {
             this.server = null;
             return .{ .err = err };
         }
-
+        ipc_pipe.setBlocking(false);
         ipc_pipe.setPendingInstancesCount(1);
 
         ipc_pipe.unref();
@@ -794,6 +795,12 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
 
         fn onRead(this: *Context, buffer: []const u8) void {
             const ipc = this.ipc();
+            if (!ipc.has_sended_first_message) {
+                // the server will wait to send the first flush (aka the version) after receiving the first message (which is the client version)
+                // this works like a handshake to ensure that both ends are listening to the messages
+                _ = ipc.writer.flush();
+                ipc.has_sended_first_message = true;
+            }
 
             log("NewNamedPipeIPCHandler#onRead {d}", .{buffer.len});
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
@@ -871,14 +878,13 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                     return;
                 },
                 .result => {
-                    // _ = uv.uv_run(uv.Loop.get(), uv.RunMode.once);
+                    client.setBlocking(false);
                     ipc.connected = true;
                     client.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                         ipc.close();
                         Output.printErrorln("Failed to connect IPC pipe", .{});
                         return;
                     };
-                    _ = ipc.writer.flush();
                 },
             }
         }
@@ -903,11 +909,14 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
                 return;
             };
             ipc.connected = true;
+            stream.setBlocking(false);
             stream.readStart(this, onReadAlloc, onReadError, onRead).unwrap() catch {
                 ipc.close();
                 Output.printErrorln("Failed to connect IPC pipe", .{});
                 return;
             };
+            // send the first message (the version and everything else pending)
+            ipc.has_sended_first_message = true;
             _ = ipc.writer.flush();
         }
     };

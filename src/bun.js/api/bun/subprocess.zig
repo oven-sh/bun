@@ -2155,7 +2155,6 @@ pub const Subprocess = struct {
                 if (ipc_data.configureServer(
                     Subprocess,
                     subprocess,
-                    // libuv will error if it contains a null byte at the end
                     windows_ipc_env_buf["NODE_CHANNEL_FD=".len .. windows_ipc_env_buf.len - 1],
                 ).asErr()) |err| {
                     process_allocator.destroy(subprocess);

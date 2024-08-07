@@ -92,7 +92,7 @@ pub const WTFStringImplStruct = extern struct {
         if (this.is8Bit()) {
             return ZigString.init(this.latin1Slice());
         } else {
-            return ZigString.initUTF16(this.utf16Slice());
+            return ZigString.init16(this.utf16Slice());
         }
     }
 
@@ -644,10 +644,6 @@ pub const String = extern struct {
         return String.init(ZigString.initUTF8(value));
     }
 
-    pub fn fromUTF16(value: []const u16) String {
-        return String.init(ZigString.initUTF16(value));
-    }
-
     pub fn fromBytes(value: []const u8) String {
         return String.init(ZigString.fromBytes(value));
     }
@@ -886,7 +882,7 @@ pub const String = extern struct {
                 if (this.value.WTFStringImpl.is8Bit()) {
                     return String.init(ZigString.init(this.value.WTFStringImpl.latin1Slice()[start_index..end_index]));
                 } else {
-                    return String.init(ZigString.initUTF16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
+                    return String.init(ZigString.init16(this.value.WTFStringImpl.utf16Slice()[start_index..end_index]));
                 }
             },
             else => return this,

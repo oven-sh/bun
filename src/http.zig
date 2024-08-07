@@ -528,7 +528,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                                 client.flags.did_have_handshaking_error = true;
 
-                                if (!socket.isClosed()) closeSocket(socket);
+                                if (!socket.isClosed()) terminateSocket(socket);
                                 return;
                             }
                         }
@@ -541,7 +541,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             return;
                         }
                         // if handshake_success it self is false, this means that the connection was rejected
-                        client.closeAndFail(error.ConnectionRefused);
+                        client.closeAndFail(error.ConnectionRefused, comptime ssl, socket);
                         return;
                     }
                 
@@ -569,7 +569,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     addMemoryBackToPool(pooled);
                 }
 
-                closeSocket(socket);
+                terminateSocket(socket);
             }
             pub fn onClose(
                 ptr: *anyopaque,
@@ -2857,11 +2857,11 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
+    if (!socket.isClosed()) {
+        NewHTTPContext(is_ssl).terminateSocket(socket);
+    }
     if (this.state.stage != .fail and this.state.stage != .done) {
         log("closeAndFail: {s}", .{@errorName(err)});
-        if (!socket.isClosed()) {
-            NewHTTPContext(is_ssl).terminateSocket(socket);
-        }
         this.fail(err);
     }
 }

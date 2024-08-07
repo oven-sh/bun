@@ -514,10 +514,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
+                    // handshake completed but we may have ssl errors
+                    client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
                     if (handshake_success) {
-                        // handshake_success means we dd the handshake but may have ssl errors
-                        client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
-
                         if(client.flags.reject_unauthorized) {
                             // only reject the connection if reject_unauthorized == true
                             if(client.flags.did_have_handshaking_error) {
@@ -529,15 +528,20 @@ fn NewHTTPContext(comptime ssl: bool) type {
                             if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
                                 client.flags.did_have_handshaking_error = true;
 
-                                if (!socket.isClosed()) terminateSocket(socket);
+                                if (!socket.isClosed()) closeSocket(socket);
                                 return;
                             }
                         }
 
                         return client.firstCall(comptime ssl, socket);
                     } else {
+                        // only throw the ssl error if reject_unauthorized, if not this is a connection rejection
+                        if(client.flags.reject_unauthorized and client.flags.did_have_handshaking_error) {
+                            client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
+                            return;
+                        }
                         // if handshake_success it self is false, this means that the connection was rejected
-                        terminateSocket(socket);
+                        closeSocket(socket);
                         if (client.state.stage != .done and client.state.stage != .fail)
                             client.fail(error.ConnectionRefused);
                         return;
@@ -567,7 +571,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     addMemoryBackToPool(pooled);
                 }
 
-                terminateSocket(socket);
+                closeSocket(socket);
             }
             pub fn onClose(
                 ptr: *anyopaque,

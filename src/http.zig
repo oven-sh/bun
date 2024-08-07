@@ -504,7 +504,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                 success: i32,
                 ssl_error: uws.us_bun_verify_error_t,
             ) void {
-                var authorized = if (success == 1) true else false;
+                const authorized = if (success == 1) true else false;
 
                 const handshake_error = HTTPCertError{
                     .error_no = ssl_error.error_no,
@@ -515,30 +515,26 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
                 const active = getTagged(ptr);
                 if (active.get(HTTPClient)) |client| {
-                    authorized = authorized or !client.flags.reject_unauthorized;
-                    if (handshake_error.error_no != 0 and !authorized) {
-                        client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
-                        return;
-                    }
-                    // no handshake_error at this point
-                    if (authorized) {
-                        client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
+                    if(client.flags.reject_unauthorized) {
+                        if (authorized) {
+                            client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
 
-                        // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
-                        if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
-                            client.flags.did_have_handshaking_error = true;
+                            // if checkServerIdentity returns false, we dont call open this means that the connection was rejected
+                            if (!client.checkServerIdentity(comptime ssl, socket, handshake_error)) {
+                                client.flags.did_have_handshaking_error = true;
 
-                            if (!socket.isClosed()) terminateSocket(socket);
+                                if (!socket.isClosed()) terminateSocket(socket);
+                                return;
+                            }
+
+                            return client.firstCall(comptime ssl, socket);
+                        } else {
+                            // if authorized it self is false, this means that the connection was rejected
+                            terminateSocket(socket);
+                            if (client.state.stage != .done and client.state.stage != .fail)
+                                client.fail(error.ConnectionRefused);
                             return;
                         }
-
-                        return client.firstCall(comptime ssl, socket);
-                    } else {
-                        // if authorized it self is false, this means that the connection was rejected
-                        terminateSocket(socket);
-                        if (client.state.stage != .done and client.state.stage != .fail)
-                            client.fail(error.ConnectionRefused);
-                        return;
                     }
                 }
 
@@ -773,7 +769,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
 
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
-    queued_shutdowns_lock: bun.Lock = .{},
+    queued_shutdowns_lock: bun.Lock = bun.Lock.init(),
 
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
@@ -3314,18 +3310,6 @@ pub const HTTPClientResult = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
-
-    pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
-        if (this.isTimeout()) {
-            return .Timeout;
-        }
-
-        if (this.isAbort()) {
-            return .UserAbort;
-        }
-
-        return null;
-    }
 
     pub const BodySize = union(enum) {
         total_received: usize,

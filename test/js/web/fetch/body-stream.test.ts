@@ -257,6 +257,7 @@ describe("reader", function () {
 
           new Int16Array(bytes),
           new Int32Array(bytes),
+          new Float16Array(bytes),
           new Float32Array(bytes),
 
           // make sure we handle subarray() as expected when reading
@@ -265,10 +266,13 @@ describe("reader", function () {
           new Int16Array(bytes).subarray(0, new Int16Array(bytes).byteLength - 1),
           new Int32Array(bytes).subarray(1),
           new Int32Array(bytes).subarray(0, new Int32Array(bytes).byteLength - 1),
+          new Float16Array(bytes).subarray(1),
+          new Float16Array(bytes).subarray(0, new Float16Array(bytes).byteLength - 1),
           new Float32Array(bytes).subarray(1),
           new Float32Array(bytes).subarray(0, new Float32Array(bytes).byteLength - 1),
           new Int16Array(bytes).subarray(0, 1),
           new Int32Array(bytes).subarray(0, 1),
+          new Float16Array(bytes).subarray(0, 1),
           new Float32Array(bytes).subarray(0, 1),
         ]) {
           gc();

@@ -481,6 +481,7 @@ pub const JestPrettyFormat = struct {
                         JSValue.JSType.Uint16Array,
                         JSValue.JSType.Int32Array,
                         JSValue.JSType.Uint32Array,
+                        JSValue.JSType.Float16Array,
                         JSValue.JSType.Float32Array,
                         JSValue.JSType.Float64Array,
                         JSValue.JSType.BigInt64Array,
@@ -1860,6 +1861,16 @@ pub const JestPrettyFormat = struct {
                             },
                             .Uint32Array => {
                                 const slice_with_type: []align(std.meta.alignment([]u32)) u32 = @alignCast(std.mem.bytesAsSlice(u32, slice));
+                                this.indent += 1;
+                                defer this.indent -|= 1;
+                                for (slice_with_type) |el| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    writer.print("{d},", .{el});
+                                }
+                            },
+                            .Float16Array => {
+                                const slice_with_type: []align(std.meta.alignment([]f16)) f16 = @alignCast(std.mem.bytesAsSlice(f16, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {

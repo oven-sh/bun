@@ -136,6 +136,7 @@ const ignoreList = [
   Int8Array.prototype,
   Int16Array.prototype,
   Int32Array.prototype,
+  Float16Array.prototype,
   Float32Array.prototype,
   Float64Array.prototype,
   BigInt64Array.prototype,

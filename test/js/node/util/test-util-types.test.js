@@ -41,6 +41,7 @@ for (const [value, _method] of [
   [new Int8Array()],
   [new Int16Array()],
   [new Int32Array()],
+  [new Float16Array()],
   [new Float32Array()],
   [new Float64Array()],
   [new BigInt64Array()],
@@ -92,6 +93,7 @@ test("isBoxedPrimitive", () => {
   const int8Array = new Int8Array(arrayBuffer);
   const int16Array = new Int16Array(arrayBuffer);
   const int32Array = new Int32Array(arrayBuffer);
+  const float16Array = new Float16Array(arrayBuffer);
   const float32Array = new Float32Array(arrayBuffer);
   const float64Array = new Float64Array(arrayBuffer);
   const bigInt64Array = new BigInt64Array(arrayBuffer);
@@ -106,6 +108,7 @@ test("isBoxedPrimitive", () => {
   const fakeInt8Array = Object.create(Int8Array.prototype);
   const fakeInt16Array = Object.create(Int16Array.prototype);
   const fakeInt32Array = Object.create(Int32Array.prototype);
+  const fakeFloat16Array = Object.create(Float16Array.prototype);
   const fakeFloat32Array = Object.create(Float32Array.prototype);
   const fakeFloat64Array = Object.create(Float64Array.prototype);
   const fakeBigInt64Array = Object.create(BigInt64Array.prototype);
@@ -119,6 +122,7 @@ test("isBoxedPrimitive", () => {
   const stealthyInt8Array = Object.setPrototypeOf(new Int8Array(arrayBuffer), Int8Array.prototype);
   const stealthyInt16Array = Object.setPrototypeOf(new Int16Array(arrayBuffer), Int16Array.prototype);
   const stealthyInt32Array = Object.setPrototypeOf(new Int32Array(arrayBuffer), Int32Array.prototype);
+  const stealthyFloat16Array = Object.setPrototypeOf(new Float16Array(arrayBuffer), Float16Array.prototype);
   const stealthyFloat32Array = Object.setPrototypeOf(new Float32Array(arrayBuffer), Float32Array.prototype);
   const stealthyFloat64Array = Object.setPrototypeOf(new Float64Array(arrayBuffer), Float64Array.prototype);
   const stealthyBigInt64Array = Object.setPrototypeOf(new BigInt64Array(arrayBuffer), BigInt64Array.prototype);
@@ -153,6 +157,9 @@ test("isBoxedPrimitive", () => {
     int32Array,
     fakeInt32Array,
     stealthyInt32Array,
+    float16Array,
+    fakeFloat16Array,
+    stealthyFloat16Array,
     float32Array,
     fakeFloat32Array,
     stealthyFloat32Array,
@@ -186,6 +193,8 @@ test("isBoxedPrimitive", () => {
       stealthyInt16Array,
       int32Array,
       stealthyInt32Array,
+      float16Array,
+      stealthyFloat16Array,
       float32Array,
       stealthyFloat32Array,
       float64Array,
@@ -211,6 +220,8 @@ test("isBoxedPrimitive", () => {
       stealthyInt16Array,
       int32Array,
       stealthyInt32Array,
+      float16Array,
+      stealthyFloat16Array,
       float32Array,
       stealthyFloat32Array,
       float64Array,
@@ -227,6 +238,7 @@ test("isBoxedPrimitive", () => {
     isInt8Array: [int8Array, stealthyInt8Array],
     isInt16Array: [int16Array, stealthyInt16Array],
     isInt32Array: [int32Array, stealthyInt32Array],
+    isFloat16Array: [float16Array, stealthyFloat16Array],
     isFloat32Array: [float32Array, stealthyFloat32Array],
     isFloat64Array: [float64Array, stealthyFloat64Array],
     isBigInt64Array: [bigInt64Array, stealthyBigInt64Array],

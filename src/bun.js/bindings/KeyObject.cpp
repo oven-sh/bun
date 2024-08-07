@@ -377,6 +377,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPrivateKey, (JSC::JSGlobalObject * glo
     case Int8ArrayType:
     case Int16ArrayType:
     case Int32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -939,6 +940,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createPublicKey, (JSC::JSGlobalObject * glob
     case Int8ArrayType:
     case Int16ArrayType:
     case Int32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -1272,6 +1274,7 @@ JSC_DEFINE_HOST_FUNCTION(KeyObject__createSecretKey, (JSC::JSGlobalObject * lexi
     case Int8ArrayType:
     case Int16ArrayType:
     case Int32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -1328,6 +1331,7 @@ static ExceptionOr<Vector<uint8_t>> KeyObject__GetBuffer(JSValue bufferArg)
     case Int8ArrayType:
     case Int16ArrayType:
     case Int32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:

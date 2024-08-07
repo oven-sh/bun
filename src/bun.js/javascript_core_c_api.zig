@@ -54,6 +54,7 @@ pub const JSTypedArrayType = enum(c_uint) {
     kJSTypedArrayTypeUint8ClampedArray,
     kJSTypedArrayTypeUint16Array,
     kJSTypedArrayTypeUint32Array,
+    kJSTypedArrayTypeFloat16Array,
     kJSTypedArrayTypeFloat32Array,
     kJSTypedArrayTypeFloat64Array,
     kJSTypedArrayTypeArrayBuffer,
@@ -67,6 +68,7 @@ pub const kJSTypedArrayTypeUint8Array = @intFromEnum(JSTypedArrayType.kJSTypedAr
 pub const kJSTypedArrayTypeUint8ClampedArray = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint8ClampedArray);
 pub const kJSTypedArrayTypeUint16Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint16Array);
 pub const kJSTypedArrayTypeUint32Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeUint32Array);
+pub const kJSTypedArrayTypeFloat16Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeFloat16Array);
 pub const kJSTypedArrayTypeFloat32Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeFloat32Array);
 pub const kJSTypedArrayTypeFloat64Array = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeFloat64Array);
 pub const kJSTypedArrayTypeArrayBuffer = @intFromEnum(JSTypedArrayType.kJSTypedArrayTypeArrayBuffer);

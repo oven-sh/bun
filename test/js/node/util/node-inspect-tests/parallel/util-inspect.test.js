@@ -239,6 +239,7 @@ test("inspect from a different context", () => {
 
 test("no assertion failures 2", () => {
   [
+    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -270,6 +271,7 @@ test("no assertion failures 2", () => {
 
   // Now check that declaring a TypedArray in a different context works the same.
   [
+    Float16Array,
     Float32Array,
     Float64Array,
     Int16Array,
@@ -2065,6 +2067,7 @@ test("no assertion failures 3", () => {
     [new Int8Array(2), "[Int8Array(2): null prototype] [ 0, 0 ]"],
     [new Int16Array(2), "[Int16Array(2): null prototype] [ 0, 0 ]"],
     [new Int32Array(2), "[Int32Array(2): null prototype] [ 0, 0 ]"],
+    [new Float16Array(2), "[Float16Array(2): null prototype] [ 0, 0 ]"],
     [new Float32Array(2), "[Float32Array(2): null prototype] [ 0, 0 ]"],
     [new Float64Array(2), "[Float64Array(2): null prototype] [ 0, 0 ]"],
     [new BigInt64Array(2), "[BigInt64Array(2): null prototype] [ 0n, 0n ]"],
@@ -2658,6 +2661,7 @@ test("no assertion failures 3", () => {
       "_",
       "_error",
       "util",
+      "Float16Array",
     ];
 
     out = util.inspect(obj, { compact: 3, breakLength: 80, maxArrayLength: 250 });
@@ -2699,7 +2703,8 @@ test("no assertion failures 3", () => {
       "  'string_decoder',  'tls',                'trace_events',",
       "  'tty',             'url',                'v8',",
       "  'vm',              'worker_threads',     'zlib',",
-      "  '_',               '_error',             'util'",
+      "  '_',               '_error',             'util',",
+      "  'Float16Array'",
       "]",
     ].join("\n");
 

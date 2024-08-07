@@ -357,6 +357,12 @@ JSC_DEFINE_HOST_FUNCTION(jsFunctionIsInt32Array,
   GET_FIRST_CELL
   return JSValue::encode(jsBoolean(cell->type() == Int32ArrayType));
 }
+JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFloat16Array,
+                         (JSC::JSGlobalObject * globalObject,
+                          JSC::CallFrame *callframe)) {
+  GET_FIRST_CELL
+  return JSValue::encode(jsBoolean(cell->type() == Float16ArrayType));
+}
 JSC_DEFINE_HOST_FUNCTION(jsFunctionIsFloat32Array,
                          (JSC::JSGlobalObject * globalObject,
                           JSC::CallFrame *callframe)) {
@@ -482,6 +488,8 @@ DEFINE_NATIVE_MODULE(NodeUtilTypes) {
               jsFunctionIsInt16Array);
   putNativeFn(Identifier::fromString(vm, "isInt32Array"_s),
               jsFunctionIsInt32Array);
+  putNativeFn(Identifier::fromString(vm, "isFloat16Array"_s),
+              jsFunctionIsFloat16Array);
   putNativeFn(Identifier::fromString(vm, "isFloat32Array"_s),
               jsFunctionIsFloat32Array);
   putNativeFn(Identifier::fromString(vm, "isFloat64Array"_s),

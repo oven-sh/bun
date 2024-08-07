@@ -219,6 +219,11 @@ The following classes are typed arrays, along with a description of how they int
 
 ---
 
+- [`Float16Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float16Array)
+- Every two (2) bytes are interpreted as a 16-bit floating point number. Range -6.104e5 to 6.55e4.
+
+---
+
 - [`Float32Array`](https://developer.mozilla.org/en-US/docs/Web/JavaScript/Reference/Global_Objects/Float32Array)
 - Every four (4) bytes are interpreted as a 32-bit floating point number. Range -3.4e38 to 3.4e38.
 

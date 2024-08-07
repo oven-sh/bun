@@ -1,9 +1,9 @@
-import { createMemfd } from "bun:internal-for-testing";
+import { memfd_create } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import { isLinux, isPosix } from "harness";
 
-// /dev/zero reports a size of 0. So we need a separate test for regular files that are huge.
+// /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
 if (isPosix) {
   test("fs.readFileSync(/dev/zero) should throw an OOM without crashing the process.", () => {
     expect(() => readFileSync("/dev/zero")).toThrow("Out of memory");
@@ -20,7 +20,7 @@ if (isPosix) {
 // memfd is linux only.
 if (isLinux) {
   test("fs.readFileSync large file show OOM without crashing the process.", () => {
-    const memfd = createMemfd(1024 * 1024 * 1024 * 5);
+    const memfd = memfd_create(1024 * 1024 * 1024 * 5);
     try {
       expect(() => readFileSync(memfd)).toThrow("Out of memory");
       Bun.gc(true);

@@ -3241,11 +3241,13 @@ pub const Blob = struct {
         );
     }
 
-    fn promisified(
-        value: JSC.JSValue,
-        global: *JSGlobalObject,
-    ) JSC.JSValue {
-        return JSC.JSPromise.wrap(global, value);
+    // Zig doesn't let you pass a function with a comptime argument to a runtime-knwon function.
+    fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*Blob, *JSC.JSGlobalObject) JSC.JSValue {
+        return struct {
+            fn wrap(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                return Fn(this, globalObject, lifetime);
+            }
+        }.wrap;
     }
 
     pub fn getText(
@@ -3256,7 +3258,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toString, .clone), .{ this, globalThis });
     }
 
     pub fn getTextTransfer(
@@ -3266,7 +3268,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalObject, .transfer), globalObject);
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toString, .transfer), .{ this, globalObject });
     }
 
     pub fn getJSON(
@@ -3278,7 +3280,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toJSON(globalThis, .share), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toJSON, .share), .{ this, globalThis });
     }
 
     pub fn getArrayBufferTransfer(
@@ -3289,7 +3291,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .transfer), .{ this, globalThis });
     }
 
     pub fn getArrayBuffer(
@@ -3300,7 +3302,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
     }
 
     pub fn getBytes(
@@ -3311,7 +3313,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toUint8Array(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
     }
 
     pub fn getFormData(
@@ -3323,7 +3325,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toFormData(globalThis, .temporary), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toFormData, .temporary), .{ this, globalThis });
     }
 
     fn getExistsSync(this: *Blob) JSC.JSValue {

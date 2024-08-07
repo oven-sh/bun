@@ -2319,7 +2319,28 @@ pub const JSPromise = extern struct {
         }
     };
 
+    extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
+
     pub fn wrap(
+        globalObject: *JSGlobalObject,
+        comptime Function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(Function)),
+    ) JSValue {
+        const Args = std.meta.ArgsTuple(@TypeOf(Function));
+        const Fn = Function;
+        const Wrapper = struct {
+            args: Args,
+
+            pub fn call(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
+                return @call(.auto, Fn, this.args);
+            }
+        };
+
+        var ctx = Wrapper{ .args = args };
+        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+    }
+
+    pub fn wrapValue(
         globalObject: *JSGlobalObject,
         value: JSValue,
     ) JSValue {

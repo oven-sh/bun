@@ -3078,6 +3078,29 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 }
 #pragma mark - JSC::JSPromise
 
+JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
+        return JSValue::encode(promise);
+    }
+
+    if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
+    }
+
+    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+}
+
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)
 {

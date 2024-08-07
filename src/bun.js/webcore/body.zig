@@ -1068,7 +1068,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toString, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBody(
@@ -1103,6 +1103,14 @@ pub fn BodyMixin(comptime Type: type) type {
             );
         }
 
+        fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
+            return struct {
+                fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                    return Fn(this, globalObject, lifetime);
+                }
+            }.wrap;
+        }
+
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
@@ -1121,9 +1129,8 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            const result = blob.toJSON(globalObject, .share);
 
-            return JSC.JSPromise.wrap(globalObject, result);
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toJSON, .share), .{ &blob, globalObject });
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1153,7 +1160,8 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
+
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toArrayBuffer, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBytes(
@@ -1176,7 +1184,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toUint8Array(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toUint8Array, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getFormData(
@@ -1222,7 +1230,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 ).reject();
             };
 
-            return JSC.JSPromise.wrap(
+            return JSC.JSPromise.wrapValue(
                 globalObject,
                 js_value,
             );

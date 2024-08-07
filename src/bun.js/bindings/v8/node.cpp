@@ -32,12 +32,13 @@ void RemoveEnvironmentCleanupHook(v8::Isolate* isolate,
 
 void node_module_register(void* opaque_mod)
 {
+    // TODO unify this with napi_module_register
     auto* globalObject = Bun__getDefaultGlobalObject();
     auto& vm = globalObject->vm();
     auto* mod = reinterpret_cast<struct node_module*>(opaque_mod);
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
-    JSValue pendingNapiModule = globalObject->pendingNapiModule;
+    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
@@ -51,17 +52,11 @@ void node_module_register(void* opaque_mod)
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
         strongExportsObject = { vm, exportsObject };
     } else {
-        globalObject->pendingNapiModule = JSC::JSValue();
         JSValue exportsObject = object->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).exportsPublicName());
         RETURN_IF_EXCEPTION(scope, void());
 
         if (exportsObject && exportsObject.isObject()) {
             strongExportsObject = { vm, exportsObject.getObject() };
-        } else {
-            auto* exportsObject = JSC::constructEmptyObject(globalObject);
-            JSC::PutPropertySlot slot(object, false);
-            object->put(object, globalObject, WebCore::builtinNames(vm).exportsPublicName(), exportsObject, slot);
-            strongExportsObject = { vm, exportsObject };
         }
     }
 
@@ -80,12 +75,13 @@ void node_module_register(void* opaque_mod)
     } else if (mod->nm_register_func) {
         mod->nm_register_func(exports, module, mod->nm_priv);
     } else {
+        // TODO(@190n) throw
         BUN_PANIC("v8 module has no entrypoint");
     }
 
     RETURN_IF_EXCEPTION(scope, void());
 
-    globalObject->pendingNapiModule = *strongExportsObject;
+    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 }

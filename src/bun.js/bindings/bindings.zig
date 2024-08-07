@@ -137,7 +137,7 @@ pub const ZigString = extern struct {
 
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
         if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
-            var out = ZigString.init16(utf16);
+            var out = ZigString.initUTF16(utf16);
             out.mark();
             out.markUTF16();
             return out;
@@ -629,8 +629,10 @@ pub const ZigString = extern struct {
         return shim.cppFn("toAtomicValue", .{ this, globalThis });
     }
 
-    pub fn init16(slice_: []const u16) ZigString {
-        var out = ZigString{ ._unsafe_ptr_do_not_use = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
+    pub fn initUTF16(items: []const u16) ZigString {
+        var out = ZigString.Empty;
+        out._unsafe_ptr_do_not_use = @ptrCast(items.ptr);
+        out.len = items.len;
         out.markUTF16();
         return out;
     }

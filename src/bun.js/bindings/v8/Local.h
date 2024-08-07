@@ -30,6 +30,11 @@ public:
         return Local<U>(location);
     }
 
+    TaggedPointer tagged() const
+    {
+        return *location;
+    }
+
 private:
     TaggedPointer* location;
 };

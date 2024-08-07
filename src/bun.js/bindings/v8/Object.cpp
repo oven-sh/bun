@@ -1,7 +1,8 @@
 #include "v8/Object.h"
-#include "JavaScriptCore/ConstructData.h"
 #include "v8/InternalFieldObject.h"
+#include "v8/HandleScope.h"
 
+#include "JavaScriptCore/ConstructData.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 
 using JSC::Identifier;
@@ -36,10 +37,10 @@ Local<Object> Object::New(Isolate* isolate)
 
 Maybe<bool> Object::Set(Local<Context> context, Local<Value> key, Local<Value> value)
 {
-    JSGlobalObject* globalObject = context->globalObject();
+    Zig::GlobalObject* globalObject = context->globalObject();
     JSObject* object = localToObjectPointer<JSObject>();
-    JSValue k = key->localToTagged().getJSValue();
-    JSValue v = value->localToTagged().getJSValue();
+    JSValue k = key->localToJSValue(globalObject->V8GlobalInternals());
+    JSValue v = value->localToJSValue(globalObject->V8GlobalInternals());
     auto& vm = globalObject->vm();
 
     auto scope = DECLARE_CATCH_SCOPE(vm);
@@ -63,31 +64,21 @@ void Object::SetInternalField(int index, Local<Data> data)
 {
     auto fields = getInternalFieldsContainer(this);
     if (fields && index >= 0 && index < fields->size()) {
-        fields->at(index) = InternalFieldObject::InternalField(data->localToTagged().getJSValue());
+        fields->at(index) = InternalFieldObject::InternalField(data->localToJSValue(Isolate::GetCurrent()->globalInternals()));
     }
 }
 
 Local<Data> Object::SlowGetInternalField(int index)
 {
-    // TODO: this might need to allocate a heap number
-    // internal fields should be v8 pointers not jsvalues (or not? figure this out along with the
-    // type() cases in handle from jscell)
-
     auto* fields = getInternalFieldsContainer(this);
     JSObject* js_object = localToObjectPointer<JSObject>();
     HandleScope* handleScope = Isolate::fromGlobalObject(JSC::jsDynamicCast<Zig::GlobalObject*>(js_object->globalObject()))->currentHandleScope();
     if (fields && index >= 0 && index < fields->size()) {
         auto& field = fields->at(index);
         if (field.is_js_value) {
-            // TODO better conversion from jsvalue to v8 value
-            if (field.data.js_value.isCell()) {
-                return handleScope->createLocal<Data>(field.data.js_value.asCell());
-            } else if (field.data.js_value.isUndefined()) {
-                return handleScope->createLocalSmi(0).reinterpret<Data>();
-            } else {
-                auto localNumber = handleScope->createLocalSmi(field.data.js_value.asInt32());
-                return localNumber.reinterpret<Data>();
-            }
+            return handleScope->createLocal<Data>(field.data.js_value);
+        } else {
+            V8_UNIMPLEMENTED();
         }
     }
     // TODO handle undefined/null the way v8 does

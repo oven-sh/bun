@@ -15,12 +15,12 @@ public:
 
     const Zig::GlobalObject* globalObject() const
     {
-        return localToObjectPointer<Zig::GlobalObject>();
+        return reinterpret_cast<const Roots*>(localToCell())->parent->globalObject;
     }
 
     Zig::GlobalObject* globalObject()
     {
-        return localToObjectPointer<Zig::GlobalObject>();
+        return reinterpret_cast<const Roots*>(localToCell())->parent->globalObject;
     }
 
     HandleScope* currentHandleScope() const

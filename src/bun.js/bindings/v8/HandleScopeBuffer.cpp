@@ -28,13 +28,16 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     Base::visitChildren(thisObject, visitor);
 
     for (int i = 0; i < thisObject->size; i++) {
-        JSCell::visitChildren(thisObject->storage[i].object, visitor);
+        auto& handle = thisObject->storage[i];
+        if (handle.to_v8_object.type() != TaggedPointer::Type::Smi && handle.map.getPtr<Map>() == &Map::object_map) {
+            JSCell::visitChildren(reinterpret_cast<JSCell*>(thisObject->storage[i].ptr), visitor);
+        }
     }
 }
 
 DEFINE_VISIT_CHILDREN(HandleScopeBuffer);
 
-HandleScopeBuffer::Handle& HandleScopeBuffer::createUninitializedHandle()
+Handle& HandleScopeBuffer::createUninitializedHandle()
 {
     RELEASE_ASSERT(size < capacity - 1);
     int index = size;
@@ -42,19 +45,11 @@ HandleScopeBuffer::Handle& HandleScopeBuffer::createUninitializedHandle()
     return storage[index];
 }
 
-TaggedPointer* HandleScopeBuffer::createHandle(JSCell* object)
+TaggedPointer* HandleScopeBuffer::createHandle(void* ptr, const Map* map)
 {
-
-    // can this work? with the Handle struct, would imply moving out of address into the buffer
-
-    // where does address come from? from our code?
-    // can we ensure address is always a JSCell*? but then how do we know what map to use?
-
-    JSC::JSType t = object->type();
-    (void)t;
-
+    // TODO(@190n) specify the map more correctly
     auto& handle = createUninitializedHandle();
-    handle = Handle(&Map::map_map, object);
+    handle = Handle(map, ptr);
     return &handle.to_v8_object;
 }
 

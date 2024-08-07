@@ -1,4 +1,5 @@
 #include "node.h"
+#include "v8/HandleScope.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "CommonJSModuleRecord.h"
@@ -62,7 +63,7 @@ void node_module_register(void* opaque_mod)
 
     JSC::Strong<JSC::JSObject> strongObject = { vm, object };
 
-    HandleScope hs(reinterpret_cast<Isolate*>(globalObject));
+    HandleScope hs(Isolate::fromGlobalObject(globalObject));
 
     // TODO(@190n) check if version is correct?
 

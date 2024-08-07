@@ -2,7 +2,10 @@
 
 namespace v8 {
 
-// TODO give this a more appropriate instance type
+// TODO give these more appropriate instance types
 const Map Map::map_map(InstanceType::Oddball);
+const Map Map::object_map(InstanceType::Oddball);
+const Map Map::raw_ptr_map(InstanceType::Oddball);
+const Map Map::oddball_map(InstanceType::Oddball);
 
 }

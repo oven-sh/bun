@@ -183,4 +183,8 @@
     __ZN3JSC9CallFrame13describeFrameEv;
     __ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm;
     __ZN2v88Function7SetNameENS_5LocalINS_6StringEEE;
+    __ZNK2v85Value9IsBooleanEv;
+    __ZNK2v87Boolean5ValueEv;
+    __ZNK2v85Value10FullIsTrueEv;
+    __ZNK2v85Value11FullIsFalseEv;
 };

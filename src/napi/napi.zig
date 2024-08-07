@@ -1724,6 +1724,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v88internal35IsolateFromNeverReadOnlySpaceObjectEm() *anyopaque;
     pub extern fn _ZN2v85Array3NewEPNS_7IsolateEPNS_5LocalINS_5ValueEEEm() *anyopaque;
     pub extern fn _ZN2v88Function7SetNameENS_5LocalINS_6StringEEE() *anyopaque;
+    pub extern fn _ZNK2v85Value9IsBooleanEv() *anyopaque;
+    pub extern fn _ZNK2v87Boolean5ValueEv() *anyopaque;
+    pub extern fn _ZNK2v85Value10FullIsTrueEv() *anyopaque;
+    pub extern fn _ZNK2v85Value11FullIsFalseEv() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1762,6 +1766,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"() *anyopaque;
     pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"() *anyopaque;
     pub extern fn @"?SetName@Function@v8@@QEAAXV?$Local@VString@v8@@@2@@Z"() *anyopaque;
+    pub extern fn @"?IsBoolean@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?Value@Boolean@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?FullIsTrue@Value@v8@@AEBA_NXZ"() *anyopaque;
+    pub extern fn @"?FullIsFalse@Value@v8@@AEBA_NXZ"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

@@ -15,7 +15,7 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
 
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
-    *escape_slot = *reinterpret_cast<HandleScopeBuffer::Handle*>(escape_value);
+    *escape_slot = *reinterpret_cast<Handle*>(escape_value);
     return reinterpret_cast<uintptr_t*>(escape_slot);
 }
 

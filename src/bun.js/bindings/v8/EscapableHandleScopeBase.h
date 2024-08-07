@@ -12,7 +12,7 @@ public:
     BUN_EXPORT uintptr_t* EscapeSlot(uintptr_t* escape_value);
 
 private:
-    HandleScopeBuffer::Handle* escape_slot;
+    Handle* escape_slot;
 };
 
 }

@@ -7,7 +7,6 @@
 
 namespace v8 {
 
-class Isolate;
 class Number;
 
 class HandleScope {
@@ -16,16 +15,31 @@ public:
     BUN_EXPORT ~HandleScope();
     BUN_EXPORT uintptr_t* CreateHandle(internal::Isolate* isolate, uintptr_t value);
 
-    template<typename T> Local<T> createLocal(JSCell* object)
+    template<typename T> Local<T> createLocal(JSC::JSValue value)
     {
-        TaggedPointer* handle = buffer->createHandle(object);
-        return Local<T>(handle);
+        // TODO(@190n) handle more types
+        if (value.isCell()) {
+            return Local<T>(buffer->createHandle(value.asCell(), &Map::object_map));
+        } else if (value.isInt32()) {
+            return Local<T>(buffer->createSmiHandle(value.asInt32()));
+        } else if (value.isUndefined()) {
+            return Local<T>(isolate->globalInternals()->undefinedSlot());
+        } else if (value.isNull()) {
+            return Local<T>(isolate->globalInternals()->nullSlot());
+        } else if (value.isTrue()) {
+            return Local<T>(isolate->globalInternals()->trueSlot());
+        } else if (value.isFalse()) {
+            return Local<T>(isolate->globalInternals()->falseSlot());
+        } else {
+            V8_UNIMPLEMENTED();
+            return Local<T>();
+        }
     }
 
-    Local<Number> createLocalSmi(int32_t smi)
+    template<typename T> Local<T> createRawLocal(void* ptr)
     {
-        TaggedPointer* handle = buffer->createSmiHandle(smi);
-        return Local<Number>(handle);
+        TaggedPointer* handle = buffer->createHandle(ptr, &Map::raw_ptr_map);
+        return Local<T>(handle);
     }
 
     friend class EscapableHandleScopeBase;
@@ -36,5 +50,7 @@ protected:
     HandleScope* prev;
     HandleScopeBuffer* buffer;
 };
+
+static_assert(sizeof(HandleScope) == 24, "HandleScope has wrong layout");
 
 }

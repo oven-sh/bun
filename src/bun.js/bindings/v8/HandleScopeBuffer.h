@@ -3,9 +3,12 @@
 #include "v8.h"
 #include "v8/TaggedPointer.h"
 #include "v8/Map.h"
+#include "v8/Handle.h"
 
 namespace v8 {
 
+// An array used by HandleScope to store the items. Must keep pointer stability when resized, since
+// v8::Locals point inside this array.
 class HandleScopeBuffer : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
@@ -30,50 +33,11 @@ public:
             [](auto& spaces, auto&& space) { spaces.m_subspaceForHandleScopeBuffer = std::forward<decltype(space)>(space); });
     }
 
-    TaggedPointer* createHandle(JSCell* address);
+    TaggedPointer* createHandle(void* ptr, const Map* map);
     TaggedPointer* createSmiHandle(int32_t smi);
 
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
-
-    struct Handle {
-        Handle(const Map* map_, JSCell* object_)
-            : to_v8_object(&this->map)
-            , map(const_cast<Map*>(map_))
-            , object(object_)
-        {
-        }
-
-        Handle(int32_t smi)
-            : to_v8_object(smi)
-        {
-        }
-
-        Handle(const Handle& that)
-        {
-            *this = that;
-        }
-
-        Handle& operator=(const Handle& that)
-        {
-            map = that.map;
-            object = that.object;
-            if (that.to_v8_object.type() == TaggedPointer::Type::Smi) {
-                to_v8_object = that.to_v8_object;
-            } else {
-                to_v8_object = &this->map;
-            }
-            return *this;
-        }
-
-        Handle() {}
-
-        // if not SMI, holds the address of this->map so that V8 can see what kind of object this is
-        TaggedPointer to_v8_object;
-        // these two fields are laid out so that V8 can find the map
-        TaggedPointer map;
-        JSCell* object;
-    };
 
     friend class EscapableHandleScopeBase;
 

@@ -1,6 +1,7 @@
 #include "v8/ObjectTemplate.h"
 #include "v8/InternalFieldObject.h"
 #include "v8/GlobalInternals.h"
+#include "v8/HandleScope.h"
 
 #include "JavaScriptCore/FunctionPrototype.h"
 #include "JavaScriptCore/LazyPropertyInlines.h"

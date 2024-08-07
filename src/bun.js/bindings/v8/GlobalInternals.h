@@ -2,40 +2,18 @@
 
 #include "BunClientData.h"
 
-#include "v8/TaggedPointer.h"
+#include "v8/Roots.h"
+#include "v8/Oddball.h"
 
 namespace v8 {
 
 class HandleScope;
 
-// Container for some data that V8 expects to find at certain offsets. Isolate and Context pointers
-// actually point to this object. It is a separate struct so that we can use offsetof() to make sure
-// the layout is correct.
-struct Roots {
-    // v8-internal.h:775
-    static const int kUndefinedValueRootIndex = 4;
-    static const int kTheHoleValueRootIndex = 5;
-    static const int kNullValueRootIndex = 6;
-    static const int kTrueValueRootIndex = 7;
-    static const int kFalseValueRootIndex = 8;
-
-    GlobalInternals* parent;
-
-    uintptr_t padding[73];
-
-    TaggedPointer roots[9];
-
-    Roots(GlobalInternals* parent);
-};
-
-// kIsolateRootsOffset at v8-internal.h:744
-static_assert(offsetof(Roots, roots) == 592, "Roots does not match V8 layout");
-
 class GlobalInternals : public JSC::JSCell {
 public:
     using Base = JSC::JSCell;
 
-    static GlobalInternals* create(JSC::VM& vm, JSC::Structure* structure);
+    static GlobalInternals* create(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject);
 
     static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* globalObject)
     {
@@ -79,48 +57,41 @@ public:
 
     void setCurrentHandleScope(HandleScope* handleScope) { m_CurrentHandleScope = handleScope; }
 
+    TaggedPointer* undefinedSlot() { return &roots.roots[Roots::kUndefinedValueRootIndex]; }
+
+    TaggedPointer* nullSlot() { return &roots.roots[Roots::kNullValueRootIndex]; }
+
+    TaggedPointer* trueSlot() { return &roots.roots[Roots::kTrueValueRootIndex]; }
+
+    TaggedPointer* falseSlot() { return &roots.roots[Roots::kFalseValueRootIndex]; }
+
     DECLARE_INFO;
     DECLARE_VISIT_CHILDREN_WITH_MODIFIER(JS_EXPORT_PRIVATE);
 
     friend struct Roots;
+    friend class Isolate;
+    friend class Context;
 
 private:
+    Zig::GlobalObject* globalObject;
     JSC::LazyClassStructure m_ObjectTemplateStructure;
     JSC::LazyClassStructure m_HandleScopeBufferStructure;
     JSC::LazyClassStructure m_FunctionTemplateStructure;
     JSC::LazyClassStructure m_V8FunctionStructure;
     HandleScope* m_CurrentHandleScope;
-
-    struct V8Oddball {
-        enum class Kind : int {
-            undefined = 4,
-            null = 3,
-        };
-
-        TaggedPointer map;
-        uintptr_t unused[4];
-        TaggedPointer kind;
-
-        V8Oddball(Kind kind_)
-            // TODO oddball map
-            : map(nullptr)
-            , kind(TaggedPointer(static_cast<int>(kind_)))
-        {
-        }
-    };
-
-    V8Oddball undefinedValue;
-    V8Oddball nullValue;
+    Oddball undefinedValue;
+    Oddball nullValue;
 
     Roots roots;
 
     void finishCreation(JSC::VM& vm);
-    GlobalInternals(JSC::VM& vm, JSC::Structure* structure)
+    GlobalInternals(JSC::VM& vm, JSC::Structure* structure, Zig::GlobalObject* globalObject_)
         : Base(vm, structure)
         , m_CurrentHandleScope(nullptr)
-        , undefinedValue(V8Oddball::Kind::undefined)
-        , nullValue(V8Oddball::Kind::null)
+        , undefinedValue(Oddball::Kind::undefined)
+        , nullValue(Oddball::Kind::null)
         , roots(this)
+        , globalObject(globalObject_)
     {
     }
 };

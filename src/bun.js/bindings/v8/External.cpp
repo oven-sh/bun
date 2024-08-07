@@ -1,4 +1,5 @@
 #include "v8/External.h"
+#include "v8/HandleScope.h"
 
 #include "napi_external.h"
 

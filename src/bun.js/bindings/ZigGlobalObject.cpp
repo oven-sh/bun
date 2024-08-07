@@ -2671,7 +2671,8 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(
                 v8::GlobalInternals::create(
                     init.vm,
-                    v8::GlobalInternals::createStructure(init.vm, init.owner)));
+                    v8::GlobalInternals::createStructure(init.vm, init.owner),
+                    jsDynamicCast<Zig::GlobalObject*>(init.owner)));
         });
 
     m_memoryFootprintStructure.initLater(

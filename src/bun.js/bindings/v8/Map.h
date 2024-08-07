@@ -24,6 +24,12 @@ class Map {
 public:
     // the map used by maps
     static const Map map_map;
+    // the map used by objects inheriting JSCell
+    static const Map object_map;
+    // the map used by pointers to non-JSCell objects stored in handles
+    static const Map raw_ptr_map;
+    // the map used by oddballs (null, undefined)
+    static const Map oddball_map;
 
     Map(InstanceType instance_type_)
         : meta_map(const_cast<Map*>(&map_map))
@@ -32,5 +38,7 @@ public:
     {
     }
 };
+
+static_assert(sizeof(Map) == 16, "Map has wrong layout");
 
 }

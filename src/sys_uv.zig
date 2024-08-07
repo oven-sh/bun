@@ -413,3 +413,5 @@ pub inline fn write(fd: FileDescriptor, buf: []const u8) Maybe(usize) {
     var bufs: [1]bun.PlatformIOVec = .{bun.platformIOVecCreate(buf)};
     return writev(fd, &bufs);
 }
+
+pub const Tag = @import("./sys.zig").Tag;

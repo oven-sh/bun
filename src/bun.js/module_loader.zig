@@ -1687,7 +1687,7 @@ pub const ModuleLoader = struct {
                     }
                 }
 
-                var parse_result = switch (disable_transpilying or
+                var parse_result: ParseResult = switch (disable_transpilying or
                     (loader == .json and !path.isJSONCFile())) {
                     inline else => |return_file_only| brk: {
                         break :brk jsc_vm.bundler.parseMaybeReturnFileOnly(
@@ -1939,7 +1939,7 @@ pub const ModuleLoader = struct {
                     if (parse_result.ast.exports_kind == .cjs and parse_result.source.path.isFile()) {
                         const actual_package_json: *PackageJSON = package_json orelse brk2: {
                             // this should already be cached virtually always so it's fine to do this
-                            const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dir) catch null) orelse
+                            const dir_info = (jsc_vm.bundler.resolver.readDirInfo(parse_result.source.path.name.dirOrDot()) catch null) orelse
                                 break :brk .javascript;
 
                             break :brk2 dir_info.package_json orelse dir_info.enclosing_package_json;

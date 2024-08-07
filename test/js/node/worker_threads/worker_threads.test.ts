@@ -210,10 +210,12 @@ test("support require in eval", async () => {
 
 test("support require in eval for a file", async () => {
   const cwd = process.cwd();
+  console.log("cwd", cwd);
   const dir = import.meta.dir;
   const testfile = resolve(dir, "fixture-argv.js");
-  const realpath = relative(cwd, testfile);
-  const worker = new Worker(`postMessage(require('.${sep}${realpath}').argv[0])`, { eval: true });
+  const realpath = relative(cwd, testfile).replaceAll("\\", "/");
+  console.log("realpath", realpath);
+  const worker = new Worker(`postMessage(require('./${realpath}').argv[0])`, { eval: true });
   const result = await new Promise(resolve => {
     worker.on("message", resolve);
   });

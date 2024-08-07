@@ -7,12 +7,14 @@ import { isLinux, isPosix } from "harness";
 if (isPosix) {
   test("fs.readFileSync(/dev/zero) should throw an OOM without crashing the process.", () => {
     expect(() => readFileSync("/dev/zero")).toThrow("Out of memory");
+    Bun.gc(true);
   });
 
   test.each(["utf8", "ucs2", "latin1", "hex", "base64", "base64url"] as const)(
     "fs.readFileSync(/dev/zero, '%s') should throw an OOM without crashing the process.",
     encoding => {
       expect(() => readFileSync("/dev/zero", encoding)).toThrow("Out of memory");
+      Bun.gc(true);
     },
   );
 }

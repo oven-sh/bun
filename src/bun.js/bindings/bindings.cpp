@@ -1861,17 +1861,17 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
         return {};
     }
 
+    auto catchScope = DECLARE_CATCH_SCOPE(globalObject->vm());
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);
 
-    if (!result && !scope.exception()) {
+    if (!result && !catchScope.exception())
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
-    }
 
-    if (scope.exception()) {
-        auto* exception = scope.exception();
-        scope.clearException();
-        return JSC::JSValue::encode(exception);
+    if (catchScope.exception()) {
+        auto* exception = catchScope.exception();
+        catchScope.clearExceptionExceptTermination();
+        return JSC::JSValue::encode(exception->value());
     }
 
     return JSValue::encode(result);

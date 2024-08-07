@@ -186,7 +186,11 @@ function create_release() {
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
-    upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    if [ "$tag" == "canary" ]; then
+      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
+    else
+      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    fi
     upload_s3_file "releases/$tag" "$artifact" &
     upload_github_asset "$tag" "$artifact" &
     wait

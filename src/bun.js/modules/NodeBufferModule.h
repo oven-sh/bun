@@ -4,7 +4,7 @@
 
 #include "../bindings/JSBuffer.h"
 #include "_NativeModule.h"
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 
 namespace Zig {
 using namespace WebCore;

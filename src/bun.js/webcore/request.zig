@@ -286,7 +286,7 @@ pub const Request = struct {
         this.url = bun.String.empty;
 
         if (this.signal) |signal| {
-            _ = signal.unref();
+            signal.unref();
             this.signal = null;
         }
     }

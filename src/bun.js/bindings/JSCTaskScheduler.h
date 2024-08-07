@@ -1,5 +1,9 @@
 #pragma once
 
+namespace WebCore {
+class JSVMClientData;
+}
+
 #include <JavaScriptCore/DeferredWorkTimer.h>
 
 namespace Bun {
@@ -12,9 +16,9 @@ public:
     {
     }
 
-    static void onAddPendingWork(Ref<JSC::DeferredWorkTimer::TicketData> ticket, JSC::DeferredWorkTimer::WorkKind kind);
-    static void onScheduleWorkSoon(JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
-    static void onCancelPendingWork(JSC::DeferredWorkTimer::Ticket ticket);
+    static void onAddPendingWork(WebCore::JSVMClientData* clientData, Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind);
+    static void onScheduleWorkSoon(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task);
+    static void onCancelPendingWork(WebCore::JSVMClientData* clientData, JSC::DeferredWorkTimer::Ticket ticket);
 
 public:
     Lock m_lock;

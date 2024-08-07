@@ -1,6 +1,8 @@
 import { itBundled } from "./expectBundled";
 import { Database } from "bun:sqlite";
+import { expect } from "bun:test";
 import { describe } from "bun:test";
+import { rmSync } from "fs";
 
 describe("bundler", () => {
   itBundled("compile/HelloWorld", {
@@ -295,5 +297,95 @@ describe("bundler", () => {
       `,
     },
     run: { stdout: '{"\u{6211}":"\u{6211}"}' },
+  });
+  itBundled("compile/ImportMetaMain", {
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        // test toString on function to observe what the inlined value was
+        console.log((() => import.meta.main).toString().includes('true'));
+        console.log((() => !import.meta.main).toString().includes('false'));
+        console.log((() => !!import.meta.main).toString().includes('true'));
+        console.log((() => require.main == module).toString().includes('true'));
+        console.log((() => require.main === module).toString().includes('true'));
+        console.log((() => require.main !== module).toString().includes('false'));
+        console.log((() => require.main !== module).toString().includes('false'));
+      `,
+    },
+    run: { stdout: new Array(7).fill("true").join("\n") },
+  });
+  itBundled("compile/SourceMap", {
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `
+        // this file has comments and weird whitespace, intentionally
+        // to make it obvious if sourcemaps were generated and mapped properly
+        if           (true) code();
+        function code() {
+          // hello world
+                  throw   new
+            Error("Hello World");
+        }
+      `,
+    },
+    sourceMap: "external",
+    onAfterBundle(api) {
+      rmSync(api.join("entry.ts"), {}); // Hide the source files for errors
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toStartWith(
+          `1 | // this file has comments and weird whitespace, intentionally
+2 | // to make it obvious if sourcemaps were generated and mapped properly
+3 | if           (true) code();
+4 | function code() {
+5 |   // hello world
+6 |           throw   new
+                      ^
+error: Hello World`,
+        );
+        expect(stderr).toInclude("entry.ts:6:19");
+      },
+    },
+  });
+  itBundled("compile/SourceMapBigFile", {
+    target: "bun",
+    compile: true,
+    files: {
+      "/entry.ts": /* js */ `import * as ReactDom from ${JSON.stringify(require.resolve("react-dom/server"))};
+
+// this file has comments and weird whitespace, intentionally
+// to make it obvious if sourcemaps were generated and mapped properly
+if           (true) code();
+function code() {
+  // hello world
+          throw   new
+    Error("Hello World");
+}
+
+console.log(ReactDom);`,
+    },
+    sourceMap: "external",
+    onAfterBundle(api) {
+      rmSync(api.join("entry.ts"), {}); // Hide the source files for errors
+    },
+    run: {
+      exitCode: 1,
+      validate({ stderr }) {
+        expect(stderr).toStartWith(
+          `3 | // this file has comments and weird whitespace, intentionally
+4 | // to make it obvious if sourcemaps were generated and mapped properly
+5 | if           (true) code();
+6 | function code() {
+7 |   // hello world
+8 |           throw   new
+                      ^
+error: Hello World`,
+        );
+        expect(stderr).toInclude("entry.ts:8:19");
+      },
+    },
   });
 });

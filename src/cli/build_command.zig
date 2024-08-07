@@ -102,6 +102,9 @@ pub const BuildCommand = struct {
         this_bundler.options.react_server_components = ctx.bundler_options.react_server_components;
         this_bundler.resolver.opts.react_server_components = ctx.bundler_options.react_server_components;
 
+        this_bundler.options.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+        this_bundler.resolver.opts.inline_entrypoint_import_meta_main = ctx.bundler_options.inline_entrypoint_import_meta_main;
+
         this_bundler.options.code_splitting = ctx.bundler_options.code_splitting;
         this_bundler.resolver.opts.code_splitting = ctx.bundler_options.code_splitting;
 
@@ -113,6 +116,12 @@ pub const BuildCommand = struct {
 
         this_bundler.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         this_bundler.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
+
+        this_bundler.options.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+        this_bundler.resolver.opts.emit_dce_annotations = ctx.bundler_options.emit_dce_annotations;
+
+        this_bundler.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
+        this_bundler.resolver.opts.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
 
         if (ctx.bundler_options.compile) {
             if (ctx.bundler_options.code_splitting) {

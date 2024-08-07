@@ -423,6 +423,7 @@ extern "C" void Bun__onFulfillAsyncModule(
 
     if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
         if (entry.isObject()) {
+
             auto* object = entry.getObject();
             if (auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName())) {
                 if (state.toInt32(globalObject) > JSC::JSModuleLoader::Status::Fetch) {

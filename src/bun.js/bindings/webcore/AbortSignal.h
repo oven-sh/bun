@@ -30,6 +30,10 @@
 #include "ContextDestructionObserver.h"
 #include "EventTarget.h"
 #include "JSValueInWrappedObject.h"
+#include "JavaScriptCore/JSGlobalObject.h"
+#include "ZigGlobalObject.h"
+#include "wtf/DebugHeap.h"
+#include "wtf/FastMalloc.h"
 #include <wtf/Function.h>
 #include <wtf/Ref.h>
 #include <wtf/RefCounted.h>
@@ -42,8 +46,19 @@ class AbortAlgorithm;
 class ScriptExecutionContext;
 class WebCoreOpaqueRoot;
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(AbortSignal);
+
+enum class CommonAbortReason : uint8_t {
+    None,
+    Timeout,
+    UserAbort,
+    ConnectionClosed,
+};
+
+JSC::JSValue toJS(JSC::JSGlobalObject*, CommonAbortReason);
+
 class AbortSignal final : public RefCounted<AbortSignal>, public EventTargetWithInlineData, private ContextDestructionObserver {
-    WTF_MAKE_ISO_ALLOCATED_EXPORT(AbortSignal, WEBCORE_EXPORT);
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(AbortSignal);
 
 public:
     static Ref<AbortSignal> create(ScriptExecutionContext*);
@@ -57,11 +72,14 @@ public:
     static uint32_t addAbortAlgorithmToSignal(AbortSignal&, Ref<AbortAlgorithm>&&);
     static void removeAbortAlgorithmFromSignal(AbortSignal&, uint32_t algorithmIdentifier);
 
+    void signalAbort(JSC::JSGlobalObject* globalObject, CommonAbortReason reason);
     void signalAbort(JSC::JSValue reason);
     void signalFollow(AbortSignal&);
 
     bool aborted() const { return m_aborted; }
     const JSValueInWrappedObject& reason() const { return m_reason; }
+    JSValue jsReason(JSC::JSGlobalObject& globalObject);
+    CommonAbortReason commonReason() const { return m_commonReason; }
 
     void cleanNativeBindings(void* ref);
     void addNativeCallback(NativeCallbackTuple callback) { m_native_callbacks.append(callback); }
@@ -85,8 +103,10 @@ public:
     AbortSignalSet& sourceSignals() { return m_sourceSignals; }
 
 private:
-    enum class Aborted : bool { No,
-        Yes };
+    enum class Aborted : bool {
+        No,
+        Yes
+    };
     explicit AbortSignal(ScriptExecutionContext*, Aborted = Aborted::No, JSC::JSValue reason = JSC::jsUndefined());
 
     void setHasActiveTimeoutTimer(bool hasActiveTimeoutTimer) { m_hasActiveTimeoutTimer = hasActiveTimeoutTimer; }
@@ -108,6 +128,7 @@ private:
     AbortSignalSet m_sourceSignals;
     AbortSignalSet m_dependentSignals;
     JSValueInWrappedObject m_reason;
+    CommonAbortReason m_commonReason { CommonAbortReason::None };
     Vector<NativeCallbackTuple, 2> m_native_callbacks;
     uint32_t m_algorithmIdentifier { 0 };
     bool m_aborted { false };

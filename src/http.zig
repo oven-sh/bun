@@ -772,7 +772,7 @@ pub const HTTPThread = struct {
     queued_tasks: Queue = Queue{},
 
     queued_shutdowns: std.ArrayListUnmanaged(ShutdownMessage) = std.ArrayListUnmanaged(ShutdownMessage){},
-    queued_shutdowns_lock: bun.Lock = bun.Lock.init(),
+    queued_shutdowns_lock: bun.Lock = .{},
 
     has_awoken: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
     timer: std.time.Timer,
@@ -1149,7 +1149,7 @@ pub fn onClose(
 ) void {
     log("Closed  {s}\n", .{client.url.href});
 
-    const in_progress = client.state.stage != .done and client.state.stage != .fail;
+    const in_progress = client.state.stage != .done and client.state.stage != .fail and client.state.flags.is_redirect_pending == false;
 
     if (in_progress) {
         // if the peer closed after a full chunk, treat this
@@ -1181,7 +1181,7 @@ pub fn onClose(
     }
 
     if (in_progress) {
-        client.closeAndFail(error.ConnectionClosed, is_ssl, socket);
+        client.fail(error.ConnectionClosed);
     }
 }
 pub fn onTimeout(
@@ -2288,8 +2288,6 @@ pub const AsyncHTTP = struct {
             this.response_buffer.allocator = default_allocator;
         }
         this.client.start(this.request_body, this.response_buffer);
-
-        log("onStart: {any}", .{bun.fmt.fmtDuration(this.elapsed)});
     }
 };
 
@@ -2502,7 +2500,6 @@ fn start_(this: *HTTPClient, comptime is_ssl: bool) void {
     if (socket.isClosed() and (this.state.response_stage != .done and this.state.response_stage != .fail)) {
         NewHTTPContext(is_ssl).markSocketAsDead(socket);
         this.fail(error.ConnectionClosed);
-        assert(this.state.fail != null);
         return;
     }
 }
@@ -3316,6 +3313,18 @@ pub const HTTPClientResult = struct {
     /// If is not chunked encoded and Content-Length is not provided this will be unknown
     body_size: BodySize = .unknown,
     certificate_info: ?CertificateInfo = null,
+
+    pub fn abortReason(this: *const HTTPClientResult) ?JSC.CommonAbortReason {
+        if (this.isTimeout()) {
+            return .Timeout;
+        }
+
+        if (this.isAbort()) {
+            return .UserAbort;
+        }
+
+        return null;
+    }
 
     pub const BodySize = union(enum) {
         total_received: usize,

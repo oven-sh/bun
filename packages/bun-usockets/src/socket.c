@@ -21,6 +21,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
 
 #ifndef WIN32
 #include <fcntl.h>
@@ -113,6 +114,9 @@ void us_socket_flush(int ssl, struct us_socket_t *s) {
 }
 
 int us_socket_is_closed(int ssl, struct us_socket_t *s) {
+    if(ssl) {
+        return us_internal_ssl_socket_is_closed((struct us_internal_ssl_socket_t *) s);
+    }
     return s->prev == (struct us_socket_t *) s->context;
 }
 
@@ -171,6 +175,8 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
@@ -221,6 +227,8 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
             us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }

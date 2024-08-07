@@ -31,8 +31,11 @@
 #include "HTTPHeaderNames.h"
 
 #include "HTTPParsers.h"
+#include "wtf/DebugHeap.h"
 
 namespace WebCore {
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(FetchHeaders);
 
 // https://fetch.spec.whatwg.org/#concept-headers-remove-privileged-no-cors-request-headers
 static void removePrivilegedNoCORSRequestHeaders(HTTPHeaderMap& headers)

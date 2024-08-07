@@ -165,6 +165,7 @@ export interface BundlerTestInput {
   format?: "esm" | "cjs" | "iife";
   globalName?: string;
   ignoreDCEAnnotations?: boolean;
+  emitDCEAnnotations?: boolean;
   inject?: string[];
   jsx?: {
     runtime?: "automatic" | "classic";
@@ -284,7 +285,7 @@ export interface SourceMapTests {
   mappingsExactMatch?: string;
 }
 
-/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more consise */
+/** Keep in mind this is an array/tuple, NOT AN OBJECT. This keeps things more concise */
 export type MappingSnapshot = [
   // format a string like "file:line:col", for example
   //    "index.ts:5:2"
@@ -301,6 +302,7 @@ export interface BundlerTestBundleAPI {
   outfile: string;
   outdir: string;
 
+  join(subPath: string): string;
   readFile(file: string): string;
   writeFile(file: string, contents: string): void;
   prependFile(file: string, contents: string): void;
@@ -440,6 +442,8 @@ function expectBundled(
     unsupportedCSSFeatures,
     unsupportedJSFeatures,
     useDefineForClassFields,
+    ignoreDCEAnnotations,
+    emitDCEAnnotations,
     // @ts-expect-error
     _referenceFn,
     expectExactFilesize,
@@ -645,6 +649,8 @@ function expectBundled(
               splitting && `--splitting`,
               serverComponents && "--server-components",
               outbase && `--root=${outbase}`,
+              ignoreDCEAnnotations && `--ignore-dce-annotations`,
+              emitDCEAnnotations && `--emit-dce-annotations`,
               // inject && inject.map(x => ["--inject", path.join(root, x)]),
               // jsx.preserve && "--jsx=preserve",
               // legalComments && `--legal-comments=${legalComments}`,
@@ -687,6 +693,7 @@ function expectBundled(
               sourceMap && `--sourcemap=${sourceMap}`,
               banner && `--banner:js=${banner}`,
               legalComments && `--legal-comments=${legalComments}`,
+              ignoreDCEAnnotations && `--ignore-annotations`,
               splitting && `--splitting`,
               treeShaking && `--tree-shaking`,
               outbase && `--outbase=${outbase}`,
@@ -953,6 +960,8 @@ function expectBundled(
           splitting,
           target,
           publicPath,
+          emitDCEAnnotations,
+          ignoreDCEAnnotations,
         } as BuildConfig;
 
         if (conditions?.length) {
@@ -1092,6 +1101,7 @@ for (const [key, blob] of build.outputs) {
       root,
       outfile: outfile!,
       outdir: outdir!,
+      join: (...paths: string[]) => path.join(root, ...paths),
       readFile,
       writeFile,
       expectFile: file => expect(readFile(file)),

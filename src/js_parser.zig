@@ -511,13 +511,6 @@ const TransposeState = struct {
     import_options: Expr = Expr.empty,
 };
 
-var true_args = &[_]Expr{
-    .{
-        .data = .{ .e_boolean = .{ .value = true } },
-        .loc = logger.Loc.Empty,
-    },
-};
-
 const JSXTag = struct {
     pub const TagType = enum { fragment, tag };
     pub const Data = union(TagType) {
@@ -1845,6 +1838,7 @@ pub const SideEffects = enum(u1) {
             .e_number,
             .e_big_int,
             .e_inlined_enum,
+            .e_require_main,
             => true,
             else => false,
         };
@@ -1935,13 +1929,14 @@ pub const SideEffects = enum(u1) {
                 }
             },
 
-            .e_call => |call| {
-
+            inline .e_call, .e_new => |call| {
                 // A call that has been marked "__PURE__" can be removed if all arguments
                 // can be removed. The annotation causes us to ignore the target.
                 if (call.can_be_unwrapped_if_unused) {
                     if (call.args.len > 0) {
                         return Expr.joinAllWithCommaCallback(call.args.slice(), @TypeOf(p), p, comptime simplifyUnusedExpr, p.allocator);
+                    } else {
+                        return Expr.empty;
                     }
                 }
             },
@@ -2071,23 +2066,6 @@ pub const SideEffects = enum(u1) {
                 );
             },
 
-            .e_new => |call| {
-                // A constructor call that has been marked "__PURE__" can be removed if all arguments
-                // can be removed. The annotation causes us to ignore the target.
-                if (call.can_be_unwrapped_if_unused) {
-                    if (call.args.len > 0) {
-                        return Expr.joinAllWithCommaCallback(
-                            call.args.slice(),
-                            @TypeOf(p),
-                            p,
-                            comptime simplifyUnusedExpr,
-                            p.allocator,
-                        );
-                    }
-
-                    return null;
-                }
-            },
             else => {},
         }
 
@@ -3100,6 +3078,10 @@ pub const Parser = struct {
 
         transform_only: bool = false,
 
+        /// Used for inlining the state of import.meta.main during visiting
+        import_meta_main_value: ?bool = null,
+        lower_import_meta_main_for_node_js: bool = false,
+
         pub fn hashForRuntimeTranspiler(this: *const Options, hasher: *std.hash.Wyhash, did_use_jsx: bool) void {
             bun.assert(!this.bundle);
 
@@ -3120,6 +3102,10 @@ pub const Parser = struct {
                 hasher.update("TS");
             } else {
                 hasher.update("NO_TS");
+            }
+
+            if (this.ignore_dce_annotations) {
+                hasher.update("no_dce");
             }
 
             this.features.hashForRuntimeTranspiler(hasher);
@@ -5043,6 +5029,7 @@ fn NewParser_(
 
         commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
         commonjs_named_exports_deoptimized: bool = false,
+        commonjs_module_exports_assigned_deoptimized: bool = false,
         commonjs_named_exports_needs_conversion: u32 = std.math.maxInt(u32),
         had_commonjs_named_exports_this_visit: bool = false,
         commonjs_replacement_stmts: StmtNodeList = &.{},
@@ -7531,8 +7518,14 @@ fn NewParser_(
                         }
                     },
                     .bin_loose_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                p.ignoreUsage(p.module_ref);
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(
                                 E.Boolean{ .value = equality.equal },
                                 v.loc,
@@ -7554,8 +7547,14 @@ fn NewParser_(
 
                     },
                     .bin_strict_eq => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(false, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = equality.equal }, v.loc);
                         }
 
@@ -7564,8 +7563,14 @@ fn NewParser_(
                         // TODO: warn about typeof string
                     },
                     .bin_loose_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .loose);
+                        const equality = e_.left.data.eql(e_.right.data, p, .loose);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                         // const after_op_loc = locAfterOp(e_.);
@@ -7578,8 +7583,14 @@ fn NewParser_(
                         }
                     },
                     .bin_strict_ne => {
-                        const equality = e_.left.data.eql(e_.right.data, p.allocator, .strict);
+                        const equality = e_.left.data.eql(e_.right.data, p, .strict);
                         if (equality.ok) {
+                            if (equality.is_require_main_and_module) {
+                                p.ignoreUsage(p.module_ref);
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.valueForImportMetaMain(true, v.loc);
+                            }
+
                             return p.newExpr(E.Boolean{ .value = !equality.equal }, v.loc);
                         }
                     },
@@ -13201,12 +13212,6 @@ fn NewParser_(
                     .e_new => |ex| {
                         ex.can_be_unwrapped_if_unused = true;
                     },
-
-                    // this is specifically added only to support our implementation
-                    // of '__require' for --target=node, for /* @__PURE__ */ import.meta.url
-                    .e_dot => |ex| {
-                        ex.can_be_removed_if_unused = true;
-                    },
                     else => {},
                 }
             }
@@ -16428,33 +16433,39 @@ fn NewParser_(
                     e_.ref = result.ref;
 
                     // Handle assigning to a constant
-                    if (in.assign_target != .none and p.symbols.items[result.ref.innerIndex()].kind == .constant) {
-                        const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
-                        var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
-                        notes[0] = logger.Data{
-                            .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
-                            .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
-                        };
+                    if (in.assign_target != .none) {
+                        if (p.symbols.items[result.ref.innerIndex()].kind == .constant) {
+                            const r = js_lexer.rangeOfIdentifier(p.source, expr.loc);
+                            var notes = p.allocator.alloc(logger.Data, 1) catch unreachable;
+                            notes[0] = logger.Data{
+                                .text = std.fmt.allocPrint(p.allocator, "The symbol \"{s}\" was declared a constant here:", .{name}) catch unreachable,
+                                .location = logger.Location.initOrNull(p.source, js_lexer.rangeOfIdentifier(p.source, result.declare_loc.?)),
+                            };
 
-                        const is_error = p.const_values.contains(result.ref) or p.options.bundle;
-                        switch (is_error) {
-                            true => p.log.addRangeErrorFmtWithNotes(
-                                p.source,
-                                r,
-                                p.allocator,
-                                notes,
-                                "Cannot assign to \"{s}\" because it is a constant",
-                                .{name},
-                            ) catch unreachable,
+                            const is_error = p.const_values.contains(result.ref) or p.options.bundle;
+                            switch (is_error) {
+                                true => p.log.addRangeErrorFmtWithNotes(
+                                    p.source,
+                                    r,
+                                    p.allocator,
+                                    notes,
+                                    "Cannot assign to \"{s}\" because it is a constant",
+                                    .{name},
+                                ) catch unreachable,
 
-                            false => p.log.addRangeErrorFmtWithNotes(
-                                p.source,
-                                r,
-                                p.allocator,
-                                notes,
-                                "This assignment will throw because \"{s}\" is a constant",
-                                .{name},
-                            ) catch unreachable,
+                                false => p.log.addRangeErrorFmtWithNotes(
+                                    p.source,
+                                    r,
+                                    p.allocator,
+                                    notes,
+                                    "This assignment will throw because \"{s}\" is a constant",
+                                    .{name},
+                                ) catch unreachable,
+                            }
+                        } else if (p.exports_ref.eql(e_.ref)) {
+                            // Assigning to `exports` in a CommonJS module must be tracked to undo the
+                            // `module.exports` -> `exports` optimization.
+                            p.commonjs_module_exports_assigned_deoptimized = true;
                         }
                     }
 
@@ -16898,24 +16909,6 @@ fn NewParser_(
                     }
                 },
 
-                .inline_identifier => |id| {
-                    const ref = p.macro.imports.get(id) orelse {
-                        p.panic("Internal error: missing identifier from macro: {d}", .{id});
-                    };
-
-                    if (!p.is_control_flow_dead) {
-                        p.recordUsage(ref);
-                    }
-
-                    return p.newExpr(
-                        E.ImportIdentifier{
-                            .was_originally_identifier = false,
-                            .ref = ref,
-                        },
-                        expr.loc,
-                    );
-                },
-
                 .e_binary => |e_| {
 
                     // The handling of binary expressions is convoluted because we're using
@@ -17172,9 +17165,9 @@ fn NewParser_(
                 .e_unary => |e_| {
                     switch (e_.op) {
                         .un_typeof => {
-                            const id_before = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_before = e_.value.data == .e_identifier;
                             e_.value = p.visitExprInOut(e_.value, ExprIn{ .assign_target = e_.op.unaryAssignTarget() });
-                            const id_after = std.meta.activeTag(e_.value.data) == Expr.Tag.e_identifier;
+                            const id_after = e_.value.data == .e_identifier;
 
                             // The expression "typeof (0, x)" must not become "typeof x" if "x"
                             // is unbound because that could suppress a ReferenceError from "x"
@@ -17184,6 +17177,11 @@ fn NewParser_(
                                     e_.value,
                                     p.allocator,
                                 );
+                            }
+
+                            if (e_.value.data == .e_require_call_target) {
+                                p.ignoreUsageOfRuntimeRequire();
+                                return p.newExpr(E.String{ .data = "function" }, expr.loc);
                             }
 
                             if (SideEffects.typeof(e_.value.data)) |typeof| {
@@ -17210,6 +17208,10 @@ fn NewParser_(
                                     if (p.options.features.minify_syntax) {
                                         if (e_.value.maybeSimplifyNot(p.allocator)) |exp| {
                                             return exp;
+                                        }
+                                        if (e_.value.data == .e_import_meta_main) {
+                                            e_.value.data.e_import_meta_main.inverted = !e_.value.data.e_import_meta_main.inverted;
+                                            return e_.value;
                                         }
                                     }
                                 },
@@ -17886,6 +17888,16 @@ fn NewParser_(
             }
         }
 
+        fn ignoreUsageOfRuntimeRequire(p: *P) void {
+            if (!p.options.features.use_import_meta_require and
+                p.options.features.allow_runtime)
+            {
+                bun.assert(p.runtime_imports.__require != null);
+                p.ignoreUsage(p.runtimeIdentifierRef(logger.Loc.Empty, "__require"));
+                p.symbols.items[p.require_ref.innerIndex()].use_count_estimate -|= 1;
+            }
+        }
+
         inline fn valueForRequire(p: *P, loc: logger.Loc) Expr {
             bun.assert(!p.isSourceRuntime());
             return Expr{
@@ -17894,6 +17906,32 @@ fn NewParser_(
                 },
                 .loc = loc,
             };
+        }
+
+        inline fn valueForImportMetaMain(p: *P, inverted: bool, loc: logger.Loc) Expr {
+            if (p.options.import_meta_main_value) |known| {
+                return .{ .loc = loc, .data = .{ .e_boolean = .{ .value = if (inverted) !known else known } } };
+            } else {
+                // Node.js does not have import.meta.main, so we end up lowering
+                // this to `require.main === module`, but with the ESM format,
+                // both `require` and `module` are not present, so the code
+                // generation we need is:
+                //
+                //     import { createRequire } from "node:module";
+                //     var __require = createRequire(import.meta.url);
+                //     var import_meta_main = __require.main === __require.module;
+                //
+                // The printer can handle this for us, but we need to reference
+                // a handle to the `__require` function.
+                if (p.options.lower_import_meta_main_for_node_js) {
+                    p.recordUsageOfRuntimeRequire();
+                }
+
+                return .{
+                    .loc = loc,
+                    .data = .{ .e_import_meta_main = .{ .inverted = inverted } },
+                };
+            }
         }
 
         fn visitArgs(p: *P, args: []G.Arg, opts: VisitArgsOpts) void {
@@ -18063,6 +18101,8 @@ fn NewParser_(
                     return p.classCanBeRemovedIfUnused(ex);
                 },
                 .e_identifier => |ex| {
+                    bun.assert(!ex.ref.isSourceContentsSlice()); // was not visited
+
                     if (ex.must_keep_due_to_with_stmt) {
                         return false;
                     }
@@ -18678,6 +18718,9 @@ fn NewParser_(
                             p.ignoreUsage(p.module_ref);
                             return p.valueForRequire(name_loc);
                         } else if (!p.commonjs_named_exports_deoptimized and strings.eqlComptime(name, "exports")) {
+                            if (identifier_opts.assign_target != .none) {
+                                p.commonjs_module_exports_assigned_deoptimized = true;
+                            }
 
                             // Detect if we are doing
                             //
@@ -18843,7 +18886,7 @@ fn NewParser_(
                             }
 
                             // rewrite `module.exports` to `exports`
-                            return p.newExpr(E.Identifier{ .ref = p.exports_ref }, name_loc);
+                            return .{ .data = .e_module_dot_exports, .loc = name_loc };
                         } else if (p.options.bundle and strings.eqlComptime(name, "id") and identifier_opts.assign_target == .none) {
                             // inline module.id
                             p.ignoreUsage(p.module_ref);
@@ -18964,6 +19007,15 @@ fn NewParser_(
                             target.loc,
                         );
                     }
+
+                    if (strings.eqlComptime(name, "main")) {
+                        return p.valueForImportMetaMain(false, target.loc);
+                    }
+                },
+                .e_require_call_target => {
+                    if (strings.eqlComptime(name, "main")) {
+                        return .{ .loc = loc, .data = .e_require_main };
+                    }
                 },
                 .e_import_identifier => |id| {
                     // Symbol uses due to a property access off of an imported symbol are tracked
@@ -18994,6 +19046,50 @@ fn NewParser_(
                         !identifier_opts.is_delete_target)
                     {
                         return p.maybeRewritePropertyAccessForNamespace(name, &target, loc, name_loc);
+                    }
+                },
+                .e_module_dot_exports => {
+                    if (comptime FeatureFlags.unwrap_commonjs_to_esm) {
+                        if (!p.is_control_flow_dead) {
+                            if (!p.commonjs_named_exports_deoptimized) {
+                                if (identifier_opts.is_delete_target) {
+                                    p.deoptimizeCommonJSNamedExports();
+                                    return null;
+                                }
+
+                                const named_export_entry = p.commonjs_named_exports.getOrPut(p.allocator, name) catch unreachable;
+                                if (!named_export_entry.found_existing) {
+                                    const new_ref = p.newSymbol(
+                                        .other,
+                                        std.fmt.allocPrint(p.allocator, "${any}", .{bun.fmt.fmtIdentifier(name)}) catch unreachable,
+                                    ) catch unreachable;
+                                    p.module_scope.generated.push(p.allocator, new_ref) catch unreachable;
+                                    named_export_entry.value_ptr.* = .{
+                                        .loc_ref = LocRef{
+                                            .loc = name_loc,
+                                            .ref = new_ref,
+                                        },
+                                        .needs_decl = true,
+                                    };
+                                    if (p.commonjs_named_exports_needs_conversion == std.math.maxInt(u32))
+                                        p.commonjs_named_exports_needs_conversion = @as(u32, @truncate(p.commonjs_named_exports.count() - 1));
+                                }
+
+                                const ref = named_export_entry.value_ptr.*.loc_ref.ref.?;
+                                p.recordUsage(ref);
+
+                                return p.newExpr(
+                                    E.CommonJSExportIdentifier{
+                                        .ref = ref,
+                                        // Record this as from module.exports
+                                        .base = .module_dot_exports,
+                                    },
+                                    name_loc,
+                                );
+                            } else if (p.options.features.commonjs_at_runtime and identifier_opts.assign_target != .none) {
+                                p.has_commonjs_export_names = true;
+                            }
+                        }
                     }
                 },
                 else => {},
@@ -20264,11 +20360,11 @@ fn NewParser_(
                                     ) catch bun.outOfMemory();
                                 },
                                 else => {
-                                    if (enum_value.knownPrimitive() == .string) {
+                                    if (visited.knownPrimitive() == .string) {
                                         has_string_value = true;
                                     }
 
-                                    if (!p.exprCanBeRemovedIfUnused(&enum_value)) {
+                                    if (!p.exprCanBeRemovedIfUnused(&visited)) {
                                         all_values_are_pure = false;
                                     }
                                 },
@@ -20860,7 +20956,13 @@ fn NewParser_(
                 E.Call{
                     .target = target,
                     .args = ExprNodeList.init(args_list),
-                    .can_be_unwrapped_if_unused = all_values_are_pure,
+                    // TODO: make these fully tree-shakable. this annotation
+                    // as-is is incorrect.  This would be done by changing all
+                    // enum wrappers into `var Enum = ...` instead of two
+                    // separate statements. This way, the @__PURE__ annotation
+                    // is attached to the variable binding.
+                    //
+                    // .can_be_unwrapped_if_unused = all_values_are_pure,
                 },
                 stmt_loc,
             );
@@ -23901,12 +24003,11 @@ fn NewParser_(
                     p.require_ref,
 
                 .force_cjs_to_esm = p.unwrap_all_requires or exports_kind == .esm_with_dynamic_fallback_from_cjs,
-                .uses_module_ref = (p.symbols.items[p.module_ref.innerIndex()].use_count_estimate > 0),
-                .uses_exports_ref = (p.symbols.items[p.exports_ref.innerIndex()].use_count_estimate > 0),
-                .uses_require_ref = if (p.runtime_imports.__require != null)
-                    (p.symbols.items[p.runtime_imports.__require.?.ref.innerIndex()].use_count_estimate > 0)
-                else
-                    false,
+                .uses_module_ref = p.symbols.items[p.module_ref.inner_index].use_count_estimate > 0,
+                .uses_exports_ref = p.symbols.items[p.exports_ref.inner_index].use_count_estimate > 0,
+                .uses_require_ref = p.runtime_imports.__require != null and
+                    p.symbols.items[p.runtime_imports.__require.?.ref.inner_index].use_count_estimate > 0,
+                .commonjs_module_exports_assigned_deoptimized = p.commonjs_module_exports_assigned_deoptimized,
                 // .top_Level_await_keyword = p.top_level_await_keyword,
                 .commonjs_named_exports = p.commonjs_named_exports,
                 .has_commonjs_export_names = p.has_commonjs_export_names,

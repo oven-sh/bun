@@ -38,7 +38,7 @@
 #include "DOMJITIDLTypeFilter.h"
 #include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
-#include "simdutf.h"
+#include "wtf/SIMDUTF.h"
 #include <JavaScriptCore/ObjectPrototype.h>
 #include "BunBuiltinNames.h"
 #include "sqlite3_error_codes.h"
@@ -199,16 +199,37 @@ static inline JSC::JSValue jsBigIntFromSQLite(JSC::JSGlobalObject* globalObject,
         return {};                                                                                                 \
     }
 
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
+
 class VersionSqlite3 {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(VersionSqlite3);
+
 public:
     explicit VersionSqlite3(sqlite3* db)
         : db(db)
         , version(0)
+        , reference_count(1)
     {
     }
     sqlite3* db;
     std::atomic<uint64_t> version;
+    size_t reference_count;
+
+    void release()
+    {
+        ASSERT(reference_count > 0);
+        --reference_count;
+        if (reference_count == 0) {
+            if (!db) {
+                return;
+            }
+            sqlite3_close_v2(db);
+            db = nullptr;
+        }
+    };
 };
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(VersionSqlite3);
 
 class SQLiteSingleton {
 public:
@@ -400,6 +421,9 @@ public:
     {
         Structure* structure = globalObject->JSSQLStatementStructure();
         JSSQLStatement* ptr = new (NotNull, JSC::allocateCell<JSSQLStatement>(globalObject->vm())) JSSQLStatement(structure, *globalObject, stmt, version_db, memorySizeChange);
+        if (version_db) {
+            ++version_db->reference_count;
+        }
         ptr->finishCreation(globalObject->vm());
         return ptr;
     }
@@ -1616,12 +1640,7 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementOpenStatementFunction, (JSC::JSGlobalObje
     databases().append(new VersionSqlite3(db));
     if (finalizationTarget.isObject()) {
         vm.heap.addFinalizer(finalizationTarget.getObject(), [index](JSC::JSCell* ptr) -> void {
-            auto* db = databases()[index];
-            if (!db->db) {
-                return;
-            }
-            sqlite3_close_v2(db->db);
-            databases()[index]->db = nullptr;
+            databases()[index]->release();
         });
     }
     RELEASE_AND_RETURN(scope, JSValue::encode(jsNumber(index)));
@@ -2225,6 +2244,11 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionRun, (JSC::JSGlob
         DO_REBIND(arg0);
     }
 
+    if (UNLIKELY(!castedThis->version_db->db)) {
+        throwException(lexicalGlobalObject, scope, createError(lexicalGlobalObject, "Database has closed"_s));
+        return JSValue::encode(JSC::jsUndefined());
+    }
+
     int total_changes_before = sqlite3_total_changes(castedThis->version_db->db);
 
     int status = sqlite3_step(stmt);
@@ -2392,6 +2416,10 @@ JSSQLStatement::~JSSQLStatement()
     if (auto* columnNames = this->columnNames.get()) {
         columnNames->releaseData();
         this->columnNames = nullptr;
+    }
+
+    if (this->version_db) {
+        this->version_db->release();
     }
 }
 

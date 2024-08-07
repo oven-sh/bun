@@ -30,9 +30,12 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "wtf/DebugHeap.h"
 #include <wtf/URLParser.h>
 
 namespace WebCore {
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 DOMFormData::DOMFormData(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)

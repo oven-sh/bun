@@ -1282,8 +1282,9 @@ fn NewSocket(comptime ssl: bool) type {
         }
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
+            const needs_deref = !this.flags.detached;
             this.flags.detached = true;
-            defer this.deref();
+            defer if (needs_deref) this.deref();
 
             defer this.markInactive(socket_ctx);
 
@@ -1977,7 +1978,8 @@ fn NewSocket(comptime ssl: bool) type {
                     },
                 };
             } else {
-                globalObject.throw("Expected ArrayBufferView, a string, or a Blob", .{});
+                if (!globalObject.hasException())
+                    globalObject.throw("Expected ArrayBufferView, a string, or a Blob", .{});
                 return .{ .fail = {} };
             }
         }

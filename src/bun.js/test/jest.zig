@@ -1739,7 +1739,7 @@ inline fn createScope(
 inline fn createIfScope(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: string,
+    comptime property: [:0]const u8,
     comptime signature: string,
     comptime Scope: type,
     comptime tag: Tag,
@@ -2032,7 +2032,7 @@ fn eachBind(
 inline fn createEach(
     globalThis: *JSGlobalObject,
     callframe: *CallFrame,
-    comptime property: string,
+    comptime property: [:0]const u8,
     comptime signature: string,
     comptime is_test: bool,
 ) JSValue {

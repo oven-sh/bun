@@ -1519,7 +1519,7 @@ pub fn dumpStackTrace(trace: std.builtin.StackTrace) void {
         },
         .linux => {
             // Linux doesnt seem to be able to decode it's own debug info.
-            // TODO(@paperdave): see if zig 0.12 fixes this
+            // TODO(@paperdave): see if zig 0.14 fixes this
         },
         else => {
             stdDumpStackTrace(trace);

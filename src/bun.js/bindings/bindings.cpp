@@ -1,6 +1,8 @@
 
 #include "root.h"
 
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
@@ -1852,8 +1854,12 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
-    auto str = Zig::toString(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    auto str = Zig::toString(*strPtr);
+    if (str.isNull() && strPtr->len > 0) {
+        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+        return {};
+    }
 
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);

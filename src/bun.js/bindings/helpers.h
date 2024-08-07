@@ -10,6 +10,7 @@
 #include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/ThrowScope.h>
 #include <JavaScriptCore/VM.h>
+#include <limits>
 
 using JSC__JSGlobalObject = JSC::JSGlobalObject;
 using JSC__JSValue = JSC::EncodedJSValue;
@@ -82,10 +83,21 @@ static const WTF::String toString(ZigString str)
     }
 
     if (UNLIKELY(isTaggedExternalPtr(str.ptr))) {
+        // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+        if (UNLIKELY(str.len > std::numeric_limits<uint32_t>::max())) {
+            free_global_string(nullptr, reinterpret_cast<void*>(const_cast<unsigned char*>(untag(str.ptr))), static_cast<unsigned>(str.len));
+            return {};
+        }
+
         return !isTaggedUTF16Ptr(str.ptr)
             ? WTF::String(WTF::ExternalStringImpl::create({ untag(str.ptr), str.len }, untagVoid(str.ptr), free_global_string))
             : WTF::String(WTF::ExternalStringImpl::create(
                   { reinterpret_cast<const UChar*>(untag(str.ptr)), str.len }, untagVoid(str.ptr), free_global_string));
+    }
+
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > std::numeric_limits<uint32_t>::max())) {
+        return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)
@@ -113,6 +125,11 @@ static const WTF::String toString(ZigString str, StringPointer ptr)
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
     }
 
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > std::numeric_limits<uint32_t>::max())) {
+        return {};
+    }
+
     return !isTaggedUTF16Ptr(str.ptr)
         ? WTF::String(WTF::StringImpl::createWithoutCopying({ &untag(str.ptr)[ptr.off], ptr.len }))
         : WTF::String(WTF::StringImpl::createWithoutCopying(
@@ -126,6 +143,11 @@ static const WTF::String toStringCopy(ZigString str, StringPointer ptr)
     }
     if (UNLIKELY(isTaggedUTF8Ptr(str.ptr))) {
         return WTF::String::fromUTF8ReplacingInvalidSequences(std::span { &untag(str.ptr)[ptr.off], ptr.len });
+    }
+
+    // This will fail if the string is too long. Let's make it explicit instead of an ASSERT.
+    if (UNLIKELY(str.len > std::numeric_limits<uint32_t>::max())) {
+        return {};
     }
 
     return !isTaggedUTF16Ptr(str.ptr)

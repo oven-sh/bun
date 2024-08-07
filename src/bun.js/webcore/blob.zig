@@ -4116,10 +4116,13 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
 
         if (buf.len == 0) {
+            // If all it contained was the bom, we need to free the bytes
+            if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             return ZigString.Empty.toJS(global);
         }
 
         if (bom == .utf16_le) {
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJS(global);
@@ -4223,6 +4226,8 @@ pub const Blob = struct {
 
         if (bom == .utf16_le) {
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            defer if (lifetime == .transfer) this.detach();
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
@@ -4269,6 +4274,12 @@ pub const Blob = struct {
     pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
+                if (buf.len > JSC.max_typed_array_size) {
+                    global.throwOutOfMemory();
+                    this.detach();
+                    return JSValue.zero;
+                }
+
                 if (comptime Environment.isLinux) {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if (this.store) |store| {
@@ -4303,6 +4314,11 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
+                if (buf.len > JSC.max_typed_array_size) {
+                    global.throwOutOfMemory();
+                    return JSValue.zero;
+                }
+
                 this.store.?.ref();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                     global,
@@ -4312,6 +4328,12 @@ pub const Blob = struct {
                 );
             },
             .transfer => {
+                if (buf.len > JSC.max_typed_array_size) {
+                    global.throwOutOfMemory();
+                    this.detach();
+                    return JSValue.zero;
+                }
+
                 const store = this.store.?;
                 this.transfer();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
@@ -4322,6 +4344,12 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
+                if (buf.len > JSC.max_typed_array_size) {
+                    global.throwOutOfMemory();
+                    bun.default_allocator.free(buf);
+                    return JSValue.zero;
+                }
+
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
                     global,
                     null,

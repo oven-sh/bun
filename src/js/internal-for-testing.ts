@@ -7,11 +7,10 @@
 
 /// <reference path="./private.d.ts" />
 
-const fmtBinding = $newZigFunction(
-  "fmt.zig",
-  "fmt_js_test_bindings.jsFunctionStringFormatter",
-  2,
-) as (code: string, id: number) => string;
+const fmtBinding = $newZigFunction("fmt.zig", "fmt_js_test_bindings.jsFunctionStringFormatter", 2) as (
+  code: string,
+  id: number,
+) => string;
 
 export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
 export const escapePowershell = (code: string) => fmtBinding(code, 1);
@@ -30,7 +29,7 @@ const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
 const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
 
 export const shellInternals = {
-  lex: (a, ...b) => shellLex(a.raw, b) ,
+  lex: (a, ...b) => shellLex(a.raw, b),
   parse: (a, ...b) => shellParse(a.raw, b),
   /**
    * Checks if the given builtin is disabled on the current platform
@@ -83,4 +82,12 @@ export const jscInternals = $cpp("JSCTestingHelpers.cpp", "createJSCTestingHelpe
 export const nativeFrameForTesting: (callback: () => void) => void = $cpp(
   "CallSite.cpp",
   "createNativeFrameForTesting",
+);
+
+// Linux-only. Create an in-memory file descriptor with a preset size.
+// You should call fs.closeSync(fd) when you're done with it.
+export const memfd_create: (size: number) => number = $newZigFunction(
+  "node_fs_binding.zig",
+  "createMemfdForTesting",
+  1,
 );

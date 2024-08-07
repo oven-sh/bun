@@ -114,3 +114,5 @@ else
     std.builtin.CallingConvention.C;
 
 pub const Error = @import("ErrorCode").Error;
+
+pub const max_typed_array_size = std.math.maxInt(u32);

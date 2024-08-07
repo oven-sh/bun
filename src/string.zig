@@ -143,6 +143,8 @@ pub const WTFStringImplStruct = extern struct {
         );
     }
 
+    pub const max = std.math.maxInt(u32);
+
     pub fn toUTF8WithoutRef(this: WTFStringImpl, allocator: std.mem.Allocator) ZigString.Slice {
         if (this.is8Bit()) {
             if (bun.strings.toUTF8FromLatin1(allocator, this.latin1Slice()) catch bun.outOfMemory()) |utf8| {
@@ -403,6 +405,8 @@ pub const String = extern struct {
     ///
     /// This is not allowed on zero-length strings, in this case you should
     /// check earlier and use String.empty in that case.
+    ///
+    /// If the length is too large, this will return a dead string.
     pub fn createUninitialized(
         comptime kind: WTFStringEncoding,
         len: usize,
@@ -474,7 +478,9 @@ pub const String = extern struct {
 
         if (this.isUTF16()) {
             const new, const bytes = createUninitialized(.utf16, this.length());
-            @memcpy(bytes, this.value.ZigString.utf16Slice());
+            if (new.tag != .Dead) {
+                @memcpy(bytes, this.value.ZigString.utf16Slice());
+            }
             return new;
         }
 
@@ -604,9 +610,15 @@ pub const String = extern struct {
     /// len is the number of characters in that buffer.
     pub const ExternalStringImplFreeFunction = fn (ctx: *anyopaque, buffer: *anyopaque, len: u32) callconv(.C) void;
 
-    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: ?*anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
+    pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
+        if (bytes.len > max_length) {
+            if (callback) |cb| {
+                cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
+            }
+            return dead;
+        }
         return BunString__createExternal(bytes.ptr, bytes.len, isLatin1, ctx, callback);
     }
 
@@ -630,9 +642,19 @@ pub const String = extern struct {
         len: usize,
     ) String;
 
+    /// Max WTFStringImpl length.
+    /// **Not** in bytes. In characters.
+    pub const max_length = std.math.maxInt(u32);
+
+    /// If the allocation fails, this will free the bytes and return a dead string.
     pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
+
+        if (bytes.len > max_length) {
+            bun.default_allocator.free(bytes);
+            return dead;
+        }
 
         return switch (comptime kind) {
             .latin1 => BunString__createExternalGloballyAllocatedLatin1(bytes.ptr, bytes.len),

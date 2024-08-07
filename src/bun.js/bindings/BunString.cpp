@@ -224,16 +224,22 @@ extern "C" BunString BunString__fromUTF16Unitialized(size_t length)
 {
     ASSERT(length > 0);
     UChar* ptr;
-    auto impl = WTF::StringImpl::createUninitialized(length, ptr);
-    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (UNLIKELY(!impl)) {
+        return { .tag = BunStringTag::Dead };
+    }
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromLatin1Unitialized(size_t length)
 {
     ASSERT(length > 0);
     LChar* ptr;
-    auto impl = WTF::StringImpl::createUninitialized(length, ptr);
-    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (UNLIKELY(!impl)) {
+        return { .tag = BunStringTag::Dead };
+    }
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
@@ -242,13 +248,19 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
     if (simdutf::validate_utf8(bytes, length)) {
         size_t u16Length = simdutf::utf16_length_from_utf8(bytes, length);
         UChar* ptr;
-        auto impl = WTF::StringImpl::createUninitialized(static_cast<unsigned int>(u16Length), ptr);
+        auto impl = WTF::StringImpl::tryCreateUninitialized(static_cast<unsigned int>(u16Length), ptr);
+        if (UNLIKELY(!impl)) {
+            return { .tag = BunStringTag::Dead };
+        }
         RELEASE_ASSERT(simdutf::convert_utf8_to_utf16(bytes, length, ptr) == u16Length);
         impl->ref();
-        return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+        return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
     }
 
     auto str = WTF::String::fromUTF8ReplacingInvalidSequences(std::span { reinterpret_cast<const LChar*>(bytes), length });
+    if (UNLIKELY(str.isNull())) {
+        return { .tag = BunStringTag::Dead };
+    }
     str.impl()->ref();
     return Bun::toString(str);
 }
@@ -256,7 +268,14 @@ extern "C" BunString BunString__fromUTF8(const char* bytes, size_t length)
 extern "C" BunString BunString__fromLatin1(const char* bytes, size_t length)
 {
     ASSERT(length > 0);
-    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(std::span { bytes, length }).leakRef() } };
+    LChar* ptr;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (UNLIKELY(!impl)) {
+        return { .tag = BunStringTag::Dead };
+    }
+    memcpy(ptr, bytes, length);
+
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t length)
@@ -265,20 +284,26 @@ extern "C" BunString BunString__fromUTF16ToLatin1(const char16_t* bytes, size_t 
     ASSERT_WITH_MESSAGE(simdutf::validate_utf16le(bytes, length), "This function only accepts ascii UTF16 strings");
     size_t outLength = simdutf::latin1_length_from_utf16(length);
     LChar* ptr = nullptr;
-    auto impl = WTF::StringImpl::createUninitialized(outLength, ptr);
-    if (!ptr) {
+    auto impl = WTF::StringImpl::tryCreateUninitialized(outLength, ptr);
+    if (UNLIKELY(!impl)) {
         return { BunStringTag::Dead };
     }
 
     size_t latin1_length = simdutf::convert_valid_utf16le_to_latin1(bytes, length, reinterpret_cast<char*>(ptr));
     ASSERT_WITH_MESSAGE(latin1_length == outLength, "Failed to convert UTF16 to Latin1");
-    return { BunStringTag::WTFStringImpl, { .wtf = &impl.leakRef() } };
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromUTF16(const char16_t* bytes, size_t length)
 {
     ASSERT(length > 0);
-    return { BunStringTag::WTFStringImpl, { .wtf = &WTF::StringImpl::create(std::span { bytes, length }).leakRef() } };
+    UChar* ptr;
+    auto impl = WTF::StringImpl::tryCreateUninitialized(length, ptr);
+    if (UNLIKELY(!impl)) {
+        return { .tag = BunStringTag::Dead };
+    }
+    memcpy(ptr, bytes, length * sizeof(char16_t));
+    return { BunStringTag::WTFStringImpl, { .wtf = impl.leakRef() } };
 }
 
 extern "C" BunString BunString__fromBytes(const char* bytes, size_t length)

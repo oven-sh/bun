@@ -383,7 +383,7 @@ pub const Process = struct {
         const signal_code: ?bun.SignalCode = if (term_signal > 0 and term_signal < @intFromEnum(bun.SignalCode.SIGSYS)) @enumFromInt(term_signal) else null;
         const rusage = uv_getrusage(process);
 
-        std.log.warn("Process.onExit({d}) status={d}, sig={d}, code: {d}, signal: {?}", .{ process.pid, exit_status, term_signal, exit_code, signal_code });
+        std.log.err("Process.onExit({d}) status={d}, sig={d}, code: {d}, signal: {?}", .{ process.pid, exit_status, term_signal, exit_code, signal_code });
 
         if (signal_code) |sig| {
             this.close();

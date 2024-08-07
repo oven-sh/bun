@@ -586,22 +586,17 @@ async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
   const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
   let totalBytesWritten = 0;
 
-  try {
-    for await (let chunk of iterable) {
-      if (mustRencode && typeof chunk === "string") {
-        $debug("Re-encoding chunk to", encoding);
-        chunk = Buffer.from(chunk, encoding);
-      }
-
-      const prom = writer.write(chunk);
-      if (prom && $isPromise(prom)) {
-        totalBytesWritten += await prom;
-      } else {
-        totalBytesWritten += prom;
-      }
+  for await (let chunk of iterable) {
+    if (mustRencode && typeof chunk === "string") {
+      $debug("Re-encoding chunk to", encoding);
+      chunk = Buffer.from(chunk, encoding);
     }
-  } finally {
-    await writer.end();
+    totalBytesWritten += chunk.length;
+
+    const prom = writer.write(chunk);
+    if (prom && $isPromise(prom)) {
+      await prom;
+    }
   }
 
   return totalBytesWritten;

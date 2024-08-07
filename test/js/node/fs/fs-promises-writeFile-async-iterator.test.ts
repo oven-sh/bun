@@ -1,6 +1,7 @@
 import { test, expect, mock } from "bun:test";
 import { writeFile } from "fs/promises";
 import { tempDirWithFiles } from "harness";
+
 test("fs.promises.writeFile async iterator", async () => {
   const dir = tempDirWithFiles("fs-promises-writeFile-async-iterator", {
     "file1.txt": "0 Hello, world!",

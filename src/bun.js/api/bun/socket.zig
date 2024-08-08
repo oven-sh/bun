@@ -1175,7 +1175,6 @@ fn NewSocket(comptime ssl: bool) type {
             is_active: bool = false,
             /// Prevent onClose from calling into JavaScript while we are finalizing
             finalizing: bool = false,
-            detached: bool = true,
             authorized: bool = false,
             owned_protos: bool = true,
         };

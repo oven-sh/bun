@@ -593,7 +593,7 @@ EXPORTS
   ?SetInternalFieldCount@ObjectTemplate@v8@@QEAAXH@Z
   ?InternalFieldCount@ObjectTemplate@v8@@QEBAHXZ
   ?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z
-  ?EscapeSlot@EscapableHandleScopeBase@v8@@QEAAPEA_KPEA_K@Z
+  ?EscapeSlot@EscapableHandleScopeBase@v8@@IEAAPEA_KPEA_K@Z
   ??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z
   ?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z
   ?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z
@@ -602,3 +602,5 @@ EXPORTS
   ?Value@Boolean@v8@@QEBA_NXZ
   ?FullIsTrue@Value@v8@@AEBA_NXZ
   ?FullIsFalse@Value@v8@@AEBA_NXZ
+  ??1EscapableHandleScope@v8@@QEAA@XZ
+  ??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z

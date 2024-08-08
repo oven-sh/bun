@@ -12,7 +12,9 @@
 
 namespace v8 {
 
-class ObjectTemplate : public Template, public JSC::InternalFunction {
+// If this inherited Template like it does in V8, the layout would be wrong for JSC HeapCell.
+// Inheritance shouldn't matter for the ABI.
+class ObjectTemplate : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
@@ -52,30 +54,26 @@ private:
 
     ObjectTemplate* localToObjectPointer()
     {
-        ASSERT(this == static_cast<Data*>(this));
-        return Data::localToObjectPointer<ObjectTemplate>();
+        return reinterpret_cast<Data*>(this)->localToObjectPointer<ObjectTemplate>();
     }
 
     const ObjectTemplate* localToObjectPointer() const
     {
-        ASSERT(this == static_cast<const Data*>(this));
-        return Data::localToObjectPointer<ObjectTemplate>();
+        return reinterpret_cast<const Data*>(this)->localToObjectPointer<ObjectTemplate>();
     }
 
     Internals& internals()
     {
-        ASSERT(this == static_cast<Data*>(this));
         return localToObjectPointer()->__internals;
     }
 
     const Internals& internals() const
     {
-        ASSERT(this == static_cast<const Data*>(this));
         return localToObjectPointer()->__internals;
     }
 
     ObjectTemplate(JSC::VM& vm, JSC::Structure* structure)
-        : Base(vm, structure, DummyCallback, DummyCallback)
+        : Base(vm, structure, Template::DummyCallback, Template::DummyCallback)
     {
     }
 

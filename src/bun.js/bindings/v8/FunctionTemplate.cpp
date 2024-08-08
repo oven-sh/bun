@@ -120,7 +120,7 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
         .new_target = nullptr,
     };
 
-    FunctionCallbackInfo<Value> info(&implicit_args, &args[1], callFrame->argumentCount());
+    FunctionCallbackInfo<Value> info(&implicit_args, args.data() + 1, callFrame->argumentCount());
 
     functionTemplate->__internals.callback(info);
 

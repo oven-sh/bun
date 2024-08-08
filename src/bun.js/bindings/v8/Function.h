@@ -7,7 +7,9 @@
 
 namespace v8 {
 
-class Function : public Object, public JSC::InternalFunction {
+// If this inherited Object like it does in V8, the layout would be wrong for JSC HeapCell.
+// Inheritance shouldn't matter for the ABI.
+class Function : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
@@ -55,14 +57,12 @@ private:
 
     Function* localToObjectPointer()
     {
-        ASSERT(this == static_cast<Data*>(this));
-        return Data::localToObjectPointer<Function>();
+        return reinterpret_cast<Data*>(this)->localToObjectPointer<Function>();
     }
 
     const Function* localToObjectPointer() const
     {
-        ASSERT(this == static_cast<const Data*>(this));
-        return Data::localToObjectPointer<Function>();
+        return reinterpret_cast<const Data*>(this)->localToObjectPointer<Function>();
     }
 
     Internals& internals()

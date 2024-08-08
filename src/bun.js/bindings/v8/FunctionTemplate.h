@@ -7,7 +7,6 @@
 #include "v8/MaybeLocal.h"
 #include "v8/Value.h"
 #include "v8/Signature.h"
-#include "v8/Template.h"
 
 namespace v8 {
 
@@ -62,7 +61,9 @@ private:
     const void* type_info;
 };
 
-class FunctionTemplate : public Template, public JSC::InternalFunction {
+// If this inherited Template like it does in V8, the layout would be wrong for JSC HeapCell.
+// Inheritance shouldn't matter for the ABI.
+class FunctionTemplate : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
 
@@ -126,14 +127,12 @@ private:
 
     FunctionTemplate* localToObjectPointer()
     {
-        ASSERT(this == static_cast<Data*>(this));
-        return Data::localToObjectPointer<FunctionTemplate>();
+        return reinterpret_cast<Data*>(this)->localToObjectPointer<FunctionTemplate>();
     }
 
     const FunctionTemplate* localToObjectPointer() const
     {
-        ASSERT(this == static_cast<const Data*>(this));
-        return Data::localToObjectPointer<FunctionTemplate>();
+        return reinterpret_cast<const Data*>(this)->localToObjectPointer<FunctionTemplate>();
     }
 
     // only use from functions called on Local<FunctionTemplate>

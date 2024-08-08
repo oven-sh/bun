@@ -1728,6 +1728,10 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZNK2v87Boolean5ValueEv() *anyopaque;
     pub extern fn _ZNK2v85Value10FullIsTrueEv() *anyopaque;
     pub extern fn _ZNK2v85Value11FullIsFalseEv() *anyopaque;
+    pub extern fn _ZN2v820EscapableHandleScopeC1EPNS_7IsolateE() *anyopaque;
+    pub extern fn _ZN2v820EscapableHandleScopeC2EPNS_7IsolateE() *anyopaque;
+    pub extern fn _ZN2v820EscapableHandleScopeD1Ev() *anyopaque;
+    pub extern fn _ZN2v820EscapableHandleScopeD2Ev() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1761,7 +1765,7 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?SetInternalFieldCount@ObjectTemplate@v8@@QEAAXH@Z"() *anyopaque;
     pub extern fn @"?InternalFieldCount@ObjectTemplate@v8@@QEBAHXZ"() *anyopaque;
     pub extern fn @"?New@ObjectTemplate@v8@@SA?AV?$Local@VObjectTemplate@v8@@@2@PEAVIsolate@2@V?$Local@VFunctionTemplate@v8@@@2@@Z"() *anyopaque;
-    pub extern fn @"?EscapeSlot@EscapableHandleScopeBase@v8@@QEAAPEA_KPEA_K@Z"() *anyopaque;
+    pub extern fn @"?EscapeSlot@EscapableHandleScopeBase@v8@@IEAAPEA_KPEA_K@Z"() *anyopaque;
     pub extern fn @"??0EscapableHandleScopeBase@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"?IsolateFromNeverReadOnlySpaceObject@internal@v8@@YAPEAVIsolate@12@_K@Z"() *anyopaque;
     pub extern fn @"?New@Array@v8@@SA?AV?$Local@VArray@v8@@@2@PEAVIsolate@2@PEAV?$Local@VValue@v8@@@2@_K@Z"() *anyopaque;
@@ -1770,6 +1774,8 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"?Value@Boolean@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?FullIsTrue@Value@v8@@AEBA_NXZ"() *anyopaque;
     pub extern fn @"?FullIsFalse@Value@v8@@AEBA_NXZ"() *anyopaque;
+    pub extern fn @"??1EscapableHandleScope@v8@@QEAA@XZ"() *anyopaque;
+    pub extern fn @"??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

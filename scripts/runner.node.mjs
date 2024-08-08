@@ -318,6 +318,7 @@ async function spawnSafe(options) {
         timer = setTimeout(() => done(resolve), timeout);
       });
       subprocess.on("error", error => {
+        duration = Date.now() - timestamp;
         spawnError = error;
         done(resolve);
       });

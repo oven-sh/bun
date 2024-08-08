@@ -589,7 +589,8 @@ restart:
     }
   }
   // trigger writable if we failed last write with want read
-  if (s->ssl_write_wants_read) {
+  // but do not trigger writable if read wanna write (avoid recursive loop)
+  if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
     s->ssl_write_wants_read = 0;
 
     // make sure to update context before we call (context can change if the

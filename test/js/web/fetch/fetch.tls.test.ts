@@ -310,3 +310,29 @@ it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
     expect(await Bun.readableStreamToText(proc.stderr)).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
   }
 });
+it("fetch should abort as soon as possible under tls", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls: CERT_LOCALHOST_IP,
+    async fetch() {
+      await Bun.sleep(1000);
+      return new Response("Hello World");
+    },
+  });
+  for (const timeout of [0, 1, 10, 20, 100, 300]) {
+    const time = Date.now();
+    try {
+      await fetch(server.url, {
+        //@ts-ignore
+        tls: { ca: CERT_LOCALHOST_IP.cert },
+        signal: AbortSignal.timeout(timeout),
+      }).then(res => res.text());
+    } catch (err) {
+      expect((err as Error).name).toBe("TimeoutError");
+    } finally {
+      const diff = Date.now() - time;
+      expect(diff).toBeLessThanOrEqual(timeout + 10);
+      expect(diff).toBeGreaterThanOrEqual(timeout);
+    }
+  }
+});

@@ -12535,7 +12535,7 @@ pub fn FlagParser(comptime Opts: type) type {
 
 pub fn isPollable(fd: bun.FileDescriptor, mode: bun.Mode) bool {
     if (bun.Environment.isWindows) return false;
-    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int());
+    if (bun.Environment.isLinux) return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.cast());
     // macos allows regular files to be pollable: ISREG(mode) == true
-    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.int()) or posix.S.ISREG(mode);
+    return posix.S.ISFIFO(mode) or posix.S.ISSOCK(mode) or posix.isatty(fd.cast()) or posix.S.ISREG(mode);
 }

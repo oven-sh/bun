@@ -1549,40 +1549,6 @@ const AutoFlusher = struct {
     }
 };
 
-pub const SinkDestructor = struct {
-    const Detached = opaque {};
-    const Subprocess = JSC.API.Bun.Subprocess;
-    pub const Ptr = bun.TaggedPointerUnion(.{
-        Detached,
-        Subprocess,
-    });
-
-    pub export fn Bun__onSinkDestroyed(
-        ptr_value: ?*anyopaque,
-        sink_ptr: ?*anyopaque,
-    ) callconv(.C) void {
-        _ = sink_ptr; // autofix
-        const ptr = Ptr.from(ptr_value);
-
-        if (ptr.isNull()) {
-            return;
-        }
-
-        switch (ptr.tag()) {
-            .Detached => {
-                return;
-            },
-            .Subprocess => {
-                const subprocess = ptr.as(Subprocess);
-                subprocess.onStdinDestroyed();
-            },
-            else => {
-                Output.debugWarn("Unknown sink type", .{});
-            },
-        }
-    }
-};
-
 pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
     return struct {
         sink: SinkType,
@@ -1631,22 +1597,16 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
             return shim.cppFn("onStart", .{ ptr, globalThis });
         }
 
-        pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque, destructor: usize) callconv(.C) JSValue {
+        pub fn createObject(globalThis: *JSGlobalObject, object: *anyopaque) callconv(.C) JSValue {
             JSC.markBinding(@src());
 
-            return shim.cppFn("createObject", .{ globalThis, object, destructor });
+            return shim.cppFn("createObject", .{ globalThis, object });
         }
 
         pub fn fromJS(globalThis: *JSGlobalObject, value: JSValue) ?*anyopaque {
             JSC.markBinding(@src());
 
             return shim.cppFn("fromJS", .{ globalThis, value });
-        }
-
-        pub fn setDestroyCallback(value: JSValue, callback: usize) void {
-            JSC.markBinding(@src());
-
-            return shim.cppFn("setDestroyCallback", .{ value, callback });
         }
 
         pub fn construct(globalThis: *JSGlobalObject, _: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -1672,7 +1632,7 @@ pub fn NewJSSink(comptime SinkType: type, comptime name_: []const u8) type {
                 return .undefined;
             };
             this.sink.construct(allocator);
-            return createObject(globalThis, this, 0);
+            return createObject(globalThis, this);
         }
 
         pub fn finalize(ptr: *anyopaque) callconv(.C) void {
@@ -2975,6 +2935,7 @@ pub const FileSink = struct {
     is_socket: bool = false,
     fd: bun.FileDescriptor = bun.invalid_fd,
     has_js_called_unref: bool = false,
+    island: ?*JSC.Subprocess.Island = null,
 
     const log = Output.scoped(.FileSink, false);
 
@@ -3388,11 +3349,11 @@ pub const FileSink = struct {
     }
 
     pub fn toJS(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
-        return JSSink.createObject(globalThis, this, 0);
+        return JSSink.createObject(globalThis, this);
     }
 
-    pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject, destructor: ?SinkDestructor.Ptr) JSValue {
-        return JSSink.createObject(globalThis, this, if (destructor) |dest| @intFromPtr(dest.ptr()) else 0);
+    pub fn toJSWithDestructor(this: *FileSink, globalThis: *JSGlobalObject) JSValue {
+        return JSSink.createObject(globalThis, this);
     }
 
     pub fn endFromJS(this: *FileSink, globalThis: *JSGlobalObject) JSC.Maybe(JSValue) {

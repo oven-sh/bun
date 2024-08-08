@@ -15,6 +15,7 @@
  * limitations under the License.
  */
 // clang-format off
+#include <stdio.h>
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 
@@ -254,9 +255,8 @@ struct us_internal_ssl_socket_t *ssl_on_open(struct us_internal_ssl_socket_t *s,
 /// @param s 
 int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fast_shutdown) {
   // if we are already shutdown or in the middle of a handshake we dont need to do anything
-  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error) return 1;
-  
-  
+  if(us_internal_ssl_socket_is_shut_down(s) || s->fatal_error || !SSL_is_init_finished(s->ssl)) return 1;
+    
   // we are closing the socket but did not sent a shutdown yet
   int state = SSL_get_shutdown(s->ssl);
   int sent_shutdown = state & SSL_SENT_SHUTDOWN;
@@ -279,8 +279,9 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
         // clear
         ERR_clear_error();
         s->fatal_error = 1;
-        return 1;
       }
+      // If we error we probably do not even start the first handshake so just close the socket
+      return 1;
     }
     return ret == 1;
   }
@@ -319,7 +320,7 @@ us_internal_ssl_socket_close(struct us_internal_ssl_socket_t *s, int code,
   }
 
   // if we are in the middle of a close_notify we need to finish it (code != 0 forces a fast shutdown)
-  int can_close = s->ssl && us_internal_handle_shutdown(s, code != 0);
+  int can_close = us_internal_handle_shutdown(s, code != 0);
 
   // only close the socket if we are not in the middle of a handshake
   if(can_close) {

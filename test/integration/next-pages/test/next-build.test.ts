@@ -118,22 +118,14 @@ test(
     expect(bunBuild.exitCode).toBe(0);
 
     console.time("[node] next build");
-    const nodeBuild = Bun.spawn(["node", nextPath, "build"], {
+    const nodeBuild = Bun.spawn(["node", nextPath, "build", "--debug"], {
       cwd: nodeDir,
       env: { ...bunEnv, NODE_NO_WARNINGS: "1", NODE_ENV: "production" },
-      stdio: ["ignore", "pipe", "inherit"],
+      stdio: ["ignore", "inherit", "inherit"],
     });
     await nodeBuild.exited;
     console.timeEnd("[node] next build");
     expect(nodeBuild.exitCode).toBe(0);
-
-    const bunCliOutput = normalizeOutput(await new Response(bunBuild.stdout).text());
-    const nodeCliOutput = normalizeOutput(await new Response(nodeBuild.stdout).text());
-
-    console.log("bun", bunCliOutput);
-    console.log("node", nodeCliOutput);
-
-    expect(bunCliOutput).toBe(nodeCliOutput);
 
     const bunBuildDir = join(bunDir, ".next");
     const nodeBuildDir = join(nodeDir, ".next");

@@ -588,8 +588,10 @@ restart:
       goto restart;
     }
   }
-  // trigger writable if we failed last write with want read
-  // but do not trigger writable if read wanna write (avoid recursive loop)
+  // Trigger writable if we failed last SSL_write with SSL_ERROR_WANT_READ 
+  // If we failed SSL_read because we need to write more data (SSL_ERROR_WANT_WRITE) we are not going to trigger on_writable, we will wait until the next on_data or on_writable event
+  // SSL_read will try to flush the write buffer and if fails with SSL_ERROR_WANT_WRITE means the socket is not in a writable state anymore and only makes sense to trigger on_writable if we can write more data
+  // Otherwise we possible would trigger on_writable -> on_data event in a recursive loop
   if (s->ssl_write_wants_read && !s->ssl_read_wants_write) {
     s->ssl_write_wants_read = 0;
 

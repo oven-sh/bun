@@ -789,6 +789,7 @@ pub const Listener = struct {
             .protos = listener.protos,
             .flags = .{ .owned_protos = false },
         });
+        this_socket.ref();
         if (listener.strong_data.get()) |default_data| {
             const globalObject = listener.handlers.globalObject;
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
@@ -1075,6 +1076,7 @@ pub const Listener = struct {
                 tls.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
+
             tls.poll_ref.ref(handlers.vm);
 
             return promise_value;
@@ -1089,7 +1091,6 @@ pub const Listener = struct {
             });
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
-
             tcp.doConnect(connection, socket_context) catch {
                 tcp.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
@@ -1192,6 +1193,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
             switch (connection) {
                 .host => |c| {
+                    this.ref();
                     this.socket = .{
                         .socket = try This.Socket.connectAnon(
                             normalizeHost(c.host),
@@ -1202,6 +1204,7 @@ fn NewSocket(comptime ssl: bool) type {
                     };
                 },
                 .unix => |u| {
+                    this.ref();
                     this.socket = .{
                         .socket = try This.Socket.connectUnixAnon(
                             u,
@@ -1281,11 +1284,10 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
-            log("onConnectError({d})", .{errno});
+            log("onConnectError({d}, {})", .{ errno, this.ref_count });
             const needs_deref = this.socket != .detached;
             this.socket = .{ .detached = {} };
             defer if (needs_deref) this.deref();
-
             defer this.markInactive(socket_ctx);
 
             const handlers = this.handlers;
@@ -1374,8 +1376,12 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
+            log("onOpen {} {}", .{ this.socket == .detached, this.ref_count });
             // update the internal socket instance to the one that was just connected
-            this.socket = .{ .socket = socket };
+            if (this.socket == .detached) {
+                this.socket = .{ .socket = socket };
+                this.ref();
+            }
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});
 
@@ -1410,8 +1416,6 @@ fn NewSocket(comptime ssl: bool) type {
                     }
                 }
             }
-
-            this.ref();
 
             if (this.wrapped == .none) {
                 socket.ext(**anyopaque).* = bun.cast(**anyopaque, this);
@@ -2972,6 +2976,7 @@ fn NewSocket(comptime ssl: bool) type {
             };
 
             tls.socket = .{ .socket = new_socket };
+            tls.ref();
 
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
             raw_handlers_ptr.* = .{
@@ -3000,6 +3005,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tcp,
                 .protos = null,
             });
+            raw.ref();
 
             const raw_js_value = raw.getThisValue(globalObject);
             if (JSSocketType(ssl).dataGetCached(this.getThisValue(globalObject))) |raw_default_data| {
@@ -3023,6 +3029,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.socket = .{ .detached = {} };
+            this.unref();
             if (this.flags.is_active) {
                 const vm = this.handlers.vm;
                 this.flags.is_active = false;

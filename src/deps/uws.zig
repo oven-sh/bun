@@ -1202,11 +1202,14 @@ pub fn NewWrappedSocketHandler(comptime is_ssl: bool) type {
             };
         }
 
-        pub fn close(this: ThisSocket, code: CloseCode) void {
-            return switch (this) {
-                .socket => |socket| socket.close(code),
+        pub fn close(this: *ThisSocket, code: CloseCode) void {
+            switch (this.*) {
+                .socket => |socket| {
+                    this.* = .detached;
+                    socket.close(code);
+                },
                 .detached => {},
-            };
+            }
         }
         pub fn localPort(this: ThisSocket) i32 {
             return switch (this) {

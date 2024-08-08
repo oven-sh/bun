@@ -1040,7 +1040,212 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         }
     };
 }
+pub fn NewWrappedSocketHandler(comptime is_ssl: bool) type {
+    return union(enum) {
+        detached: void,
+        socket: uws.NewSocketHandler(is_ssl),
+        const ThisSocket = @This();
+        pub fn verifyError(this: ThisSocket) uws.us_bun_verify_error_t {
+            return switch (this) {
+                .socket => |socket| socket.verifyError(),
+                .detached => std.mem.zeroes(uws.us_bun_verify_error_t),
+            };
+        }
+        pub fn isEstablished(this: ThisSocket) bool {
+            return switch (this) {
+                .socket => |socket| socket.isEstablished(),
+                .detached => false,
+            };
+        }
 
+        pub fn timeout(this: ThisSocket, seconds: c_uint) void {
+            return switch (this) {
+                .socket => |socket| socket.timeout(seconds),
+                .detached => {},
+            };
+        }
+
+        pub fn setTimeout(this: ThisSocket, seconds: c_uint) void {
+            return switch (this) {
+                .socket => |socket| socket.setTimeout(seconds),
+                .detached => {},
+            };
+        }
+
+        pub fn setTimeoutMinutes(this: ThisSocket, minutes: c_uint) void {
+            return switch (this) {
+                .socket => |socket| socket.setTimeoutMinutes(minutes),
+                .detached => {},
+            };
+        }
+
+        pub fn startTLS(this: ThisSocket, is_client: bool) void {
+            return switch (this) {
+                .socket => |socket| socket.startTLS(is_client),
+                .detached => {},
+            };
+        }
+
+        pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
+            if (!is_ssl) return null;
+            return switch (this) {
+                .socket => |socket| @as(*BoringSSL.SSL, @ptrCast(socket.getNativeHandle())),
+                .detached => null,
+            };
+        }
+        pub fn getNativeHandle(this: ThisSocket) ?*NativeSocketHandleType(is_ssl) {
+            return switch (this) {
+                .socket => |socket| socket.getNativeHandle(),
+                .detached => null,
+            };
+        }
+
+        pub fn wrapTLS(
+            this: ThisSocket,
+            options: us_bun_socket_context_options_t,
+            socket_ext_size: i32,
+            comptime deref: bool,
+            comptime ContextType: type,
+            comptime Fields: anytype,
+        ) ?NewSocketHandler(true) {
+            return switch (this) {
+                .socket => |socket| socket.wrapTLS(options, socket_ext_size, deref, ContextType, Fields),
+                .detached => null,
+            };
+        }
+
+        pub inline fn fd(this: ThisSocket) bun.FileDescriptor {
+            if (is_ssl) return bun.invalid_fd;
+
+            return switch (this) {
+                .socket => |socket| socket.fd(),
+                .detached => bun.invalid_fd,
+            };
+        }
+
+        pub fn markNeedsMoreForSendfile(this: ThisSocket) void {
+            return switch (this) {
+                .socket => |socket| socket.markNeedsMoreForSendfile(),
+                .detached => bun.invalid_fd,
+            };
+        }
+
+        pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
+            return switch (this) {
+                .socket => |socket| socket.ext(ContextType),
+                .detached => null,
+            };
+        }
+
+        pub fn context(this: ThisSocket) ?*SocketContext {
+            return switch (this) {
+                .socket => |socket| socket.context(),
+                .detached => null,
+            };
+        }
+
+        pub fn flush(this: ThisSocket) void {
+            return switch (this) {
+                .socket => |socket| socket.flush(),
+                .detached => {},
+            };
+        }
+        pub fn write(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+            return switch (this) {
+                .socket => |socket| socket.write(data, msg_more),
+                .detached => 0,
+            };
+        }
+        pub fn rawWrite(this: ThisSocket, data: []const u8, msg_more: bool) i32 {
+            return switch (this) {
+                .socket => |socket| socket.rawWrite(data, msg_more),
+                .detached => 0,
+            };
+        }
+        pub fn shutdown(this: ThisSocket) void {
+            return switch (this) {
+                .socket => |socket| socket.shutdown(),
+                .detached => {},
+            };
+        }
+        pub fn shutdownRead(this: ThisSocket) void {
+            return switch (this) {
+                .socket => |socket| socket.shutdownRead(),
+                .detached => {},
+            };
+        }
+        pub fn isShutdown(this: ThisSocket) bool {
+            return switch (this) {
+                .socket => |socket| socket.isShutdown(),
+                .detached => true,
+            };
+        }
+
+        pub fn isClosedOrHasError(this: ThisSocket) bool {
+            return switch (this) {
+                .socket => |socket| socket.isClosedOrHasError(),
+                .detached => true,
+            };
+        }
+
+        pub fn getError(this: ThisSocket) i32 {
+            return switch (this) {
+                .socket => |socket| socket.getError(),
+                .detached => 0, // no error
+            };
+        }
+
+        pub fn isClosed(this: ThisSocket) bool {
+            return switch (this) {
+                .socket => |socket| socket.isClosed(),
+                .detached => true,
+            };
+        }
+
+        pub fn close(this: ThisSocket, code: CloseCode) void {
+            return switch (this) {
+                .socket => |socket| socket.close(code),
+                .detached => {},
+            };
+        }
+        pub fn localPort(this: ThisSocket) i32 {
+            return switch (this) {
+                .socket => |socket| socket.localPort(),
+                .detached => 0,
+            };
+        }
+        pub fn remoteAddress(this: ThisSocket, buf: [*]u8, length: *i32) void {
+            return switch (this) {
+                .socket => |socket| socket.remoteAddress(buf, length),
+                .detached => {},
+            };
+        }
+        pub fn localAddressBinary(this: ThisSocket, buf: []u8) ?[]const u8 {
+            return switch (this) {
+                .socket => |socket| socket.localAddressBinary(buf),
+                .detached => null,
+            };
+        }
+        pub fn localAddressText(this: ThisSocket, buf: []u8, is_ipv6: *bool) ?[]const u8 {
+            return switch (this) {
+                .socket => |socket| socket.localAddressText(buf, is_ipv6),
+                .detached => null,
+            };
+        }
+
+        pub fn from(socket: *Socket) ThisSocket {
+            return .{ .socket = NewSocketHandler(is_ssl).from(socket) };
+        }
+
+        pub fn fromConnecting(connecting: *ConnectingSocket) ThisSocket {
+            return .{ .socket = NewSocketHandler(is_ssl).fromConnecting(connecting) };
+        }
+
+        pub fn fromAny(socket: InternalSocket) ThisSocket {
+            return .{ .socket = NewSocketHandler(is_ssl).fromAny(socket) };
+        }
+    };
+}
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
@@ -2312,7 +2517,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
-                
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {

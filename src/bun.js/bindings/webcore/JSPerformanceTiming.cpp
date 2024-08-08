@@ -45,7 +45,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -131,8 +130,7 @@ template<> void JSPerformanceTimingDOMConstructor::initializeProperties(VM& vm, 
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceTimingPrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceTimingPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceTimingConstructor, 0 } },
     { "navigationStart"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceTiming_navigationStart, 0 } },
     { "unloadEventStart"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceTiming_unloadEventStart, 0 } },
@@ -199,7 +197,7 @@ void JSPerformanceTiming::destroy(JSC::JSCell* cell)
     thisObject->JSPerformanceTiming::~JSPerformanceTiming();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTimingConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTimingConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -217,7 +215,7 @@ static inline JSValue jsPerformanceTiming_navigationStartGetter(JSGlobalObject& 
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.navigationStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_navigationStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_navigationStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_navigationStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -230,7 +228,7 @@ static inline JSValue jsPerformanceTiming_unloadEventStartGetter(JSGlobalObject&
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.unloadEventStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_unloadEventStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_unloadEventStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_unloadEventStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -243,7 +241,7 @@ static inline JSValue jsPerformanceTiming_unloadEventEndGetter(JSGlobalObject& l
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.unloadEventEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_unloadEventEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_unloadEventEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_unloadEventEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -256,7 +254,7 @@ static inline JSValue jsPerformanceTiming_redirectStartGetter(JSGlobalObject& le
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.redirectStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_redirectStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_redirectStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_redirectStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -269,7 +267,7 @@ static inline JSValue jsPerformanceTiming_redirectEndGetter(JSGlobalObject& lexi
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.redirectEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_redirectEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_redirectEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_redirectEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -282,7 +280,7 @@ static inline JSValue jsPerformanceTiming_fetchStartGetter(JSGlobalObject& lexic
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.fetchStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_fetchStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_fetchStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_fetchStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -295,7 +293,7 @@ static inline JSValue jsPerformanceTiming_domainLookupStartGetter(JSGlobalObject
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domainLookupStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domainLookupStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domainLookupStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domainLookupStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -308,7 +306,7 @@ static inline JSValue jsPerformanceTiming_domainLookupEndGetter(JSGlobalObject& 
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domainLookupEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domainLookupEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domainLookupEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domainLookupEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -321,7 +319,7 @@ static inline JSValue jsPerformanceTiming_connectStartGetter(JSGlobalObject& lex
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.connectStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_connectStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_connectStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_connectStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -334,7 +332,7 @@ static inline JSValue jsPerformanceTiming_connectEndGetter(JSGlobalObject& lexic
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.connectEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_connectEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_connectEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_connectEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -347,7 +345,7 @@ static inline JSValue jsPerformanceTiming_secureConnectionStartGetter(JSGlobalOb
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.secureConnectionStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_secureConnectionStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_secureConnectionStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_secureConnectionStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -360,7 +358,7 @@ static inline JSValue jsPerformanceTiming_requestStartGetter(JSGlobalObject& lex
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.requestStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_requestStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_requestStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_requestStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -373,7 +371,7 @@ static inline JSValue jsPerformanceTiming_responseStartGetter(JSGlobalObject& le
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.responseStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_responseStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_responseStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_responseStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -386,7 +384,7 @@ static inline JSValue jsPerformanceTiming_responseEndGetter(JSGlobalObject& lexi
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.responseEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_responseEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_responseEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_responseEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -399,7 +397,7 @@ static inline JSValue jsPerformanceTiming_domLoadingGetter(JSGlobalObject& lexic
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domLoading())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domLoading, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domLoading, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domLoadingGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -412,7 +410,7 @@ static inline JSValue jsPerformanceTiming_domInteractiveGetter(JSGlobalObject& l
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domInteractive())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domInteractive, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domInteractive, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domInteractiveGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -425,7 +423,7 @@ static inline JSValue jsPerformanceTiming_domContentLoadedEventStartGetter(JSGlo
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domContentLoadedEventStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domContentLoadedEventStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domContentLoadedEventStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domContentLoadedEventStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -438,7 +436,7 @@ static inline JSValue jsPerformanceTiming_domContentLoadedEventEndGetter(JSGloba
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domContentLoadedEventEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domContentLoadedEventEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domContentLoadedEventEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domContentLoadedEventEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -451,7 +449,7 @@ static inline JSValue jsPerformanceTiming_domCompleteGetter(JSGlobalObject& lexi
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.domComplete())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domComplete, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_domComplete, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_domCompleteGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -464,7 +462,7 @@ static inline JSValue jsPerformanceTiming_loadEventStartGetter(JSGlobalObject& l
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.loadEventStart())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_loadEventStart, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_loadEventStart, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_loadEventStartGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -477,7 +475,7 @@ static inline JSValue jsPerformanceTiming_loadEventEndGetter(JSGlobalObject& lex
     RELEASE_AND_RETURN(throwScope, (toJS<IDLUnsignedLongLong>(lexicalGlobalObject, throwScope, impl.loadEventEnd())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_loadEventEnd, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceTiming_loadEventEnd, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSPerformanceTiming>::get<jsPerformanceTiming_loadEventEndGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -490,84 +488,84 @@ static inline EncodedJSValue jsPerformanceTimingPrototypeFunction_toJSONBody(JSG
     auto& impl = castedThis->wrapped();
     auto* result = constructEmptyObject(lexicalGlobalObject);
     auto navigationStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.navigationStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "navigationStart"_s), navigationStartValue);
     auto unloadEventStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.unloadEventStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "unloadEventStart"_s), unloadEventStartValue);
     auto unloadEventEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.unloadEventEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "unloadEventEnd"_s), unloadEventEndValue);
     auto redirectStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.redirectStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "redirectStart"_s), redirectStartValue);
     auto redirectEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.redirectEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "redirectEnd"_s), redirectEndValue);
     auto fetchStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.fetchStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "fetchStart"_s), fetchStartValue);
     auto domainLookupStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domainLookupStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domainLookupStart"_s), domainLookupStartValue);
     auto domainLookupEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domainLookupEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domainLookupEnd"_s), domainLookupEndValue);
     auto connectStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.connectStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "connectStart"_s), connectStartValue);
     auto connectEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.connectEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "connectEnd"_s), connectEndValue);
     auto secureConnectionStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.secureConnectionStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "secureConnectionStart"_s), secureConnectionStartValue);
     auto requestStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.requestStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "requestStart"_s), requestStartValue);
     auto responseStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.responseStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "responseStart"_s), responseStartValue);
     auto responseEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.responseEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "responseEnd"_s), responseEndValue);
     auto domLoadingValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domLoading());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domLoading"_s), domLoadingValue);
     auto domInteractiveValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domInteractive());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domInteractive"_s), domInteractiveValue);
     auto domContentLoadedEventStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domContentLoadedEventStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domContentLoadedEventStart"_s), domContentLoadedEventStartValue);
     auto domContentLoadedEventEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domContentLoadedEventEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domContentLoadedEventEnd"_s), domContentLoadedEventEndValue);
     auto domCompleteValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.domComplete());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "domComplete"_s), domCompleteValue);
     auto loadEventStartValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.loadEventStart());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "loadEventStart"_s), loadEventStartValue);
     auto loadEventEndValue = toJS<IDLUnsignedLongLong>(*lexicalGlobalObject, throwScope, impl.loadEventEnd());
-    RETURN_IF_EXCEPTION(throwScope, { });
+    RETURN_IF_EXCEPTION(throwScope, {});
     result->putDirect(vm, Identifier::fromString(vm, "loadEventEnd"_s), loadEventEndValue);
     return JSValue::encode(result);
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceTimingPrototypeFunction_toJSON, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceTimingPrototypeFunction_toJSON, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceTiming>::call<jsPerformanceTimingPrototypeFunction_toJSONBody>(*lexicalGlobalObject, *callFrame, "toJSON");
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceTiming::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceTiming, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceTiming.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceTiming = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceTiming.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceTiming = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceTiming, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceTiming.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceTiming = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceTiming.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceTiming = std::forward<decltype(space)>(space); });
 }
 
 void JSPerformanceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -575,11 +573,11 @@ void JSPerformanceTiming::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSPerformanceTiming*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSPerformanceTimingOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSPerformanceTimingOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -596,10 +594,14 @@ void JSPerformanceTimingOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* 
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7PerformanceTiming@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7PerformanceTiming@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore17PerformanceTimingE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore17PerformanceTimingE[];
+}
 #endif
 #endif
 
@@ -608,18 +610,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<PerformanceTiming>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7PerformanceTiming@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore17PerformanceTimingE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore17PerformanceTimingE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // PerformanceTiming has subclasses. If PerformanceTiming has subclasses that get passed
         // to toJS() we currently require PerformanceTiming you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<PerformanceTiming>(globalObject, WTFMove(impl));

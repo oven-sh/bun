@@ -1,6 +1,6 @@
 const std = @import("std");
 const Api = @import("./api/schema.zig").Api;
-const js = @import("root").bun.JSC;
+const js = bun.JSC;
 const ImportKind = @import("./import_record.zig").ImportKind;
 const bun = @import("root").bun;
 const string = bun.string;
@@ -12,12 +12,12 @@ const MutableString = bun.MutableString;
 const stringZ = bun.stringZ;
 const default_allocator = bun.default_allocator;
 const C = bun.C;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const fs = @import("fs.zig");
 const unicode = std.unicode;
 const Ref = @import("./ast/base.zig").Ref;
 const expect = std.testing.expect;
-const assert = std.debug.assert;
+const assert = bun.assert;
 const ArrayList = std.ArrayList;
 const StringBuilder = @import("./string_builder.zig");
 const Index = @import("./ast/base.zig").Index;
@@ -549,7 +549,7 @@ pub const Msg = struct {
         }
     }
 
-    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Global.panic)) void {
+    pub fn formatNoWriter(msg: *const Msg, comptime formatterFunc: @TypeOf(Output.panic)) void {
         formatterFunc("\n\n{s}: {s}\n{s}\n{s}:{}:{} ({d})", .{
             msg.kind.string(),
             msg.data.text,
@@ -717,7 +717,7 @@ pub const Log = struct {
 
         const count = @as(u16, @intCast(@min(msgs.len, errors_stack.len)));
         switch (count) {
-            0 => return JSC.JSValue.jsUndefined(),
+            0 => return .undefined,
             1 => {
                 const msg = msgs[0];
                 return switch (msg.metadata) {
@@ -1004,6 +1004,10 @@ pub const Log = struct {
         });
     }
 
+    pub fn addErrorFmtNoLoc(log: *Log, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
+        try log.addErrorFmt(null, Loc.Empty, allocator, text, args);
+    }
+
     pub fn addErrorFmt(log: *Log, source: ?*const Source, l: Loc, allocator: std.mem.Allocator, comptime text: string, args: anytype) !void {
         @setCold(true);
         log.errors += 1;
@@ -1257,6 +1261,14 @@ pub const Log = struct {
         if (needs_newline) _ = try to.write("\n");
     }
 
+    pub fn printForLogLevelColorsRuntime(self: *Log, to: anytype, enable_ansi_colors: bool) !void {
+        if (enable_ansi_colors) {
+            return self.printForLogLevelWithEnableAnsiColors(to, true);
+        } else {
+            return self.printForLogLevelWithEnableAnsiColors(to, false);
+        }
+    }
+
     pub fn toZigException(this: *const Log, allocator: std.mem.Allocator) *js.ZigException.Holder {
         var holder = try allocator.create(js.ZigException.Holder);
         holder.* = js.ZigException.Holder.init();
@@ -1293,7 +1305,7 @@ pub const Source = struct {
             return this.identifier_name;
         }
 
-        std.debug.assert(this.path.text.len > 0);
+        bun.assert(this.path.text.len > 0);
         const name = try this.path.name.nonUniqueNameString(allocator);
         this.identifier_name = name;
         return name;
@@ -1408,7 +1420,7 @@ pub const Source = struct {
     }
 
     pub fn initErrorPosition(self: *const Source, offset_loc: Loc) ErrorPosition {
-        std.debug.assert(!offset_loc.isEmpty());
+        bun.assert(!offset_loc.isEmpty());
         var prev_code_point: i32 = 0;
         const offset: usize = @min(@as(usize, @intCast(offset_loc.start)), @max(self.contents.len, 1) - 1);
 

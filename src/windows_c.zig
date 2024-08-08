@@ -2,7 +2,7 @@ const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
 const win32 = std.os.windows;
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
@@ -814,11 +814,11 @@ pub const SystemErrno = enum(u16) {
         return @as(SystemErrno, @enumFromInt(code));
     }
 
-    pub fn label(this: SystemErrno) ?[]const u8 {
+    pub fn label(this: SystemErrno) ?[:0]const u8 {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = bun.enums.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.enums.EnumMap(SystemErrno, [:0]const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
 
@@ -958,8 +958,77 @@ pub const SystemErrno = enum(u16) {
     };
 };
 
+pub const UV_E2BIG = -uv.UV_E2BIG;
+pub const UV_EACCES = -uv.UV_EACCES;
+pub const UV_EADDRINUSE = -uv.UV_EADDRINUSE;
+pub const UV_EADDRNOTAVAIL = -uv.UV_EADDRNOTAVAIL;
+pub const UV_EAFNOSUPPORT = -uv.UV_EAFNOSUPPORT;
+pub const UV_EAGAIN = -uv.UV_EAGAIN;
+pub const UV_EALREADY = -uv.UV_EALREADY;
+pub const UV_EBADF = -uv.UV_EBADF;
+pub const UV_EBUSY = -uv.UV_EBUSY;
+pub const UV_ECANCELED = -uv.UV_ECANCELED;
+pub const UV_ECHARSET = -uv.UV_ECHARSET;
+pub const UV_ECONNABORTED = -uv.UV_ECONNABORTED;
+pub const UV_ECONNREFUSED = -uv.UV_ECONNREFUSED;
+pub const UV_ECONNRESET = -uv.UV_ECONNRESET;
+pub const UV_EDESTADDRREQ = -uv.UV_EDESTADDRREQ;
+pub const UV_EEXIST = -uv.UV_EEXIST;
+pub const UV_EFAULT = -uv.UV_EFAULT;
+pub const UV_EHOSTUNREACH = -uv.UV_EHOSTUNREACH;
+pub const UV_EINTR = -uv.UV_EINTR;
+pub const UV_EINVAL = -uv.UV_EINVAL;
+pub const UV_EIO = -uv.UV_EIO;
+pub const UV_EISCONN = -uv.UV_EISCONN;
+pub const UV_EISDIR = -uv.UV_EISDIR;
+pub const UV_ELOOP = -uv.UV_ELOOP;
+pub const UV_EMFILE = -uv.UV_EMFILE;
+pub const UV_EMSGSIZE = -uv.UV_EMSGSIZE;
+pub const UV_ENAMETOOLONG = -uv.UV_ENAMETOOLONG;
+pub const UV_ENETDOWN = -uv.UV_ENETDOWN;
+pub const UV_ENETUNREACH = -uv.UV_ENETUNREACH;
+pub const UV_ENFILE = -uv.UV_ENFILE;
+pub const UV_ENOBUFS = -uv.UV_ENOBUFS;
+pub const UV_ENODEV = -uv.UV_ENODEV;
+pub const UV_ENOENT = -uv.UV_ENOENT;
+pub const UV_ENOMEM = -uv.UV_ENOMEM;
+pub const UV_ENONET = -uv.UV_ENONET;
+pub const UV_ENOSPC = -uv.UV_ENOSPC;
+pub const UV_ENOSYS = -uv.UV_ENOSYS;
+pub const UV_ENOTCONN = -uv.UV_ENOTCONN;
+pub const UV_ENOTDIR = -uv.UV_ENOTDIR;
+pub const UV_ENOTEMPTY = -uv.UV_ENOTEMPTY;
+pub const UV_ENOTSOCK = -uv.UV_ENOTSOCK;
+pub const UV_ENOTSUP = -uv.UV_ENOTSUP;
+pub const UV_EPERM = -uv.UV_EPERM;
+pub const UV_EPIPE = -uv.UV_EPIPE;
+pub const UV_EPROTO = -uv.UV_EPROTO;
+pub const UV_EPROTONOSUPPORT = -uv.UV_EPROTONOSUPPORT;
+pub const UV_EPROTOTYPE = -uv.UV_EPROTOTYPE;
+pub const UV_EROFS = -uv.UV_EROFS;
+pub const UV_ESHUTDOWN = -uv.UV_ESHUTDOWN;
+pub const UV_ESPIPE = -uv.UV_ESPIPE;
+pub const UV_ESRCH = -uv.UV_ESRCH;
+pub const UV_ETIMEDOUT = -uv.UV_ETIMEDOUT;
+pub const UV_ETXTBSY = -uv.UV_ETXTBSY;
+pub const UV_EXDEV = -uv.UV_EXDEV;
+pub const UV_EFBIG = -uv.UV_EFBIG;
+pub const UV_ENOPROTOOPT = -uv.UV_ENOPROTOOPT;
+pub const UV_ERANGE = -uv.UV_ERANGE;
+pub const UV_ENXIO = -uv.UV_ENXIO;
+pub const UV_EMLINK = -uv.UV_EMLINK;
+pub const UV_EHOSTDOWN = -uv.UV_EHOSTDOWN;
+pub const UV_EREMOTEIO = -uv.UV_EREMOTEIO;
+pub const UV_ENOTTY = -uv.UV_ENOTTY;
+pub const UV_EFTYPE = -uv.UV_EFTYPE;
+pub const UV_EILSEQ = -uv.UV_EILSEQ;
+pub const UV_EOVERFLOW = -uv.UV_EOVERFLOW;
+pub const UV_ESOCKTNOSUPPORT = -uv.UV_ESOCKTNOSUPPORT;
+pub const UV_ENODATA = -uv.UV_ENODATA;
+pub const UV_EUNATCH = -uv.UV_EUNATCH;
+
 pub const off_t = i64;
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {}
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {}
 
 const uv = @import("./deps/libuv.zig");
 
@@ -1269,32 +1338,36 @@ pub fn renameAtW(
     new_path_w: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
-    if (comptime bun.Environment.allow_assert) {
-        // if the directories are the same and the destination path is absolute, the old path name is kept
-        if (old_dir_fd == new_dir_fd) {
-            std.debug.assert(!std.fs.path.isAbsoluteWindowsWTF16(new_path_w));
+    const src_fd = brk: {
+        switch (bun.sys.openFileAtWindows(
+            old_dir_fd,
+            old_path_w,
+            w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE | w.FILE_TRAVERSE,
+            w.FILE_OPEN,
+            w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+        )) {
+            .err => {
+                // retry, wtihout FILE_TRAVERSE flag
+                switch (bun.sys.openFileAtWindows(
+                    old_dir_fd,
+                    old_path_w,
+                    w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
+                    w.FILE_OPEN,
+                    w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
+                )) {
+                    .err => |err2| return .{ .err = err2 },
+                    .result => |fd| break :brk fd,
+                }
+            },
+            .result => |fd| break :brk fd,
         }
-    }
-
-    const src_fd = switch (bun.sys.openFileAtWindows(
-        old_dir_fd,
-        old_path_w,
-        // access_mask
-        w.SYNCHRONIZE | w.GENERIC_WRITE | w.DELETE,
-        // create disposition
-        w.FILE_OPEN,
-        // create options
-        w.FILE_SYNCHRONOUS_IO_NONALERT | w.FILE_OPEN_REPARSE_POINT,
-    )) {
-        .err => |err| return Maybe(void){ .err = err },
-        .result => |fd| fd,
     };
     defer _ = bun.sys.close(src_fd);
 
     return moveOpenedFileAt(src_fd, new_dir_fd, new_path_w, replace_if_exists);
 }
 
-const log = bun.Output.scoped(.SYS, false);
+const log = bun.sys.syslog;
 
 /// With an open file source_fd, move it into the directory new_dir_fd with the name new_path_w.
 /// Does not close the file descriptor.
@@ -1314,11 +1387,10 @@ pub fn moveOpenedFileAt(
     // supported in order to avoid either (1) using a redundant call that we can know in advance will return
     // STATUS_NOT_SUPPORTED or (2) only setting IGNORE_READONLY_ATTRIBUTE when >= rs5
     // and therefore having different behavior when the Windows version is >= rs1 but < rs5.
-    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
 
     if (bun.Environment.allow_assert) {
-        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '\\') == null); // Call moveOpenedFileAtLoose
-        std.debug.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
+        bun.assert(std.mem.indexOfScalar(u16, new_file_name, '/') == null); // Call moveOpenedFileAtLoose
     }
 
     const struct_buf_len = @sizeOf(w.FILE_RENAME_INFORMATION_EX) + (bun.MAX_PATH_BYTES - 1);
@@ -1369,7 +1441,7 @@ pub fn moveOpenedFileAtLoose(
     new_path: []const u16,
     replace_if_exists: bool,
 ) Maybe(void) {
-    std.debug.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
+    bun.assert(std.mem.indexOfScalar(u16, new_path, '/') == null); // Call bun.strings.toWPathNormalized first
 
     const without_leading_dot_slash = if (new_path.len >= 2 and new_path[0] == '.' and new_path[1] == '\\')
         new_path[2..]
@@ -1378,7 +1450,7 @@ pub fn moveOpenedFileAtLoose(
 
     if (std.mem.lastIndexOfScalar(u16, new_path, '\\')) |last_slash| {
         const dirname = new_path[0..last_slash];
-        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, false, true)) {
+        const fd = switch (bun.sys.openDirAtWindows(new_dir_fd, dirname, .{ .can_rename_or_delete = true, .iterable = false })) {
             .err => |e| return .{ .err = e },
             .result => |fd| fd,
         };
@@ -1403,7 +1475,7 @@ const FILE_DISPOSITION_IGNORE_READONLY_ATTRIBUTE: w.ULONG = 0x00000010;
 ///
 /// NOTE: THE FILE MUST BE OPENED WITH ACCESS_MASK "DELETE" OR THIS WILL FAIL
 pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
-    comptime std.debug.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
+    comptime bun.assert(builtin.target.os.version_range.windows.min.isAtLeast(.win10_rs5));
     var info = w.FILE_DISPOSITION_INFORMATION_EX{
         .Flags = FILE_DISPOSITION_DELETE |
             FILE_DISPOSITION_POSIX_SEMANTICS |
@@ -1428,3 +1500,5 @@ pub fn deleteOpenedFile(fd: bun.FileDescriptor) Maybe(void) {
 }
 
 pub extern fn windows_enable_stdio_inheritance() void;
+
+pub extern "c" fn quick_exit(code: c_int) noreturn;

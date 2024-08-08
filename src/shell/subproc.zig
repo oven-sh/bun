@@ -1,15 +1,15 @@
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const bun = @import("root").bun;
 const Environment = bun.Environment;
-const NetworkThread = @import("root").bun.http.NetworkThread;
+const NetworkThread = bun.http.NetworkThread;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const Which = @import("../which.zig");
@@ -208,8 +208,10 @@ pub const ShellSubprocess = struct {
                 }
             }
             switch (stdio) {
-                // The shell never uses this
-                .dup2 => @panic("Unimplemented stdin dup2"),
+                .dup2 => {
+                    // The shell never uses this
+                    @panic("Unimplemented stdin dup2");
+                },
                 .pipe => {
                     // The shell never uses this
                     @panic("Unimplemented stdin pipe");
@@ -226,7 +228,7 @@ pub const ShellSubprocess = struct {
                     };
                 },
                 .memfd => |memfd| {
-                    std.debug.assert(memfd != bun.invalid_fd);
+                    assert(memfd != bun.invalid_fd);
                     return Writable{ .memfd = memfd };
                 },
                 .fd => {
@@ -267,7 +269,7 @@ pub const ShellSubprocess = struct {
         }
 
         pub fn finalize(this: *Writable) void {
-            const subprocess = @fieldParentPtr(Subprocess, "stdin", this);
+            const subprocess: *Subprocess = @fieldParentPtr("stdin", this);
             if (subprocess.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSSubprocess.stdinGetCached(subprocess.this_jsvalue)) |existing_value| {
                     JSC.WebCore.FileSink.JSSink.setDestroyCallback(existing_value, 0);
@@ -489,22 +491,12 @@ pub const ShellSubprocess = struct {
     }
 
     /// This disables the keeping process alive flag on the poll and also in the stdin, stdout, and stderr
-    pub fn unref(this: *@This(), comptime deactivate_poll_ref: bool) void {
-        _ = deactivate_poll_ref; // autofix
-        // const vm = this.globalThis.bunVM();
-
+    pub fn unref(this: *@This(), comptime _: bool) void {
         this.process.disableKeepingEventLoopAlive();
-        // if (!this.hasCalledGetter(.stdin)) {
-        // this.stdin.unref();
-        // }
 
-        // if (!this.hasCalledGetter(.stdout)) {
         this.stdout.unref();
-        // }
 
-        // if (!this.hasCalledGetter(.stderr)) {
-        this.stdout.unref();
-        // }
+        this.stderr.unref();
     }
 
     pub fn hasKilled(this: *const @This()) bool {
@@ -755,7 +747,7 @@ pub const ShellSubprocess = struct {
         spawn_args_: SpawnArgs,
         out: **@This(),
     ) bun.shell.Result(void) {
-        var arena = @import("root").bun.ArenaAllocator.init(bun.default_allocator);
+        var arena = bun.ArenaAllocator.init(bun.default_allocator);
         defer arena.deinit();
 
         var spawn_args = spawn_args_;
@@ -887,7 +879,7 @@ pub const ShellSubprocess = struct {
         var send_exit_notification = false;
 
         if (comptime !is_sync) {
-            switch (subprocess.process.watch(event_loop)) {
+            switch (subprocess.process.watch()) {
                 .result => {},
                 .err => {
                     send_exit_notification = true;
@@ -962,8 +954,6 @@ pub const ShellSubprocess = struct {
             }
         }
     }
-
-    const os = std.os;
 };
 
 const WaiterThread = bun.spawn.WaiterThread;
@@ -1056,7 +1046,7 @@ pub const PipeReader = struct {
         }
 
         pub fn parent(this: *CapturedWriter) *PipeReader {
-            return @fieldParentPtr(PipeReader, "captured_writer", this);
+            return @fieldParentPtr("captured_writer", this);
         }
 
         pub fn eventLoop(this: *CapturedWriter) JSC.EventLoopHandle {
@@ -1223,7 +1213,7 @@ pub const PipeReader = struct {
     ) void {
         if (!this.isDone()) return;
         log("signalDoneToCmd ({x}: {s}) isDone={any}", .{ @intFromPtr(this), @tagName(this.out_type), this.isDone() });
-        if (bun.Environment.allow_assert) std.debug.assert(this.process != null);
+        if (bun.Environment.allow_assert) assert(this.process != null);
         if (this.process) |proc| {
             if (proc.cmd_parent) |cmd| {
                 if (this.captured_writer.err) |e| {
@@ -1357,11 +1347,11 @@ pub const PipeReader = struct {
     pub fn deinit(this: *PipeReader) void {
         log("PipeReader(0x{x}, {s}) deinit()", .{ @intFromPtr(this), @tagName(this.out_type) });
         if (comptime Environment.isPosix) {
-            std.debug.assert(this.reader.isDone() or this.state == .err);
+            assert(this.reader.isDone() or this.state == .err);
         }
 
         if (comptime Environment.isWindows) {
-            std.debug.assert(this.reader.source == null or this.reader.source.?.isClosed());
+            assert(this.reader.source == null or this.reader.source.?.isClosed());
         }
 
         if (this.state == .done) {
@@ -1396,8 +1386,10 @@ pub inline fn assertStdioResult(result: StdioResult) void {
     if (comptime Environment.allow_assert) {
         if (Environment.isPosix) {
             if (result) |fd| {
-                std.debug.assert(fd != bun.invalid_fd);
+                assert(fd != bun.invalid_fd);
             }
         }
     }
 }
+
+const assert = bun.assert;

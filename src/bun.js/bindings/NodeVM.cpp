@@ -1,4 +1,6 @@
+
 #include "root.h"
+#include "JavaScriptCore/ExecutableInfo.h"
 
 #include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
@@ -36,12 +38,12 @@ using namespace JSC;
 
 class ScriptOptions {
 public:
-    String filename;
+    String filename = String();
     OrdinalNumber lineOffset;
     OrdinalNumber columnOffset;
-    String cachedData;
-    bool produceCachedData;
-    bool importModuleDynamically;
+    String cachedData = String();
+    bool produceCachedData = false;
+    bool importModuleDynamically = false;
 
     static std::optional<ScriptOptions> fromJS(JSC::JSGlobalObject* globalObject, JSC::JSValue optionsArg, bool& failed)
     {
@@ -144,8 +146,8 @@ static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScri
     if (executable == nullptr) {
         // Note: it accepts a JSGlobalObject, but it just reads stuff from JSC::VM.
         executable = JSC::DirectEvalExecutable::create(
-            globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-            false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+            globalObject, script->source(), NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+            false, false, EvalContextType::None, nullptr, nullptr);
         RETURN_IF_EXCEPTION(throwScope, {});
         script->m_cachedDirectExecutable.set(vm, script, executable);
     }
@@ -274,8 +276,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
         vm, zigGlobal->globalObjectStructure());
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        targetContext, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+        targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
@@ -345,8 +347,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     context->setPrototypeDirect(vm, proxy);
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        globalObject, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+        globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);

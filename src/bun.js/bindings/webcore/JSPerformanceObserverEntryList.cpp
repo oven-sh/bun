@@ -48,7 +48,6 @@
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
 
-
 namespace WebCore {
 using namespace JSC;
 
@@ -115,8 +114,7 @@ template<> void JSPerformanceObserverEntryListDOMConstructor::initializeProperti
 
 /* Hash table for prototype */
 
-static const HashTableValue JSPerformanceObserverEntryListPrototypeTableValues[] =
-{
+static const HashTableValue JSPerformanceObserverEntryListPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsPerformanceObserverEntryListConstructor, 0 } },
     { "getEntries"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverEntryListPrototypeFunction_getEntries, 0 } },
     { "getEntriesByType"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, 1 } },
@@ -164,7 +162,7 @@ void JSPerformanceObserverEntryList::destroy(JSC::JSCell* cell)
     thisObject->JSPerformanceObserverEntryList::~JSPerformanceObserverEntryList();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObject* lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsPerformanceObserverEntryListConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
     VM& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
@@ -184,7 +182,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntries())));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntries, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntries, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserverEntryList>::call<jsPerformanceObserverEntryListPrototypeFunction_getEntriesBody>(*lexicalGlobalObject, *callFrame, "getEntries");
 }
@@ -204,7 +202,7 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByType(WTFMove(type)))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByType, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserverEntryList>::call<jsPerformanceObserverEntryListPrototypeFunction_getEntriesByTypeBody>(*lexicalGlobalObject, *callFrame, "getEntriesByType");
 }
@@ -227,19 +225,19 @@ static inline JSC::EncodedJSValue jsPerformanceObserverEntryListPrototypeFunctio
     RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLSequence<IDLInterface<PerformanceEntry>>>(*lexicalGlobalObject, *castedThis->globalObject(), throwScope, impl.getEntriesByName(WTFMove(name), WTFMove(type)))));
 }
 
-JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, (JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame))
+JSC_DEFINE_HOST_FUNCTION(jsPerformanceObserverEntryListPrototypeFunction_getEntriesByName, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
 {
     return IDLOperation<JSPerformanceObserverEntryList>::call<jsPerformanceObserverEntryListPrototypeFunction_getEntriesByNameBody>(*lexicalGlobalObject, *callFrame, "getEntriesByName");
 }
 
 JSC::GCClient::IsoSubspace* JSPerformanceObserverEntryList::subspaceForImpl(JSC::VM& vm)
 {
-    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(vm,
-        [] (auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserverEntryList.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); },
-        [] (auto& spaces) { return spaces.m_subspaceForPerformanceObserverEntryList.get(); },
-        [] (auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); }
-    );
+    return WebCore::subspaceForImpl<JSPerformanceObserverEntryList, UseCustomHeapCellType::No>(
+        vm,
+        [](auto& spaces) { return spaces.m_clientSubspaceForPerformanceObserverEntryList.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_clientSubspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); },
+        [](auto& spaces) { return spaces.m_subspaceForPerformanceObserverEntryList.get(); },
+        [](auto& spaces, auto&& space) { spaces.m_subspaceForPerformanceObserverEntryList = std::forward<decltype(space)>(space); });
 }
 
 void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
@@ -247,11 +245,11 @@ void JSPerformanceObserverEntryList::analyzeHeap(JSCell* cell, HeapAnalyzer& ana
     auto* thisObject = jsCast<JSPerformanceObserverEntryList*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url "_s + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSPerformanceObserverEntryListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSPerformanceObserverEntryListOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -268,10 +266,14 @@ void JSPerformanceObserverEntryListOwner::finalize(JSC::Handle<JSC::Unknown> han
 
 #if ENABLE(BINDING_INTEGRITY)
 #if PLATFORM(WIN)
-#pragma warning(disable: 4483)
-extern "C" { extern void (*const __identifier("??_7PerformanceObserverEntryList@WebCore@@6B@")[])(); }
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7PerformanceObserverEntryList@WebCore@@6B@")[])();
+}
 #else
-extern "C" { extern void* _ZTVN7WebCore28PerformanceObserverEntryListE[]; }
+extern "C" {
+extern void* _ZTVN7WebCore28PerformanceObserverEntryListE[];
+}
 #endif
 #endif
 
@@ -280,18 +282,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<PerformanceObserverEntryList>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7PerformanceObserverEntryList@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore28PerformanceObserverEntryListE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore28PerformanceObserverEntryListE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // PerformanceObserverEntryList has subclasses. If PerformanceObserverEntryList has subclasses that get passed
         // to toJS() we currently require PerformanceObserverEntryList you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<PerformanceObserverEntryList>(globalObject, WTFMove(impl));

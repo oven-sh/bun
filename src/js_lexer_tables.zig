@@ -1,12 +1,13 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const expectString = std.testing.expectEqualStrings;
 const expect = std.testing.expect;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const unicode = std.unicode;
-const default_allocator = @import("root").bun.default_allocator;
+const default_allocator = bun.default_allocator;
 const string = @import("string_types.zig").string;
 const CodePoint = @import("string_types.zig").CodePoint;
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+const ComptimeStringMap = bun.ComptimeStringMap;
 
 pub const T = enum(u8) {
     t_end_of_file,
@@ -258,130 +259,130 @@ pub const TypeScriptAccessibilityModifier = ComptimeStringMap(void, .{
     .{ "readonly", void },
 });
 
-pub const TokenEnumType = std.EnumArray(T, []u8);
+pub const TokenEnumType = std.EnumArray(T, []const u8);
 
 pub const tokenToString = brk: {
-    var TEndOfFile = "end of file".*;
-    var TSyntaxError = "syntax error".*;
-    var THashbang = "hashbang comment".*;
+    const TEndOfFile = "end of file".*;
+    const TSyntaxError = "syntax error".*;
+    const THashbang = "hashbang comment".*;
 
     // Literals
-    var TNoSubstitutionTemplateLiteral = "template literal".*;
-    var TNumericLiteral = "number".*;
-    var TStringLiteral = "string".*;
-    var TBigIntegerLiteral = "bigint".*;
+    const TNoSubstitutionTemplateLiteral = "template literal".*;
+    const TNumericLiteral = "number".*;
+    const TStringLiteral = "string".*;
+    const TBigIntegerLiteral = "bigint".*;
 
     // Pseudo-literals
-    var TTemplateHead = "template literal".*;
-    var TTemplateMiddle = "template literal".*;
-    var TTemplateTail = "template literal".*;
+    const TTemplateHead = "template literal".*;
+    const TTemplateMiddle = "template literal".*;
+    const TTemplateTail = "template literal".*;
 
     // Punctuation
-    var TAmpersand = "\"&\"".*;
-    var TAmpersandAmpersand = "\"&&\"".*;
-    var TAsterisk = "\"*\"".*;
-    var TAsteriskAsterisk = "\"**\"".*;
-    var TAt = "\"@\"".*;
-    var TBar = "\"|\"".*;
-    var TBarBar = "\"||\"".*;
-    var TCaret = "\"^\"".*;
-    var TCloseBrace = "\"}\"".*;
-    var TCloseBracket = "\"]\"".*;
-    var TCloseParen = "\")\"".*;
-    var TColon = "\" =\"".*;
-    var TComma = "\",\"".*;
-    var TDot = "\".\"".*;
-    var TDotDotDot = "\"...\"".*;
-    var TEqualsEquals = "\"==\"".*;
-    var TEqualsEqualsEquals = "\"===\"".*;
-    var TEqualsGreaterThan = "\"=>\"".*;
-    var TExclamation = "\"!\"".*;
-    var TExclamationEquals = "\"!=\"".*;
-    var TExclamationEqualsEquals = "\"!==\"".*;
-    var TGreaterThan = "\">\"".*;
-    var TGreaterThanEquals = "\">=\"".*;
-    var TGreaterThanGreaterThan = "\">>\"".*;
-    var TGreaterThanGreaterThanGreaterThan = "\">>>\"".*;
-    var TLessThan = "\"<\"".*;
-    var TLessThanEquals = "\"<=\"".*;
-    var TLessThanLessThan = "\"<<\"".*;
-    var TMinus = "\"-\"".*;
-    var TMinusMinus = "\"--\"".*;
-    var TOpenBrace = "\"{\"".*;
-    var TOpenBracket = "\"[\"".*;
-    var TOpenParen = "\"(\"".*;
-    var TPercent = "\"%\"".*;
-    var TPlus = "\"+\"".*;
-    var TPlusPlus = "\"++\"".*;
-    var TQuestion = "\"?\"".*;
-    var TQuestionDot = "\"?.\"".*;
-    var TQuestionQuestion = "\"??\"".*;
-    var TSemicolon = "\";\"".*;
-    var TSlash = "\"/\"".*;
-    var TTilde = "\"~\"".*;
+    const TAmpersand = "\"&\"".*;
+    const TAmpersandAmpersand = "\"&&\"".*;
+    const TAsterisk = "\"*\"".*;
+    const TAsteriskAsterisk = "\"**\"".*;
+    const TAt = "\"@\"".*;
+    const TBar = "\"|\"".*;
+    const TBarBar = "\"||\"".*;
+    const TCaret = "\"^\"".*;
+    const TCloseBrace = "\"}\"".*;
+    const TCloseBracket = "\"]\"".*;
+    const TCloseParen = "\")\"".*;
+    const TColon = "\" =\"".*;
+    const TComma = "\",\"".*;
+    const TDot = "\".\"".*;
+    const TDotDotDot = "\"...\"".*;
+    const TEqualsEquals = "\"==\"".*;
+    const TEqualsEqualsEquals = "\"===\"".*;
+    const TEqualsGreaterThan = "\"=>\"".*;
+    const TExclamation = "\"!\"".*;
+    const TExclamationEquals = "\"!=\"".*;
+    const TExclamationEqualsEquals = "\"!==\"".*;
+    const TGreaterThan = "\">\"".*;
+    const TGreaterThanEquals = "\">=\"".*;
+    const TGreaterThanGreaterThan = "\">>\"".*;
+    const TGreaterThanGreaterThanGreaterThan = "\">>>\"".*;
+    const TLessThan = "\"<\"".*;
+    const TLessThanEquals = "\"<=\"".*;
+    const TLessThanLessThan = "\"<<\"".*;
+    const TMinus = "\"-\"".*;
+    const TMinusMinus = "\"--\"".*;
+    const TOpenBrace = "\"{\"".*;
+    const TOpenBracket = "\"[\"".*;
+    const TOpenParen = "\"(\"".*;
+    const TPercent = "\"%\"".*;
+    const TPlus = "\"+\"".*;
+    const TPlusPlus = "\"++\"".*;
+    const TQuestion = "\"?\"".*;
+    const TQuestionDot = "\"?.\"".*;
+    const TQuestionQuestion = "\"??\"".*;
+    const TSemicolon = "\";\"".*;
+    const TSlash = "\"/\"".*;
+    const TTilde = "\"~\"".*;
 
     // Assignments
-    var TAmpersandAmpersandEquals = "\"&&=\"".*;
-    var TAmpersandEquals = "\"&=\"".*;
-    var TAsteriskAsteriskEquals = "\"**=\"".*;
-    var TAsteriskEquals = "\"*=\"".*;
-    var TBarBarEquals = "\"||=\"".*;
-    var TBarEquals = "\"|=\"".*;
-    var TCaretEquals = "\"^=\"".*;
-    var TEquals = "\"=\"".*;
-    var TGreaterThanGreaterThanEquals = "\">>=\"".*;
-    var TGreaterThanGreaterThanGreaterThanEquals = "\">>>=\"".*;
-    var TLessThanLessThanEquals = "\"<<=\"".*;
-    var TMinusEquals = "\"-=\"".*;
-    var TPercentEquals = "\"%=\"".*;
-    var TPlusEquals = "\"+=\"".*;
-    var TQuestionQuestionEquals = "\"??=\"".*;
-    var TSlashEquals = "\"/=\"".*;
+    const TAmpersandAmpersandEquals = "\"&&=\"".*;
+    const TAmpersandEquals = "\"&=\"".*;
+    const TAsteriskAsteriskEquals = "\"**=\"".*;
+    const TAsteriskEquals = "\"*=\"".*;
+    const TBarBarEquals = "\"||=\"".*;
+    const TBarEquals = "\"|=\"".*;
+    const TCaretEquals = "\"^=\"".*;
+    const TEquals = "\"=\"".*;
+    const TGreaterThanGreaterThanEquals = "\">>=\"".*;
+    const TGreaterThanGreaterThanGreaterThanEquals = "\">>>=\"".*;
+    const TLessThanLessThanEquals = "\"<<=\"".*;
+    const TMinusEquals = "\"-=\"".*;
+    const TPercentEquals = "\"%=\"".*;
+    const TPlusEquals = "\"+=\"".*;
+    const TQuestionQuestionEquals = "\"??=\"".*;
+    const TSlashEquals = "\"/=\"".*;
 
     // Class-private fields and methods
-    var TPrivateIdentifier = "private identifier".*;
+    const TPrivateIdentifier = "private identifier".*;
 
     // Identifiers
-    var TIdentifier = "identifier".*;
-    var TEscapedKeyword = "escaped keyword".*;
+    const TIdentifier = "identifier".*;
+    const TEscapedKeyword = "escaped keyword".*;
 
     // Reserved words
-    var TBreak = "\"break\"".*;
-    var TCase = "\"case\"".*;
-    var TCatch = "\"catch\"".*;
-    var TClass = "\"class\"".*;
-    var TConst = "\"const\"".*;
-    var TContinue = "\"continue\"".*;
-    var TDebugger = "\"debugger\"".*;
-    var TDefault = "\"default\"".*;
-    var TDelete = "\"delete\"".*;
-    var TDo = "\"do\"".*;
-    var TElse = "\"else\"".*;
-    var TEnum = "\"enum\"".*;
-    var TExport = "\"export\"".*;
-    var TExtends = "\"extends\"".*;
-    var TFalse = "\"false\"".*;
-    var TFinally = "\"finally\"".*;
-    var TFor = "\"for\"".*;
-    var TFunction = "\"function\"".*;
-    var TIf = "\"if\"".*;
-    var TImport = "\"import\"".*;
-    var TIn = "\"in\"".*;
-    var TInstanceof = "\"instanceof\"".*;
-    var TNew = "\"new\"".*;
-    var TNull = "\"null\"".*;
-    var TReturn = "\"return\"".*;
-    var TSuper = "\"super\"".*;
-    var TSwitch = "\"switch\"".*;
-    var TThis = "\"this\"".*;
-    var TThrow = "\"throw\"".*;
-    var TTrue = "\"true\"".*;
-    var TTry = "\"try\"".*;
-    var TTypeof = "\"typeof\"".*;
-    var TVar = "\"var\"".*;
-    var TVoid = "\"void\"".*;
-    var TWhile = "\"while\"".*;
-    var TWith = "\"with\"".*;
+    const TBreak = "\"break\"".*;
+    const TCase = "\"case\"".*;
+    const TCatch = "\"catch\"".*;
+    const TClass = "\"class\"".*;
+    const TConst = "\"const\"".*;
+    const TContinue = "\"continue\"".*;
+    const TDebugger = "\"debugger\"".*;
+    const TDefault = "\"default\"".*;
+    const TDelete = "\"delete\"".*;
+    const TDo = "\"do\"".*;
+    const TElse = "\"else\"".*;
+    const TEnum = "\"enum\"".*;
+    const TExport = "\"export\"".*;
+    const TExtends = "\"extends\"".*;
+    const TFalse = "\"false\"".*;
+    const TFinally = "\"finally\"".*;
+    const TFor = "\"for\"".*;
+    const TFunction = "\"function\"".*;
+    const TIf = "\"if\"".*;
+    const TImport = "\"import\"".*;
+    const TIn = "\"in\"".*;
+    const TInstanceof = "\"instanceof\"".*;
+    const TNew = "\"new\"".*;
+    const TNull = "\"null\"".*;
+    const TReturn = "\"return\"".*;
+    const TSuper = "\"super\"".*;
+    const TSwitch = "\"switch\"".*;
+    const TThis = "\"this\"".*;
+    const TThrow = "\"throw\"".*;
+    const TTrue = "\"true\"".*;
+    const TTry = "\"try\"".*;
+    const TTypeof = "\"typeof\"".*;
+    const TVar = "\"var\"".*;
+    const TVoid = "\"void\"".*;
+    const TWhile = "\"while\"".*;
+    const TWith = "\"with\"".*;
 
     var tokenEnums = TokenEnumType.initUndefined();
 
@@ -827,19 +828,3 @@ pub const jsxEntity = ComptimeStringMap(CodePoint, .{
     .{ "zwj", @as(CodePoint, 0x200D) },
     .{ "zwnj", @as(CodePoint, 0x200C) },
 });
-
-test "tokenToString" {
-    try expectString(tokenToString.get(T.t_end_of_file), "end of file");
-}
-
-// test "jsxEntity" {
-//     try alloc.setup(std.heap.page_allocator);
-
-//     initJSXEntityMap() catch |err| {
-//         @panic(@errorName(err));
-//     };
-
-//     if (jsxEntity.get("sim")) |v| {
-//         expect(v == 0x223C);
-//     }
-// }

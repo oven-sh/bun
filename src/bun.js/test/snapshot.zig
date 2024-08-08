@@ -108,7 +108,7 @@ pub const Snapshots = struct {
         const test_filename = test_file.source.path.name.filename;
         const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
-        var snapshot_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var snapshot_file_path_buf: bun.PathBuffer = undefined;
         var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
         bun.copy(u8, remain, dir_path);
         remain = remain[dir_path.len..];
@@ -218,7 +218,7 @@ pub const Snapshots = struct {
             const test_filename = test_file.source.path.name.filename;
             const dir_path = test_file.source.path.name.dirWithTrailingSlash();
 
-            var snapshot_file_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var snapshot_file_path_buf: bun.PathBuffer = undefined;
             var remain: []u8 = snapshot_file_path_buf[0..bun.MAX_PATH_BYTES];
             bun.copy(u8, remain, dir_path);
             remain = remain[dir_path.len..];
@@ -248,8 +248,8 @@ pub const Snapshots = struct {
             remain[0] = 0;
             const snapshot_file_path = snapshot_file_path_buf[0 .. snapshot_file_path_buf.len - remain.len :0];
 
-            var flags: bun.Mode = std.os.O.CREAT | std.os.O.RDWR;
-            if (this.update_snapshots) flags |= std.os.O.TRUNC;
+            var flags: bun.Mode = bun.O.CREAT | bun.O.RDWR;
+            if (this.update_snapshots) flags |= bun.O.TRUNC;
             const fd = switch (bun.sys.open(snapshot_file_path, flags, 0o644)) {
                 .result => |_fd| _fd,
                 .err => |err| return JSC.Maybe(void){

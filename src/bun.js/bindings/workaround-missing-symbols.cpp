@@ -1,4 +1,5 @@
 
+
 #if defined(WIN32)
 
 #include <cstdint>
@@ -89,6 +90,7 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
 typedef double (*MathFunction)(double);
+typedef double (*MathFunction2)(double, double);
 
 static inline double __real_exp(double x)
 {
@@ -122,6 +124,17 @@ static inline double __real_log2(double x)
     }
 
     return function(x);
+}
+static inline double __real_fmod(double x, double y)
+{
+    static MathFunction2 function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x, y);
 }
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
@@ -163,6 +176,26 @@ extern "C" double __wrap_log(double x)
 extern "C" double __wrap_log2(double x)
 {
     return __real_log2(x);
+}
+
+extern "C" double __wrap_fmod(double x, double y)
+{
+    return __real_fmod(x, y);
+}
+
+static inline float __real_expf(float arg)
+{
+    static void* ptr = nullptr;
+    if (UNLIKELY(ptr == nullptr)) {
+        ptr = dlsym(RTLD_DEFAULT, "expf");
+    }
+
+    return ((float (*)(float))ptr)(arg);
+}
+
+extern "C" float __wrap_expf(float arg)
+{
+    return __real_expf(arg);
 }
 
 #ifndef _MKNOD_VER
@@ -234,8 +267,23 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 // macOS
 #if defined(__APPLE__)
 
+#include <version>
 #include <dlfcn.h>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include "headers.h"
+
+void std::__libcpp_verbose_abort(char const* format, ...)
+{
+    va_list list;
+    va_start(list, format);
+    char buffer[1024];
+    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    va_end(list);
+
+    Bun__panic(buffer, len);
+}
 
 extern "C" int pthread_self_is_exiting_np()
 {
@@ -324,6 +372,10 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
     return ((int (*)(uint32_t, void*, uint64_t, uint64_t, uint64_t))__ulock_wait2_ptr)(operation, addr, value, timeout_ns, value2);
 }
 
+#endif
+
+#ifndef U_SHOW_CPLUSPLUS_API
+#define U_SHOW_CPLUSPLUS_API 0
 #endif
 
 #include <unicode/uchar.h>

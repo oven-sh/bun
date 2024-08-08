@@ -1,8 +1,52 @@
 import { spawnSync, which } from "bun";
 import { describe, expect, it } from "bun:test";
-import { existsSync, readFileSync } from "fs";
-import { bunEnv, bunExe, isWindows } from "harness";
+import { existsSync, readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, isWindows, tmpdirSync } from "harness";
 import { basename, join, resolve } from "path";
+
+expect.extend({
+  toRunInlineFixture(input) {
+    const script = input[0];
+    const optionalStdout = input[1];
+    const expectedCode = input[2];
+    const x = tmpdirSync();
+    const path = join(x, "index.js");
+    writeFileSync(path, script);
+
+    // return expect([path]).toRun(optionalStdout, expectedCode);
+    const cmds = [path];
+    const result = Bun.spawnSync({
+      cmd: [bunExe(), ...cmds],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+
+    if (result.exitCode !== expectedCode) {
+      return {
+        pass: false,
+        message: () =>
+          `Command ${cmds.join(" ")} failed: ${result.exitCode} != ${expectedCode}:` +
+          "\n" +
+          result.stdout.toString("utf-8") +
+          "\n" +
+          result.stderr.toString("utf-8"),
+      };
+    }
+
+    if (optionalStdout != null) {
+      return {
+        pass: result.stdout.toString("utf-8") === optionalStdout,
+        message: () =>
+          `Expected ${cmds.join(" ")} to output ${optionalStdout} but got ${result.stdout.toString("utf-8")}`,
+      };
+    }
+
+    return {
+      pass: true,
+      message: () => `Expected ${cmds.join(" ")} to fail`,
+    };
+  },
+});
 
 const process_sleep = join(import.meta.dir, "process-sleep.js");
 
@@ -105,6 +149,23 @@ it("process.env is spreadable and editable", () => {
   expect(eval(`globalThis.process.env.USER = "${orig}"`)).toBe(String(orig));
 });
 
+const MIN_ICU_VERSIONS_BY_PLATFORM_ARCH = {
+  "darwin-x64": "70.1",
+  "darwin-arm64": "72.1",
+  "linux-x64": "72.1",
+  "linux-arm64": "72.1",
+  "win32-x64": "72.1",
+  "win32-arm64": "72.1",
+};
+
+it("ICU version does not regress", () => {
+  const min = MIN_ICU_VERSIONS_BY_PLATFORM_ARCH[`${process.platform}-${process.arch}`];
+  if (!min) {
+    throw new Error(`Unknown platform/arch: ${process.platform}-${process.arch}`);
+  }
+  expect(parseFloat(process.versions.icu, 10) || 0).toBeGreaterThanOrEqual(parseFloat(min, 10));
+});
+
 it("process.env.TZ", () => {
   var origTimezone = Intl.DateTimeFormat().resolvedOptions().timeZone;
 
@@ -129,6 +190,12 @@ it("process.env.TZ", () => {
 
 it("process.version starts with v", () => {
   expect(process.version.startsWith("v")).toBeTruthy();
+});
+
+it("process.version is set", () => {
+  // This implies you forgot -Dreported_nodejs_version in zig build configuration
+  expect(process.version).not.toInclude("0.0.0");
+  expect(process.version).not.toInclude("unset");
 });
 
 it.todo("process.argv0", () => {
@@ -310,6 +377,30 @@ describe("process.onBeforeExit", () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
   });
+
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+});
+
+describe("process.onExit", () => {
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
 });
 
 it("process.memoryUsage", () => {
@@ -417,6 +508,7 @@ describe("signal", () => {
     const child = Bun.spawn({
       cmd: [bunExe(), fixture, "SIGUSR1"],
       env: bunEnv,
+      stderr: "inherit",
     });
 
     expect(await child.exited).toBe(0);
@@ -524,13 +616,28 @@ for (const stub of emptyArrayStubs) {
 }
 
 it("dlopen args parsing", () => {
-  expect(() => process.dlopen({ module: "42" }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: 42 }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: "42" } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: 42 } }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: Symbol() }, "/tmp/not-found.so")).toThrow();
-  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, "/tmp/not-found.so")).toThrow();
+  const notFound = join(tmpdirSync(), "not-found.so");
+  expect(() => process.dlopen({ module: "42" }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: 42 }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: "42" } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: 42 } }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: Symbol() }, notFound)).toThrow();
+  expect(() => process.dlopen({ module: { exports: Symbol("123") } }, notFound)).toThrow();
   expect(() => process.dlopen({ module: { exports: Symbol("123") } }, Symbol("badddd"))).toThrow();
+});
+
+it("dlopen accepts file: URLs", () => {
+  const mod = { exports: {} };
+  try {
+    process.dlopen(mod, import.meta.url);
+    throw "Expected error";
+  } catch (e) {
+    expect(e.message).not.toContain("file:");
+  }
+
+  expect(() => process.dlopen(mod, "file://asd[kasd[po@[p1o23]1po!-10923-095-@$@8123=-9123=-0==][pc;!")).toThrow(
+    "invalid file: URL passed to dlopen",
+  );
 });
 
 it("process.constrainedMemory()", () => {
@@ -558,3 +665,347 @@ if (isWindows) {
     expect(() => Object.getOwnPropertyDescriptors(process.env)).not.toThrow();
   });
 }
+
+it("catches exceptions with process.setUncaughtExceptionCaptureCallback", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallback.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('uncaughtException', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtException.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('uncaughtException', fn) from setTimeout", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionSetTimeout.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("catches exceptions with process.on('unhandledRejection', fn)", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUnhandledRejection.js")]);
+  expect(await proc.exited).toBe(42);
+});
+
+it("aborts when the uncaughtException handler throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-onUncaughtExceptionAbort.js")], {
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(7);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});
+
+it("aborts when the uncaughtExceptionCaptureCallback throws", async () => {
+  const proc = Bun.spawn([bunExe(), join(import.meta.dir, "process-uncaughtExceptionCaptureCallbackAbort.js")], {
+    stderr: "pipe",
+  });
+  expect(await proc.exited).toBe(1);
+  expect(await new Response(proc.stderr).text()).toContain("bar");
+});
+
+it("process.hasUncaughtExceptionCaptureCallback", () => {
+  process.setUncaughtExceptionCaptureCallback(null);
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(false);
+  process.setUncaughtExceptionCaptureCallback(() => {});
+  expect(process.hasUncaughtExceptionCaptureCallback()).toBe(true);
+  process.setUncaughtExceptionCaptureCallback(null);
+});
+
+it("process.execArgv", async () => {
+  const fixtures = [
+    ["index.ts --bun -a -b -c", [], ["--bun", "-a", "-b", "-c"]],
+    ["--bun index.ts index.ts", ["--bun"], ["index.ts"]],
+    ["run -e bruh -b index.ts foo -a -b -c", ["-e", "bruh", "-b"], ["foo", "-a", "-b", "-c"]],
+  ];
+
+  for (const [cmd, execArgv, argv] of fixtures) {
+    const replacedCmd = cmd.replace("index.ts", Bun.$.escape(join(__dirname, "print-process-execArgv.js")));
+    const result = await Bun.$`${bunExe()} ${{ raw: replacedCmd }}`.json();
+    expect(result, `bun ${cmd}`).toEqual({ execArgv, argv });
+  }
+});
+
+describe("process.exitCode", () => {
+  it("normal", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+    `,
+      "beforeExit 0 undefined\nexit 0 undefined\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("setter", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = 0;
+    `,
+      "beforeExit 0 0\nexit 0 0\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("setter non-zero", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exitCode = 3;
+    `,
+      "beforeExit 3 3\nexit 3 3\n",
+      3,
+    ]).toRunInlineFixture();
+  });
+
+  it("exit", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exit(0);
+    `,
+      "exit 0 0\n",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exit non-zero", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      process.exit(3);
+    `,
+      "exit 3 3\n",
+      3,
+    ]).toRunInlineFixture();
+  });
+
+  it("property access on undefined", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      const x = {};
+      x.y.z();
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("thrown Error", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      throw new Error("oops");
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("unhandled rejected promise", () => {
+    expect([
+      `
+      process.on("exit", (code) => console.log("exit", code, process.exitCode));
+      process.on("beforeExit", (code) => console.log("beforeExit", code, process.exitCode));
+
+      await Promise.reject();
+    `,
+      "exit 1 1\n",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitsOnExitCodeSet", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 42;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 42);
+        assert.strictEqual(code, 42);
+      });
+    `,
+      "",
+      42,
+    ]).toRunInlineFixture();
+  });
+
+  it("changesCodeViaExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 42);
+        assert.strictEqual(code, 42);
+      });
+      process.exit(42);
+    `,
+      "",
+      42,
+    ]).toRunInlineFixture();
+  });
+
+  it("changesCodeZeroExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 0);
+        assert.strictEqual(code, 0);
+      });
+      process.exit(0);
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithOneOnUncaught", () => {
+    expect([
+      `
+      process.exitCode = 99;
+      process.on('exit', (code) => {
+        // cannot use assert because it will be uncaughtException -> 1 exit code that will render this test useless
+        if (code !== 1 || process.exitCode !== 1) {
+          console.log('wrong code! expected 1 for uncaughtException');
+          process.exit(99);
+        }
+      });
+      throw new Error('ok');
+    `,
+      "",
+      1,
+    ]).toRunInlineFixture();
+  });
+
+  it("changeCodeInsideExit", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.exitCode = 95;
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 95);
+        assert.strictEqual(code, 95);
+        process.exitCode = 99;
+      });
+    `,
+      "",
+      99,
+    ]).toRunInlineFixture();
+  });
+
+  it.todoIf(isWindows)("zeroExitWithUncaughtHandler", () => {
+    expect([
+      `
+      process.on('exit', (code) => {
+        if (code !== 0) {
+          console.log('wrong code! expected 0; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== undefined) {
+          console.log('wrong exitCode! expected undefined; got', process.exitCode);
+          process.exit(99);
+        }
+      });
+      process.on('uncaughtException', () => { });
+      throw new Error('ok');
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it.todoIf(isWindows)("changeCodeInUncaughtHandler", () => {
+    expect([
+      `
+      process.on('exit', (code) => {
+        if (code !== 97) {
+          console.log('wrong code! expected 97; got', code);
+          process.exit(99);
+        }
+        if (process.exitCode !== 97) {
+          console.log('wrong exitCode! expected 97; got', process.exitCode);
+          process.exit(99);
+        }
+      });
+      process.on('uncaughtException', () => {
+        process.exitCode = 97;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      97,
+    ]).toRunInlineFixture();
+  });
+
+  it("changeCodeInExitWithUncaught", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 1);
+        assert.strictEqual(code, 1);
+        process.exitCode = 98;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      98,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithZeroInExitWithUncaught", () => {
+    expect([
+      `
+      const assert = require('assert');
+      process.on('exit', (code) => {
+        assert.strictEqual(process.exitCode, 1);
+        assert.strictEqual(code, 1);
+        process.exitCode = 0;
+      });
+      throw new Error('ok');
+    `,
+      "",
+      0,
+    ]).toRunInlineFixture();
+  });
+
+  it("exitWithThrowInUncaughtHandler", () => {
+    expect([
+      `
+      process.on('uncaughtException', () => {
+        throw new Error('ok')
+      });
+      throw new Error('bad');
+    `,
+      "",
+      7,
+    ]).toRunInlineFixture();
+  });
+
+  it.todo("exitWithUndefinedFatalException", () => {
+    expect([
+      `
+      process._fatalException = undefined;
+      throw new Error('ok');
+    `,
+      "",
+      6,
+    ]).toRunInlineFixture();
+  });
+});

@@ -1,6 +1,7 @@
-import { TestBuilder, redirect } from "./util";
+import { createTestBuilder, redirect } from "./util";
 import { shellInternals } from "bun:internal-for-testing";
 const { parse } = shellInternals;
+const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("parse shell", () => {
   test("basic", () => {
@@ -1026,9 +1027,7 @@ describe("parse shell invalid input", () => {
   });
 
   test("subshell", async () => {
-    await TestBuilder.command`echo (echo foo && echo hi)`
-      .error("Unexpected `(`, subshells are currently not supported right now. Escape the `(` or open a GitHub issue.")
-      .run();
+    await TestBuilder.command`echo (echo foo && echo hi)`.error("Unexpected token: `(`").run();
 
     await TestBuilder.command`echo foo >`.error("Redirection with no file").run();
   });

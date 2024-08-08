@@ -5,7 +5,7 @@ import assertNode from "node:assert";
 type DoneCb = (err?: Error) => any;
 function noop() {}
 export function createTest(path: string) {
-  const { expect, test, it, describe, beforeAll, afterAll, beforeEach, afterEach } = Bun.jest(path);
+  const { expect, test, it, describe, beforeAll, afterAll, beforeEach, afterEach, mock } = Bun.jest(path);
 
   hideFromStackTrace(expect);
 
@@ -255,6 +255,7 @@ export function createTest(path: string) {
     createCallCheckCtx,
     match,
     assert,
+    mock,
   };
 }
 

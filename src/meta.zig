@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub usingnamespace std.meta;
 
@@ -18,8 +19,7 @@ pub fn typeName(comptime Type: type) []const u8 {
 
 // partially emulates behaviour of @typeName in previous Zig versions,
 // converting "some.namespace.MyType" to "MyType"
-pub fn typeBaseName(comptime fullname: []const u8) []const u8 {
-
+pub fn typeBaseName(comptime fullname: [:0]const u8) [:0]const u8 {
     // leave type name like "namespace.WrapperType(namespace.MyType)" as it is
     const baseidx = comptime std.mem.indexOf(u8, fullname, "(");
     if (baseidx != null) return fullname;
@@ -36,7 +36,7 @@ pub fn enumFieldNames(comptime Type: type) []const []const u8 {
     for (names) |name| {
         // zig seems to include "_" or an empty string in the list of enum field names
         // it makes sense, but humans don't want that
-        if (@import("root").bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
+        if (bun.strings.eqlAnyComptime(name, &.{ "_none", "", "_" })) {
             continue;
         }
         names[i] = name;
@@ -52,5 +52,25 @@ pub fn banFieldType(comptime Container: type, comptime T: type) void {
                 @compileError(std.fmt.comptimePrint(typeName(T) ++ " field \"" ++ field.name ++ "\" not allowed in " ++ typeName(Container), .{}));
             }
         }
+    }
+}
+
+// []T -> T
+// *const T -> T
+// *[n]T -> T
+pub fn Item(comptime T: type) type {
+    switch (@typeInfo(T)) {
+        .Pointer => |ptr| {
+            if (ptr.size == .One) {
+                switch (@typeInfo(ptr.child)) {
+                    .Array => |array| {
+                        return array.child;
+                    },
+                    else => {},
+                }
+            }
+            return ptr.child;
+        },
+        else => return std.meta.Child(T),
     }
 }

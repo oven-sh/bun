@@ -2,6 +2,7 @@
 
 #include "root.h"
 #include <wtf/Deque.h>
+#include "ZigGlobalObject.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -49,25 +50,43 @@ public:
     inline size_t length() { return m_deque.size(); }
     void push(JSC::VM& vm, JSC::JSValue v)
     {
+        this->lock();
         m_deque.append(WriteBarrier<JSC::Unknown>());
+        this->unlock();
+
         m_deque.last().set(vm, this, v);
     }
     void unshift(JSC::VM& vm, JSC::JSValue v)
     {
+        this->lock();
         m_deque.prepend(WriteBarrier<JSC::Unknown>());
+        this->unlock();
+
         m_deque.first().set(vm, this, v);
+    }
+    void removeFirst()
+    {
+        this->lock();
+        m_deque.removeFirst();
+        this->unlock();
     }
     JSC::JSValue shift()
     {
         if (UNLIKELY(length() == 0))
             return JSC::jsUndefined();
         auto v = m_deque.first().get();
+
+        this->lock();
         m_deque.removeFirst();
+        this->unlock();
+
         return v;
     }
     void clear()
     {
+        this->lock();
         m_deque.clear();
+        this->unlock();
     }
     JSC::JSValue first()
     {
@@ -82,8 +101,12 @@ public:
     JSC::JSValue _getBuffer(JSC::VM&, JSC::JSGlobalObject*, size_t);
     JSC::JSValue _getString(JSC::VM&, JSC::JSGlobalObject*, size_t);
 
+    void lock() { m_lock.lock(); }
+    void unlock() { m_lock.unlock(); }
+
 private:
     Deque<WriteBarrier<JSC::Unknown>> m_deque;
+    WTF::Lock m_lock;
 };
 
 class JSBufferListPrototype : public JSC::JSNonFinalObject {
@@ -144,5 +167,7 @@ private:
 
     void finishCreation(JSC::VM&, JSC::JSGlobalObject* globalObject, JSBufferListPrototype* prototype);
 };
+
+JSValue getBufferList(Zig::GlobalObject* globalObject);
 
 }

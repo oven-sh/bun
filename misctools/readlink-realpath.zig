@@ -27,12 +27,12 @@ pub fn main() anyerror!void {
     var args = std.mem.bytesAsSlice([]u8, try std.process.argsAlloc(allocator));
 
     const to_resolve = args[args.len - 1];
-    var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var out_buffer: bun.PathBuffer = undefined;
     var path: []u8 = undefined;
 
     var j: usize = 0;
     while (j < 1000) : (j += 1) {
-        path = try std.os.realpathZ(to_resolve, &out_buffer);
+        path = try std.posix.realpathZ(to_resolve, &out_buffer);
     }
 
     Output.print("{s}", .{path});

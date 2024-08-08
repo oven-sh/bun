@@ -43,7 +43,7 @@ namespace WebCore {
 
 class SerializedScriptValue;
 
-class BroadcastChannel : public RefCounted<BroadcastChannel>, public EventTarget /*, public ActiveDOMObject*/, public ContextDestructionObserver {
+class BroadcastChannel : public ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>, public EventTarget /*, public ActiveDOMObject*/, public ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED(BroadcastChannel);
 
 public:
@@ -55,8 +55,8 @@ public:
     }
     ~BroadcastChannel();
 
-    using RefCounted<BroadcastChannel>::ref;
-    using RefCounted<BroadcastChannel>::deref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::ref;
+    using ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr<BroadcastChannel>::deref;
 
     BroadcastChannelIdentifier identifier() const;
     String name() const;
@@ -83,8 +83,8 @@ private:
     // EventTarget
     EventTargetInterface eventTargetInterface() const final { return BroadcastChannelEventTargetInterfaceType; }
     ScriptExecutionContext* scriptExecutionContext() const;
-    void refEventTarget() final { RefCounted<BroadcastChannel>::ref(); }
-    void derefEventTarget() final { RefCounted<BroadcastChannel>::deref(); }
+    void refEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::ref(); }
+    void derefEventTarget() final { ThreadSafeRefCountedAndCanMakeThreadSafeWeakPtr::deref(); }
     void eventListenersDidChange() final;
 
     EventTargetData* eventTargetData() final { return &m_eventTargetData; }

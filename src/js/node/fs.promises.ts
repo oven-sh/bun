@@ -19,6 +19,7 @@ const kTransfer = Symbol("kTransfer");
 const kTransferList = Symbol("kTransferList");
 const kDeserialize = Symbol("kDeserialize");
 const kEmptyObject = ObjectFreeze({ __proto__: null });
+const kFlag = Symbol("kFlag");
 
 function watch(
   filename: string | Buffer | URL,
@@ -152,13 +153,26 @@ const private_symbols = {
   fs,
 };
 
+const _readFile = fs.readFile.bind(fs);
+const _writeFile = fs.writeFile.bind(fs);
+const _appendFile = fs.appendFile.bind(fs);
+
 const exports = {
   access: fs.access.bind(fs),
-  appendFile: fs.appendFile.bind(fs),
+  appendFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    return _appendFile(fileHandleOrFdOrPath, ...args);
+  },
   close: fs.close.bind(fs),
   copyFile: fs.copyFile.bind(fs),
   cp,
-  exists: fs.exists.bind(fs),
+  exists: async function exists() {
+    try {
+      return await fs.exists.$apply(fs, arguments);
+    } catch (e) {
+      return false;
+    }
+  },
   chown: fs.chown.bind(fs),
   chmod: fs.chmod.bind(fs),
   fchmod: fs.fchmod.bind(fs),
@@ -174,14 +188,29 @@ const exports = {
   lstat: fs.lstat.bind(fs),
   mkdir: fs.mkdir.bind(fs),
   mkdtemp: fs.mkdtemp.bind(fs),
-  open: async (path, flags, mode) => {
-    return new FileHandle(await fs.open(path, flags, mode));
+  open: async (path, flags = "r", mode = 0o666) => {
+    return new FileHandle(await fs.open(path, flags, mode), flags);
   },
   read: fs.read.bind(fs),
   write: fs.write.bind(fs),
   readdir: fs.readdir.bind(fs),
-  readFile: fs.readFile.bind(fs),
-  writeFile: fs.writeFile.bind(fs),
+  readFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    return _readFile(fileHandleOrFdOrPath, ...args);
+  },
+  writeFile: function (fileHandleOrFdOrPath, ...args) {
+    fileHandleOrFdOrPath = fileHandleOrFdOrPath?.[kFd] ?? fileHandleOrFdOrPath;
+    if (
+      !$isTypedArrayView(args[0]) &&
+      typeof args[0] !== "string" &&
+      ($isCallable(args[0]?.[Symbol.iterator]) || $isCallable(args[0]?.[Symbol.asyncIterator]))
+    ) {
+      $debug("fs.promises.writeFile async iterator slow path!");
+      // Node accepts an arbitrary async iterator here
+      return writeFileAsyncIterator(fileHandleOrFdOrPath, ...args);
+    }
+    return _writeFile(fileHandleOrFdOrPath, ...args);
+  },
   readlink: fs.readlink.bind(fs),
   realpath: fs.realpath.bind(fs),
   rename: fs.rename.bind(fs),
@@ -240,11 +269,12 @@ export default exports;
   // These functions await the result so that errors propagate correctly with
   // async stack traces and so that the ref counting is correct.
   var FileHandle = (private_symbols.FileHandle = class FileHandle extends EventEmitter {
-    constructor(fd) {
+    constructor(fd, flag) {
       super();
       this[kFd] = fd ? fd : -1;
       this[kRefs] = 1;
       this[kClosePromise] = null;
+      this[kFlag] = flag;
     }
 
     getAsyncId() {
@@ -255,13 +285,29 @@ export default exports;
       return this[kFd];
     }
 
-    async appendFile(data, options) {
+    [kCloseResolve];
+    [kFd];
+    [kFlag];
+    [kClosePromise];
+    [kRefs];
+
+    async appendFile(data, options: object | string | undefined) {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
+      let encoding = "utf8";
+      let flush = false;
+
+      if (options == null || typeof options === "function") {
+      } else if (typeof options === "string") {
+        encoding = options;
+      } else {
+        encoding = options?.encoding ?? encoding;
+        flush = options?.flush ?? flush;
+      }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, options);
+        return await writeFile(fd, data, { encoding, flush, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }
@@ -415,13 +461,21 @@ export default exports;
       }
     }
 
-    async writeFile(data, options) {
+    async writeFile(data: string, options: object | string | undefined = "utf8") {
       const fd = this[kFd];
       throwEBADFIfNecessary(writeFile, fd);
+      let encoding: string = "utf8";
+
+      if (options == null || typeof options === "function") {
+      } else if (typeof options === "string") {
+        encoding = options;
+      } else {
+        encoding = options?.encoding ?? encoding;
+      }
 
       try {
         this[kRef]();
-        return await writeFile(fd, data, options);
+        return await writeFile(fd, data, { encoding, flag: this[kFlag] });
       } finally {
         this[kUnref]();
       }
@@ -523,5 +577,72 @@ function throwEBADFIfNecessary(fn, fd) {
     err.name = "SystemError";
     err.syscall = fn.name;
     throw err;
+  }
+}
+
+async function writeFileAsyncIteratorInner(fd, iterable, encoding) {
+  const writer = Bun.file(fd).writer();
+
+  const mustRencode = !(encoding === "utf8" || encoding === "utf-8" || encoding === "binary" || encoding === "buffer");
+  let totalBytesWritten = 0;
+
+  try {
+    for await (let chunk of iterable) {
+      if (mustRencode && typeof chunk === "string") {
+        $debug("Re-encoding chunk to", encoding);
+        chunk = Buffer.from(chunk, encoding);
+      }
+
+      const prom = writer.write(chunk);
+      if (prom && $isPromise(prom)) {
+        totalBytesWritten += await prom;
+      } else {
+        totalBytesWritten += prom;
+      }
+    }
+  } finally {
+    await writer.end();
+  }
+
+  return totalBytesWritten;
+}
+
+async function writeFileAsyncIterator(fdOrPath, iterable, optionsOrEncoding, flag, mode) {
+  let encoding;
+  if (typeof optionsOrEncoding === "object") {
+    encoding = optionsOrEncoding?.encoding ?? (encoding || "utf8");
+    flag = optionsOrEncoding?.flag ?? (flag || "w");
+    mode = optionsOrEncoding?.mode ?? (mode || 0o666);
+  } else if (typeof optionsOrEncoding === "string" || optionsOrEncoding == null) {
+    encoding = optionsOrEncoding || "utf8";
+    flag ??= "w";
+    mode ??= 0o666;
+  }
+
+  if (!Buffer.isEncoding(encoding)) {
+    // ERR_INVALID_OPT_VALUE_ENCODING was removed in Node v15.
+    throw new TypeError(`Unknown encoding: ${encoding}`);
+  }
+
+  let mustClose = typeof fdOrPath === "string";
+  if (mustClose) {
+    // Rely on fs.open for further argument validaiton.
+    fdOrPath = await fs.open(fdOrPath, flag, mode);
+  }
+
+  let totalBytesWritten = 0;
+
+  try {
+    totalBytesWritten = await writeFileAsyncIteratorInner(fdOrPath, iterable, encoding);
+  } finally {
+    if (mustClose) {
+      try {
+        if (typeof flag === "string" && !flag.includes("a")) {
+          await fs.ftruncate(fdOrPath, totalBytesWritten);
+        }
+      } finally {
+        await fs.close(fdOrPath);
+      }
+    }
   }
 }

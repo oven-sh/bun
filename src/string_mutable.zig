@@ -143,7 +143,7 @@ pub const MutableString = struct {
             }
 
             if (comptime bun.Environment.allow_assert) {
-                std.debug.assert(js_lexer.isIdentifier(mutable.list.items));
+                bun.assert(js_lexer.isIdentifier(mutable.list.items));
             }
 
             return try mutable.list.toOwnedSlice(allocator);
@@ -193,7 +193,7 @@ pub const MutableString = struct {
         self: *MutableString,
         index: usize,
     ) void {
-        std.debug.assert(index <= self.list.capacity);
+        bun.assert(index <= self.list.capacity);
         self.list.items.len = index;
     }
 
@@ -215,7 +215,7 @@ pub const MutableString = struct {
         try self.list.ensureUnusedCapacity(self.allocator, count);
         const old = self.list.items.len;
         self.list.items.len += count;
-        std.debug.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
+        bun.assert(count == bun.fmt.formatIntBuf(self.list.items.ptr[old .. old + count], int, 10, .lower, .{}));
     }
 
     pub inline fn appendAssumeCapacity(self: *MutableString, char: []const u8) void {
@@ -228,7 +228,7 @@ pub const MutableString = struct {
     }
 
     pub fn toOwnedSlice(self: *MutableString) string {
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     pub fn toOwnedSliceLeaky(self: *MutableString) []u8 {
@@ -255,7 +255,7 @@ pub const MutableString = struct {
 
     pub fn toOwnedSliceLength(self: *MutableString, length: usize) string {
         self.list.shrinkAndFree(self.allocator, length);
-        return self.list.toOwnedSlice(self.allocator) catch @panic("Allocation Error"); // TODO
+        return self.list.toOwnedSlice(self.allocator) catch bun.outOfMemory(); // TODO
     }
 
     // pub fn deleteAt(self: *MutableString, i: usize)  {
@@ -286,8 +286,8 @@ pub const MutableString = struct {
         return std.mem.eql(u8, self.list.items, other);
     }
 
-    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.os.iovec_const {
-        var buffers: [count]std.os.iovec_const = undefined;
+    pub fn toSocketBuffers(self: *MutableString, comptime count: usize, ranges: anytype) [count]std.posix.iovec_const {
+        var buffers: [count]std.posix.iovec_const = undefined;
         inline for (&buffers, ranges) |*b, r| {
             b.* = .{
                 .iov_base = self.list.items[r[0]..r[1]].ptr,
@@ -447,29 +447,3 @@ pub const MutableString = struct {
         return bytes.len;
     }
 };
-
-test "MutableString" {
-    const alloc = std.heap.page_allocator;
-
-    var str = try MutableString.initCopy(alloc, "hello");
-    try expect(str.eql("hello"));
-}
-
-test "MutableString.ensureValidIdentifier" {
-    const alloc = std.heap.page_allocator;
-
-    try std.testing.expectEqualStrings("jquery", try MutableString.ensureValidIdentifier("jquery", alloc));
-    try std.testing.expectEqualStrings("jquery_foo", try MutableString.ensureValidIdentifier("jquery😋foo", alloc));
-}
-
-test "MutableString BufferedWriter" {
-    const alloc = std.heap.page_allocator;
-
-    var str = try MutableString.init(alloc, 0);
-    var buffered_writer = str.bufferedWriter();
-    var writer = buffered_writer.writer();
-    try writer.writeAll("hello world hello world hello world hello world hello world hello world");
-    try writer.context.flush();
-    str = writer.context.context.*;
-    try std.testing.expectEqualStrings("hello world hello world hello world hello world hello world hello world", str.toOwnedSlice());
-}

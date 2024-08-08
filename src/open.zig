@@ -10,7 +10,7 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const DotEnv = @import("env_loader.zig");
-const ComptimeStringMap = @import("./comptime_string_map.zig").ComptimeStringMap;
+
 const opener = switch (@import("builtin").target.os.tag) {
     .macos => "/usr/bin/open",
     .windows => "start",
@@ -66,21 +66,21 @@ pub const Editor = enum(u8) {
     const StringMap = std.EnumMap(Editor, string);
     const StringArrayMap = std.EnumMap(Editor, []const [:0]const u8);
 
-    const name_map = ComptimeStringMap(Editor, .{
-        .{ "sublime", Editor.sublime },
-        .{ "subl", Editor.sublime },
-        .{ "vscode", Editor.vscode },
-        .{ "code", Editor.vscode },
-        .{ "textmate", Editor.textmate },
-        .{ "mate", Editor.textmate },
-        .{ "atom", Editor.atom },
-        .{ "idea", Editor.intellij },
-        .{ "webstorm", Editor.webstorm },
-        .{ "nvim", Editor.neovim },
-        .{ "neovim", Editor.neovim },
-        .{ "vim", Editor.vim },
-        .{ "vi", Editor.vim },
-        .{ "emacs", Editor.emacs },
+    const name_map = bun.ComptimeStringMap(Editor, .{
+        .{ "sublime", .sublime },
+        .{ "subl", .sublime },
+        .{ "vscode", .vscode },
+        .{ "code", .vscode },
+        .{ "textmate", .textmate },
+        .{ "mate", .textmate },
+        .{ "atom", .atom },
+        .{ "idea", .intellij },
+        .{ "webstorm", .webstorm },
+        .{ "nvim", .neovim },
+        .{ "neovim", .neovim },
+        .{ "vim", .vim },
+        .{ "vi", .vim },
+        .{ "emacs", .emacs },
     });
 
     pub fn byName(name: string) ?Editor {
@@ -106,7 +106,7 @@ pub const Editor = enum(u8) {
     }
 
     const which = @import("./which.zig").which;
-    pub fn byPATH(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byPATH(env: *DotEnv.Loader, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) ?Editor {
         const PATH = env.get("PATH") orelse return null;
 
         inline for (default_preference_list) |editor| {
@@ -121,7 +121,7 @@ pub const Editor = enum(u8) {
         return null;
     }
 
-    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) bool {
+    pub fn byPATHForEditor(env: *DotEnv.Loader, editor: Editor, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) bool {
         const PATH = env.get("PATH") orelse return false;
 
         if (bin_name.get(editor)) |path| {
@@ -139,8 +139,8 @@ pub const Editor = enum(u8) {
     pub fn byFallbackPathForEditor(editor: Editor, out: ?*[]const u8) bool {
         if (bin_path.get(editor)) |paths| {
             for (paths) |path| {
-                if (std.os.open(path, 0, 0)) |opened| {
-                    std.os.close(opened);
+                if (std.fs.cwd().openFile(path, .{})) |opened| {
+                    opened.close();
                     if (out != null) {
                         out.?.* = bun.asByteSlice(path);
                     }
@@ -152,7 +152,7 @@ pub const Editor = enum(u8) {
         return false;
     }
 
-    pub fn byFallback(env: *DotEnv.Loader, buf: *[bun.MAX_PATH_BYTES]u8, cwd: string, out: *[]const u8) ?Editor {
+    pub fn byFallback(env: *DotEnv.Loader, buf: *bun.PathBuffer, cwd: string, out: *[]const u8) ?Editor {
         inline for (default_preference_list) |editor| {
             if (byPATHForEditor(env, editor, buf, cwd, out)) {
                 return editor;
@@ -327,14 +327,14 @@ pub const Editor = enum(u8) {
             },
         }
 
-        spawned.child_process = std.ChildProcess.init(args_buf[0..i], default_allocator);
+        spawned.child_process = std.process.Child.init(args_buf[0..i], default_allocator);
         var thread = try std.Thread.spawn(.{}, autoClose, .{spawned});
         thread.detach();
     }
     const SpawnedEditorContext = struct {
         file_path_buf: [1024 + bun.MAX_PATH_BYTES]u8 = undefined,
         buf: [10]string = undefined,
-        child_process: std.ChildProcess = undefined,
+        child_process: std.process.Child = undefined,
     };
 
     fn autoClose(spawned: *SpawnedEditorContext) void {
@@ -375,7 +375,7 @@ pub const EditorContext = struct {
 
         var opened = try tmpdir.openFile(basename, .{});
         defer opened.close();
-        var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var path_buf: bun.PathBuffer = undefined;
         try editor_.open(
             path,
             try bun.getFdPath(opened.handle, &path_buf),
@@ -391,7 +391,7 @@ pub const EditorContext = struct {
         }
     }
     pub fn detectEditor(this: *EditorContext, env: *DotEnv.Loader) void {
-        var buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var buf: bun.PathBuffer = undefined;
 
         var out: string = "";
         // first: choose from user preference

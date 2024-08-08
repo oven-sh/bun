@@ -31,7 +31,6 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("-b, --body <STR>           HTTP request body as a string") catch unreachable,
     clap.parseParam("-f, --file <STR>           File path to load as body") catch unreachable,
     clap.parseParam("-n, --count <INT>          How many runs? Default 10") catch unreachable,
-    clap.parseParam("-t, --timeout <INT>        Max duration per request") catch unreachable,
     clap.parseParam("-r, --retry <INT>          Max retry count") catch unreachable,
     clap.parseParam("--no-gzip                  Disable gzip") catch unreachable,
     clap.parseParam("--no-deflate               Disable deflate") catch unreachable,
@@ -63,8 +62,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: bun.PathBuffer = undefined;
+var cwd_buf: bun.PathBuffer = undefined;
 
 pub const Arguments = struct {
     url: URL,
@@ -75,7 +74,6 @@ pub const Arguments = struct {
     body: string = "",
     turbo: bool = false,
     count: usize = 10,
-    timeout: usize = 0,
     repeat: usize = 0,
     concurrency: u16 = 32,
 
@@ -165,10 +163,6 @@ pub const Arguments = struct {
             // .keep_alive = !args.flag("--no-keep-alive"),
             .concurrency = std.fmt.parseInt(u16, args.option("--max-concurrency") orelse "32", 10) catch 32,
             .turbo = args.flag("--turbo"),
-            .timeout = std.fmt.parseInt(usize, args.option("--timeout") orelse "0", 10) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> parsing timeout", .{@errorName(err)});
-                Global.exit(1);
-            },
             .count = std.fmt.parseInt(usize, args.option("--count") orelse "10", 10) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> parsing count", .{@errorName(err)});
                 Global.exit(1);
@@ -177,7 +171,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -198,7 +192,7 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
-    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .Monotonic);
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .monotonic);
     const Group = struct {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
@@ -225,7 +219,6 @@ pub fn main() anyerror!void {
                     args.headers_buf,
                     response_body,
                     "",
-                    args.timeout,
                 ),
             };
             ctx.http.client.verbose = args.verbose;

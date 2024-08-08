@@ -1,8 +1,13 @@
-const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 
 pub const SIMDUTFResult = extern struct {
     status: Status,
     count: usize = 0,
+
+    pub fn isSuccessful(this: *const SIMDUTFResult) bool {
+        return this.status == Status.success;
+    }
 
     pub const Status = enum(i32) {
         success = 0,
@@ -25,6 +30,13 @@ pub const SIMDUTFResult = extern struct {
         /// a high surrogate must be followed by a low surrogate and a low surrogate must be preceded by a high surrogate (UTF-16)
         too_large = 5,
         surrogate = 6,
+
+        /// Found a character that cannot be part of a valid base64 string.
+        invalid_base64_character = 7,
+        /// The base64 input terminates with a single character, excluding padding (=).
+        base64_input_remainder = 8,
+        /// The provided buffer is too small.
+        output_buffer_too_small = 9,
         /// Not related to validation/transcoding.
         _,
     };
@@ -354,5 +366,23 @@ pub const trim = struct {
 
     pub fn utf8(buf: []const u8) []const u8 {
         return buf[0..utf8_len(buf)];
+    }
+};
+
+pub const base64 = struct {
+    extern fn simdutf__base64_encode(input: [*]const u8, length: usize, output: [*]u8, is_urlsafe: c_int) usize;
+    extern fn simdutf__base64_decode_from_binary(input: [*]const u8, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+    extern fn simdutf__base64_decode_from_binary16(input: [*]const u16, length: usize, output: [*]u8, outlen: usize, is_urlsafe: c_int) SIMDUTFResult;
+
+    pub fn encode(input: []const u8, output: []u8, is_urlsafe: bool) usize {
+        return simdutf__base64_encode(input.ptr, input.len, output.ptr, @intFromBool(is_urlsafe));
+    }
+
+    pub fn decode(input: []const u8, output: []u8, is_urlsafe: bool) SIMDUTFResult {
+        return simdutf__base64_decode_from_binary(input.ptr, input.len, output.ptr, output.len, @intFromBool(is_urlsafe));
+    }
+
+    pub fn decode16(input: []const u16, output: []u8, is_urlsafe: bool) SIMDUTFResult {
+        return simdutf__base64_decode_from_binary16(input.ptr, input.len, output.ptr, output.len, @intFromBool(is_urlsafe));
     }
 };

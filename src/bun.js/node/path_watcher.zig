@@ -18,8 +18,12 @@ const GenericWatcher = @import("../../watcher.zig");
 const sync = @import("../../sync.zig");
 const Semaphore = sync.Semaphore;
 
-var default_manager_mutex: Mutex = Mutex.init();
+var default_manager_mutex: Mutex = .{};
 var default_manager: ?*PathWatcherManager = null;
+
+const FSWatcher = bun.JSC.Node.FSWatcher;
+const Event = FSWatcher.Event;
+const StringOrBytesToDecode = FSWatcher.FSWatchTaskWindows.StringOrBytesToDecode;
 
 pub const PathWatcherManager = struct {
     const options = @import("../../options.zig");
@@ -47,90 +51,98 @@ pub const PathWatcherManager = struct {
     };
 
     fn refPendingTask(this: *PathWatcherManager) bool {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.deinit_on_last_task) return false;
         this.pending_tasks += 1;
-        this.has_pending_tasks.store(true, .Release);
+        this.has_pending_tasks.store(true, .release);
         return true;
     }
 
     fn hasPendingTasks(this: *PathWatcherManager) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_tasks.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_tasks.load(.acquire);
     }
 
     fn unrefPendingTask(this: *PathWatcherManager) void {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_tasks -= 1;
         if (this.deinit_on_last_task and this.pending_tasks == 0) {
-            this.has_pending_tasks.store(false, .Release);
+            this.has_pending_tasks.store(false, .release);
             this.deinit();
         }
     }
-    // TODO: switch to using JSC.Maybe to avoid using "unreachable" and improve error messages
+
     fn _fdFromAbsolutePathZ(
         this: *PathWatcherManager,
         path: [:0]const u8,
-    ) !PathInfo {
+    ) bun.JSC.Maybe(PathInfo) {
         this.mutex.lock();
         defer this.mutex.unlock();
 
         if (this.file_paths.getEntry(path)) |entry| {
             var info = entry.value_ptr;
             info.refs += 1;
-            return info.*;
+            return .{ .result = info.* };
         }
-        const cloned_path = try bun.default_allocator.dupeZ(u8, path);
-        errdefer bun.default_allocator.free(cloned_path);
 
-        if (std.fs.openDirAbsoluteZ(cloned_path, .{
-            .access_sub_paths = true,
-            .iterate = true,
-        })) |iterable_dir| {
-            const result = PathInfo{
-                .fd = bun.toFD(iterable_dir.fd),
-                .is_file = false,
-                .path = cloned_path,
-                .dirname = cloned_path,
-                .hash = GenericWatcher.getHash(cloned_path),
-                .refs = 1,
-            };
-            _ = try this.file_paths.put(cloned_path, result);
-            return result;
-        } else |err| {
-            if (err == error.NotDir) {
-                const file = try std.fs.openFileAbsoluteZ(cloned_path, .{ .mode = .read_only });
+        switch (switch (Environment.os) {
+            else => bun.sys.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0),
+            // windows bun.sys.open does not pass iterable=true,
+            .windows => bun.sys.openDirAtWindowsA(bun.FD.cwd(), path, .{ .iterable = true, .read_only = true }),
+        }) {
+            .err => |e| {
+                if (e.errno == @intFromEnum(bun.C.E.NOTDIR)) {
+                    const file = switch (bun.sys.open(path, 0, 0)) {
+                        .err => |file_err| return .{ .err = file_err.withPath(path) },
+                        .result => |r| r,
+                    };
+                    const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
+                    const result = PathInfo{
+                        .fd = file,
+                        .is_file = true,
+                        .path = cloned_path,
+                        // if is really a file we need to get the dirname
+                        .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
+                        .hash = GenericWatcher.getHash(cloned_path),
+                        .refs = 1,
+                    };
+                    _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
+                    return .{ .result = result };
+                }
+                return .{ .err = e.withPath(path) };
+            },
+            .result => |iterable_dir| {
+                const cloned_path = bun.default_allocator.dupeZ(u8, path) catch bun.outOfMemory();
                 const result = PathInfo{
-                    .fd = bun.toFD(file.handle),
-                    .is_file = true,
+                    .fd = iterable_dir,
+                    .is_file = false,
                     .path = cloned_path,
-                    // if is really a file we need to get the dirname
-                    .dirname = std.fs.path.dirname(cloned_path) orelse cloned_path,
+                    .dirname = cloned_path,
                     .hash = GenericWatcher.getHash(cloned_path),
                     .refs = 1,
                 };
-                _ = try this.file_paths.put(cloned_path, result);
-                return result;
-            } else {
-                return err;
-            }
+                _ = this.file_paths.put(cloned_path, result) catch bun.outOfMemory();
+                return .{ .result = result };
+            },
         }
-
-        unreachable;
     }
 
-    pub fn init(vm: *JSC.VirtualMachine) !*PathWatcherManager {
-        const this = try bun.default_allocator.create(PathWatcherManager);
+    const PathWatcherManagerError = std.mem.Allocator.Error ||
+        std.posix.KQueueError ||
+        error{KQueueError} ||
+        std.posix.INotifyInitError ||
+        std.Thread.SpawnError;
+
+    pub fn init(vm: *JSC.VirtualMachine) PathWatcherManagerError!*PathWatcherManager {
+        const this = bun.default_allocator.create(PathWatcherManager) catch bun.outOfMemory();
         errdefer bun.default_allocator.destroy(this);
-        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch |err| {
-            bun.default_allocator.destroy(this);
-            return err;
-        };
+        var watchers = bun.BabyList(?*PathWatcher).initCapacity(bun.default_allocator, 1) catch bun.outOfMemory();
         errdefer watchers.deinitWithAllocator(bun.default_allocator);
+
         const manager = PathWatcherManager{
             .file_paths = bun.StringHashMap(PathInfo).init(bun.default_allocator),
             .current_fd_task = bun.FDHashMap(*DirectoryRegisterTask).init(bun.default_allocator),
@@ -142,7 +154,7 @@ pub const PathWatcherManager = struct {
             ),
             .vm = vm,
             .watcher_count = 0,
-            .mutex = Mutex.init(),
+            .mutex = .{},
         };
 
         this.* = manager;
@@ -161,7 +173,7 @@ pub const PathWatcherManager = struct {
 
         var counts = slice.items(.count);
         const kinds = slice.items(.kind);
-        var _on_file_update_path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        var _on_file_update_path_buf: bun.PathBuffer = undefined;
 
         var ctx = this.main_watcher;
         defer ctx.flushEvictions();
@@ -227,16 +239,8 @@ pub const PathWatcherManager = struct {
                                     if (path.len <= 1) {
                                         continue;
                                     }
-                                    if (path.len == 0) {
-                                        while (path.len > 0) {
-                                            if (bun.strings.startsWithChar(path, '/')) {
-                                                path = path[1..];
-                                                break;
-                                            } else {
-                                                path = path[1..];
-                                            }
-                                        }
-                                    } else {
+
+                                    if (bun.strings.startsWithChar(path, '/')) {
                                         // Skip forward slash
                                         path = path[1..];
                                     }
@@ -246,7 +250,7 @@ pub const PathWatcherManager = struct {
                                 if (path.len == 0 or (bun.strings.containsChar(path, '/') and !watcher.recursive)) {
                                     continue;
                                 }
-                                watcher.emit(path, hash, timestamp, true, event_type);
+                                watcher.emit(event_type.toEvent(path), hash, timestamp, true);
                             }
                         }
                     }
@@ -298,7 +302,7 @@ pub const PathWatcherManager = struct {
                                     continue;
                                 }
 
-                                watcher.emit(path, hash, timestamp, false, event_type);
+                                watcher.emit(event_type.toEvent(path), hash, timestamp, false);
                             }
                         }
                     }
@@ -318,7 +322,7 @@ pub const PathWatcherManager = struct {
 
     pub fn onError(
         this: *PathWatcherManager,
-        err: anyerror,
+        err: bun.sys.Error,
     ) void {
         {
             this.mutex.lock();
@@ -329,8 +333,8 @@ pub const PathWatcherManager = struct {
             // stop all watchers
             for (watchers) |w| {
                 if (w) |watcher| {
-                    log("[watch] error: {s}", .{@errorName(err)});
-                    watcher.emit(@errorName(err), 0, timestamp, false, .@"error");
+                    log("[watch] error: {}", .{err});
+                    watcher.emit(.{ .@"error" = err }, 0, timestamp, false);
                     watcher.flush();
                 }
             }
@@ -340,6 +344,7 @@ pub const PathWatcherManager = struct {
             defer default_manager_mutex.unlock();
             default_manager = null;
         }
+
         // deinit manager when all watchers are closed
         this.deinit();
     }
@@ -351,7 +356,7 @@ pub const PathWatcherManager = struct {
         watcher_list: bun.BabyList(*PathWatcher) = .{},
 
         pub fn callback(task: *JSC.WorkPoolTask) void {
-            var routine = @fieldParentPtr(@This(), "task", task);
+            var routine: *@This() = @fieldParentPtr("task", task);
             defer routine.deinit();
             routine.run();
         }
@@ -427,19 +432,30 @@ pub const PathWatcherManager = struct {
         fn processWatcher(
             this: *DirectoryRegisterTask,
             watcher: *PathWatcher,
-            buf: *[bun.MAX_PATH_BYTES + 1]u8,
-        ) !void {
-            if (comptime Environment.isWindows) {
-                bun.todo(@src(), "implement directory watching on windows");
-                return;
-            }
+            buf: *bun.PathBuffer,
+        ) bun.JSC.Maybe(void) {
+            if (Environment.isWindows) @compileError("use win_watcher.zig");
+
             const manager = this.manager;
             const path = this.path;
             const fd = path.fd;
             var iter = fd.asDir().iterate();
 
             // now we iterate over all files and directories
-            while (try iter.next()) |entry| {
+            while (iter.next() catch |err| {
+                return .{
+                    .err = .{
+                        .errno = @truncate(@intFromEnum(switch (err) {
+                            error.AccessDenied => bun.C.E.ACCES,
+                            error.SystemResources => bun.C.E.NOMEM,
+                            error.Unexpected,
+                            error.InvalidUtf8,
+                            => bun.C.E.INVAL,
+                        })),
+                        .syscall = .watch,
+                    },
+                };
+            }) |entry| {
                 var parts = [2]string{ path.path, entry.name };
                 const entry_path = Path.joinAbsStringBuf(
                     Fs.FileSystem.instance.topLevelDirWithoutTrailingSlash(),
@@ -451,26 +467,50 @@ pub const PathWatcherManager = struct {
                 buf[entry_path.len] = 0;
                 const entry_path_z = buf[0..entry_path.len :0];
 
-                const child_path = try manager._fdFromAbsolutePathZ(entry_path_z);
+                const child_path = switch (manager._fdFromAbsolutePathZ(entry_path_z)) {
+                    .result => |result| result,
+                    .err => |e| return .{ .err = e },
+                };
+
                 {
                     watcher.mutex.lock();
                     defer watcher.mutex.unlock();
                     watcher.file_paths.push(bun.default_allocator, child_path.path) catch |err| {
                         manager._decrementPathRef(entry_path_z);
-                        return err;
+                        return switch (err) {
+                            error.OutOfMemory => .{ .err = .{
+                                .errno = @truncate(@intFromEnum(bun.C.E.NOMEM)),
+                                .syscall = .watch,
+                            } },
+                        };
                     };
                 }
 
                 // we need to call this unlocked
                 if (child_path.is_file) {
-                    try manager.main_watcher.addFile(child_path.fd, child_path.path, child_path.hash, options.Loader.file, .zero, null, false);
+                    switch (manager.main_watcher.addFile(
+                        child_path.fd,
+                        child_path.path,
+                        child_path.hash,
+                        options.Loader.file,
+                        .zero,
+                        null,
+                        false,
+                    )) {
+                        .err => |err| return .{ .err = err },
+                        .result => {},
+                    }
                 } else {
                     if (watcher.recursive and !watcher.isClosed()) {
                         // this may trigger another thread with is desired when available to watch long trees
-                        try manager._addDirectory(watcher, child_path);
+                        switch (manager._addDirectory(watcher, child_path)) {
+                            .err => |err| return .{ .err = err },
+                            .result => {},
+                        }
                     }
                 }
             }
+            return .{ .result = {} };
         }
 
         fn run(this: *DirectoryRegisterTask) void {
@@ -478,15 +518,18 @@ pub const PathWatcherManager = struct {
                 return bun.todo(@src(), {});
             }
 
-            var buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+            var buf: bun.PathBuffer = undefined;
 
             while (this.getNext()) |watcher| {
                 defer watcher.unrefPendingDirectory();
-                this.processWatcher(watcher, &buf) catch |err| {
-                    log("[watch] error registering directory: {s}", .{@errorName(err)});
-                    watcher.emit(@errorName(err), 0, std.time.milliTimestamp(), false, .@"error");
-                    watcher.flush();
-                };
+                switch (this.processWatcher(watcher, &buf)) {
+                    .err => |err| {
+                        log("[watch] error registering directory: {s}", .{err});
+                        watcher.emit(.{ .@"error" = err }, 0, std.time.milliTimestamp(), false);
+                        watcher.flush();
+                    },
+                    .result => {},
+                }
             }
 
             this.manager.unrefPendingTask();
@@ -498,11 +541,23 @@ pub const PathWatcherManager = struct {
     };
 
     // this should only be called if thread pool is not null
-    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) !void {
+    fn _addDirectory(this: *PathWatcherManager, watcher: *PathWatcher, path: PathInfo) bun.JSC.Maybe(void) {
         const fd = path.fd;
-        try this.main_watcher.addDirectory(fd, path.path, path.hash, false);
+        switch (this.main_watcher.addDirectory(fd, path.path, path.hash, false)) {
+            .err => |err| return .{ .err = err },
+            .result => {},
+        }
 
-        return try DirectoryRegisterTask.schedule(this, watcher, path);
+        return .{
+            .result = DirectoryRegisterTask.schedule(this, watcher, path) catch |err| return .{
+                .err = .{
+                    .errno = @truncate(@intFromEnum(switch (err) {
+                        error.OutOfMemory => bun.C.E.NOMEM,
+                        error.UnexpectedFailure => bun.C.E.INVAL,
+                    })),
+                },
+            },
+        };
     }
 
     // register is always called form main thread
@@ -531,14 +586,14 @@ pub const PathWatcherManager = struct {
 
         const path = watcher.path;
         if (path.is_file) {
-            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false);
+            try this.main_watcher.addFile(path.fd, path.path, path.hash, options.Loader.file, .zero, null, false).unwrap();
         } else {
             if (comptime Environment.isMac) {
                 if (watcher.fsevents_watcher != null) {
                     return;
                 }
             }
-            try this._addDirectory(watcher, path);
+            try this._addDirectory(watcher, path).unwrap();
         }
     }
 
@@ -696,9 +751,15 @@ pub const PathWatcher = struct {
     pub const EventType = enum {
         rename,
         change,
-        @"error",
+
+        pub fn toEvent(event_type: EventType, path: FSWatcher.EventPathString) Event {
+            return switch (event_type) {
+                inline else => |t| @unionInit(Event, @tagName(t), path),
+            };
+        }
     };
-    const Callback = *const fn (ctx: ?*anyopaque, path: string, is_file: bool, event_type: EventType) void;
+
+    pub const Callback = *const fn (ctx: ?*anyopaque, detail: Event, is_file: bool) void;
     const UpdateEndCallback = *const fn (ctx: ?*anyopaque) void;
 
     pub fn init(manager: *PathWatcherManager, path: PathWatcherManager.PathInfo, recursive: bool, callback: Callback, updateEndCallback: UpdateEndCallback, ctx: ?*anyopaque) !*PathWatcher {
@@ -706,7 +767,7 @@ pub const PathWatcher = struct {
 
         if (comptime Environment.isMac) {
             if (!path.is_file) {
-                var buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+                var buffer: bun.PathBuffer = undefined;
                 const resolved_path_temp = std.os.getFdPath(path.fd.cast(), &buffer) catch |err| {
                     bun.default_allocator.destroy(this);
                     return err;
@@ -722,8 +783,8 @@ pub const PathWatcher = struct {
                     .fsevents_watcher = FSEvents.watch(
                         resolved_path,
                         recursive,
-                        bun.cast(FSEvents.FSEventsWatcher.Callback, callback),
-                        bun.cast(FSEvents.FSEventsWatcher.UpdateEndCallback, updateEndCallback),
+                        callback,
+                        updateEndCallback,
                         bun.cast(*anyopaque, ctx),
                     ) catch |err| {
                         bun.default_allocator.destroy(this);
@@ -734,7 +795,7 @@ pub const PathWatcher = struct {
                     .flushCallback = updateEndCallback,
                     .file_paths = .{},
                     .ctx = ctx,
-                    .mutex = Mutex.init(),
+                    .mutex = .{},
                 };
 
                 errdefer this.deinit();
@@ -754,7 +815,7 @@ pub const PathWatcher = struct {
             .recursive = recursive,
             .flushCallback = updateEndCallback,
             .ctx = ctx,
-            .mutex = Mutex.init(),
+            .mutex = .{},
             .file_paths = bun.BabyList([:0]const u8).initCapacity(bun.default_allocator, 1) catch |err| {
                 bun.default_allocator.destroy(this);
                 return err;
@@ -768,60 +829,79 @@ pub const PathWatcher = struct {
     }
 
     pub fn refPendingDirectory(this: *PathWatcher) bool {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         if (this.isClosed()) return false;
         this.pending_directories += 1;
-        this.has_pending_directories.store(true, .Release);
+        this.has_pending_directories.store(true, .release);
         return true;
     }
 
     pub fn hasPendingDirectories(this: *PathWatcher) callconv(.C) bool {
-        @fence(.Acquire);
-        return this.has_pending_directories.load(.Acquire);
+        @fence(.acquire);
+        return this.has_pending_directories.load(.acquire);
     }
 
     pub fn isClosed(this: *PathWatcher) bool {
-        @fence(.Acquire);
-        return this.closed.load(.Acquire);
+        @fence(.acquire);
+        return this.closed.load(.acquire);
     }
 
     pub fn setClosed(this: *PathWatcher) void {
         this.mutex.lock();
         defer this.mutex.unlock();
-        @fence(.Release);
-        this.closed.store(true, .Release);
+        @fence(.release);
+        this.closed.store(true, .release);
     }
 
     pub fn unrefPendingDirectory(this: *PathWatcher) void {
-        @fence(.Release);
+        @fence(.release);
         this.mutex.lock();
         defer this.mutex.unlock();
         this.pending_directories -= 1;
         if (this.isClosed() and this.pending_directories == 0) {
-            this.has_pending_directories.store(false, .Release);
+            this.has_pending_directories.store(false, .release);
             this.deinit();
         }
     }
 
-    pub fn emit(this: *PathWatcher, path: string, hash: GenericWatcher.HashType, time_stamp: i64, is_file: bool, event_type: EventType) void {
-        const time_diff = time_stamp - this.last_change_event.time_stamp;
-        // skip consecutive duplicates
-        if ((this.last_change_event.time_stamp == 0 or time_diff > 1) or this.last_change_event.event_type != event_type and this.last_change_event.hash != hash) {
-            this.last_change_event.time_stamp = time_stamp;
-            this.last_change_event.event_type = event_type;
-            this.last_change_event.hash = hash;
-            this.needs_flush = true;
-            if (this.isClosed()) return;
-            this.callback(this.ctx, path, is_file, event_type);
+    pub fn emit(this: *PathWatcher, event: Event, hash: GenericWatcher.HashType, time_stamp: i64, is_file: bool) void {
+        switch (event) {
+            .change, .rename => {
+                const event_type = switch (event) {
+                    inline .change, .rename => |_, t| @field(EventType, @tagName(t)),
+                    else => unreachable, // above switch guarentees this subset
+                };
+
+                const time_diff = time_stamp - this.last_change_event.time_stamp;
+                if (!((this.last_change_event.time_stamp == 0 or time_diff > 1) or
+                    this.last_change_event.event_type != event_type and
+                    this.last_change_event.hash != hash))
+                {
+                    // skip consecutive duplicates
+                    return;
+                }
+
+                this.last_change_event.time_stamp = time_stamp;
+                this.last_change_event.event_type = event_type;
+            },
+            else => {},
         }
+
+        this.needs_flush = true;
+        if (this.isClosed()) return;
+        this.callback(this.ctx, event, is_file);
     }
 
     pub fn flush(this: *PathWatcher) void {
         this.needs_flush = false;
         if (this.isClosed()) return;
         this.flushCallback(this.ctx);
+    }
+
+    pub fn detach(this: *PathWatcher, _: *anyopaque) void {
+        this.deinit();
     }
 
     pub fn deinit(this: *PathWatcher) void {
@@ -861,23 +941,80 @@ pub fn watch(
     vm: *VirtualMachine,
     path: [:0]const u8,
     recursive: bool,
-    callback: PathWatcher.Callback,
-    updateEnd: PathWatcher.UpdateEndCallback,
+    comptime callback: PathWatcher.Callback,
+    comptime updateEnd: PathWatcher.UpdateEndCallback,
     ctx: ?*anyopaque,
-) !*PathWatcher {
-    if (default_manager) |manager| {
-        const path_info = try manager._fdFromAbsolutePathZ(path);
-        errdefer manager._decrementPathRef(path);
-        return try PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx);
-    } else {
+) bun.JSC.Maybe(*PathWatcher) {
+    const manager = default_manager orelse brk: {
         default_manager_mutex.lock();
         defer default_manager_mutex.unlock();
         if (default_manager == null) {
-            default_manager = try PathWatcherManager.init(vm);
+            default_manager = PathWatcherManager.init(vm) catch |e| {
+                return .{ .err = .{
+                    .errno = @truncate(@intFromEnum(switch (e) {
+                        error.SystemResources, error.LockedMemoryLimitExceeded, error.OutOfMemory => bun.C.E.NOMEM,
+
+                        error.ProcessFdQuotaExceeded,
+                        error.SystemFdQuotaExceeded,
+                        error.ThreadQuotaExceeded,
+                        => bun.C.E.MFILE,
+
+                        error.Unexpected => bun.C.E.NOMEM,
+
+                        error.KQueueError => bun.C.E.INVAL,
+                    })),
+                    .syscall = .watch,
+                } };
+            };
         }
-        const manager = default_manager.?;
-        const path_info = try manager._fdFromAbsolutePathZ(path);
-        errdefer manager._decrementPathRef(path);
-        return try PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx);
-    }
+        break :brk default_manager.?;
+    };
+
+    const path_info = switch (manager._fdFromAbsolutePathZ(path)) {
+        .result => |result| result,
+        .err => |err| return .{ .err = err },
+    };
+
+    const watcher = PathWatcher.init(manager, path_info, recursive, callback, updateEnd, ctx) catch |e| {
+        bun.handleErrorReturnTrace(e, @errorReturnTrace());
+        manager._decrementPathRef(path);
+
+        return .{ .err = .{
+            .errno = @truncate(@intFromEnum(switch (e) {
+                error.Unexpected,
+                error.UnexpectedFailure,
+                error.WatchAlreadyExists,
+                error.NameTooLong,
+                error.BadPathName,
+                error.InvalidUtf8,
+                error.InvalidWtf8,
+                => bun.C.E.INVAL,
+
+                error.OutOfMemory,
+                error.SystemResources,
+                => bun.C.E.NOMEM,
+
+                error.FileNotFound,
+                error.NetworkNotFound,
+                error.NoDevice,
+                => bun.C.E.NOENT,
+
+                error.DeviceBusy => bun.C.E.BUSY,
+                error.AccessDenied => bun.C.E.PERM,
+                error.InvalidHandle => bun.C.E.BADF,
+                error.SymLinkLoop => bun.C.E.LOOP,
+                error.NotDir => bun.C.E.NOTDIR,
+
+                error.ProcessFdQuotaExceeded,
+                error.SystemFdQuotaExceeded,
+                error.UserResourceLimitReached,
+                => bun.C.E.MFILE,
+
+                else => bun.C.E.INVAL,
+            })),
+            .syscall = .watch,
+        } };
+    };
+
+    return .{ .result = watcher };
 }

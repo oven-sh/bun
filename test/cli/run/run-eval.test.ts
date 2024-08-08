@@ -1,7 +1,7 @@
 import { SpawnOptions, Subprocess, SyncSubprocess } from "bun";
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync, writeFileSync, rmSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { writeFileSync, rmSync } from "fs";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join, sep, posix } from "path";
 
@@ -48,7 +48,7 @@ for (const flag of ["-e", "--print"]) {
 
 describe("--print for cjs/esm", () => {
   test("eval result between esm imports", async () => {
-    let cwd = mkdtempSync(join(tmpdir(), "bun-run-eval-test-"));
+    let cwd = tmpdirSync();
     writeFileSync(join(cwd, "foo.js"), "'foo'");
     writeFileSync(join(cwd, "bar.js"), "'bar'");
     let { stdout, stderr, exitCode } = Bun.spawnSync({

@@ -34,6 +34,7 @@
 #include <wtf/persistence/PersistentCoders.h>
 #include <wtf/text/StringBuilder.h>
 #include <wtf/unicode/UTF8Conversion.h>
+#include "headers-handwritten.h"
 
 namespace WebCore {
 
@@ -104,7 +105,7 @@ static Vector<uint8_t> combineSegmentsData(const FragmentedSharedBuffer::DataSeg
     Vector<uint8_t> combinedData;
     combinedData.reserveInitialCapacity(size);
     for (auto& segment : segments)
-        combinedData.append(segment.segment->data(), segment.segment->size());
+        combinedData.append(std::span { segment.segment->data(), segment.segment->size() });
     ASSERT(combinedData.size() == size);
     return combinedData;
 }
@@ -164,10 +165,10 @@ Ref<SharedBuffer> FragmentedSharedBuffer::getContiguousData(size_t position, siz
         return SharedBufferDataView { element->segment.copyRef(), offsetInSegment, length }.createSharedBuffer();
     Vector<uint8_t> combinedData;
     combinedData.reserveInitialCapacity(length);
-    combinedData.append(element->segment->data() + offsetInSegment, element->segment->size() - offsetInSegment);
+    combinedData.append(std::span { element->segment->data() + offsetInSegment, element->segment->size() - offsetInSegment });
     for (++element; combinedData.size() < length && element != m_segments.end(); element++) {
         auto canCopy = std::min(length - combinedData.size(), element->segment->size());
-        combinedData.append(element->segment->data(), canCopy);
+        combinedData.append(std::span { element->segment->data(), canCopy });
     }
     return SharedBuffer::create(WTFMove(combinedData));
 }
@@ -226,7 +227,7 @@ void FragmentedSharedBuffer::append(const FragmentedSharedBuffer& data)
 void FragmentedSharedBuffer::append(const uint8_t* data, size_t length)
 {
     ASSERT(!m_contiguous);
-    m_segments.append({ m_size, DataSegment::create(Vector { data, length }) });
+    m_segments.append({ m_size, DataSegment::create(Vector(std::span { data, length })) });
     m_size += length;
     ASSERT(internallyConsistent());
 }
@@ -319,7 +320,7 @@ Vector<uint8_t> FragmentedSharedBuffer::read(size_t offset, size_t length) const
     auto* currentSegment = getSegmentForPosition(offset);
     size_t offsetInSegment = offset - currentSegment->beginPosition;
     size_t availableInSegment = std::min(currentSegment->segment->size() - offsetInSegment, remaining);
-    data.append(currentSegment->segment->data() + offsetInSegment, availableInSegment);
+    data.append(std::span { currentSegment->segment->data() + offsetInSegment, availableInSegment });
 
     remaining -= availableInSegment;
 
@@ -327,7 +328,7 @@ Vector<uint8_t> FragmentedSharedBuffer::read(size_t offset, size_t length) const
 
     while (remaining && ++currentSegment != afterLastSegment) {
         size_t lengthInSegment = std::min(currentSegment->segment->size(), remaining);
-        data.append(currentSegment->segment->data(), lengthInSegment);
+        data.append(std::span { currentSegment->segment->data(), lengthInSegment });
         remaining -= lengthInSegment;
     }
     return data;
@@ -549,7 +550,7 @@ const uint8_t* DataSegment::data() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> const uint8_t* { return data->data(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.data()); },
+        [](const FileSystem::MappedFileData& data) -> const uint8_t* { return static_cast<const uint8_t*>(data.span().data()); },
         [](const Provider& provider) -> const uint8_t* { return provider.data(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -572,7 +573,7 @@ size_t DataSegment::size() const
 #if USE(GSTREAMER)
         [](const RefPtr<GstMappedOwnedBuffer>& data) -> size_t { return data->size(); },
 #endif
-        [](const FileSystem::MappedFileData& data) -> size_t { return data.size(); },
+        [](const FileSystem::MappedFileData& data) -> size_t { return data.span().size(); },
         [](const Provider& provider) -> size_t { return provider.size(); });
     return std::visit(visitor, m_immutableData);
 }
@@ -609,7 +610,7 @@ void SharedBufferBuilder::initialize(Ref<FragmentedSharedBuffer>&& buffer)
 
 RefPtr<ArrayBuffer> SharedBufferBuilder::tryCreateArrayBuffer() const
 {
-    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate(nullptr, 0);
+    return m_buffer ? m_buffer->tryCreateArrayBuffer() : ArrayBuffer::tryCreate({});
 }
 
 Ref<FragmentedSharedBuffer> SharedBufferBuilder::take()
@@ -625,7 +626,7 @@ Ref<SharedBuffer> SharedBufferBuilder::takeAsContiguous()
 RefPtr<ArrayBuffer> SharedBufferBuilder::takeAsArrayBuffer()
 {
     if (!m_buffer)
-        return ArrayBuffer::tryCreate(nullptr, 0);
+        return ArrayBuffer::tryCreate({});
     return take()->tryCreateArrayBuffer();
 }
 
@@ -667,22 +668,15 @@ RefPtr<SharedBuffer> utf8Buffer(const String& string)
     }
 
     Vector<uint8_t> buffer(length * 3);
-
-    // Convert to runs of 8-bit characters.
-    char* p = reinterpret_cast<char*>(buffer.data());
+    WTF::Unicode::ConversionResult<char8_t> result;
     if (length) {
-        if (string.is8Bit()) {
-            const LChar* d = string.characters8();
-            if (!WTF::Unicode::convertLatin1ToUTF8(&d, d + length, &p, p + buffer.size()))
-                return nullptr;
-        } else {
-            const UChar* d = string.characters16();
-            if (WTF::Unicode::convertUTF16ToUTF8(&d, d + length, &p, p + buffer.size()) != WTF::Unicode::ConversionResult::Success)
-                return nullptr;
-        }
+        if (string.is8Bit())
+            result = WTF::Unicode::convert(string.span8(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
+        else
+            result = WTF::Unicode::convert(string.span16(), spanReinterpretCast<char8_t>(buffer.mutableSpan()));
     }
 
-    buffer.shrink(p - reinterpret_cast<char*>(buffer.data()));
+    buffer.shrink(result.buffer.size());
     return SharedBuffer::create(WTFMove(buffer));
 }
 

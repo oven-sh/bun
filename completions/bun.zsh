@@ -425,6 +425,7 @@ _bun_run_completion() {
         '--external[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
         '-e[Exclude module from transpilation (can use * wildcards). ex: -e react]:external' \
         '--loader[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
+        '--packages[Exclude dependencies from bundle, e.g. --packages external. Valid options: bundle, external]:packages' \
         '-l[Parse files with .ext:loader, e.g. --loader .js:jsx. Valid loaders: js, jsx, ts, tsx, json, toml, text, file, wasm, napi]:loader' \
         '--origin[Rewrite import URLs to start with --origin. Default: ""]:origin' \
         '-u[Rewrite import URLs to start with --origin. Default: ""]:origin' \

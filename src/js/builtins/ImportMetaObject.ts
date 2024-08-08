@@ -149,7 +149,7 @@ export function internalRequire(this: ImportMetaObject, id) {
   }
 
   // TODO: remove this hardcoding
-  if (last5 === ".json") {
+  if (last5 === ".json" && !id.endsWith?.("package.json")) {
     var fs = (globalThis[Symbol.for("_fs")] ||= Bun.fs());
     var exports = JSON.parse(fs.readFileSync(id, "utf8"));
     $requireMap.$set(id, $createCommonJSModule(id, exports, true, undefined));

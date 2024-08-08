@@ -10,11 +10,10 @@ const default_allocator = bun.default_allocator;
 const C = bun.C;
 const std = @import("std");
 const options = @import("../options.zig");
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const cache = @import("../cache.zig");
 const js_ast = bun.JSAst;
 const js_lexer = bun.js_lexer;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // Heuristic: you probably don't have 100 of these
 // Probably like 5-10
@@ -58,6 +57,7 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    pub usingnamespace bun.New(@This());
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -68,10 +68,10 @@ pub const TSConfigJSON = struct {
         remove,
         invalid,
 
-        pub const List = ComptimeStringMap(ImportsNotUsedAsValue, .{
-            .{ "preserve", ImportsNotUsedAsValue.preserve },
-            .{ "error", ImportsNotUsedAsValue.err },
-            .{ "remove", ImportsNotUsedAsValue.remove },
+        pub const List = bun.ComptimeStringMap(ImportsNotUsedAsValue, .{
+            .{ "preserve", .preserve },
+            .{ "error", .err },
+            .{ "remove", .remove },
         });
     };
 
@@ -321,16 +321,10 @@ pub const TSConfigJSON = struct {
         }
 
         if (Environment.isDebug and has_base_url) {
-            std.debug.assert(result.base_url.len > 0);
+            assert(result.base_url.len > 0);
         }
 
-        const _result = allocator.create(TSConfigJSON) catch unreachable;
-        _result.* = result;
-
-        if (Environment.isDebug and has_base_url) {
-            std.debug.assert(_result.base_url.len > 0);
-        }
-        return _result;
+        return TSConfigJSON.new(result);
     }
 
     pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: std.mem.Allocator) bool {
@@ -443,3 +437,5 @@ pub const TSConfigJSON = struct {
         return false;
     }
 };
+
+const assert = bun.assert;

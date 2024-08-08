@@ -58,7 +58,7 @@ using namespace JSC;
 
 SubtleCrypto::SubtleCrypto(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
-    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"))
+    , m_workQueue(WorkQueue::create("com.apple.WebKit.CryptoQueue"_s))
 {
 }
 
@@ -111,7 +111,7 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
 
     if (std::holds_alternative<String>(algorithmIdentifier)) {
         auto newParams = Strong<JSObject>(vm, constructEmptyObject(&state));
-        newParams->putDirect(vm, Identifier::fromString(vm, "name"_s), jsString(vm, std::get<String>(algorithmIdentifier)));
+        newParams->putDirect(vm, vm.propertyNames->name, jsString(vm, std::get<String>(algorithmIdentifier)));
 
         return normalizeCryptoAlgorithmParameters(state, newParams, operation);
     }
@@ -268,10 +268,10 @@ static ExceptionOr<std::unique_ptr<CryptoAlgorithmParameters>> normalizeCryptoAl
         switch (*identifier) {
         case CryptoAlgorithmIdentifier::ECDH: {
             // Remove this hack once https://bugs.webkit.org/show_bug.cgi?id=169333 is fixed.
-            JSValue nameValue = value.get()->get(&state, Identifier::fromString(vm, "name"_s));
+            JSValue nameValue = value.get()->get(&state, vm.propertyNames->name);
             JSValue publicValue = value.get()->get(&state, Identifier::fromString(vm, "public"_s));
             JSObject* newValue = constructEmptyObject(&state);
-            newValue->putDirect(vm, Identifier::fromString(vm, "name"_s), nameValue);
+            newValue->putDirect(vm, vm.propertyNames->name, nameValue);
             newValue->putDirect(vm, Identifier::fromString(vm, "publicKey"_s), publicValue);
 
             auto params = convertDictionary<CryptoAlgorithmEcdhKeyDeriveParams>(state, newValue);
@@ -493,7 +493,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
                 return std::nullopt;
             },
             [](auto& bufferSource) -> std::optional<KeyData> {
-                return KeyData { Vector { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() } };
+                return KeyData { Vector(std::span { static_cast<const uint8_t*>(bufferSource->data()), bufferSource->byteLength() }) };
             });
     case SubtleCrypto::KeyFormat::Jwk:
         return WTF::switchOn(
@@ -513,7 +513,7 @@ static std::optional<KeyData> toKeyData(SubtleCrypto::KeyFormat format, SubtleCr
 
 static Vector<uint8_t> copyToVector(BufferSource&& data)
 {
-    return { data.data(), data.length() };
+    return std::span { data.data(), data.length() };
 }
 
 static bool isSupportedExportKey(JSGlobalObject& state, CryptoAlgorithmIdentifier identifier)
@@ -1072,7 +1072,7 @@ void SubtleCrypto::wrapKey(JSC::JSGlobalObject& state, KeyFormat format, CryptoK
                     auto jwk = toJS<IDLDictionary<JsonWebKey>>(*(promise->globalObject()), *(promise->globalObject()), WTFMove(std::get<JsonWebKey>(key)));
                     String jwkString = JSONStringify(promise->globalObject(), jwk, 0);
                     CString jwkUTF8String = jwkString.utf8(StrictConversion);
-                    bytes.append(jwkUTF8String.data(), jwkUTF8String.length());
+                    bytes.append(std::span { jwkUTF8String.data(), jwkUTF8String.length() });
                 }
                 }
 
@@ -1173,7 +1173,7 @@ void SubtleCrypto::unwrapKey(JSC::JSGlobalObject& state, KeyFormat format, Buffe
                     auto& vm = state.vm();
                     auto scope = DECLARE_THROW_SCOPE(vm);
 
-                    String jwkString(bytes.data(), bytes.size());
+                    String jwkString(std::span { bytes.data(), bytes.size() });
                     JSLockHolder locker(vm);
                     auto jwkObject = JSONParse(&state, jwkString);
                     if (!jwkObject) {

@@ -1,16 +1,17 @@
 #pragma once
 #include "root.h"
 
+#define POSIX_PATH_SEP_s "/"_s
+#define POSIX_PATH_SEP '/'
+#define WINDOWS_PATH_SEP_s "\\"_s
+#define WINDOWS_PATH_SEP '\\'
+
 #if OS(WINDOWS)
-#define PLATFORM_SEP_s "\\"_s
-#define PLATFORM_SEP '\\'
-#define NOT_PLATFORM_SEP_s "/"_s
-#define NOT_PLATFORM_SEP '/'
+#define PLATFORM_SEP_s WINDOWS_PATH_SEP_s
+#define PLATFORM_SEP WINDOWS_PATH_SEP
 #else
-#define PLATFORM_SEP_s "/"_s
-#define PLATFORM_SEP '/'
-#define NOT_PLATFORM_SEP_s "\\"_s
-#define NOT_PLATFORM_SEP '\\'
+#define PLATFORM_SEP_s POSIX_PATH_SEP_s
+#define PLATFORM_SEP POSIX_PATH_SEP
 #endif
 
 ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
@@ -20,7 +21,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         auto len = input.length();
         if (len < 1)
             return false;
-        auto bytes = input.characters8();
+        const auto bytes = input.span8().data();
         if (bytes[0] == '/' || bytes[0] == '\\')
             return true;
         if (len < 2)
@@ -32,7 +33,7 @@ ALWAYS_INLINE bool isAbsolutePath(WTF::String input)
         auto len = input.length();
         if (len < 1)
             return false;
-        auto bytes = input.characters16();
+        const auto bytes = input.span16().data();
         if (bytes[0] == '/' || bytes[0] == '\\')
             return true;
         if (len < 2)

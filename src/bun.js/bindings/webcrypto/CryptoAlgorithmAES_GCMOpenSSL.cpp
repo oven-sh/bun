@@ -115,7 +115,7 @@ static std::optional<Vector<uint8_t>> cryptDecrypt(const Vector<uint8_t>& key, c
     int cipherTextLen = cipherText.size() - tagLength;
 
     Vector<uint8_t> plainText(cipherText.size());
-    Vector<uint8_t> tag { cipherText.data() + cipherTextLen, tagLength };
+    Vector<uint8_t> tag { std::span { cipherText.data() + cipherTextLen, tagLength } };
 
     // Create and initialize the context
     if (!(ctx = EvpCipherCtxPtr(EVP_CIPHER_CTX_new())))

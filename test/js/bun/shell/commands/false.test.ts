@@ -1,6 +1,7 @@
 import { $ } from "bun";
 import { describe, test, expect } from "bun:test";
-import { TestBuilder } from "../test_builder";
+import { createTestBuilder } from "../test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
 
 describe("false", async () => {
   TestBuilder.command`false`.exitCode(1).runAsTest("works");

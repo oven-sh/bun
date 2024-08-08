@@ -245,7 +245,6 @@ export function readableStreamPipeToWritableStream(
 
   source.$disturbed = true;
 
-  pipeState.finalized = false;
   pipeState.shuttingDown = false;
   pipeState.promiseCapability = $newPromiseCapability(Promise);
   pipeState.pendingReadPromiseCapability = $newPromiseCapability(Promise);
@@ -254,8 +253,6 @@ export function readableStreamPipeToWritableStream(
 
   if (signal !== undefined) {
     const algorithm = reason => {
-      if (pipeState.finalized) return;
-
       $pipeToShutdownWithAction(
         pipeState,
         () => {
@@ -290,7 +287,13 @@ export function readableStreamPipeToWritableStream(
         reason,
       );
     };
-    if ($whenSignalAborted(signal, algorithm)) return pipeState.promiseCapability.promise;
+    const abortAlgorithmIdentifier = (pipeState.abortAlgorithmIdentifier = $addAbortAlgorithmToSignal(
+      signal,
+      algorithm,
+    ));
+
+    if (!abortAlgorithmIdentifier) return pipeState.promiseCapability.promise;
+    pipeState.signal = signal;
   }
 
   $pipeToErrorsMustBePropagatedForward(pipeState);
@@ -480,8 +483,8 @@ export function pipeToFinalize(pipeState) {
   $writableStreamDefaultWriterRelease(pipeState.writer);
   $readableStreamReaderGenericRelease(pipeState.reader);
 
-  // Instead of removing the abort algorithm as per spec, we make it a no-op which is equivalent.
-  pipeState.finalized = true;
+  const signal = pipeState.signal;
+  if (signal) $removeAbortAlgorithmFromSignal(signal, pipeState.abortAlgorithmIdentifier);
 
   if (arguments.length > 1) pipeState.promiseCapability.reject.$call(undefined, arguments[1]);
   else pipeState.promiseCapability.resolve.$call();
@@ -1325,7 +1328,13 @@ export function readableStreamDefaultControllerCallPullIfNeeded(controller) {
 
 export function isReadableStreamLocked(stream) {
   $assert($isReadableStream(stream));
-  return !!$getByIdDirectPrivate(stream, "reader") || stream.$bunNativePtr === -1;
+  return (
+    // Case 1. Is there a reader actively using it?
+    !!$getByIdDirectPrivate(stream, "reader") ||
+    // Case 2. Has the native reader been released?
+    // Case 3. Has it been converted into a Node.js NativeReadable?
+    stream.$bunNativePtr === -1
+  );
 }
 
 export function readableStreamDefaultControllerGetDesiredSize(controller) {
@@ -1351,16 +1360,14 @@ export function readableStreamCancel(stream, reason) {
   if (state === $streamErrored) return Promise.$reject($getByIdDirectPrivate(stream, "storedError"));
   $readableStreamClose(stream);
 
-  var controller = $getByIdDirectPrivate(stream, "readableStreamController");
-  var cancel = controller.$cancel;
-  if (cancel) {
-    return cancel(controller, reason).$then(function () {});
-  }
+  const controller = $getByIdDirectPrivate(stream, "readableStreamController");
+  if (controller === null) return Promise.$resolve();
 
-  var close = controller.close;
-  if (close) {
-    return Promise.$resolve(controller.close(reason));
-  }
+  const cancel = controller.$cancel;
+  if (cancel) return cancel(controller, reason).$then(function () {});
+
+  const close = controller.close;
+  if (close) return Promise.$resolve(controller.close(reason));
 
   $throwTypeError("ReadableStreamController has no cancel or close method");
 }
@@ -1861,11 +1868,11 @@ export function readableStreamIntoText(stream) {
   return closer.promise.$then($withoutUTF8BOM);
 }
 
-export function readableStreamToArrayBufferDirect(stream, underlyingSource) {
+export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUint8Array) {
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
-  sink.start(highWaterMark ? { highWaterMark } : {});
+  sink.start({ highWaterMark, asUint8Array });
   var capability = $newPromiseCapability(Promise);
   var ended = false;
   var pull = underlyingSource.pull;
@@ -2001,12 +2008,16 @@ export function readableStreamDefineLazyIterators(prototype) {
       reader.releaseLock();
 
       if (!preventCancel && !$isReadableStreamLocked(stream)) {
-        stream.cancel(deferredError);
+        const promise = stream.cancel(deferredError);
+        if (Bun.peek.status(promise) === "rejected") {
+          $markPromiseAsHandled(promise);
+        }
       }
 
       if (deferredError) {
         throw deferredError;
       }
+
     }
   };
   var createAsyncIterator = function asyncIterator() {

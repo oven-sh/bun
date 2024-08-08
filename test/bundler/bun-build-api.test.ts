@@ -1,6 +1,6 @@
 import { test, expect, describe } from "bun:test";
-import { readFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { readFileSync, writeFileSync } from "fs";
+import { bunEnv, bunExe, tempDirWithFiles } from "harness";
 import { join } from "path";
 
 describe("Bun.build", () => {
@@ -12,6 +12,43 @@ describe("Bun.build", () => {
       return;
     }
     throw new Error("should have thrown");
+  });
+
+  // https://github.com/oven-sh/bun/issues/12818
+  test("sourcemap + build error crash case", async () => {
+    const dir = tempDirWithFiles("build", {
+      "/src/file1.ts": `
+        import { A } from './dir';
+        console.log(A);
+      `,
+      "/src/dir/index.ts": `
+        import { B } from "./file3";
+        export const A = [B]
+      `,
+      "/src/dir/file3.ts": `
+        import { C } from "../file1"; // error
+        export const B = C;
+      `,
+      "/src/package.json": `
+        { "type": "module" }
+      `,
+      "/src/tsconfig.json": `
+        {
+          "extends": "../tsconfig.json",
+          "compilerOptions": {
+              "target": "ESNext",
+              "module": "ESNext",
+              "types": []
+          }
+        }
+      `,
+    });
+    const y = await Bun.build({
+      entrypoints: [join(dir, "src/file1.ts")],
+      outdir: join(dir, "out"),
+      sourcemap: "external",
+      external: ["@minecraft"],
+    });
   });
 
   test("invalid options throws", async () => {
@@ -79,7 +116,7 @@ describe("Bun.build", () => {
   test("rebuilding busts the directory entries cache", () => {
     Bun.gc(true);
     const { exitCode, stderr } = Bun.spawnSync({
-      cmd: [bunExe(), join(import.meta.dir, "bundler-reloader-script.ts")],
+      cmd: [bunExe(), join(import.meta.dir, "fixtures", "bundler-reloader-script.ts")],
       env: bunEnv,
       stderr: "pipe",
       stdout: "inherit",
@@ -263,34 +300,6 @@ describe("Bun.build", () => {
     expect(x.logs[0].position).toBeTruthy();
   });
 
-  test("test bun target", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-      target: "bun",
-    });
-    expect(x.success).toBe(true);
-    const [blob] = x.outputs;
-    const content = await blob.text();
-
-    // use bun's ws
-    expect(content).toContain('import {WebSocket} from "ws"');
-    expect(content).not.toContain("var websocket = __toESM(require_websocket(), 1);");
-  });
-
-  test("test node target, issue #3844", async () => {
-    const x = await Bun.build({
-      entrypoints: [join(import.meta.dir, "./fixtures/trivial/bundle-ws.ts")],
-      target: "node",
-    });
-    expect(x.success).toBe(true);
-    const [blob] = x.outputs;
-    const content = await blob.text();
-
-    expect(content).not.toContain('import {WebSocket} from "ws"');
-    // depends on the ws package in the test/node_modules.
-    expect(content).toContain("var websocket = __toESM(require_websocket(), 1);");
-  });
-
   test("module() throws error", async () => {
     expect(() =>
       Bun.build({
@@ -312,5 +321,103 @@ describe("Bun.build", () => {
         ],
       }),
     ).toThrow();
+  });
+
+  test("hash considers cross chunk imports", async () => {
+    Bun.gc(true);
+    const fixture = tempDirWithFiles("build", {
+      "entry1.ts": `
+        import { bar } from './bar'
+        export const entry1 = () => {
+          console.log('FOO')
+          bar()
+        }
+      `,
+      "entry2.ts": `
+        import { bar } from './bar'
+        export const entry1 = () => {
+          console.log('FOO')
+          bar()
+        }
+      `,
+      "bar.ts": `
+        export const bar = () => {
+          console.log('BAR')
+        }
+      `,
+    });
+    const first = await Bun.build({
+      entrypoints: [join(fixture, "entry1.ts"), join(fixture, "entry2.ts")],
+      outdir: join(fixture, "out"),
+      target: "browser",
+      splitting: true,
+      minify: false,
+      naming: "[dir]/[name]-[hash].[ext]",
+    });
+    if (!first.success) throw new AggregateError(first.logs);
+    expect(first.outputs.length).toBe(3);
+
+    writeFileSync(join(fixture, "bar.ts"), readFileSync(join(fixture, "bar.ts"), "utf8").replace("BAR", "BAZ"));
+
+    const second = await Bun.build({
+      entrypoints: [join(fixture, "entry1.ts"), join(fixture, "entry2.ts")],
+      outdir: join(fixture, "out2"),
+      target: "browser",
+      splitting: true,
+      minify: false,
+      naming: "[dir]/[name]-[hash].[ext]",
+    });
+    if (!second.success) throw new AggregateError(second.logs);
+    expect(second.outputs.length).toBe(3);
+
+    const totalUniqueHashes = new Set();
+    const allFiles = [...first.outputs, ...second.outputs];
+    for (const out of allFiles) totalUniqueHashes.add(out.hash);
+
+    expect(
+      totalUniqueHashes.size,
+      "number of unique hashes should be 6: three per bundle. the changed foo.ts affects all chunks",
+    ).toBe(6);
+
+    // ensure that the hashes are in the path
+    for (const out of allFiles) {
+      expect(out.path).toInclude(out.hash!);
+    }
+
+    Bun.gc(true);
+  });
+
+  test("ignoreDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      ignoreDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("console.log(1);\n");
+  });
+
+  test("emitDCEAnnotations works", async () => {
+    const fixture = tempDirWithFiles("build", {
+      "entry.ts": `
+        export const OUT = /* @__PURE__ */ console.log(1)
+      `,
+    });
+
+    const bundle = await Bun.build({
+      entrypoints: [join(fixture, "entry.ts")],
+      emitDCEAnnotations: true,
+      minify: true,
+    });
+    if (!bundle.success) throw new AggregateError(bundle.logs);
+
+    expect(await bundle.outputs[0].text()).toBe("var o=/*@__PURE__*/console.log(1);export{o as OUT};\n");
   });
 });

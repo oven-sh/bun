@@ -99,7 +99,6 @@ pub inline fn utf16(slice_: []const u16) FormatUTF16 {
 
 pub const FormatUTF16 = struct {
     buf: []const u16,
-    escape_backslashes: bool = false,
     path_fmt_opts: ?PathFormatOptions = null,
     pub fn format(self: @This(), comptime _: []const u8, _: anytype, writer: anytype) !void {
         if (self.path_fmt_opts) |opts| {
@@ -535,140 +534,78 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
         pub fn colorCode(this: Keyword) ColorCode {
             return switch (this) {
-                Keyword.abstract => ColorCode.blue,
-                Keyword.as => ColorCode.blue,
-                Keyword.@"async" => ColorCode.magenta,
-                Keyword.@"await" => ColorCode.magenta,
-                Keyword.case => ColorCode.magenta,
-                Keyword.@"catch" => ColorCode.magenta,
-                Keyword.class => ColorCode.magenta,
-                Keyword.@"const" => ColorCode.magenta,
-                Keyword.@"continue" => ColorCode.magenta,
-                Keyword.debugger => ColorCode.magenta,
-                Keyword.default => ColorCode.magenta,
-                Keyword.delete => ColorCode.red,
-                Keyword.do => ColorCode.magenta,
-                Keyword.@"else" => ColorCode.magenta,
-                Keyword.@"break" => ColorCode.magenta,
-                Keyword.undefined => ColorCode.orange,
-                Keyword.@"enum" => ColorCode.blue,
-                Keyword.@"export" => ColorCode.magenta,
-                Keyword.extends => ColorCode.magenta,
-                Keyword.false => ColorCode.orange,
-                Keyword.finally => ColorCode.magenta,
-                Keyword.@"for" => ColorCode.magenta,
-                Keyword.function => ColorCode.magenta,
-                Keyword.@"if" => ColorCode.magenta,
-                Keyword.implements => ColorCode.blue,
-                Keyword.import => ColorCode.magenta,
-                Keyword.in => ColorCode.magenta,
-                Keyword.instanceof => ColorCode.magenta,
-                Keyword.interface => ColorCode.blue,
-                Keyword.let => ColorCode.magenta,
-                Keyword.new => ColorCode.magenta,
-                Keyword.null => ColorCode.orange,
-                Keyword.package => ColorCode.magenta,
-                Keyword.private => ColorCode.blue,
-                Keyword.protected => ColorCode.blue,
-                Keyword.public => ColorCode.blue,
-                Keyword.@"return" => ColorCode.magenta,
-                Keyword.static => ColorCode.magenta,
-                Keyword.super => ColorCode.magenta,
-                Keyword.@"switch" => ColorCode.magenta,
-                Keyword.this => ColorCode.orange,
-                Keyword.throw => ColorCode.magenta,
-                Keyword.true => ColorCode.orange,
-                Keyword.@"try" => ColorCode.magenta,
-                Keyword.type => ColorCode.blue,
-                Keyword.typeof => ColorCode.magenta,
-                Keyword.@"var" => ColorCode.magenta,
-                Keyword.void => ColorCode.magenta,
-                Keyword.@"while" => ColorCode.magenta,
-                Keyword.with => ColorCode.magenta,
-                Keyword.yield => ColorCode.magenta,
-                Keyword.string => ColorCode.blue,
-                Keyword.number => ColorCode.blue,
-                Keyword.boolean => ColorCode.blue,
-                Keyword.symbol => ColorCode.blue,
-                Keyword.any => ColorCode.blue,
-                Keyword.object => ColorCode.blue,
-                Keyword.unknown => ColorCode.blue,
-                Keyword.never => ColorCode.blue,
-                Keyword.namespace => ColorCode.blue,
-                Keyword.declare => ColorCode.blue,
-                Keyword.readonly => ColorCode.blue,
+                .abstract => .blue,
+                .as => .blue,
+                .@"async" => .magenta,
+                .@"await" => .magenta,
+                .case => .magenta,
+                .@"catch" => .magenta,
+                .class => .magenta,
+                .@"const" => .magenta,
+                .@"continue" => .magenta,
+                .debugger => .magenta,
+                .default => .magenta,
+                .delete => .red,
+                .do => .magenta,
+                .@"else" => .magenta,
+                .@"break" => .magenta,
+                .undefined => .orange,
+                .@"enum" => .blue,
+                .@"export" => .magenta,
+                .extends => .magenta,
+                .false => .orange,
+                .finally => .magenta,
+                .@"for" => .magenta,
+                .function => .magenta,
+                .@"if" => .magenta,
+                .implements => .blue,
+                .import => .magenta,
+                .in => .magenta,
+                .instanceof => .magenta,
+                .interface => .blue,
+                .let => .magenta,
+                .new => .magenta,
+                .null => .orange,
+                .package => .magenta,
+                .private => .blue,
+                .protected => .blue,
+                .public => .blue,
+                .@"return" => .magenta,
+                .static => .magenta,
+                .super => .magenta,
+                .@"switch" => .magenta,
+                .this => .orange,
+                .throw => .magenta,
+                .true => .orange,
+                .@"try" => .magenta,
+                .type => .blue,
+                .typeof => .magenta,
+                .@"var" => .magenta,
+                .void => .magenta,
+                .@"while" => .magenta,
+                .with => .magenta,
+                .yield => .magenta,
+                .string => .blue,
+                .number => .blue,
+                .boolean => .blue,
+                .symbol => .blue,
+                .any => .blue,
+                .object => .blue,
+                .unknown => .blue,
+                .never => .blue,
+                .namespace => .blue,
+                .declare => .blue,
+                .readonly => .blue,
             };
         }
     };
 
-    pub const Keywords = ComptimeStringMap(Keyword, .{
-        .{ "abstract", Keyword.abstract },
-        .{ "any", Keyword.any },
-        .{ "as", Keyword.as },
-        .{ "async", Keyword.@"async" },
-        .{ "await", Keyword.@"await" },
-        .{ "boolean", Keyword.boolean },
-        .{ "break", Keyword.@"break" },
-        .{ "case", Keyword.case },
-        .{ "catch", Keyword.@"catch" },
-        .{ "class", Keyword.class },
-        .{ "const", Keyword.@"const" },
-        .{ "continue", Keyword.@"continue" },
-        .{ "debugger", Keyword.debugger },
-        .{ "declare", Keyword.declare },
-        .{ "default", Keyword.default },
-        .{ "delete", Keyword.delete },
-        .{ "do", Keyword.do },
-        .{ "else", Keyword.@"else" },
-        .{ "enum", Keyword.@"enum" },
-        .{ "export", Keyword.@"export" },
-        .{ "extends", Keyword.extends },
-        .{ "false", Keyword.false },
-        .{ "finally", Keyword.finally },
-        .{ "for", Keyword.@"for" },
-        .{ "function", Keyword.function },
-        .{ "if", Keyword.@"if" },
-        .{ "implements", Keyword.implements },
-        .{ "import", Keyword.import },
-        .{ "in", Keyword.in },
-        .{ "instanceof", Keyword.instanceof },
-        .{ "interface", Keyword.interface },
-        .{ "let", Keyword.let },
-        .{ "namespace", Keyword.namespace },
-        .{ "never", Keyword.never },
-        .{ "new", Keyword.new },
-        .{ "null", Keyword.null },
-        .{ "number", Keyword.number },
-        .{ "object", Keyword.object },
-        .{ "package", Keyword.package },
-        .{ "private", Keyword.private },
-        .{ "protected", Keyword.protected },
-        .{ "public", Keyword.public },
-        .{ "readonly", Keyword.readonly },
-        .{ "return", Keyword.@"return" },
-        .{ "static", Keyword.static },
-        .{ "string", Keyword.string },
-        .{ "super", Keyword.super },
-        .{ "switch", Keyword.@"switch" },
-        .{ "symbol", Keyword.symbol },
-        .{ "this", Keyword.this },
-        .{ "throw", Keyword.throw },
-        .{ "true", Keyword.true },
-        .{ "try", Keyword.@"try" },
-        .{ "type", Keyword.type },
-        .{ "typeof", Keyword.typeof },
-        .{ "undefined", Keyword.undefined },
-        .{ "unknown", Keyword.unknown },
-        .{ "var", Keyword.@"var" },
-        .{ "void", Keyword.void },
-        .{ "while", Keyword.@"while" },
-        .{ "with", Keyword.with },
-        .{ "yield", Keyword.yield },
-    });
+    pub const Keywords = bun.ComptimeEnumMap(Keyword);
 
-    pub fn format(this: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        const text = this.text;
+    pub fn format(this: @This(), comptime unused_fmt: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        comptime bun.assert(unused_fmt.len == 0);
 
+        var text = this.text;
         if (this.limited) {
             if (!this.enable_colors or text.len > 2048 or text.len == 0 or !strings.isAllASCII(text)) {
                 try writer.writeAll(text);
@@ -676,22 +613,21 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
             }
         }
 
-        var remain = text;
         var prev_keyword: ?Keyword = null;
 
-        outer: while (remain.len > 0) {
-            if (js_lexer.isIdentifierStart(remain[0])) {
+        outer: while (text.len > 0) {
+            if (js_lexer.isIdentifierStart(text[0])) {
                 var i: usize = 1;
 
-                while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                while (i < text.len and js_lexer.isIdentifierContinue(text[i])) {
                     i += 1;
                 }
 
-                if (Keywords.get(remain[0..i])) |keyword| {
+                if (Keywords.get(text[0..i])) |keyword| {
                     if (keyword != .as)
                         prev_keyword = keyword;
                     const code = keyword.colorCode();
-                    try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                    try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), text[0..i] });
                 } else {
                     write: {
                         if (prev_keyword) |prev| {
@@ -699,20 +635,20 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                 .new => {
                                     prev_keyword = null;
 
-                                    if (i < remain.len and remain[i] == '(') {
-                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{remain[0..i]});
+                                    if (i < text.len and text[i] == '(') {
+                                        try writer.print(Output.prettyFmt("<r><b>{s}<r>", true), .{text[0..i]});
                                         break :write;
                                     }
                                 },
                                 .abstract, .namespace, .declare, .type, .interface => {
-                                    try writer.print(Output.prettyFmt("<r><b><blue>{s}<r>", true), .{remain[0..i]});
+                                    try writer.print(Output.prettyFmt("<r><b><blue>{s}<r>", true), .{text[0..i]});
                                     prev_keyword = null;
                                     break :write;
                                 },
                                 .import => {
-                                    if (strings.eqlComptime(remain[0..i], "from")) {
+                                    if (strings.eqlComptime(text[0..i], "from")) {
                                         const code = ColorCode.magenta;
-                                        try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), remain[0..i] });
+                                        try writer.print(Output.prettyFmt("<r>{s}{s}<r>", true), .{ code.color(), text[0..i] });
                                         prev_keyword = null;
 
                                         break :write;
@@ -722,25 +658,25 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             }
                         }
 
-                        try writer.writeAll(remain[0..i]);
+                        try writer.writeAll(text[0..i]);
                     }
                 }
-                remain = remain[i..];
+                text = text[i..];
             } else {
-                switch (remain[0]) {
+                switch (text[0]) {
                     '0'...'9' => {
                         prev_keyword = null;
                         var i: usize = 1;
-                        if (remain.len > 1 and remain[0] == '0' and remain[1] == 'x') {
+                        if (text.len > 1 and text[0] == '0' and text[1] == 'x') {
                             i += 1;
-                            while (i < remain.len and switch (remain[i]) {
+                            while (i < text.len and switch (text[i]) {
                                 '0'...'9', 'a'...'f', 'A'...'F' => true,
                                 else => false,
                             }) {
                                 i += 1;
                             }
                         } else {
-                            while (i < remain.len and switch (remain[i]) {
+                            while (i < text.len and switch (text[i]) {
                                 '0'...'9', '.', 'e', 'E', 'x', 'X', 'b', 'B', 'o', 'O' => true,
                                 else => false,
                             }) {
@@ -748,30 +684,30 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             }
                         }
 
-                        try writer.print(Output.prettyFmt("<r><yellow>{s}<r>", true), .{remain[0..i]});
-                        remain = remain[i..];
+                        try writer.print(Output.prettyFmt("<r><yellow>{s}<r>", true), .{text[0..i]});
+                        text = text[i..];
                     },
                     inline '`', '"', '\'' => |char| {
                         prev_keyword = null;
 
                         var i: usize = 1;
-                        while (i < remain.len and remain[i] != char) {
-                            if (comptime char == '`') {
-                                if (remain[i] == '$' and i + 1 < remain.len and remain[i + 1] == '{') {
+                        while (i < text.len and text[i] != char) {
+                            if (char == '`') {
+                                if (text[i] == '$' and i + 1 < text.len and text[i + 1] == '{') {
                                     const curly_start = i;
                                     i += 2;
 
-                                    while (i < remain.len and remain[i] != '}') {
-                                        if (remain[i] == '\\') {
+                                    while (i < text.len and text[i] != '}') {
+                                        if (text[i] == '\\') {
                                             i += 1;
                                         }
                                         i += 1;
                                     }
 
-                                    try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..curly_start]});
+                                    try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..curly_start]});
                                     try writer.writeAll("${");
                                     const curly_remain = QuickAndDirtyJavaScriptSyntaxHighlighter{
-                                        .text = remain[curly_start + 2 .. i],
+                                        .text = text[curly_start + 2 .. i],
                                         .enable_colors = this.enable_colors,
                                         .limited = false,
                                     };
@@ -780,22 +716,22 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                                         try curly_remain.format("", .{}, writer);
                                     }
 
-                                    if (i < remain.len and remain[i] == '}') {
+                                    if (i < text.len and text[i] == '}') {
                                         i += 1;
                                     }
                                     try writer.writeAll("}");
-                                    remain = remain[i..];
+                                    text = text[i..];
                                     i = 0;
-                                    if (remain.len > 0 and remain[0] == char) {
+                                    if (text.len > 0 and text[0] == char) {
                                         try writer.writeAll(Output.prettyFmt("<r><green>`<r>", true));
-                                        remain = remain[1..];
+                                        text = text[1..];
                                         continue :outer;
                                     }
                                     continue;
                                 }
                             }
 
-                            if (i + 1 < remain.len and remain[i] == '\\') {
+                            if (i + 1 < text.len and text[i] == '\\') {
                                 i += 1;
                             }
 
@@ -803,58 +739,58 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                         }
 
                         // Include the trailing quote, if any
-                        i += @as(usize, @intFromBool(i > 1 and i < remain.len and remain[i] == char));
+                        i += @intFromBool(i < text.len);
 
-                        try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{remain[0..i]});
-                        remain = remain[i..];
+                        try writer.print(Output.prettyFmt("<r><green>{s}<r>", true), .{text[0..i]});
+                        text = text[i..];
                     },
                     '/' => {
                         prev_keyword = null;
                         var i: usize = 1;
 
                         // the start of a line comment
-                        if (i < remain.len and remain[i] == '/') {
-                            while (i < remain.len and remain[i] != '\n') {
+                        if (i < text.len and text[i] == '/') {
+                            while (i < text.len and text[i] != '\n') {
                                 i += 1;
                             }
 
-                            const remain_to_print = remain[0..i];
-                            if (i < remain.len and remain[i] == '\n') {
+                            const remain_to_print = text[0..i];
+                            if (i < text.len and text[i] == '\n') {
                                 i += 1;
                             }
 
-                            if (i < remain.len and remain[i] == '\r') {
+                            if (i < text.len and text[i] == '\r') {
                                 i += 1;
                             }
 
                             try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain_to_print});
-                            remain = remain[i..];
+                            text = text[i..];
                             continue;
                         }
 
                         as_multiline_comment: {
-                            if (i < remain.len and remain[i] == '*') {
+                            if (i < text.len and text[i] == '*') {
                                 i += 1;
 
-                                while (i + 2 < remain.len and !strings.eqlComptime(remain[i..][0..2], "*/")) {
+                                while (i + 2 < text.len and !strings.eqlComptime(text[i..][0..2], "*/")) {
                                     i += 1;
                                 }
 
-                                if (i + 2 < remain.len and strings.eqlComptime(remain[i..][0..2], "*/")) {
+                                if (i + 2 < text.len and strings.eqlComptime(text[i..][0..2], "*/")) {
                                     i += 2;
                                 } else {
                                     i = 1;
                                     break :as_multiline_comment;
                                 }
 
-                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{remain[0..i]});
-                                remain = remain[i..];
+                                try writer.print(Output.prettyFmt("<r><d>{s}<r>", true), .{text[0..i]});
+                                text = text[i..];
                                 continue;
                             }
                         }
 
-                        try writer.writeAll(remain[0..i]);
-                        remain = remain[i..];
+                        try writer.writeAll(text[0..i]);
+                        text = text[i..];
                     },
                     '}', '{' => {
                         // support potentially highlighting "from" in an import statement
@@ -862,39 +798,39 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
                             prev_keyword = null;
                         }
 
-                        try writer.writeAll(remain[0..1]);
-                        remain = remain[1..];
+                        try writer.writeAll(text[0..1]);
+                        text = text[1..];
                     },
                     '[', ']' => {
                         prev_keyword = null;
-                        try writer.writeAll(remain[0..1]);
-                        remain = remain[1..];
+                        try writer.writeAll(text[0..1]);
+                        text = text[1..];
                     },
                     ';' => {
                         prev_keyword = null;
                         try writer.print(Output.prettyFmt("<r><d>;<r>", true), .{});
-                        remain = remain[1..];
+                        text = text[1..];
                     },
                     '.' => {
                         prev_keyword = null;
                         var i: usize = 1;
-                        if (remain.len > 1 and (js_lexer.isIdentifierStart(remain[1]) or remain[1] == '#')) {
+                        if (text.len > 1 and (js_lexer.isIdentifierStart(text[1]) or text[1] == '#')) {
                             i = 2;
 
-                            while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                            while (i < text.len and js_lexer.isIdentifierContinue(text[i])) {
                                 i += 1;
                             }
 
-                            if (i < remain.len and (remain[i] == '(')) {
-                                try writer.print(Output.prettyFmt("<r><i><b>{s}<r>", true), .{remain[0..i]});
-                                remain = remain[i..];
+                            if (i < text.len and (text[i] == '(')) {
+                                try writer.print(Output.prettyFmt("<r><i><b>{s}<r>", true), .{text[0..i]});
+                                text = text[i..];
                                 continue;
                             }
                             i = 1;
                         }
 
-                        try writer.writeAll(remain[0..1]);
-                        remain = remain[1..];
+                        try writer.writeAll(text[0..1]);
+                        text = text[1..];
                     },
 
                     '<' => {
@@ -902,77 +838,48 @@ pub const QuickAndDirtyJavaScriptSyntaxHighlighter = struct {
 
                         // JSX
                         jsx: {
-                            if (remain.len > 1 and remain[0] == '/') {
+                            if (text.len > 1 and text[0] == '/') {
                                 i = 2;
                             }
                             prev_keyword = null;
 
-                            while (i < remain.len and js_lexer.isIdentifierContinue(remain[i])) {
+                            while (i < text.len and js_lexer.isIdentifierContinue(text[i])) {
                                 i += 1;
                             } else {
                                 i = 1;
                                 break :jsx;
                             }
 
-                            while (i < remain.len and remain[i] != '>') {
+                            while (i < text.len and text[i] != '>') {
                                 i += 1;
 
-                                if (i < remain.len and remain[i] == '<') {
+                                if (i < text.len and text[i] == '<') {
                                     i = 1;
                                     break :jsx;
                                 }
                             }
 
-                            if (i < remain.len and remain[i] == '>') {
+                            if (i < text.len and text[i] == '>') {
                                 i += 1;
-                                try writer.print(Output.prettyFmt("<r><cyan>{s}<r>", true), .{remain[0..i]});
-                                remain = remain[i..];
+                                try writer.print(Output.prettyFmt("<r><cyan>{s}<r>", true), .{text[0..i]});
+                                text = text[i..];
                                 continue;
                             }
 
                             i = 1;
                         }
 
-                        try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{remain[0..i]});
-                        remain = remain[i..];
+                        try writer.print(Output.prettyFmt("<r>{s}<r>", true), .{text[0..i]});
+                        text = text[i..];
                     },
 
                     else => {
-                        try writer.writeAll(remain[0..1]);
-                        remain = remain[1..];
+                        try writer.writeAll(text[0..1]);
+                        text = text[1..];
                     },
                 }
             }
         }
-    }
-
-    /// Function for testing in highlighter.test.ts
-    pub fn jsFunctionSyntaxHighlight(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(.C) bun.JSC.JSValue {
-        const args = callframe.arguments(1);
-        if (args.len < 1) {
-            globalThis.throwNotEnoughArguments("code", 1, 0);
-        }
-
-        const code = args.ptr[0].toSliceOrNull(globalThis) orelse return .zero;
-        defer code.deinit();
-        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
-        defer buffer.deinit();
-        var writer = buffer.bufferedWriter();
-        var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
-        formatter.limited = false;
-        std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
-        };
-
-        writer.flush() catch |err| {
-            globalThis.throwError(err, "Error formatting code");
-            return .zero;
-        };
-
-        var str = bun.String.createUTF8(buffer.list.items);
-        defer str.deref();
-        return str.toJS(globalThis);
     }
 };
 
@@ -1079,6 +986,7 @@ pub fn fastDigitCount(x: u64) u64 {
 
 pub const SizeFormatter = struct {
     value: usize = 0,
+
     pub fn format(self: SizeFormatter, comptime _: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
         const math = std.math;
         const value = self.value;
@@ -1098,12 +1006,12 @@ pub const SizeFormatter = struct {
         const suffix = mags_si[magnitude];
 
         if (suffix == ' ') {
-            try fmt.formatFloatDecimal(new_value / 1000.0, .{ .precision = 2 }, writer);
-            return writer.writeAll(" KB");
-        } else {
-            try fmt.formatFloatDecimal(new_value, .{ .precision = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) @as(usize, 1) else @as(usize, 2) }, writer);
+            try writer.print("{d:.2} KB", .{new_value / 1000.0});
+            return;
         }
-        return writer.writeAll(&[_]u8{ ' ', suffix, 'B' });
+        const precision: usize = if (std.math.approxEqAbs(f64, new_value, @trunc(new_value), 0.100)) 1 else 2;
+        try fmt.formatType(new_value, "d", .{ .precision = precision }, writer, 0);
+        try writer.writeAll(&.{ ' ', suffix, 'B' });
     }
 };
 
@@ -1112,7 +1020,7 @@ pub fn size(value: anytype) SizeFormatter {
         f64, f32, f128 => SizeFormatter{
             .value = @as(u64, @intFromFloat(value)),
         },
-        else => SizeFormatter{ .value = @as(u64, @intCast(value)) },
+        else => SizeFormatter{ .value = value },
     };
 }
 
@@ -1259,8 +1167,6 @@ pub fn fmtSlice(data: anytype, comptime delim: []const u8) FormatSlice(@TypeOf(d
 }
 
 fn FormatSlice(comptime T: type, comptime delim: []const u8) type {
-    std.debug.assert(@typeInfo(T).Pointer.size == .Slice);
-
     return struct {
         slice: T,
 
@@ -1284,7 +1190,7 @@ pub fn fmtDouble(number: f64) FormatDouble {
 pub const FormatDouble = struct {
     number: f64,
 
-    extern "C" fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
+    extern fn WTF__dtoa(buf_124_bytes: *[124]u8, number: f64) void;
 
     pub fn dtoa(buf: *[124]u8, number: f64) []const u8 {
         WTF__dtoa(buf, number);
@@ -1304,5 +1210,90 @@ pub const FormatDouble = struct {
         var buf: [124]u8 = undefined;
         const slice = dtoa(&buf, self.number);
         try writer.writeAll(slice);
+    }
+};
+
+pub fn nullableFallback(value: anytype, null_fallback: []const u8) NullableFallback(@TypeOf(value)) {
+    return .{ .value = value, .null_fallback = null_fallback };
+}
+
+pub fn NullableFallback(comptime T: type) type {
+    return struct {
+        value: T,
+        null_fallback: []const u8,
+
+        pub fn format(self: @This(), comptime template: []const u8, opts: fmt.FormatOptions, writer: anytype) !void {
+            if (self.value) |value| {
+                try std.fmt.formatType(value, template, opts, writer, 4);
+            } else {
+                try writer.writeAll(self.null_fallback);
+            }
+        }
+    };
+}
+
+pub fn escapePowershell(str: []const u8) std.fmt.Formatter(escapePowershellImpl) {
+    return .{ .data = str };
+}
+
+fn escapePowershellImpl(str: []const u8, comptime f: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+    comptime bun.assert(f.len == 0);
+    var remain = str;
+    while (bun.strings.indexOfAny(remain, "\"`")) |i| {
+        try writer.writeAll(remain[0..i]);
+        try writer.writeAll("`");
+        try writer.writeByte(remain[i]);
+        remain = remain[i + 1 ..];
+    }
+    try writer.writeAll(remain);
+}
+
+pub const fmt_js_test_bindings = struct {
+    const Formatter = enum {
+        fmtJavaScript,
+        escapePowershell,
+    };
+
+    /// Internal function for testing in highlighter.test.ts
+    pub fn jsFunctionStringFormatter(globalThis: *bun.JSC.JSGlobalObject, callframe: *bun.JSC.CallFrame) callconv(bun.JSC.conv) bun.JSC.JSValue {
+        const args = callframe.arguments(2);
+        if (args.len < 2) {
+            globalThis.throwNotEnoughArguments("code", 1, 0);
+        }
+
+        const code = args.ptr[0].toSliceOrNull(globalThis) orelse
+            return .zero;
+        defer code.deinit();
+
+        var buffer = bun.MutableString.initEmpty(bun.default_allocator);
+        defer buffer.deinit();
+        var writer = buffer.bufferedWriter();
+
+        const formatter_id: Formatter = @enumFromInt(args.ptr[1].toInt32());
+        switch (formatter_id) {
+            .fmtJavaScript => {
+                var formatter = bun.fmt.fmtJavaScript(code.slice(), true);
+                formatter.limited = false;
+                std.fmt.format(writer.writer(), "{}", .{formatter}) catch |err| {
+                    globalThis.throwError(err, "Error formatting");
+                    return .zero;
+                };
+            },
+            .escapePowershell => {
+                std.fmt.format(writer.writer(), "{}", .{escapePowershell(code.slice())}) catch |err| {
+                    globalThis.throwError(err, "Error formatting");
+                    return .zero;
+                };
+            },
+        }
+
+        writer.flush() catch |err| {
+            globalThis.throwError(err, "Error formatting");
+            return .zero;
+        };
+
+        var str = bun.String.createUTF8(buffer.list.items);
+        defer str.deref();
+        return str.toJS(globalThis);
     }
 };

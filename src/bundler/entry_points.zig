@@ -1,4 +1,4 @@
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
@@ -9,7 +9,7 @@ const strings = bun.strings;
 
 pub const FallbackEntryPoint = struct {
     code_buffer: [8192]u8 = undefined,
-    path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
+    path_buffer: bun.PathBuffer = undefined,
     source: logger.Source = undefined,
     built_code: string = "",
 
@@ -75,7 +75,7 @@ pub const FallbackEntryPoint = struct {
 
 pub const ClientEntryPoint = struct {
     code_buffer: [8192]u8 = undefined,
-    path_buffer: [bun.MAX_PATH_BYTES]u8 = undefined,
+    path_buffer: bun.PathBuffer = undefined,
     source: logger.Source = undefined,
 
     pub fn isEntryPointPath(extname: string) bool {

@@ -69,6 +69,7 @@
 
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/IsoMallocInlines.h>
@@ -77,5 +78,13 @@
 #define ENABLE_WEB_CRYPTO 1
 #define USE_OPENSSL 1
 #define HAVE_RSA_PSS 1
+
+#if OS(WINDOWS)
+#define BUN_DECLARE_HOST_FUNCTION(name) extern "C" __attribute__((visibility("default"))) JSC_DECLARE_HOST_FUNCTION(name)
+#define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" __attribute__((visibility("default"))) JSC_DEFINE_HOST_FUNCTION(name, args)
+#else
+#define BUN_DECLARE_HOST_FUNCTION(name) extern "C" JSC_DECLARE_HOST_FUNCTION(name)
+#define BUN_DEFINE_HOST_FUNCTION(name, args) extern "C" JSC_DEFINE_HOST_FUNCTION(name, args)
+#endif
 
 #endif

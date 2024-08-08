@@ -1,5 +1,6 @@
-const ThreadPool = @import("root").bun.ThreadPool;
+const ThreadPool = bun.ThreadPool;
 const std = @import("std");
+const bun = @import("root").bun;
 
 pub const Batch = ThreadPool.Batch;
 pub const Task = ThreadPool.Task;
@@ -13,13 +14,23 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
             @setCold(true);
 
             pool = ThreadPool.init(.{
-                .max_threads = max_threads orelse @max(@as(u32, @truncate(std.Thread.getCpuCount() catch 0)), 2),
+                .max_threads = max_threads orelse @max(2, max_threads: {
+                    if (bun.getenvZ("GOMAXPROCS")) |max_procs| try_override: {
+                        break :max_threads std.fmt.parseInt(u32, max_procs, 10) catch
+                            break :try_override;
+                    }
+
+                    break :max_threads @as(u32, @truncate(std.Thread.getCpuCount() catch 0));
+                }),
                 .stack_size = ThreadPool.default_thread_stack_size,
             });
             return &pool;
         }
+
+        /// Initialization of WorkPool is not thread-safe, as it is
+        /// assumed a single main thread sets everything up. Calling
+        /// this afterwards is thread-safe.
         pub inline fn get() *ThreadPool {
-            // lil racy
             if (loaded) return &pool;
             loaded = true;
 
@@ -41,7 +52,7 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
                 allocator: std.mem.Allocator,
 
                 pub fn callback(task: *Task) void {
-                    var this_task = @fieldParentPtr(@This(), "task", task);
+                    var this_task: *@This() = @fieldParentPtr("task", task);
                     function(this_task.context);
                     this_task.allocator.destroy(this_task);
                 }

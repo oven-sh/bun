@@ -28,6 +28,6 @@
     "tamasfe.even-better-toml",
 
     // Other
-    "bierner.comment-tagged-templates"
-  ]
+    "bierner.comment-tagged-templates",
+  ],
 }

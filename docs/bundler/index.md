@@ -156,7 +156,7 @@ Like the Bun runtime, the bundler supports an array of file types out of the box
 ---
 
 - `.js` `.jsx`, `.cjs` `.mjs` `.mts` `.cts` `.ts` `.tsx`
-- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms, including dead code elimination, tree shaking, and environment variable inlining. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
+- Uses Bun's built-in transpiler to parse the file and transpile TypeScript/JSX syntax to vanilla JavaScript. The bundler executes a set of default transforms including dead code elimination and tree shaking. At the moment Bun does not attempt to down-convert syntax; if you use recently ECMAScript syntax, that will be reflected in the bundled code.
 
 ---
 
@@ -563,12 +563,12 @@ Specifies the type of sourcemap to generate.
 await Bun.build({
   entrypoints: ['./index.tsx'],
   outdir: './out',
-  sourcemap: "external", // default "none"
+  sourcemap: 'linked', // default 'none'
 })
 ```
 
 ```bash#CLI
-$ bun build ./index.tsx --outdir ./out --sourcemap=external
+$ bun build ./index.tsx --outdir ./out --sourcemap=linked
 ```
 
 {% /codetabs %}
@@ -582,19 +582,19 @@ $ bun build ./index.tsx --outdir ./out --sourcemap=external
 
 ---
 
-- `"inline"`
-- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.
+- `"linked"`
+- A separate `*.js.map` file is created alongside each `*.js` bundle using a `//# sourceMappingURL` comment to link the two. Requires `--outdir` to be set. The base URL of this can be customized with `--public-path`.
 
   ```ts
   // <bundled code here>
 
-  //# sourceMappingURL=data:application/json;base64,<encoded sourcemap here>
+  //# sourceMappingURL=bundle.js.map
   ```
 
 ---
 
 - `"external"`
-- A separate `*.js.map` file is created alongside each `*.js` bundle.
+- A separate `*.js.map` file is created alongside each `*.js` bundle without inserting a `//# sourceMappingURL` comment.
 
 {% /table %}
 
@@ -608,7 +608,18 @@ Generated bundles contain a [debug id](https://sentry.engineering/blog/the-case-
 //# debugId=<DEBUG ID>
 ```
 
-The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
+---
+
+- `"inline"`
+- A sourcemap is generated and appended to the end of the generated bundle as a base64 payload.
+
+  ```ts
+  // <bundled code here>
+
+  //# sourceMappingURL=data:application/json;base64,<encoded sourcemap here>
+  ```
+
+  The associated `*.js.map` sourcemap will be a JSON file containing an equivalent `debugId` property.
 
 {% /callout %}
 
@@ -745,6 +756,25 @@ $ bun build ./index.tsx --outdir ./out --external '*'
 
 {% /codetabs %}
 
+### `packages`
+
+Control whatever package dependencies are included to bundle or not. Possible values: `bundle` (default), `external`. Bun threats any import which path do not start with `.`, `..` or `/` as package.
+
+{% codetabs group="a" %}
+
+```ts#JavaScript
+await Bun.build({
+  entrypoints: ['./index.ts'],
+  packages: 'external',
+})
+```
+
+```bash#CLI
+$ bun build ./index.ts --packages external
+```
+
+{% /codetabs %}
+
 ### `naming`
 
 Customizes the generated file names. Defaults to `./[dir]/[name].[ext]`.
@@ -792,7 +822,7 @@ The names and locations of the generated files can be customized with the `namin
 - `[name]` - The name of the entrypoint file, without the extension.
 - `[ext]` - The extension of the generated bundle.
 - `[hash]` - A hash of the bundle contents.
-- `[dir]` - The relative path from the build root to the parent directory of the file.
+- `[dir]` - The relative path from the project root to the parent directory of the source file.
 
 For example:
 
@@ -1096,6 +1126,7 @@ const build = await Bun.build({
 
 for (const output of build.outputs) {
   await output.arrayBuffer(); // => ArrayBuffer
+  await output.bytes(); // => Uint8Array
   await output.text(); // string
 }
 ```
@@ -1245,7 +1276,7 @@ interface BuildOptions {
   loader?: { [k in string]: Loader }; // See https://bun.sh/docs/bundler/loaders
   manifest?: boolean; // false
   external?: string[]; // []
-  sourcemap?: "none" | "inline" | "external"; // "none"
+  sourcemap?: "none" | "inline" | "linked" | "external" | boolean; // "none"
   root?: string; // computed from entrypoints
   naming?:
     | string

@@ -1,14 +1,15 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const c = @import("picohttpparser.zig");
-const ExactSizeMatcher = @import("root").bun.ExactSizeMatcher;
+const ExactSizeMatcher = bun.ExactSizeMatcher;
 const Match = ExactSizeMatcher(2);
-const Output = @import("root").bun.Output;
-const Environment = @import("root").bun.Environment;
-const StringBuilder = @import("root").bun.StringBuilder;
+const Output = bun.Output;
+const Environment = bun.Environment;
+const StringBuilder = bun.StringBuilder;
 
 const fmt = std.fmt;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 pub const Header = struct {
     name: []const u8,
@@ -19,7 +20,7 @@ pub const Header = struct {
     }
 
     pub fn format(self: Header, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        if (Output.enable_ansi_colors) {
+        if (Output.enable_ansi_colors_stderr) {
             if (self.isMultiline()) {
                 try fmt.format(writer, comptime Output.prettyFmt("<r><cyan>{s}", true), .{self.value});
             } else {
@@ -50,6 +51,23 @@ pub const Header = struct {
         assert(@sizeOf(Header) == @sizeOf(c.phr_header));
         assert(@alignOf(Header) == @alignOf(c.phr_header));
     }
+
+    pub const CURLFormatter = struct {
+        header: *const Header,
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const header = self.header;
+            if (header.value.len > 0) {
+                try fmt.format(writer, "-H \"{s}: {s}\"", .{ header.name, header.value });
+            } else {
+                try fmt.format(writer, "-H \"{s}\"", .{header.name});
+            }
+        }
+    };
+
+    pub fn curl(self: *const Header) Header.CURLFormatter {
+        return .{ .header = self };
+    }
 };
 
 pub const Request = struct {
@@ -58,6 +76,61 @@ pub const Request = struct {
     minor_version: usize,
     headers: []const Header,
     bytes_read: u32 = 0,
+
+    pub const CURLFormatter = struct {
+        request: *const Request,
+        ignore_insecure: bool = false,
+        body: []const u8 = "",
+
+        pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+            const request = self.request;
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch] $<r> ", true));
+
+                try fmt.format(writer, Output.prettyFmt("<b><cyan>curl<r> <d>--http1.1<r> <b>\"{s}\"<r>", true), .{request.path});
+            } else {
+                try fmt.format(writer, "curl --http1.1 \"{s}\"", .{request.path});
+            }
+
+            if (!bun.strings.eqlComptime(request.method, "GET")) {
+                try fmt.format(writer, " -X {s}", .{request.method});
+            }
+
+            if (self.ignore_insecure) {
+                _ = try writer.writeAll(" -k");
+            }
+
+            var content_type: []const u8 = "";
+
+            for (request.headers) |*header| {
+                _ = try writer.writeAll(" ");
+                if (content_type.len == 0) {
+                    if (bun.strings.eqlCaseInsensitiveASCII("content-type", header.name, true)) {
+                        content_type = header.value;
+                    }
+                }
+
+                try header.curl().format("", .{}, writer);
+
+                if (bun.strings.eqlCaseInsensitiveASCII("accept-encoding", header.name, true)) {
+                    _ = try writer.writeAll(" --compressed");
+                }
+            }
+
+            if (self.body.len > 0 and (content_type.len > 0 and bun.strings.hasPrefixComptime(content_type, "application/json") or bun.strings.hasPrefixComptime(content_type, "text/") or bun.strings.containsComptime(content_type, "json"))) {
+                _ = try writer.writeAll(" --data-raw ");
+                try bun.js_printer.writeJSONString(self.body, @TypeOf(writer), writer, .utf8);
+            }
+        }
+    };
+
+    pub fn curl(self: *const Request, ignore_insecure: bool, body: []const u8) Request.CURLFormatter {
+        return .{
+            .request = self,
+            .ignore_insecure = ignore_insecure,
+            .body = body,
+        };
+    }
 
     pub fn clone(this: *const Request, headers: []Header, builder: *StringBuilder) Request {
         for (this.headers, 0..) |header, i| {
@@ -74,9 +147,15 @@ pub const Request = struct {
     }
 
     pub fn format(self: Request, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "{s} {s}\n", .{ self.method, self.path });
+        if (Output.enable_ansi_colors_stderr) {
+            _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+        }
+        try fmt.format(writer, "> HTTP/1.1 {s} {s}\n", .{ self.method, self.path });
         for (self.headers) |header| {
-            _ = try writer.write("\t");
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+            }
+            _ = try writer.write("> ");
             try fmt.format(writer, "{s}\n", .{header});
         }
     }
@@ -117,6 +196,22 @@ pub const Request = struct {
     }
 };
 
+const StatusCodeFormatter = struct {
+    code: usize,
+
+    pub fn format(self: @This(), comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
+        if (Output.enable_ansi_colors_stderr) {
+            switch (self.code) {
+                101, 200...299 => try fmt.format(writer, comptime Output.prettyFmt("<r><green>{d}<r>", true), .{self.code}),
+                300...399 => try fmt.format(writer, comptime Output.prettyFmt("<r><yellow>{d}<r>", true), .{self.code}),
+                else => try fmt.format(writer, comptime Output.prettyFmt("<r><red>{d}<r>", true), .{self.code}),
+            }
+        } else {
+            try fmt.format(writer, "{d}", .{self.code});
+        }
+    }
+};
+
 pub const Response = struct {
     minor_version: usize = 0,
     status_code: usize = 0,
@@ -125,9 +220,26 @@ pub const Response = struct {
     bytes_read: c_int = 0,
 
     pub fn format(self: Response, comptime _: []const u8, _: fmt.FormatOptions, writer: anytype) !void {
-        try fmt.format(writer, "< {d} {s}\n", .{ self.status_code, self.status });
+        if (Output.enable_ansi_colors_stderr) {
+            _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+        }
+
+        try fmt.format(
+            writer,
+            "< {} {s}\n",
+            .{
+                StatusCodeFormatter{
+                    .code = self.status_code,
+                },
+                self.status,
+            },
+        );
         for (self.headers) |header| {
-            _ = try writer.write("< \t");
+            if (Output.enable_ansi_colors_stderr) {
+                _ = try writer.write(Output.prettyFmt("<r><d>[fetch]<r> ", true));
+            }
+
+            _ = try writer.write("< ");
             try fmt.format(writer, "{s}\n", .{header});
         }
     }
@@ -198,30 +310,6 @@ pub const Response = struct {
     }
 };
 
-test "pico_http: parse response" {
-    const RES = "HTTP/1.1 200 OK\r\n" ++
-        "Date: Mon, 22 Mar 2021 08:15:54 GMT\r\n" ++
-        "Content-Type: text/html; charset=utf-8\r\n" ++
-        "Content-Length: 9593\r\n" ++
-        "Connection: keep-alive\r\n" ++
-        "Server: gunicorn/19.9.0\r\n" ++
-        "Access-Control-Allow-Origin: *\r\n" ++
-        "Access-Control-Allow-Credentials: true\r\n" ++
-        "\r\n";
-
-    var headers: [32]Header = undefined;
-
-    const res = try Response.parse(RES, &headers);
-
-    std.debug.print("Minor Version: {}\n", .{res.minor_version});
-    std.debug.print("Status Code: {}\n", .{res.status_code});
-    std.debug.print("Status: {s}\n", .{res.status});
-
-    for (res.headers) |header| {
-        std.debug.print("{}\n", .{header});
-    }
-}
-
 pub const Headers = struct {
     headers: []const Header,
 
@@ -251,23 +339,5 @@ pub const Headers = struct {
         };
     }
 };
-
-test "pico_http: parse headers" {
-    const HEADERS = "Date: Mon, 22 Mar 2021 08:15:54 GMT\r\n" ++
-        "Content-Type: text/html; charset=utf-8\r\n" ++
-        "Content-Length: 9593\r\n" ++
-        "Connection: keep-alive\r\n" ++
-        "Server: gunicorn/19.9.0\r\n" ++
-        "Access-Control-Allow-Origin: *\r\n" ++
-        "Access-Control-Allow-Credentials: true\r\n" ++
-        "\r\n";
-
-    var headers: [32]Header = undefined;
-
-    const result = try Headers.parse(HEADERS, &headers);
-    for (result.headers) |header| {
-        std.debug.print("{}\n", .{header});
-    }
-}
 
 pub usingnamespace c;

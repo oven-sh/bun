@@ -43,11 +43,34 @@ fi
 
 rm -rf "$OUTDIR"
 
+download () {
+  local command="$1"
+  local retries="$2"
+  local options="$-"
+  if [[ $options == *e* ]]; then
+    set +e
+  fi
+  $command
+  local exit_code=$?
+  if [[ $options == *e* ]]; then
+    set -e
+  fi
+  if [[ $exit_code -ne 0 && $retries -gt 0 ]]; then
+    download "$command" $(($retries - 1)) 
+  else
+    return $exit_code
+  fi
+}
+
+# this is a big download so we will retry 5 times and ask curl to resume
+# download from where failure occurred if it fails and is rerun
 if [ ! -f "$tar" ]; then
   echo "-- Downloading WebKit"
-  if ! curl -o "$tar" -L "$url"; then
+  if ! download "curl -C - --http1.1 -o $tar.tmp -L $url" 5; then
     echo "Failed to download $url"
     exit 1
+  else
+    mv $tar.tmp $tar
   fi
 fi
 

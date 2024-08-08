@@ -196,3 +196,41 @@ As of Bun v1.0.19, Bun automatically resolves the `specifier` argument to `mock.
 After resolution, the mocked module is stored in the ES Module registry **and** the CommonJS require cache. This means that you can use `import` and `require` interchangeably for mocked modules.
 
 The callback function is called lazily, only if the module is imported or required. This means that you can use `mock.module()` to mock modules that don't exist yet, and it means that you can use `mock.module()` to mock modules that are imported by other modules.
+
+## Restore all function mocks to their original values with `mock.restore()`
+
+Instead of manually restoring each mock individually with `mockFn.mockRestore()`, restore all mocks with one command by calling `mock.restore()`. Doing so does not reset the value of modules overridden with `mock.module()`.
+
+Using `mock.restore()` can reduce the amount of code in your tests by adding it to `afterEach` blocks in each test file or even in your [test preload code](https://bun.sh/docs/runtime/bunfig#test-preload).
+
+```ts
+import { expect, mock, spyOn, test } from "bun:test";
+
+import * as fooModule from './foo.ts';
+import * as barModule from './bar.ts';
+import * as bazModule from './baz.ts';
+
+test('foo, bar, baz', () => {
+  const fooSpy = spyOn(fooModule, 'foo');
+  const barSpy = spyOn(barModule, 'bar');
+  const bazSpy = spyOn(bazModule, 'baz');
+
+  expect(fooSpy).toBe('foo');
+  expect(barSpy).toBe('bar');
+  expect(bazSpy).toBe('baz');
+
+  fooSpy.mockImplementation(() => 42);
+  barSpy.mockImplementation(() => 43);
+  bazSpy.mockImplementation(() => 44);
+
+  expect(fooSpy).toBe(42);
+  expect(barSpy).toBe(43);
+  expect(bazSpy).toBe(44);
+
+  mock.restore();
+
+  expect(fooSpy).toBe('foo');
+  expect(barSpy).toBe('bar');
+  expect(bazSpy).toBe('baz');
+});
+```

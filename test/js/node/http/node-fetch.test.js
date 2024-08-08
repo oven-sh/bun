@@ -3,7 +3,17 @@ import * as iso from "isomorphic-fetch";
 import * as vercelFetch from "@vercel/fetch";
 import * as stream from "stream";
 
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll, afterEach } from "bun:test";
+
+const originalResponse = globalThis.Response;
+const originalRequest = globalThis.Request;
+const originalHeaders = globalThis.Headers;
+afterEach(() => {
+  globalThis.Response = originalResponse;
+  globalThis.Request = originalRequest;
+  globalThis.Headers = originalHeaders;
+  globalThis.fetch = Bun.fetch;
+});
 
 test("node-fetch", () => {
   expect(Response.prototype).toBeInstanceOf(globalThis.Response);
@@ -34,7 +44,7 @@ for (const [impl, name] of [
   [vercelFetch.default(fetch), "@vercel/fetch.default"],
 ]) {
   test(name + " fetches", async () => {
-    const server = Bun.serve({
+    using server = Bun.serve({
       port: 0,
       fetch(req, server) {
         server.stop();
@@ -42,12 +52,11 @@ for (const [impl, name] of [
       },
     });
     expect(await impl("http://" + server.hostname + ":" + server.port)).toBeInstanceOf(globalThis.Response);
-    server.stop(true);
   });
 }
 
 test("node-fetch uses node streams instead of web streams", async () => {
-  const server = Bun.serve({
+  using server = Bun.serve({
     port: 0,
     async fetch(req, server) {
       const body = await req.text();
@@ -56,7 +65,7 @@ test("node-fetch uses node streams instead of web streams", async () => {
     },
   });
 
-  try {
+  {
     const result = await fetch2("http://" + server.hostname + ":" + server.port, {
       body: new stream.Readable({
         read() {
@@ -79,7 +88,5 @@ test("node-fetch uses node streams instead of web streams", async () => {
       chunks.push(chunk);
     }
     expect(Buffer.concat(chunks).toString()).toBe("hello world");
-  } finally {
-    server.stop(true);
   }
 });

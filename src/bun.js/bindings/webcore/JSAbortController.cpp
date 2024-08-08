@@ -39,17 +39,16 @@
 #include "JSDOMWrapperCache.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
+#include "WebCoreOpaqueRootInlines.h"
 #include <JavaScriptCore/FunctionPrototype.h>
 #include <JavaScriptCore/HeapAnalyzer.h>
-
+#include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSDestructibleObjectHeapCellType.h>
 #include <JavaScriptCore/SlotVisitorMacros.h>
 #include <JavaScriptCore/SubspaceInlines.h>
 #include <wtf/GetPtr.h>
 #include <wtf/PointerPreparations.h>
 #include <wtf/URL.h>
-
-#include "weak_handle.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -97,15 +96,15 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(JSAbortControllerPrototype, JSAbortControlle
 
 using JSAbortControllerDOMConstructor = JSDOMConstructor<JSAbortController>;
 
-template<> JSC::EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
+template<> EncodedJSValue JSC_HOST_CALL_ATTRIBUTES JSAbortControllerDOMConstructor::construct(JSGlobalObject* lexicalGlobalObject, CallFrame* callFrame)
 {
-    VM& vm = lexicalGlobalObject->vm();
+    auto& vm = lexicalGlobalObject->vm();
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* castedThis = jsCast<JSAbortControllerDOMConstructor*>(callFrame->jsCallee());
     ASSERT(castedThis);
     auto* context = castedThis->scriptExecutionContext();
     if (UNLIKELY(!context))
-        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "AbortController");
+        return throwConstructorScriptExecutionContextUnavailableError(*lexicalGlobalObject, throwScope, "AbortController"_s);
     auto object = AbortController::create(*context);
     if constexpr (IsExceptionOr<decltype(object)>)
         RETURN_IF_EXCEPTION(throwScope, {});
@@ -139,8 +138,8 @@ template<> void JSAbortControllerDOMConstructor::initializeProperties(VM& vm, JS
 /* Hash table for prototype */
 
 static const HashTableValue JSAbortControllerPrototypeTableValues[] = {
-    { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortControllerConstructor, 0 } },
-    { "signal"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortController_signal, 0 } },
+    { "constructor"_s, static_cast<unsigned>(PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortControllerConstructor, 0 } },
+    { "signal"_s, JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute, NoIntrinsic, { HashTableValue::GetterSetterType, jsAbortController_signal, 0 } },
     { "abort"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsAbortControllerPrototypeFunction_abort, 0 } },
 };
 
@@ -160,13 +159,7 @@ JSAbortController::JSAbortController(Structure* structure, JSDOMGlobalObject& gl
 {
 }
 
-void JSAbortController::finishCreation(VM& vm)
-{
-    Base::finishCreation(vm);
-    ASSERT(inherits(info()));
-
-    // static_assert(!std::is_base_of<ActiveDOMObject, AbortController>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
-}
+// static_assert(!std::is_base_of<ActiveDOMObject, AbortController>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 
 JSObject* JSAbortController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
@@ -191,14 +184,14 @@ void JSAbortController::destroy(JSC::JSCell* cell)
     thisObject->JSAbortController::~JSAbortController();
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsAbortControllerConstructor, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName))
+JSC_DEFINE_CUSTOM_GETTER(jsAbortControllerConstructor, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName))
 {
-    VM& vm = JSC::getVM(lexicalGlobalObject);
+    auto& vm = JSC::getVM(lexicalGlobalObject);
     auto throwScope = DECLARE_THROW_SCOPE(vm);
     auto* prototype = jsDynamicCast<JSAbortControllerPrototype*>(JSValue::decode(thisValue));
     if (UNLIKELY(!prototype))
         return throwVMTypeError(lexicalGlobalObject, throwScope);
-    return JSValue::encode(JSAbortController::getConstructor(JSC::getVM(lexicalGlobalObject), prototype->globalObject()));
+    return JSValue::encode(JSAbortController::getConstructor(vm, prototype->globalObject()));
 }
 
 static inline JSValue jsAbortController_signalGetter(JSGlobalObject& lexicalGlobalObject, JSAbortController& thisObject)
@@ -209,7 +202,7 @@ static inline JSValue jsAbortController_signalGetter(JSGlobalObject& lexicalGlob
     RELEASE_AND_RETURN(throwScope, (toJS<IDLInterface<AbortSignal>>(lexicalGlobalObject, *thisObject.globalObject(), throwScope, impl.signal())));
 }
 
-JSC_DEFINE_CUSTOM_GETTER(jsAbortController_signal, (JSGlobalObject * lexicalGlobalObject, JSC::EncodedJSValue thisValue, PropertyName attributeName))
+JSC_DEFINE_CUSTOM_GETTER(jsAbortController_signal, (JSGlobalObject * lexicalGlobalObject, EncodedJSValue thisValue, PropertyName attributeName))
 {
     return IDLAttribute<JSAbortController>::get<jsAbortController_signalGetter, CastedThisErrorBehavior::Assert>(*lexicalGlobalObject, thisValue, attributeName);
 }
@@ -248,7 +241,7 @@ void JSAbortController::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     auto* thisObject = jsCast<JSAbortController*>(cell);
     ASSERT_GC_OBJECT_INHERITS(thisObject, info());
     Base::visitChildren(thisObject, visitor);
-    visitor.addOpaqueRoot(WTF::getPtr(thisObject->wrapped().signal()));
+    addWebCoreOpaqueRoot(visitor, thisObject->wrapped().opaqueRoot());
 }
 
 DEFINE_VISIT_CHILDREN(JSAbortController);
@@ -258,11 +251,11 @@ void JSAbortController::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSAbortController*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSAbortControllerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSAbortControllerOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -277,8 +270,44 @@ void JSAbortControllerOwner::finalize(JSC::Handle<JSC::Unknown> handle, void* co
     uncacheWrapper(world, &jsAbortController->wrapped(), jsAbortController);
 }
 
+void JSAbortController::finishCreation(VM& vm)
+{
+    Base::finishCreation(vm);
+    ASSERT(inherits(info()));
+}
+
+#if ENABLE(BINDING_INTEGRITY)
+#if PLATFORM(WIN)
+#pragma warning(disable : 4483)
+extern "C" {
+extern void (*const __identifier("??_7AbortController@WebCore@@6B@")[])();
+}
+#else
+extern "C" {
+extern void* _ZTVN7WebCore15AbortControllerE[];
+}
+#endif
+#endif
+
 JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObject, Ref<AbortController>&& impl)
 {
+
+    if constexpr (std::is_polymorphic_v<AbortController>) {
+#if ENABLE(BINDING_INTEGRITY)
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
+#if PLATFORM(WIN)
+        void* expectedVTablePointer = __identifier("??_7AbortController@WebCore@@6B@");
+#else
+        // void* expectedVTablePointer = &_ZTVN7WebCore15AbortControllerE[2];
+#endif
+
+        // If you hit this assertion you either have a use after free bug, or
+        // AbortController has subclasses. If AbortController has subclasses that get passed
+        // to toJS() we currently require AbortController you to opt out of binding hardening
+        // by adding the SkipVTableValidation attribute to the interface IDL definition
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+#endif
+    }
     return createWrapper<AbortController>(globalObject, WTFMove(impl));
 }
 
@@ -287,7 +316,7 @@ JSC::JSValue toJS(JSC::JSGlobalObject* lexicalGlobalObject, JSDOMGlobalObject* g
     return wrap(lexicalGlobalObject, globalObject, impl);
 }
 
-AbortController* JSAbortController::toWrapped(JSC::VM& vm, JSC::JSValue value)
+AbortController* JSAbortController::toWrapped(JSC::VM&, JSC::JSValue value)
 {
     if (auto* wrapper = jsDynamicCast<JSAbortController*>(value))
         return &wrapper->wrapped();

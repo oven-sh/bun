@@ -1,6 +1,7 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const C = @import("std").zig.c_builtins;
-const pthread_rwlock_t = if (@import("root").bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
+const pthread_rwlock_t = if (bun.Environment.isPosix) @import("../sync.zig").RwLock.pthread_rwlock_t else *anyopaque;
 const time_t = C.time_t;
 const va_list = C.va_list;
 const struct_timeval = C.struct_timeval;
@@ -1391,7 +1392,7 @@ pub extern fn EVP_VerifyFinal(ctx: [*c]EVP_MD_CTX, sig: [*c]const u8, sig_len: u
 pub extern fn EVP_PKEY_print_public(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_private(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
 pub extern fn EVP_PKEY_print_params(out: [*c]BIO, pkey: [*c]const EVP_PKEY, indent: c_int, pctx: ?*ASN1_PCTX) c_int;
-pub extern fn PKCS5_PBKDF2_HMAC(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: [*c]u8) c_int;
+pub extern fn PKCS5_PBKDF2_HMAC(password: ?[*]const u8, password_len: usize, salt: ?[*]const u8, salt_len: usize, iterations: c_uint, digest: ?*const EVP_MD, key_len: usize, out_key: ?[*]u8) c_int;
 pub extern fn PKCS5_PBKDF2_HMAC_SHA1(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, iterations: c_uint, key_len: usize, out_key: [*c]u8) c_int;
 pub extern fn EVP_PBE_scrypt(password: [*c]const u8, password_len: usize, salt: [*c]const u8, salt_len: usize, N: u64, r: u64, p: u64, max_mem: usize, out_key: [*c]u8, key_len: usize) c_int;
 pub extern fn EVP_PKEY_CTX_new(pkey: [*c]EVP_PKEY, e: ?*ENGINE) ?*EVP_PKEY_CTX;
@@ -5034,7 +5035,7 @@ pub extern fn d2i_PKCS8PrivateKey_bio(bp: [*c]BIO, x: [*c][*c]EVP_PKEY, cb: ?*co
 // pub extern fn d2i_PKCS8PrivateKey_fp(fp: [*c]FILE, x: [*c][*c]EVP_PKEY, cb: ?*const pem_password_cb, u: ?*anyopaque) [*c]EVP_PKEY;
 // pub extern fn PEM_write_PKCS8PrivateKey(fp: [*c]FILE, x: [*c]EVP_PKEY, enc: ?*const EVP_CIPHER, kstr: [*c]u8, klen: c_int, cd: ?*const pem_password_cb, u: ?*anyopaque) c_int;
 
-pub extern fn HMAC(evp_md: ?*const EVP_MD, key: ?*const anyopaque, key_len: usize, data: [*c]const u8, data_len: usize, out: [*c]u8, out_len: [*c]c_uint) [*c]u8;
+pub extern fn HMAC(evp_md: *const EVP_MD, key: *const anyopaque, key_len: usize, data: [*]const u8, data_len: usize, out: [*]u8, out_len: *c_uint) ?[*]u8;
 pub extern fn HMAC_CTX_init(ctx: [*c]HMAC_CTX) void;
 pub extern fn HMAC_CTX_new() [*c]HMAC_CTX;
 pub extern fn HMAC_CTX_cleanup(ctx: [*c]HMAC_CTX) void;
@@ -18745,9 +18746,11 @@ pub extern fn EVP_sha224() *const EVP_MD;
 pub extern fn EVP_sha256() *const EVP_MD;
 pub extern fn EVP_sha384() *const EVP_MD;
 pub extern fn EVP_sha512() *const EVP_MD;
+pub extern fn EVP_sha512_224() *const EVP_MD;
 pub extern fn EVP_sha512_256() *const EVP_MD;
 
 pub extern fn EVP_blake2b256() *const EVP_MD;
+pub extern fn EVP_blake2b512() *const EVP_MD;
 
 pub extern fn ERR_clear_error() void;
 pub extern fn ERR_set_mark() c_int;
@@ -18781,7 +18784,7 @@ pub const struct_bio_st = extern struct {
 
     pub fn slice(this: *struct_bio_st) []u8 {
         var buf_mem: ?*BUF_MEM = null;
-        std.debug.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
+        bun.assert(BIO_get_mem_ptr(this, &buf_mem) > -1);
         if (buf_mem) |buf| {
             if (buf.data == null) return &[_]u8{};
 
@@ -19026,18 +19029,12 @@ pub const SSL = opaque {
         if (hostname.len > 0) ssl.setHostname(hostname);
         _ = SSL_clear_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
         _ = SSL_set_options(ssl, SSL_OP_LEGACY_SERVER_CONNECT);
-        const mode = SSL_MODE_CBC_RECORD_SPLITTING | SSL_MODE_ENABLE_FALSE_START | SSL_MODE_ACCEPT_MOVING_WRITE_BUFFER;
-
-        _ = SSL_set_mode(ssl, mode);
-        _ = SSL_clear_mode(ssl, mode);
 
         const alpns = &[_]u8{ 8, 'h', 't', 't', 'p', '/', '1', '.', '1' };
-        std.debug.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
+        bun.assert(SSL_set_alpn_protos(ssl, alpns, alpns.len) == 0);
 
         SSL_enable_signed_cert_timestamps(ssl);
         SSL_enable_ocsp_stapling(ssl);
-
-        // std.debug.assert(SSL_set_strict_cipher_list(ssl, SSL_DEFAULT_CIPHER_LIST) == 0);
 
         SSL_set_enable_ech_grease(ssl, 1);
     }
@@ -19068,8 +19065,8 @@ pub const SSL = opaque {
         };
     }
 
-    const Output = @import("root").bun.Output;
-    const Environment = @import("root").bun.Environment;
+    const Output = bun.Output;
+    const Environment = bun.Environment;
 
     pub fn read(this: *SSL, buf: []u8) Error!usize {
         const rc = SSL_read(this, buf.ptr, @as(c_int, @intCast(buf.len)));
@@ -19164,9 +19161,7 @@ pub const SSL_CTX = opaque {
     pub fn setup(ctx: *SSL_CTX) void {
         if (auto_crypto_buffer_pool == null) auto_crypto_buffer_pool = CRYPTO_BUFFER_POOL_new();
         SSL_CTX_set0_buffer_pool(ctx, auto_crypto_buffer_pool);
-        // _ = SSL_CTX_set_mode(ctx, SSL_MODE_AUTO_RETRY);
         _ = SSL_CTX_set_cipher_list(ctx, SSL_DEFAULT_CIPHER_LIST);
-        SSL_CTX_set_quiet_shutdown(ctx, 1);
     }
 
     pub inline fn setCustomVerify(this: *SSL_CTX, cb: ?VerifyCallback) void {
@@ -19204,22 +19199,22 @@ pub const BIOMethod = struct {
     ) *BIO_METHOD {
         const method = BIO_meth_new(BIO_get_new_index() | BIO_TYPE_SOURCE_SINK, name);
         if (comptime create__) |create_| {
-            std.debug.assert(BIO_meth_set_create(method, create_) > 0);
+            bun.assert(BIO_meth_set_create(method, create_) > 0);
         }
         if (comptime destroy__) |destroy_| {
-            std.debug.assert(BIO_meth_set_destroy(method, destroy_) > 0);
+            bun.assert(BIO_meth_set_destroy(method, destroy_) > 0);
         }
         if (comptime write__) |write_| {
-            std.debug.assert(BIO_meth_set_write(method, write_) > 0);
+            bun.assert(BIO_meth_set_write(method, write_) > 0);
         }
         if (comptime read__) |read_| {
-            std.debug.assert(BIO_meth_set_read(method, read_) > 0);
+            bun.assert(BIO_meth_set_read(method, read_) > 0);
         }
         if (comptime gets__) |gets_| {
-            std.debug.assert(BIO_meth_set_gets(method, gets_) > 0);
+            bun.assert(BIO_meth_set_gets(method, gets_) > 0);
         }
         if (comptime ctrl__) |ctrl_| {
-            std.debug.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
+            bun.assert(BIO_meth_set_ctrl(method, ctrl_) > 0);
         }
 
         return method;

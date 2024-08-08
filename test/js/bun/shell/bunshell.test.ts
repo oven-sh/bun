@@ -6,21 +6,36 @@
  */
 import { $ } from "bun";
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, realpath, rm, stat } from "fs/promises";
-import { bunEnv, bunExe, runWithErrorPromise, tempDirWithFiles } from "harness";
-import { tmpdir } from "os";
+import { mkdir, rm, stat } from "fs/promises";
+import { bunEnv as __bunEnv, bunExe, isWindows, runWithErrorPromise, tempDirWithFiles, tmpdirSync } from "harness";
 import { join, sep } from "path";
-import { TestBuilder, sortedShellOutput } from "./util";
+import { createTestBuilder, sortedShellOutput } from "./util";
+const TestBuilder = createTestBuilder(import.meta.path);
+
+export const bunEnv: NodeJS.ProcessEnv = {
+  ...process.env,
+  GITHUB_ACTIONS: "false",
+  BUN_DEBUG_QUIET_LOGS: "1",
+  NO_COLOR: "1",
+  FORCE_COLOR: undefined,
+  TZ: "Etc/UTC",
+  CI: "1",
+  BUN_RUNTIME_TRANSPILER_CACHE_PATH: "0",
+  BUN_FEATURE_FLAG_INTERNAL_FOR_TESTING: "1",
+  BUN_GARBAGE_COLLECTOR_LEVEL: process.env.BUN_GARBAGE_COLLECTOR_LEVEL || "0",
+  // windows doesn't set this, but we do to match posix compatibility
+  PWD: (process.env.PWD || process.cwd()).replaceAll("\\", "/"),
+};
 
 $.env(bunEnv);
-$.cwd(process.cwd());
+$.cwd(process.cwd().replaceAll("\\", "/"));
 $.nothrow();
 
 let temp_dir: string;
 const temp_files = ["foo.txt", "lmao.ts"];
 beforeAll(async () => {
   $.nothrow();
-  temp_dir = await mkdtemp(join(await realpath(tmpdir()), "bun-add.test"));
+  temp_dir = tmpdirSync();
   await mkdir(temp_dir, { recursive: true });
 
   for (const file of temp_files) {
@@ -37,6 +52,40 @@ afterAll(async () => {
 const BUN = bunExe();
 
 describe("bunshell", () => {
+  describe("exit codes", async () => {
+    const failing_cmds = [
+      process.platform === "win32" ? "cat ldkfjsldf" : null,
+      "touch -alskdjfakjfhasjfh",
+      "mkdir",
+      "export",
+      "cd lskfjlsdkjf",
+      process.platform !== "win32" ? "echo hi > /dev/full" : null,
+      "pwd sldfkj sfks jdflks flksd f",
+      "which",
+      "rm lskdjfskldjfksdjflkjsldfj",
+      "mv lskdjflskdjf lskdjflskjdlf",
+      "ls lksdjflksdjf",
+      "exit sldkfj sdjf ls f",
+      // "true",
+      // "false",
+      // "yes",
+      // "seq",
+      "dirname",
+      "basename",
+      "cp ksdjflksjdfks lkjsdflksjdfl",
+    ];
+
+    failing_cmds.forEach(cmdstr =>
+      !!cmdstr
+        ? TestBuilder.command`${{ raw: cmdstr }}`
+            .exitCode(c => c !== 0)
+            .stdout(() => {})
+            .stderr(() => {})
+            .runAsTest(cmdstr)
+        : "",
+    );
+  });
+
   describe("concurrency", () => {
     test("writing to stdout", async () => {
       await Promise.all([
@@ -79,6 +128,10 @@ describe("bunshell", () => {
       `"hello" "lol" "nice"lkasjf;jdfla<>SKDJFLKSF`,
       `"\\"hello\\" \\"lol\\" \\"nice\\"lkasjf;jdfla<>SKDJFLKSF"`,
     );
+    escapeTest("✔", "✔");
+    escapeTest("lmao=✔", '"lmao=✔"');
+    escapeTest("元気かい、兄弟", "元気かい、兄弟");
+    escapeTest("d元気かい、兄弟", "d元気かい、兄弟");
 
     describe("wrapped in quotes", async () => {
       const url = "http://www.example.com?candy_name=M&M";
@@ -100,8 +153,8 @@ describe("bunshell", () => {
       const buf = new Uint8Array(1);
 
       expect(async () => {
-        await TestBuilder.command`echo hi > \\${buf}`.run();
-      }).toThrow("Redirection with no file");
+        await TestBuilder.command`echo hi > \\${buf}`.error("Redirection with no file").run();
+      });
     });
 
     test("in command position", async () => {
@@ -116,7 +169,7 @@ describe("bunshell", () => {
   });
 
   describe("quiet", async () => {
-    test.todo("basic", async () => {
+    test("basic", async () => {
       // Check its buffered
       {
         const { stdout, stderr } = await $`BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e "console.log('hi'); console.error('lol')"`;
@@ -260,6 +313,11 @@ describe("bunshell", () => {
       expect(stdout.toString("utf-8")).toEqual(`${haha}\n`);
     });
 
+    // #9823
+    TestBuilder.command`AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD=false; echo $AUTH_COOKIE_SECUREALKJAKJDLASJDKLSAJD`
+      .stdout("false\n")
+      .runAsTest("long varname");
+
     // test("invalid lone surrogate fails", async () => {
     //   const err = await runWithErrorPromise(async () => {
     //     const loneSurrogate = randomLoneSurrogate();
@@ -340,29 +398,252 @@ describe("bunshell", () => {
     expect(stdout.toString()).toEqual("LMAO\n");
   });
 
+  describe("operators no spaces", async () => {
+    TestBuilder.command`echo LMAO|cat`.stdout("LMAO\n").runAsTest("pipeline");
+    TestBuilder.command`echo foo&&echo hi`.stdout("foo\nhi\n").runAsTest("&&");
+    TestBuilder.command`echo foo||echo hi`.stdout("foo\n").runAsTest("||");
+    TestBuilder.command`echo foo>hi.txt`.ensureTempDir().fileEquals("hi.txt", "foo\n").runAsTest("||");
+    TestBuilder.command`echo hifriends#lol`.stdout("hifriends#lol\n").runAsTest("#");
+  });
+
   test("cmd subst", async () => {
     const haha = "noice";
     const { stdout } = await $`echo $(echo noice)`;
     expect(stdout.toString()).toEqual(`noice\n`);
   });
 
-  describe("glob expansion", () => {
-    test("No matches should fail", async () => {
-      // Issue #8403: https://github.com/oven-sh/bun/issues/8403
-      await TestBuilder.command`ls *.sdfljsfsdf`.exitCode(1).stderr("bun: no matches found: *.sdfljsfsdf\n").run();
+  describe("empty_expansion", () => {
+    TestBuilder.command`$(exit 0) && echo hi`.stdout("hi\n").runAsTest("empty command subst");
+    TestBuilder.command`$(exit 1) && echo hi`.exitCode(1).runAsTest("empty command subst 2");
+    TestBuilder.command`FOO="" $FOO`.runAsTest("empty var");
+  });
+
+  describe("tilde_expansion", () => {
+    describe("with paths", async () => {
+      TestBuilder.command`echo ~/Documents`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("normal");
+      TestBuilder.command`echo ~/Do"cu"me"nts"`.stdout(`${process.env.HOME}/Documents\n`).runAsTest("compound word");
+      TestBuilder.command`echo ~/LOL hi hello`.stdout(`${process.env.HOME}/LOL hi hello\n`).runAsTest("multiple words");
     });
 
-    test("Should work with a different cwd", async () => {
-      // Calling `ensureTempDir()` changes the cwd here
-      await TestBuilder.command`ls *.js`
-        .ensureTempDir()
-        .file("foo.js", "foo")
-        .file("bar.js", "bar")
-        .stdout(out => {
-          expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
-        })
-        .run();
+    describe("normal", async () => {
+      TestBuilder.command`echo ~`.stdout(`${process.env.HOME}\n`).runAsTest("lone tilde");
+      TestBuilder.command`echo ~~`.stdout(`~~\n`).runAsTest("double tilde");
+      TestBuilder.command`echo ~ hi hello`.stdout(`${process.env.HOME} hi hello\n`).runAsTest("multiple words");
     });
+
+    TestBuilder.command`HOME="" USERPROFILE="" && echo ~ && echo ~/Documents`
+      .stdout("\n/Documents\n")
+      .runAsTest("empty $HOME or $USERPROFILE");
+
+    describe("modified $HOME or $USERPROFILE", async () => {
+      TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~`.stdout("lmao\n").runAsTest("1");
+
+      TestBuilder.command`HOME=lmao USERPROFILE=lmao && echo ~ && echo ~/Documents`
+        .stdout("lmao\nlmao/Documents\n")
+        .runAsTest("2");
+    });
+  });
+
+  // Ported from GNU bash "quote.tests"
+  // https://github.com/bminor/bash/blob/f3b6bd19457e260b65d11f2712ec3da56cef463f/tests/quote.tests#L1
+  // Some backtick tests are skipped, because of insane behavior:
+  // For some reason, even though $(...) and `...` are suppoed to be equivalent,
+  // doing:
+  // echo "`echo 'foo\
+  // bar'`"
+  //
+  // gives:
+  // foobar
+  //
+  // While doing the same, but with $(...):
+  // echo "$(echo 'foo\
+  // bar')"
+  //
+  // gives:
+  // foo\
+  // bar
+  //
+  // I'm not sure why, this isn't documented behavior, so I'm choosing to ignore it.
+  describe("gnu_quote", () => {
+    // An unfortunate consequence of our use of String.raw and tagged template
+    // functions for the shell make it so that we have to use { raw: string } to do
+    // backtick command substitution
+    const BACKTICK = { raw: "`" };
+
+    // Single Quote
+    TestBuilder.command`
+echo 'foo
+bar'
+echo 'foo
+bar'
+echo 'foo\
+bar'
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoo\\\nbar\n")
+      .runAsTest("Single Quote");
+
+    TestBuilder.command`
+echo "foo
+bar"
+echo "foo
+bar"
+echo "foo\
+bar"
+`
+      .stdout("foo\nbar\nfoo\nbar\nfoobar\n")
+      .runAsTest("Double Quote");
+
+    TestBuilder.command`
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo
+bar'${BACKTICK}
+echo ${BACKTICK}echo 'foo\
+bar'${BACKTICK}
+`
+      .stdout(
+        `foo bar
+foo bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Backslash Single Quote");
+
+    TestBuilder.command`
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo
+bar'${BACKTICK}"
+echo "${BACKTICK}echo 'foo\
+bar'${BACKTICK}"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foobar\n`,
+      )
+      .todo("insane backtick behavior")
+      .runAsTest("Double Quote Backslash Single Quote");
+
+    TestBuilder.command`
+echo $(echo 'foo
+bar')
+echo $(echo 'foo
+bar')
+echo $(echo 'foo\
+bar')
+`
+      .stdout(
+        `foo bar
+foo bar
+foo\\ bar\n`,
+      )
+      .runAsTest("Dollar Paren Single Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Dollar Paren Double Quote");
+
+    TestBuilder.command`
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo
+bar')"
+echo "$(echo 'foo\
+bar')"
+`
+      .stdout(
+        `foo
+bar
+foo
+bar
+foo\\
+bar\n`,
+      )
+      .runAsTest("Double Quote Dollar Paren Single Quote");
+  });
+
+  describe("escaped_newline", () => {
+    const printArgs = /* ts */ `console.log(JSON.stringify(process.argv))`;
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!"]))
+      .runAsTest("single");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    and \
+    a few \
+    others!
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out =>
+        expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "and", "a", "few", "others!"]),
+      )
+      .runAsTest("many");
+
+    TestBuilder.command/* sh */ `${BUN} run ./code.ts hi hello \
+    on a newline! \
+    ooga"
+booga"
+  `
+      .ensureTempDir()
+      .file("code.ts", printArgs)
+      .stdout(out => expect(JSON.parse(out).slice(2)).toEqual(["hi", "hello", "on", "a", "newline!", "ooga\nbooga"]))
+      .runAsTest("quotes");
+  });
+
+  describe("glob expansion", () => {
+    // Issue #8403: https://github.com/oven-sh/bun/issues/8403
+    TestBuilder.command`ls *.sdfljsfsdf`
+      .exitCode(1)
+      .stderr("bun: no matches found: *.sdfljsfsdf\n")
+      .runAsTest("No matches should fail");
+
+    TestBuilder.command`FOO=*.lolwut; echo $FOO`
+      .stdout("*.lolwut\n")
+      .runAsTest("No matches in assignment position should print out pattern");
+
+    TestBuilder.command`FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout("hi*\n")
+      .runAsTest("Trailing asterisk with no matches");
+
+    TestBuilder.command`touch hihello; touch hifriends; FOO=hi*; echo $FOO`
+      .ensureTempDir()
+      .stdout(s => expect(s).toBeOneOf(["hihello hifriends\n", "hifriends hihello\n"]))
+      .runAsTest("Trailing asterisk with matches, inline");
+
+    TestBuilder.command`ls *.js`
+      // Calling `ensureTempDir()` changes the cwd here
+      .ensureTempDir()
+      .file("foo.js", "foo")
+      .file("bar.js", "bar")
+      .stdout(out => {
+        expect(sortedShellOutput(out)).toEqual(sortedShellOutput("foo.js\nbar.js\n"));
+      })
+      .runAsTest("Should work with a different cwd");
   });
 
   describe("brace expansion", () => {
@@ -473,7 +754,7 @@ describe("bunshell", () => {
 
     test("cd -", async () => {
       const { stdout } = await $`cd ${temp_dir} && pwd && cd - && pwd`;
-      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd()}\n`);
+      expect(stdout.toString()).toEqual(`${temp_dir}\n${process.cwd().replaceAll("\\", "/")}\n`);
     });
   });
 
@@ -527,7 +808,56 @@ ${temp_dir}`
   /**
    *
    */
-  describe("escaping", () => {});
+  describe("escaping", () => {
+    // Testing characters that need special handling when not quoted or in different contexts
+    TestBuilder.command`echo ${"$"}`.stdout("$\n").runAsTest("dollar");
+    TestBuilder.command`echo ${">"}`.stdout(">\n").runAsTest("right_arrow");
+    TestBuilder.command`echo ${"&"}`.stdout("&\n").runAsTest("ampersand");
+    TestBuilder.command`echo ${"|"}`.stdout("|\n").runAsTest("pipe");
+    TestBuilder.command`echo ${"="}`.stdout("=\n").runAsTest("equals");
+    TestBuilder.command`echo ${";"}`.stdout(";\n").runAsTest("semicolon");
+    TestBuilder.command`echo ${"\n"}`.stdout("\n").runAsTest("newline");
+    TestBuilder.command`echo ${"{"}`.stdout("{\n").runAsTest("left_brace");
+    TestBuilder.command`echo ${"}"}`.stdout("}\n").runAsTest("right_brace");
+    TestBuilder.command`echo ${","}`.stdout(",\n").runAsTest("comma");
+    TestBuilder.command`echo ${"("}`.stdout("(\n").runAsTest("left_parenthesis");
+    TestBuilder.command`echo ${")"}`.stdout(")\n").runAsTest("right_parenthesis");
+    TestBuilder.command`echo ${"\\"}`.stdout("\\\n").runAsTest("backslash");
+    TestBuilder.command`echo ${" "}`.stdout(" \n").runAsTest("space");
+    TestBuilder.command`echo ${"'hello'"}`.stdout("'hello'\n").runAsTest("single_quote");
+    TestBuilder.command`echo ${'"hello"'}`.stdout('"hello"\n').runAsTest("double_quote");
+    TestBuilder.command`echo ${"`hello`"}`.stdout("`hello`\n").runAsTest("backtick");
+
+    // Testing characters that need to be escaped within double quotes
+    TestBuilder.command`echo "${"$"}"`.stdout("$\n").runAsTest("dollar_in_dquotes");
+    TestBuilder.command`echo "${"`"}"`.stdout("`\n").runAsTest("backtick_in_dquotes");
+    TestBuilder.command`echo "${'"'}"`.stdout('"\n').runAsTest("double_quote_in_dquotes");
+    TestBuilder.command`echo "${"\\"}"`.stdout("\\\n").runAsTest("backslash_in_dquotes");
+
+    // Testing characters that need to be escaped within single quotes
+    TestBuilder.command`echo '${"$"}'`.stdout("$\n").runAsTest("dollar_in_squotes");
+    TestBuilder.command`echo '${'"'}'`.stdout('"\n').runAsTest("double_quote_in_squotes");
+    TestBuilder.command`echo '${"`"}'`.stdout("`\n").runAsTest("backtick_in_squotes");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("backslash_in_squotes");
+
+    // Ensure that backslash escapes within single quotes are treated literally
+    TestBuilder.command`echo '${"\\"}'`.stdout("\\\n").runAsTest("literal_backslash_single_quote");
+    TestBuilder.command`echo '${"\\\\"}'`.stdout("\\\\\n").runAsTest("double_backslash_single_quote");
+
+    // Edge cases with mixed quotes
+    TestBuilder.command`echo "'\${"$"}'"`.stdout("'${$}'\n").runAsTest("mixed_quotes_dollar");
+    TestBuilder.command`echo '"${"`"}"'`.stdout('"`"\n').runAsTest("mixed_quotes_backtick");
+
+    // Compound command with special characters
+    TestBuilder.command`echo ${"hello; echo world"}`.stdout("hello; echo world\n").runAsTest("compound_command");
+    TestBuilder.command`echo ${"hello > world"}`.stdout("hello > world\n").runAsTest("redirect_in_echo");
+    TestBuilder.command`echo ${"$(echo nested)"}`.stdout("$(echo nested)\n").runAsTest("nested_command_substitution");
+
+    // Pathological cases involving multiple special characters
+    TestBuilder.command`echo ${"complex > command; $(execute)"}`
+      .stdout("complex > command; $(execute)\n")
+      .runAsTest("complex_mixed_special_chars");
+  });
 });
 
 describe("deno_task", () => {
@@ -565,14 +895,12 @@ describe("deno_task", () => {
     TestBuilder.command`echo 1 && echo 2 || echo 3`.stdout("1\n2\n").runAsTest("echo 1 && echo 2 || echo 3");
     TestBuilder.command`echo 1 || echo 2 && echo 3`.stdout("1\n3\n").runAsTest("echo 1 || echo 2 && echo 3");
 
-    TestBuilder.command`echo 1 || (echo 2 && echo 3)`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("or with subshell");
+    TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").runAsTest("or with subshell 2");
+    TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").runAsTest("conditional with subshell");
     TestBuilder.command`false || false || (echo 2 && false) || echo 3`
-      .error(TestBuilder.UNEXPECTED_SUBSHELL_ERROR_OPEN)
-      .runAsTest("or with subshell 2");
-    // await TestBuilder.command`echo 1 || (echo 2 && echo 3)`.stdout("1\n").run();
-    // await TestBuilder.command`false || false || (echo 2 && false) || echo 3`.stdout("2\n3\n").run();
+      .stdout("2\n3\n")
+      .runAsTest("conditional with subshell2");
   });
 
   describe("command substitution", async () => {
@@ -611,9 +939,10 @@ describe("deno_task", () => {
 
     TestBuilder.command`echo 1 | echo 2 && echo 3`.stdout("2\n3\n").runAsTest("pipe in conditional");
 
-    // await TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_TEST_VAR=1 ${BUN} -e 'await Deno.stdin.readable.pipeTo(Deno.stdout.writable)'`
-    //   .stdout("1 2\n")
-    //   .run();
+    TestBuilder.command`echo $(sleep 0.1 && echo 2 & echo 1) | BUN_DEBUG_QUIET_LOGS=1 BUN_TEST_VAR=1 ${BUN} -e 'await process.stdin.pipe(process.stdout)'`
+      .stdout("1 2\n")
+      .todo("& not supported")
+      .runAsTest("complicated pipeline");
 
     TestBuilder.command`echo 2 | echo 1 | BUN_TEST_VAR=1 ${BUN} -e 'process.stdin.pipe(process.stdout)'`
       .stdout("1\n")
@@ -648,9 +977,12 @@ describe("deno_task", () => {
   });
 
   describe("redirects", async function igodf() {
-    // await TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").run();
+    TestBuilder.command`echo 5 6 7 > test.txt`.fileEquals("test.txt", "5 6 7\n").runAsTest("basic redirect");
 
-    // await TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`.stdout("1 2 3\n").fileEquals("test.txt", "1\n").run();
+    TestBuilder.command`echo 1 2 3 && echo 1 > test.txt`
+      .stdout("1 2 3\n")
+      .fileEquals("test.txt", "1\n")
+      .runAsTest("basic redirect with &&");
 
     // subdir
     TestBuilder.command`mkdir subdir && cd subdir && echo 1 2 3 > test.txt`
@@ -790,7 +1122,8 @@ describe("deno_task", () => {
     }
   });
 
-  test("stacktrace", async () => {
+  // https://github.com/oven-sh/bun/issues/11305
+  test.todoIf(isWindows)("stacktrace", async () => {
     // const folder = TestBuilder.tmpdir();
     const code = /* ts */ `import { $ } from 'bun'
 
@@ -912,17 +1245,17 @@ fi
   "private": true,
   "name": "bun",
   "dependencies": {
-    "@vscode/debugadapter": "^1.61.0",
-    "esbuild": "^0.17.15",
-    "eslint": "^8.20.0",
-    "eslint-config-prettier": "^8.5.0",
-    "mitata": "^0.1.3",
+    "@vscode/debugadapter": "1.61.0",
+    "esbuild": "0.17.15",
+    "eslint": "8.20.0",
+    "eslint-config-prettier": "8.5.0",
+    "mitata": "0.1.3",
     "peechy": "0.4.34",
-    "prettier": "^3.2.5",
+    "prettier": "3.2.5",
     "react": "next",
     "react-dom": "next",
-    "source-map-js": "^1.0.2",
-    "typescript": "^5.0.2"
+    "source-map-js": "1.0.2",
+    "typescript": "5.0.2"
   },
   "devDependencies": {
   },
@@ -1724,6 +2057,243 @@ if [[ "123abc" == *?(a)bc ]]; then echo ok 43; else echo bad 43; fi
     //   .stdout("ok 4")
     //   .stdout("ok 5")
     //   .runAsTest("various tests");
+  });
+});
+
+describe("subshell", () => {
+  const sharppkgjson = /* json */ `{
+    "name": "sharp-test",
+    "module": "index.ts",
+    "type": "module",
+    "dependencies": {
+      "sharp": "0.33.3"
+    }
+  }`;
+
+  TestBuilder.command/* sh */ `
+  mkdir sharp-test
+  cd sharp-test
+  echo ${sharppkgjson} > package.json
+  ${BUN} i
+  `
+    .ensureTempDir()
+    .stdout(out => expect(out).toInclude("+ sharp@0.33.3"))
+    .stderr(() => {})
+    .exitCode(0)
+    .env(bunEnv)
+    .runAsTest("sharp");
+
+  TestBuilder.command/* sh */ `( ( ( ( echo HI! ) ) ) )`.stdout("HI!\n").runAsTest("multiple levels");
+  TestBuilder.command/* sh */ `(
+    echo HELLO! ;
+    echo HELLO AGAIN!
+    )`
+    .stdout("HELLO!\nHELLO AGAIN!\n")
+    .runAsTest("multiline");
+  TestBuilder.command/* sh */ `(exit 42)`.exitCode(42).runAsTest("exit code");
+  TestBuilder.command/* sh */ `(exit 42); echo hi`.exitCode(0).stdout("hi\n").runAsTest("exit code 2");
+  TestBuilder.command/* sh */ `
+  VAR1=VALUE1
+  VAR2=VALUE2
+  VAR3=VALUE3
+  (
+    echo $VAR1 $VAR2 $VAR3
+    VAR1='you cant'
+    VAR2='see me'
+    VAR3='my time is now'
+    echo $VAR1 $VAR2 $VAR3
+  )
+  echo $VAR1 $VAR2 $VAR3
+  `
+    .stdout("VALUE1 VALUE2 VALUE3\nyou cant see me my time is now\nVALUE1 VALUE2 VALUE3\n")
+    .runAsTest("copy of environment");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  (
+    echo $PWD
+    cd foo
+    echo $PWD
+  )
+  echo $PWD
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}foo\n$TEMP_DIR\n`)
+    .runAsTest("does not change cwd");
+
+  TestBuilder.command`
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+
+  (
+    export FOO=bar
+    BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  )
+
+
+  BUN_DEBUG_QUIET_LOGS=1 ${BUN} -e ${"console.log(process.env.FOO)"}
+  `
+    .stdout("undefined\nbar\nundefined\n")
+    .runAsTest("does not modify export env of parent");
+
+  TestBuilder.command`\(echo hi \)`.stderr("bun: command not found: (echo\n").exitCode(1).runAsTest("escaped subshell");
+  TestBuilder.command`echo \\\(hi\\\)`.stdout("\\(hi\\)\n").runAsTest("escaped subshell 2");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (
+    cd dir
+    pwd | cat | cat
+  )
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("pipeline in subshell");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir dir
+  (pwd) | cat
+  (cd dir; pwd) | cat
+  pwd
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR\n$TEMP_DIR${sep}dir\n$TEMP_DIR\n`)
+    .runAsTest("subshell in pipeline");
+
+  TestBuilder.command/* sh */ `
+  mkdir foo
+  ( ( (cd foo ; pwd) | cat) ) | ( ( (cat) ) | cat )
+
+  `
+    .ensureTempDir()
+    .stdout(`$TEMP_DIR${sep}foo\n`)
+    .runAsTest("imbricated subshells and pipelines");
+
+  TestBuilder.command/* sh */ `
+  echo (echo)
+  `
+    .error("Unexpected token: `(`")
+    .runAsTest("Invalid subshell use");
+
+  describe("ported", () => {
+    // test_oE 'effect of subshell'
+    TestBuilder.command/* sh */ `
+  a=1
+  # (a=2; echo $a; exit; echo not reached)
+  # NOTE: We actually implemented exit wrong so changing this for now until we fix it
+  (a=2; echo $a; exit; echo reached)
+  echo $a
+  `
+      .stdout("2\nreached\n1\n")
+      .runAsTest("effect of subshell");
+
+    // test_x -e 23 'exit status of subshell'
+    TestBuilder.command/* sh */ `
+  (true; exit 23)
+  `
+      .exitCode(23)
+      .runAsTest("exit status of subshell");
+
+    // test_oE 'redirection on subshell'
+    TestBuilder.command/* sh */ `
+  (echo 1; echo 2; echo 3; echo 4) >sub_out
+  # (tail -n 2) <sub_out
+  cat sub_out
+  `
+      .error("Subshells with redirections are currently not supported. Please open a GitHub issue.")
+      // .stdout("1\n2\n3\n4\n")
+      .runAsTest("redirection on subshell");
+
+    // test_oE 'subshell ending with semicolon'
+    TestBuilder.command/* sh */ `
+(echo foo;)
+`
+      .stdout("foo\n")
+      .runAsTest("subshell ending with semicolon");
+
+    // test_oE 'subshell ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+(echo foo >fifo1&)
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("async commands not implemented yet")
+      .runAsTest("subshell ending with asynchronous list");
+
+    // test_oE 'newlines in subshell'
+    TestBuilder.command/* sh */ `
+(
+echo foo
+)
+`
+      .stdout("foo\n")
+      .runAsTest("newlines in subshell");
+
+    // test_oE 'effect of brace grouping'
+    TestBuilder.command/* sh */ `
+a=1
+{ a=2; echo $a; exit; echo not reached; }
+echo $a
+`
+      .stdout("2\n1\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("effect of brace grouping");
+
+    // test_x -e 29 'exit status of brace grouping'
+    TestBuilder.command/* sh */ `
+{ true; sh -c 'exit 29'; }
+`
+      .exitCode(29)
+      .todo("brace grouping not implemented")
+      .runAsTest("exit status of brace grouping");
+
+    // test_oE 'redirection on brace grouping'
+    TestBuilder.command/* sh */ `
+{ echo 1; echo 2; echo 3; echo 4; } >brace_out
+{ tail -n 2; } <brace_out
+`
+      .stdout("3\n4\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("redirection on brace grouping");
+
+    // test_oE 'brace grouping ending with semicolon'
+    TestBuilder.command/* sh */ `
+{ echo foo; }
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with semicolon");
+
+    // test_oE 'brace grouping ending with asynchronous list'
+    TestBuilder.command/* sh */ `
+mkfifo fifo1
+{ echo foo >fifo1& }
+cat fifo1
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("brace grouping ending with asynchronous list");
+
+    // test_oE 'newlines in brace grouping'
+    TestBuilder.command/* sh */ `
+{
+echo foo
+}
+`
+      .stdout("foo\n")
+      .todo("brace grouping not implemented")
+      .runAsTest("newlines in brace grouping");
   });
 });
 

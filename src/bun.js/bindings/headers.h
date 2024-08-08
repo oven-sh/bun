@@ -164,7 +164,6 @@ CPP_DECL JSC__JSValue ZigString__toExternalValueWithCallback(const ZigString* ar
 CPP_DECL JSC__JSValue ZigString__toRangeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toSyntaxErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toTypeErrorInstance(const ZigString* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL JSC__JSValue ZigString__toValue(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL JSC__JSValue ZigString__toValueGC(const ZigString* arg0, JSC__JSGlobalObject* arg1);
 CPP_DECL WebCore__DOMURL* WebCore__DOMURL__cast_(JSC__JSValue JSValue0, JSC__VM* arg1);
 CPP_DECL BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0);
@@ -232,13 +231,11 @@ CPP_DECL JSC__JSValue WebCore__AbortSignal__abortReason(WebCore__AbortSignal* ar
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__addListener(WebCore__AbortSignal* arg0, void* arg1, void(* ArgFn2)(void* arg0, JSC__JSValue JSValue1));
 CPP_DECL void WebCore__AbortSignal__cleanNativeBindings(WebCore__AbortSignal* arg0, void* arg1);
 CPP_DECL JSC__JSValue WebCore__AbortSignal__create(JSC__JSGlobalObject* arg0);
-CPP_DECL JSC__JSValue WebCore__AbortSignal__createAbortError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
-CPP_DECL JSC__JSValue WebCore__AbortSignal__createTimeoutError(const ZigString* arg0, const ZigString* arg1, JSC__JSGlobalObject* arg2);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__fromJS(JSC__JSValue JSValue0);
 CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__ref(WebCore__AbortSignal* arg0);
-CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSValue JSValue1);
+CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__signal(WebCore__AbortSignal* arg0, JSC__JSGlobalObject*,  uint8_t abortReason); 
 CPP_DECL JSC__JSValue WebCore__AbortSignal__toJS(WebCore__AbortSignal* arg0, JSC__JSGlobalObject* arg1);
-CPP_DECL WebCore__AbortSignal* WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0);
+CPP_DECL void WebCore__AbortSignal__unref(WebCore__AbortSignal* arg0);
 
 #pragma mark - JSC::JSPromise
 
@@ -251,7 +248,6 @@ CPP_DECL void JSC__JSPromise__rejectAsHandledException(JSC__JSPromise* arg0, JSC
 CPP_DECL JSC__JSPromise* JSC__JSPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__rejectedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL void JSC__JSPromise__rejectOnNextTickWithHandled(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, bool arg3);
-CPP_DECL void JSC__JSPromise__rejectWithCaughtException(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSPromise__resolve(JSC__JSPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSPromise* JSC__JSPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSPromise__resolvedPromiseValue(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
@@ -268,7 +264,6 @@ CPP_DECL void JSC__JSInternalPromise__reject(JSC__JSInternalPromise* arg0, JSC__
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandled(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSInternalPromise__rejectAsHandledException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__Exception* arg2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__rejectedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
-CPP_DECL void JSC__JSInternalPromise__rejectWithCaughtException(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, bJSC__ThrowScope arg2);
 CPP_DECL void JSC__JSInternalPromise__resolve(JSC__JSInternalPromise* arg0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSInternalPromise* JSC__JSInternalPromise__resolvedPromise(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 CPP_DECL JSC__JSValue JSC__JSInternalPromise__result(const JSC__JSInternalPromise* arg0, JSC__VM* arg1);
@@ -304,7 +299,7 @@ CPP_DECL void JSC__JSMap__set(JSC__JSMap* arg0, JSC__JSGlobalObject* arg1, JSC__
 
 #pragma mark - JSC::JSValue
 
-CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
+CPP_DECL void JSC__JSValue___then(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2, SYSV_ABI JSC__JSValue(* ArgFn3)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1), SYSV_ABI JSC__JSValue(* ArgFn4)(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1));
 CPP_DECL bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, Bun__ArrayBuffer* arg2);
 CPP_DECL unsigned char JSC__JSValue__asBigIntCompare(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL JSC__JSCell* JSC__JSValue__asCell(JSC__JSValue JSValue0);
@@ -389,7 +384,7 @@ CPP_DECL JSC__JSValue JSC__JSValue__jsTDZValue();
 CPP_DECL unsigned char JSC__JSValue__jsType(JSC__JSValue JSValue0);
 CPP_DECL JSC__JSValue JSC__JSValue__jsUndefined();
 CPP_DECL JSC__JSValue JSC__JSValue__keys(JSC__JSGlobalObject* arg0, JSC__JSValue arg1);
-CPP_DECL JSC__JSValue JSC__JSValue__makeWithNameAndPrototype(JSC__JSGlobalObject* arg0, void* arg1, void* arg2, const ZigString* arg3);
+CPP_DECL JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* arg0, JSC__JSValue arg1);
 CPP_DECL JSC__JSValue JSC__JSValue__parseJSON(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1);
 CPP_DECL void JSC__JSValue__push(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, JSC__JSValue JSValue2);
 CPP_DECL void JSC__JSValue__put(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, const ZigString* arg2, JSC__JSValue JSValue3);
@@ -464,104 +459,104 @@ CPP_DECL void FFI__ptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue FFI__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2);
-ZIG_DECL JSC__JSValue FFI__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI FFI__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, Uint8Array_alias* arg2);
+extern "C" JSC__JSValue SYSV_ABI FFI__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u8__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u16__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__ptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__ptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__ptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i8__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i8__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i8__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i16__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i16__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i16__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__f32__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__f32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__f32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f32__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f32__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__f64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__f64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__f64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__f64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__i64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__i64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__i64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__i64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__u64__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__u64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__u64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u64__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__u64__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 CPP_DECL void Reader__intptr__put(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1);
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Reader__intptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
-ZIG_DECL JSC__JSValue Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__intptr__fastpath(JSC__JSGlobalObject* arg0, void* arg1, int64_t arg2, int32_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Reader__intptr__slowpath(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, JSC__JSValue* arg2, size_t arg3);
 
 #endif
 
@@ -584,17 +579,17 @@ ZIG_DECL void Zig__GlobalObject__resolve(ErrorableString* arg0, JSC__JSGlobalObj
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__Path__basename(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__dirname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__extname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__format(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__isAbsolute(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__join(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
-ZIG_DECL JSC__JSValue Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__basename(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__dirname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__extname(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__format(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__isAbsolute(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__join(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__normalize(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__parse(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__relative(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__resolve(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
+extern "C" JSC__JSValue SYSV_ABI Bun__Path__toNamespacedPath(JSC__JSGlobalObject* arg0, bool arg1, JSC__JSValue* arg2, uint16_t arg3);
 
 #endif
 
@@ -608,14 +603,14 @@ CPP_DECL void ArrayBufferSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVal
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue ArrayBufferSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__construct);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI ArrayBufferSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void ArrayBufferSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue ArrayBufferSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__flush);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__start);
 ZIG_DECL void ArrayBufferSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue ArrayBufferSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(ArrayBufferSink__write);
 
 #endif
 CPP_DECL JSC__JSValue HTTPSResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -628,14 +623,14 @@ CPP_DECL void HTTPSResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSV
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue HTTPSResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__construct);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI HTTPSResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPSResponseSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__flush);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__start);
 ZIG_DECL void HTTPSResponseSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue HTTPSResponseSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPSResponseSink__write);
 
 #endif
 CPP_DECL JSC__JSValue HTTPResponseSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -648,14 +643,14 @@ CPP_DECL void HTTPResponseSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSVa
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue HTTPResponseSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__construct);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI SYSV_ABI HTTPResponseSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void HTTPResponseSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue HTTPResponseSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__flush);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__start);
 ZIG_DECL void HTTPResponseSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue HTTPResponseSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(HTTPResponseSink__write);
 
 #endif
 CPP_DECL JSC__JSValue FileSink__assignToStream(JSC__JSGlobalObject* arg0, JSC__JSValue JSValue1, void* arg2, void** arg3);
@@ -668,14 +663,14 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue FileSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
+BUN_DECLARE_HOST_FUNCTION(FileSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue FileSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
+BUN_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
 
@@ -689,14 +684,14 @@ CPP_DECL void FileSink__onReady(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JS
 #ifdef __cplusplus
 
 ZIG_DECL JSC__JSValue FileSink__close(JSC__JSGlobalObject* arg0, void* arg1);
-ZIG_DECL JSC__JSValue FileSink__construct(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__end(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__construct);
+BUN_DECLARE_HOST_FUNCTION(FileSink__end);
+ZIG_DECL JSC__JSValue SYSV_ABI FileSink__endWithSink(void* arg0, JSC__JSGlobalObject* arg1);
 ZIG_DECL void FileSink__finalize(void* arg0);
-ZIG_DECL JSC__JSValue FileSink__flush(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue FileSink__start(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__flush);
+BUN_DECLARE_HOST_FUNCTION(FileSink__start);
 ZIG_DECL void FileSink__updateRef(void* arg0, bool arg1);
-ZIG_DECL JSC__JSValue FileSink__write(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(FileSink__write);
 
 #endif
 
@@ -760,19 +755,19 @@ CPP_DECL ZigException ZigException__fromException(JSC__Exception* arg0);
 
 #ifdef __cplusplus
 
-ZIG_DECL void Bun__ConsoleObject__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
-ZIG_DECL void Bun__ConsoleObject__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Bun__ConsoleObject__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Bun__ConsoleObject__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
-ZIG_DECL void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
-ZIG_DECL void Bun__ConsoleObject__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
-ZIG_DECL void Bun__ConsoleObject__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__count(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__countReset(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__messageWithTypeAndLevel(void* arg0, uint32_t MessageType1, uint32_t MessageLevel2, JSC__JSGlobalObject* arg3, JSC__JSValue* arg4, size_t arg5);
+extern "C" SYSV_ABI void Bun__ConsoleObject__profile(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__profileEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__record(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__recordEnd(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__screenshot(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
+extern "C" SYSV_ABI void Bun__ConsoleObject__takeHeapSnapshot(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__time(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeEnd(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeLog(void* arg0, JSC__JSGlobalObject* arg1, const unsigned char* arg2, size_t arg3, JSC__JSValue* arg4, size_t arg5);
+extern "C" SYSV_ABI void Bun__ConsoleObject__timeStamp(void* arg0, JSC__JSGlobalObject* arg1, ScriptArguments* arg2);
 
 #endif
 
@@ -791,37 +786,37 @@ ZIG_DECL JSC__JSValue Bun__Timer__setTimeout(JSC__JSGlobalObject* arg0, JSC__JSV
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContext__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContext__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextTLS__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextTLS__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebug__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebug__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolve);
+BUN_DECLARE_HOST_FUNCTION(Bun__HTTPRequestContextDebugTLS__onResolveStream);
 
 #endif
 
@@ -830,15 +825,15 @@ ZIG_DECL JSC__JSValue Bun__HTTPRequestContextDebugTLS__onResolveStream(JSC__JSGl
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onRejectStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__BodyValueBufferer__onResolveStream(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onRejectStream);
+BUN_DECLARE_HOST_FUNCTION(Bun__BodyValueBufferer__onResolveStream);
 
 #endif
 
 #ifdef __cplusplus
 
-ZIG_DECL JSC__JSValue Bun__TestScope__onReject(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-ZIG_DECL JSC__JSValue Bun__TestScope__onResolve(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onReject);
+BUN_DECLARE_HOST_FUNCTION(Bun__TestScope__onResolve);
 
 #endif
 
@@ -856,7 +851,7 @@ CPP_DECL bool JSC__CustomGetterSetter__isSetterNull(JSC__CustomGetterSetter *arg
 
 #ifdef __cplusplus
 
-CPP_DECL JSC__JSValue Bun__onResolveEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
-CPP_DECL JSC__JSValue Bun__onRejectEntryPointResult(JSC__JSGlobalObject* arg0, JSC__CallFrame* arg1);
+BUN_DECLARE_HOST_FUNCTION(Bun__onResolveEntryPointResult);
+BUN_DECLARE_HOST_FUNCTION(Bun__onRejectEntryPointResult);
 
 #endif

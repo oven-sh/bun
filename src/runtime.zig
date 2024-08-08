@@ -34,7 +34,7 @@ fn embedDebugFallback(comptime msg: []const u8, comptime code: []const u8) []con
 pub const ErrorCSS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: bun.PathBuffer = undefined;
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_css_path };
             const file = std.fs.cwd().openFile(
@@ -57,7 +57,7 @@ pub const ReactRefresh = @embedFile("./react-refresh.js");
 pub const ErrorJS = struct {
     pub inline fn sourceContent() string {
         if (comptime Environment.isDebug) {
-            var out_buffer: [bun.MAX_PATH_BYTES]u8 = undefined;
+            var out_buffer: bun.PathBuffer = undefined;
             const dirname = std.fs.selfExeDirPath(&out_buffer) catch unreachable;
             var paths = [_]string{ dirname, BUN_ROOT, content.error_js_path };
             const file = std.fs.cwd().openFile(
@@ -199,13 +199,12 @@ pub const Fallback = struct {
 pub const Runtime = struct {
     pub const source_code = @embedFile("./runtime.out.js");
 
-    pub const version_hash = @import("build_options").runtime_js_version;
-    var version_hash_int: u32 = 0;
+    pub const hash = brk: {
+        @setEvalBranchQuota(source_code.len * 50);
+        break :brk bun.Wyhash11.hash(0, source_code);
+    };
     pub fn versionHash() u32 {
-        if (version_hash_int == 0) {
-            version_hash_int = @as(u32, @truncate(version_hash));
-        }
-        return version_hash_int;
+        return @truncate(hash);
     }
 
     pub const Features = struct {
@@ -245,7 +244,6 @@ pub const Runtime = struct {
         jsx_optimization_hoist: bool = false,
 
         trim_unused_imports: bool = false,
-        should_fold_typescript_constant_expressions: bool = false,
 
         /// Use `import.meta.require()` instead of require()?
         /// This is only supported in Bun.
@@ -287,7 +285,6 @@ pub const Runtime = struct {
             .dead_code_elimination,
             .set_breakpoint_on_first_line,
             .trim_unused_imports,
-            .should_fold_typescript_constant_expressions,
             .use_import_meta_require,
             .dont_bundle_twice,
             .commonjs_at_runtime,
@@ -298,7 +295,7 @@ pub const Runtime = struct {
         };
 
         pub fn hashForRuntimeTranspiler(this: *const Features, hasher: *std.hash.Wyhash) void {
-            std.debug.assert(this.runtime_transpiler_cache != null);
+            bun.assert(this.runtime_transpiler_cache != null);
 
             var bools: [std.meta.fieldNames(@TypeOf(hash_fields_for_runtime_transpiler)).len]bool = undefined;
             inline for (hash_fields_for_runtime_transpiler, 0..) |field, i| {

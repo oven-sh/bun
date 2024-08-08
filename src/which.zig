@@ -3,6 +3,7 @@ const bun = @import("root").bun;
 const PosixToWinNormalizer = bun.path.PosixToWinNormalizer;
 
 fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
+    if (segment.len + 1 + bin.len > bun.MAX_PATH_BYTES) return null;
     bun.copy(u8, buf, segment);
     buf[segment.len] = std.fs.path.sep;
     bun.copy(u8, buf[segment.len + 1 ..], bin);
@@ -15,12 +16,15 @@ fn isValid(buf: *bun.PathBuffer, segment: []const u8, bin: []const u8) ?u16 {
 // Like /usr/bin/which but without needing to exec a child process
 // Remember to resolve the symlink if necessary
 pub fn which(buf: *bun.PathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u8 {
+    if (bin.len > bun.MAX_PATH_BYTES) return null;
+    bun.Output.scoped(.which, true)("path={s} cwd={s} bin={s}", .{ path, cwd, bin });
+
     if (bun.Environment.os == .windows) {
         var convert_buf: bun.WPathBuffer = undefined;
         const result = whichWin(&convert_buf, path, cwd, bin) orelse return null;
         const result_converted = bun.strings.convertUTF16toUTF8InBuffer(buf, result) catch unreachable;
         buf[result_converted.len] = 0;
-        std.debug.assert(result_converted.ptr == buf.ptr);
+        bun.assert(result_converted.ptr == buf.ptr);
         return buf[0..result_converted.len :0];
     }
 
@@ -76,8 +80,8 @@ pub fn endsWithExtension(str: []const u8) bool {
     if (str[str.len - 4] != '.') return false;
     const file_ext = str[str.len - 3 ..];
     inline for (win_extensions) |ext| {
-        comptime std.debug.assert(ext.len == 3);
-        if (bun.strings.eqlComptimeCheckLenWithType(u8, file_ext, ext, false)) return true;
+        comptime bun.assert(ext.len == 3);
+        if (bun.strings.eqlCaseInsensitiveASCIIICheckLength(file_ext, ext)) return true;
     }
     return false;
 }
@@ -128,7 +132,7 @@ fn searchBinInPath(buf: *bun.WPathBuffer, path_buf: *bun.PathBuffer, path: []con
 /// It is similar to Get-Command in powershell.
 pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: []const u8) ?[:0]const u16 {
     if (bin.len == 0) return null;
-    var path_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+    var path_buf: bun.PathBuffer = undefined;
 
     const check_windows_extensions = !endsWithExtension(bin);
 
@@ -165,15 +169,4 @@ pub fn whichWin(buf: *bun.WPathBuffer, path: []const u8, cwd: []const u8, bin: [
     }
 
     return null;
-}
-
-test "which" {
-    var buf: bun.fs.PathBuffer = undefined;
-    const realpath = bun.getenvZ("PATH") orelse unreachable;
-    const whichbin = which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "which");
-    try std.testing.expectEqualStrings(whichbin orelse return std.debug.assert(false), "/usr/bin/which");
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "baconnnnnn"));
-    try std.testing.expect(null != which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "zig"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "bin"));
-    try std.testing.expect(null == which(&buf, realpath, try bun.getcwdAlloc(std.heap.c_allocator), "usr"));
 }

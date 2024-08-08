@@ -194,7 +194,7 @@ extern "C" JSC::EncodedJSValue functionImportMeta__resolveSync(JSC::JSGlobalObje
         return JSC::JSValue::encode(JSC::JSValue {});
     }
 
-    JSC__JSValue from = 0;
+    JSC__JSValue from = JSC::JSValue::encode(JSC::jsUndefined());
     bool isESM = true;
 
     if (callFrame->argumentCount() > 1) {
@@ -535,7 +535,7 @@ public:
         reifyStaticProperties(vm, ImportMetaObject::info(), ImportMetaObjectPrototypeValues, *this);
         JSC_TO_STRING_TAG_WITHOUT_TRANSITION();
 
-        auto mainGetter = JSFunction::create(vm, importMetaObjectMainCodeGenerator(vm), globalObject);
+        auto mainGetter = JSFunction::create(vm, globalObject, importMetaObjectMainCodeGenerator(vm), globalObject);
 
         this->putDirectAccessor(
             this->globalObject(),
@@ -666,7 +666,7 @@ void ImportMetaObject::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
 {
     // if (void* wrapped = thisObject->wrapped()) {
     // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     // }
     Base::analyzeHeap(cell, analyzer);
 }

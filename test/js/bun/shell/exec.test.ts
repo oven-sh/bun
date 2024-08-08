@@ -1,9 +1,13 @@
-import { describe } from "bun:test";
-import { TestBuilder } from "./test_builder";
-import { bunEnv } from "harness";
+import { $ } from "bun";
+import { describe, test, expect } from "bun:test";
+import { createTestBuilder } from "./test_builder";
+const TestBuilder = createTestBuilder(import.meta.path);
+import { bunEnv, tmpdirSync } from "harness";
+import { join } from "path";
 
 const BUN = process.argv0;
 
+$.nothrow();
 describe("bun exec", () => {
   TestBuilder.command`${BUN} exec ${"echo hi!"}`.env(bunEnv).stdout("hi!\n").runAsTest("it works");
   TestBuilder.command`${BUN} exec sldkfjslkdjflksdjflj`
@@ -54,6 +58,8 @@ describe("bun exec", () => {
       ["exit",   1, "exit: numeric argument required\n", ""],
       ["true",   0, "", ""],
       ["false",  1, "", ""],
+      // ["yes",    1, "", ""],
+      ["seq",    1, "seq: invalid argument\n", ""],
     ] as const;
     for (const [item, exitCode, stderr, stdout] of programs) {
       TestBuilder.command`${BUN} exec ${`${item} --help`}`
@@ -63,5 +69,28 @@ describe("bun exec", () => {
         .stdout(stdout)
         .runAsTest(item);
     }
+  });
+
+  TestBuilder.command`${BUN} exec cd`
+    .env(bunEnv)
+    .exitCode(0)
+    .stderr("")
+    .stdout("")
+    .runAsTest("cd with no arguments works");
+
+  test("bun works even when not in PATH", async () => {
+    const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
+    expect(val.stderr.toString()).not.toContain("bun: command not found: bun");
+    expect(val.stdout.toString()).toContain("Bun is a fast JavaScript runtime");
+  });
+
+  test("works with latin1 paths", async () => {
+    const tempdir = tmpdirSync();
+    await Bun.write(join(tempdir, "Í", "hi"), "text");
+    const result = await $`bun exec ls`
+      .env({ ...(bunEnv as any) })
+      .cwd(join(tempdir, "Í"))
+      .quiet();
+    expect(result.text()).toBe("hi\n");
   });
 });

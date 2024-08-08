@@ -15,9 +15,10 @@ const err2 = new Error();
 Error.captureStackTrace(err2);
 const stack2 = err2.stack;
 
-const stackIgnoringLineAndColumn = stack2.replaceAll(":16:2", "N");
-const stack2IgnoringLineAndColumn = stack.replaceAll(":11:2", "N");
+const stackIgnoringLineAndColumn = stack.replaceAll(":10:24", "N");
+const stack2IgnoringLineAndColumn = stack2.replaceAll(":15:24", "N");
 if (stackIgnoringLineAndColumn !== stack2IgnoringLineAndColumn) {
-  console.log(stackIgnoringLineAndColumn, stack2IgnoringLineAndColumn);
+  console.log(stackIgnoringLineAndColumn);
+  console.log(stack2IgnoringLineAndColumn);
   throw new Error("Stacks are different");
 }

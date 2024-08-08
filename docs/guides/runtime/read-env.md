@@ -18,10 +18,10 @@ Bun.env.API_TOKEN; // => "secret"
 
 ---
 
-To print all currently-set environment variables to the command line, run `bun run env`. This is useful for debugging.
+To print all currently-set environment variables to the command line, run `bun --print process.env`. This is useful for debugging.
 
 ```sh
-$ bun run env
+$ bun --print process.env
 BAZ=stuff
 FOOBAR=aaaaaa
 <lots more lines>

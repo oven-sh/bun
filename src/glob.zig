@@ -113,7 +113,7 @@ const CursorState = struct {
     }
 };
 
-pub const BunGlobWalker = GlobWalker_(null, false);
+pub const BunGlobWalker = GlobWalker_(null, SyscallAccessor, false);
 
 fn dummyFilterTrue(val: []const u8) bool {
     _ = val;
@@ -125,11 +125,207 @@ fn dummyFilterFalse(val: []const u8) bool {
     return false;
 }
 
+pub fn statatWindows(fd: bun.FileDescriptor, path: [:0]const u8) Maybe(bun.Stat) {
+    if (comptime !bun.Environment.isWindows) @compileError("oi don't use this");
+    var buf: bun.PathBuffer = undefined;
+    const dir = switch (Syscall.getFdPath(fd, &buf)) {
+        .err => |e| return .{ .err = e },
+        .result => |s| s,
+    };
+    const parts: []const []const u8 = &.{
+        dir[0..dir.len],
+        path,
+    };
+    const statpath = ResolvePath.joinZBuf(&buf, parts, .auto);
+    return Syscall.stat(statpath);
+}
+
+pub const SyscallAccessor = struct {
+    const count_fds = true;
+
+    const Handle = struct {
+        value: bun.FileDescriptor,
+
+        const zero = Handle{ .value = bun.FileDescriptor.zero };
+
+        pub fn isZero(this: Handle) bool {
+            return this.value == bun.FileDescriptor.zero;
+        }
+
+        pub fn eql(this: Handle, other: Handle) bool {
+            return this.value == other.value;
+        }
+    };
+
+    const DirIter = struct {
+        value: DirIterator.WrappedIterator,
+
+        pub inline fn next(self: *DirIter) Maybe(?DirIterator.IteratorResult) {
+            return self.value.next();
+        }
+
+        pub inline fn iterate(dir: Handle) DirIter {
+            return .{ .value = DirIterator.WrappedIterator.init(dir.value.asDir()) };
+        }
+    };
+
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
+        return switch (Syscall.open(path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+            .err => |err| .{ .err = err },
+            .result => |fd| .{ .result = Handle{ .value = fd } },
+        };
+    }
+
+    pub fn statat(handle: Handle, path: [:0]const u8) Maybe(bun.Stat) {
+        if (comptime bun.Environment.isWindows) return statatWindows(handle.value, path);
+        return switch (Syscall.fstatat(handle.value, path)) {
+            .err => |err| .{ .err = err },
+            .result => |s| .{ .result = s },
+        };
+    }
+
+    pub fn openat(handle: Handle, path: [:0]const u8) !Maybe(Handle) {
+        return switch (Syscall.openat(handle.value, path, bun.O.DIRECTORY | bun.O.RDONLY, 0)) {
+            .err => |err| .{ .err = err },
+            .result => |fd| .{ .result = Handle{ .value = fd } },
+        };
+    }
+
+    pub fn close(handle: Handle) ?Syscall.Error {
+        return Syscall.close(handle.value);
+    }
+
+    pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
+        return Syscall.getcwd(path_buf);
+    }
+};
+
+pub const DirEntryAccessor = struct {
+    const FS = bun.fs.FileSystem;
+
+    const count_fds = false;
+
+    const Handle = struct {
+        value: ?*FS.DirEntry,
+
+        const zero = Handle{ .value = null };
+
+        pub fn isZero(this: Handle) bool {
+            return this.value == null;
+        }
+
+        pub fn eql(this: Handle, other: Handle) bool {
+            // TODO this might not be quite right, we're comparing pointers, not the underlying directory
+            // On the other hand, DirEntries are only ever created once (per generation), so this should be fine?
+            // Realistically, as closing the handle is a no-op, this should be fine either way.
+            return this.value == other.value;
+        }
+    };
+
+    const DirIter = struct {
+        value: ?FS.DirEntry.EntryMap.Iterator,
+
+        const IterResult = struct {
+            name: NameWrapper,
+            kind: std.fs.File.Kind,
+
+            const NameWrapper = struct {
+                value: []const u8,
+
+                pub fn slice(this: NameWrapper) []const u8 {
+                    return this.value;
+                }
+            };
+        };
+
+        pub inline fn next(self: *DirIter) Maybe(?IterResult) {
+            if (self.value) |*value| {
+                const nextval = value.next() orelse return .{ .result = null };
+                const name = nextval.key_ptr.*;
+                const kind = nextval.value_ptr.*.kind(&FS.instance.fs, true);
+                const fskind = switch (kind) {
+                    .file => std.fs.File.Kind.file,
+                    .dir => std.fs.File.Kind.directory,
+                };
+                return .{
+                    .result = .{
+                        .name = IterResult.NameWrapper{ .value = name },
+                        .kind = fskind,
+                    },
+                };
+            } else {
+                return .{ .result = null };
+            }
+        }
+
+        pub inline fn iterate(dir: Handle) DirIter {
+            const entry = dir.value orelse return DirIter{ .value = null };
+            return .{ .value = entry.data.iterator() };
+        }
+    };
+
+    pub fn statat(handle: Handle, path_: [:0]const u8) Maybe(bun.Stat) {
+        var path: [:0]const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                const slice = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+                buf[slice.len] = 0;
+                path = buf[0..slice.len :0];
+            }
+        }
+        return Syscall.stat(path);
+    }
+
+    pub fn open(path: [:0]const u8) !Maybe(Handle) {
+        return openat(Handle.zero, path);
+    }
+
+    pub fn openat(handle: Handle, path_: [:0]const u8) !Maybe(Handle) {
+        var path: []const u8 = path_;
+        var buf: bun.PathBuffer = undefined;
+
+        if (!bun.path.Platform.auto.isAbsolute(path)) {
+            if (handle.value) |entry| {
+                path = bun.path.joinStringBuf(&buf, [_][]const u8{ entry.dir, path }, .auto);
+            }
+        }
+        // TODO do we want to propagate ENOTDIR through the 'Maybe' to match the SyscallAccessor?
+        // The glob implementation specifically checks for this error when dealing with symlinks
+        // return .{ .err = Syscall.Error.fromCode(bun.C.E.NOTDIR, Syscall.Tag.open) };
+        const res = FS.instance.fs.readDirectory(path, null, 0, false) catch |err| {
+            return err;
+        };
+        switch (res.*) {
+            .entries => |entry| {
+                return .{ .result = Handle{ .value = entry } };
+            },
+            .err => |err| {
+                return err.original_err;
+            },
+        }
+    }
+
+    pub inline fn close(handle: Handle) ?Syscall.Error {
+        // TODO is this a noop?
+        _ = handle;
+        return null;
+    }
+
+    pub fn getcwd(path_buf: *bun.PathBuffer) Maybe([]const u8) {
+        @memcpy(path_buf, bun.fs.FileSystem.instance.fs.cwd);
+    }
+};
+
 pub fn GlobWalker_(
     comptime ignore_filter_fn: ?*const fn ([]const u8) bool,
+    comptime Accessor: type,
     comptime sentinel: bool,
 ) type {
     const is_ignored: *const fn ([]const u8) bool = if (comptime ignore_filter_fn) |func| func else dummyFilterFalse;
+
+    const count_fds = Accessor.count_fds and bun.Environment.isDebug;
+
     const stdJoin = comptime if (!sentinel) std.fs.path.join else std.fs.path.joinZ;
     const bunJoin = comptime if (!sentinel) ResolvePath.join else ResolvePath.joinZ;
     const MatchedPath = comptime if (!sentinel) []const u8 else [:0]const u8;
@@ -149,8 +345,11 @@ pub fn GlobWalker_(
         /// If the pattern contains "./" or "../"
         has_relative_components: bool = false,
 
+        end_byte_of_basename_excluding_special_syntax: u32 = 0,
+        basename_excluding_special_syntax_component_idx: u32 = 0,
+
         patternComponents: ArrayList(Component) = .{},
-        matchedPaths: ArrayList(BunString) = .{},
+        matchedPaths: MatchedMap = .{},
         i: u32 = 0,
 
         dot: bool = false,
@@ -165,18 +364,66 @@ pub fn GlobWalker_(
         // iteration state
         workbuf: ArrayList(WorkItem) = ArrayList(WorkItem){},
 
+        /// Array hashmap used as a set (values are the keys)
+        /// to store matched paths and prevent duplicates
+        ///
+        /// BunString is used so that we can call BunString.toJSArray()
+        /// on the result of `.keys()` to give the result back to JS
+        ///
+        /// The only type of string impl we use is ZigString since
+        /// all matched paths are UTF-8 (DirIterator converts them on
+        /// windows) and allocated on the arnea
+        ///
+        /// Multiple patterns are not supported so right now this is
+        /// only possible when running a pattern like:
+        ///
+        /// `foo/**/*`
+        ///
+        /// Use `.keys()` to get the matched paths
+        const MatchedMap = std.ArrayHashMapUnmanaged(BunString, void, struct {
+            pub fn hash(_: @This(), this: BunString) u32 {
+                bun.assert(this.tag == .ZigString);
+                const slice = this.byteSlice();
+                if (comptime sentinel) {
+                    const slicez = slice[0 .. slice.len - 1 :0];
+                    return std.array_hash_map.hashString(slicez);
+                }
+
+                return std.array_hash_map.hashString(slice);
+            }
+
+            pub fn eql(_: @This(), this: BunString, other: BunString, _: usize) bool {
+                return this.eql(other);
+            }
+        }, true);
+
         /// The glob walker references the .directory.path so its not safe to
         /// copy/move this
         const IterState = union(enum) {
             /// Pops the next item off the work stack
             get_next,
+
             /// Currently iterating over a directory
             directory: Directory,
 
+            /// Two particular cases where this is used:
+            ///
+            /// 1. A pattern with no special glob syntax was supplied, for example: `/Users/zackradisic/foo/bar`
+            ///
+            ///    In that case, the mere existence of the file/dir counts as a match, so we can eschew directory
+            ///    iterating and walking for a simple stat call to the path.
+            ///
+            /// 2. Pattern ending in literal optimization
+            ///
+            ///    With a pattern like: `packages/**/package.json`, once the iteration component index reaches
+            ///    the final component, which is a literal string ("package.json"), we can similarly make a
+            ///    single stat call to complete the pattern.
+            matched: MatchedPath,
+
             const Directory = struct {
-                fd: bun.FileDescriptor,
-                iter: DirIterator.WrappedIterator,
-                path: [bun.MAX_PATH_BYTES]u8,
+                fd: Accessor.Handle,
+                iter: Accessor.DirIter,
+                path: bun.PathBuffer,
                 dir_path: [:0]const u8,
 
                 component_idx: u32,
@@ -192,33 +439,100 @@ pub fn GlobWalker_(
         pub const Iterator = struct {
             walker: *GlobWalker,
             iter_state: IterState = .get_next,
-            cwd_fd: bun.FileDescriptor = .zero,
+            cwd_fd: Accessor.Handle = Accessor.Handle.zero,
             empty_dir_path: [0:0]u8 = [0:0]u8{},
             /// This is to make sure in debug/tests that we are closing file descriptors
             /// We should only have max 2 open at a time. One for the cwd, and one for the
             /// directory being iterated on.
-            fds_open: if (bun.Environment.allow_assert) usize else u0 = 0,
+            fds_open: if (count_fds) usize else u0 = 0,
 
             pub fn init(this: *Iterator) !Maybe(void) {
                 log("Iterator init pattern={s}", .{this.walker.pattern});
-                var path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
-                const root_path = this.walker.cwd;
+                var was_absolute = false;
+                const root_work_item = brk: {
+                    var use_posix = bun.Environment.isPosix;
+                    const is_absolute = if (bun.Environment.isPosix) std.fs.path.isAbsolute(this.walker.pattern) else std.fs.path.isAbsolute(this.walker.pattern) or is_absolute: {
+                        use_posix = true;
+                        break :is_absolute std.fs.path.isAbsolutePosix(this.walker.pattern);
+                    };
+
+                    if (!is_absolute) break :brk WorkItem.new(this.walker.cwd, 0, .directory);
+
+                    was_absolute = true;
+
+                    var path_without_special_syntax = this.walker.pattern[0..this.walker.end_byte_of_basename_excluding_special_syntax];
+                    var starting_component_idx = this.walker.basename_excluding_special_syntax_component_idx;
+
+                    if (path_without_special_syntax.len == 0) {
+                        path_without_special_syntax = if (!bun.Environment.isWindows) "/" else ResolvePath.windowsFilesystemRoot(this.walker.cwd);
+                    } else {
+                        // Skip the components associated with the literal path
+                        starting_component_idx += 1;
+
+                        // This means we got a pattern without any special glob syntax, for example:
+                        // `/Users/zackradisic/foo/bar`
+                        //
+                        // In that case we don't need to do any walking and can just open up the FS entry
+                        if (starting_component_idx >= this.walker.patternComponents.items.len) {
+                            const path = try this.walker.arena.allocator().dupeZ(u8, path_without_special_syntax);
+                            const fd = switch (try Accessor.open(path)) {
+                                .err => |e| {
+                                    if (e.getErrno() == bun.C.E.NOTDIR) {
+                                        this.iter_state = .{ .matched = path };
+                                        return Maybe(void).success;
+                                    }
+                                    // Doesn't exist
+                                    if (e.getErrno() == bun.C.E.NOENT) {
+                                        this.iter_state = .get_next;
+                                        return Maybe(void).success;
+                                    }
+                                    const errpath = try this.walker.arena.allocator().dupeZ(u8, path);
+                                    return .{ .err = e.withPath(errpath) };
+                                },
+                                .result => |fd| fd,
+                            };
+                            _ = Accessor.close(fd);
+                            this.iter_state = .{ .matched = path };
+                            return Maybe(void).success;
+                        }
+
+                        // In the above branch, if `starting_compoennt_dix >= pattern_components.len` then
+                        // it should also mean that `end_byte_of_basename_excluding_special_syntax >= pattern.len`
+                        //
+                        // So if we see that `end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len` we
+                        // miscalculated the values
+                        bun.assert(this.walker.end_byte_of_basename_excluding_special_syntax < this.walker.pattern.len);
+                    }
+
+                    break :brk WorkItem.new(
+                        path_without_special_syntax,
+                        starting_component_idx,
+                        .directory,
+                    );
+                };
+
+                var path_buf: *bun.PathBuffer = &this.walker.pathBuf;
+                const root_path = root_work_item.path;
                 @memcpy(path_buf[0..root_path.len], root_path[0..root_path.len]);
                 path_buf[root_path.len] = 0;
-                const root_path_z = path_buf[0..root_path.len :0];
-                const cwd_fd = switch (Syscall.open(root_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
-                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, root_path_z) },
+                const cwd_fd = switch (try Accessor.open(path_buf[0..root_path.len :0])) {
+                    .err => |err| return .{ .err = this.walker.handleSysErrWithPath(err, @ptrCast(path_buf[0 .. root_path.len + 1])) },
                     .result => |fd| fd,
                 };
 
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                 }
 
                 this.cwd_fd = cwd_fd;
 
-                const root_work_item = WorkItem.new(this.walker.cwd, 0, .directory);
-                switch (try this.transitionToDirIterState(root_work_item, true)) {
+                switch (if (was_absolute) try this.transitionToDirIterState(
+                    root_work_item,
+                    false,
+                ) else try this.transitionToDirIterState(
+                    root_work_item,
+                    true,
+                )) {
                     .err => |err| return .{ .err = err },
                     else => {},
                 }
@@ -227,6 +541,9 @@ pub fn GlobWalker_(
             }
 
             pub fn deinit(this: *Iterator) void {
+                defer {
+                    bun.debugAssert(this.fds_open == 0);
+                }
                 this.closeCwdFd();
                 switch (this.iter_state) {
                     .directory => |dir| {
@@ -243,28 +560,28 @@ pub fn GlobWalker_(
                     }
                 }
 
-                if (bun.Environment.allow_assert) {
-                    std.debug.assert(this.fds_open == 0);
+                if (comptime count_fds) {
+                    bun.debugAssert(this.fds_open == 0);
                 }
             }
 
             pub fn closeCwdFd(this: *Iterator) void {
-                if (this.cwd_fd == .zero) return;
-                _ = Syscall.close(this.cwd_fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+                if (this.cwd_fd.isZero()) return;
+                _ = Accessor.close(this.cwd_fd);
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
-            pub fn closeDisallowingCwd(this: *Iterator, fd: bun.FileDescriptor) void {
-                if (fd == this.cwd_fd or fd == bun.invalid_fd) return;
-                _ = Syscall.close(fd);
-                if (bun.Environment.allow_assert) this.fds_open -= 1;
+            pub fn closeDisallowingCwd(this: *Iterator, fd: Accessor.Handle) void {
+                if (fd.isZero() or fd.eql(this.cwd_fd)) return;
+                _ = Accessor.close(fd);
+                if (comptime count_fds) this.fds_open -= 1;
             }
 
             pub fn bumpOpenFds(this: *Iterator) void {
-                if (bun.Environment.allow_assert) {
+                if (comptime count_fds) {
                     this.fds_open += 1;
                     // If this is over 2 then this means that there is a bug in the iterator code
-                    std.debug.assert(this.fds_open <= 2);
+                    bun.debugAssert(this.fds_open <= 2);
                 }
             }
 
@@ -275,7 +592,7 @@ pub fn GlobWalker_(
             ) !Maybe(void) {
                 log("transition => {s}", .{work_item.path});
                 this.iter_state = .{ .directory = .{
-                    .fd = .zero,
+                    .fd = Accessor.Handle.zero,
                     .iter = undefined,
                     .path = undefined,
                     .dir_path = undefined,
@@ -303,18 +620,10 @@ pub fn GlobWalker_(
                 var had_dot_dot = false;
                 const component_idx = this.walker.skipSpecialComponents(work_item.idx, &dir_path, &this.iter_state.directory.path, &had_dot_dot);
 
-                this.iter_state.directory.dir_path = dir_path;
-                this.iter_state.directory.component_idx = component_idx;
-                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
-                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
-                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
-                this.iter_state.directory.at_cwd = false;
-                this.iter_state.directory.fd = bun.invalid_fd;
-
-                const fd: bun.FileDescriptor = fd: {
+                const fd: Accessor.Handle = fd: {
                     if (work_item.fd) |fd| break :fd fd;
                     if (comptime root) {
-                        if (had_dot_dot) break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                        if (had_dot_dot) break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                             .err => |err| return .{
                                 .err = this.walker.handleSysErrWithPath(err, dir_path),
                             },
@@ -328,7 +637,7 @@ pub fn GlobWalker_(
                         break :fd this.cwd_fd;
                     }
 
-                    break :fd switch (Syscall.openat(this.cwd_fd, dir_path, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                    break :fd switch (try Accessor.openat(this.cwd_fd, dir_path)) {
                         .err => |err| return .{
                             .err = this.walker.handleSysErrWithPath(err, dir_path),
                         },
@@ -339,10 +648,62 @@ pub fn GlobWalker_(
                     };
                 };
 
+                // Optimization:
+                // If we have a pattern like:
+                // `packages/*/package.json`
+                //              ^ and we are at this component, with let's say
+                //                a directory named: `packages/frontend/`
+                //
+                // Then we can just open `packages/frontend/package.json` without
+                // doing any iteration on the current directory.
+                //
+                // More generally, we can apply this optimization if we are on the
+                // last component and it is a literal with no special syntax.
+                if (component_idx == this.walker.patternComponents.items.len -| 1 and
+                    this.walker.patternComponents.items[component_idx].syntax_hint == .Literal)
+                {
+                    defer {
+                        this.closeDisallowingCwd(fd);
+                    }
+                    const stackbuf_size = 256;
+                    var stfb = std.heap.stackFallback(stackbuf_size, this.walker.arena.allocator());
+                    const pathz = try stfb.get().dupeZ(u8, this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern));
+                    const stat_result: bun.Stat = switch (Accessor.statat(fd, pathz)) {
+                        .err => |e_| {
+                            var e: bun.sys.Error = e_;
+                            if (e.getErrno() == bun.C.E.NOENT) {
+                                this.iter_state = .get_next;
+                                return Maybe(void).success;
+                            }
+                            return .{ .err = e.withPath(this.walker.patternComponents.items[component_idx].patternSlice(this.walker.pattern)) };
+                        },
+                        .result => |stat| stat,
+                    };
+                    const matches = (bun.S.ISDIR(@intCast(stat_result.mode)) and !this.walker.only_files) or bun.S.ISREG(@intCast(stat_result.mode)) or !this.walker.only_files;
+                    if (matches) {
+                        if (try this.walker.prepareMatchedPath(pathz, dir_path)) |path| {
+                            this.iter_state = .{ .matched = path };
+                        } else {
+                            this.iter_state = .get_next;
+                        }
+                    } else {
+                        this.iter_state = .get_next;
+                    }
+                    return Maybe(void).success;
+                }
+
+                this.iter_state.directory.dir_path = dir_path;
+                this.iter_state.directory.component_idx = component_idx;
+                this.iter_state.directory.pattern = &this.walker.patternComponents.items[component_idx];
+                this.iter_state.directory.next_pattern = if (component_idx + 1 < this.walker.patternComponents.items.len) &this.walker.patternComponents.items[component_idx + 1] else null;
+                this.iter_state.directory.is_last = component_idx == this.walker.patternComponents.items.len - 1;
+                this.iter_state.directory.at_cwd = false;
+                this.iter_state.directory.fd = Accessor.Handle.zero;
+
                 log("Transition(dirpath={s}, fd={}, component_idx={d})", .{ dir_path, fd, component_idx });
 
                 this.iter_state.directory.fd = fd;
-                const iterator = DirIterator.iterate(fd.asDir(), .u8);
+                const iterator = Accessor.DirIter.iterate(fd);
                 this.iter_state.directory.iter = iterator;
                 this.iter_state.directory.iter_closed = false;
 
@@ -352,6 +713,10 @@ pub fn GlobWalker_(
             pub fn next(this: *Iterator) !Maybe(?MatchedPath) {
                 while (true) {
                     switch (this.iter_state) {
+                        .matched => |path| {
+                            this.iter_state = .get_next;
+                            return .{ .result = path };
+                        },
                         .get_next => {
                             // Done
                             if (this.walker.workbuf.items.len == 0) return .{ .result = null };
@@ -365,7 +730,7 @@ pub fn GlobWalker_(
                                     continue;
                                 },
                                 .symlink => {
-                                    var scratch_path_buf: *[bun.MAX_PATH_BYTES]u8 = &this.walker.pathBuf;
+                                    var scratch_path_buf: *bun.PathBuffer = &this.walker.pathBuf;
                                     @memcpy(scratch_path_buf[0..work_item.path.len], work_item.path);
                                     scratch_path_buf[work_item.path.len] = 0;
                                     var symlink_full_path_z: [:0]u8 = scratch_path_buf[0..work_item.path.len :0];
@@ -378,7 +743,7 @@ pub fn GlobWalker_(
                                     const is_last = component_idx == this.walker.patternComponents.items.len - 1;
 
                                     this.iter_state = .get_next;
-                                    const maybe_dir_fd: ?bun.FileDescriptor = switch (Syscall.openat(this.cwd_fd, symlink_full_path_z, std.os.O.DIRECTORY | std.os.O.RDONLY, 0)) {
+                                    const maybe_dir_fd: ?Accessor.Handle = switch (try Accessor.openat(this.cwd_fd, symlink_full_path_z)) {
                                         .err => |err| brk: {
                                             if (@as(usize, @intCast(err.errno)) == @as(usize, @intFromEnum(bun.C.E.NOTDIR))) {
                                                 break :brk null;
@@ -397,7 +762,7 @@ pub fn GlobWalker_(
                                                     next_pattern.?.syntax_hint != .Double and
                                                     this.walker.matchPatternImpl(next_pattern.?, entry_name)))
                                                 {
-                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                                    return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                                 }
                                             }
                                             continue;
@@ -411,14 +776,14 @@ pub fn GlobWalker_(
                                     const dir_fd = maybe_dir_fd orelse {
                                         // No directory file descriptor, it's a file
                                         if (is_last)
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
 
                                         if (pattern.syntax_hint == .Double and
                                             component_idx + 1 == this.walker.patternComponents.items.len -| 1 and
                                             next_pattern.?.syntax_hint != .Double and
                                             this.walker.matchPatternImpl(next_pattern.?, entry_name))
                                         {
-                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                            return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                         }
 
                                         continue;
@@ -431,14 +796,25 @@ pub fn GlobWalker_(
                                     const recursion_idx_bump_ = this.walker.matchPatternDir(&pattern, next_pattern, entry_name, component_idx, is_last, &add_dir);
 
                                     if (recursion_idx_bump_) |recursion_idx_bump| {
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx, .directory, dir_fd),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.newWithFd(work_item.path, component_idx + recursion_idx_bump, .directory, dir_fd),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) };
+                                        return .{ .result = try this.walker.prepareMatchedPathSymlink(symlink_full_path_z) orelse continue };
                                     }
 
                                     continue;
@@ -468,7 +844,7 @@ pub fn GlobWalker_(
                                 .file => {
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared };
                                     }
                                     continue;
@@ -485,14 +861,25 @@ pub fn GlobWalker_(
 
                                         const subdir_entry_name = try this.walker.join(subdir_parts);
 
-                                        try this.walker.workbuf.append(
-                                            this.walker.arena.allocator(),
-                                            WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
-                                        );
+                                        if (recursion_idx_bump == 2) {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx, .directory),
+                                            );
+                                        } else {
+                                            try this.walker.workbuf.append(
+                                                this.walker.arena.allocator(),
+                                                WorkItem.new(subdir_entry_name, dir_iter_state.component_idx + recursion_idx_bump, .directory),
+                                            );
+                                        }
                                     }
 
                                     if (add_dir and !this.walker.only_files) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -527,7 +914,7 @@ pub fn GlobWalker_(
 
                                     const matches = this.walker.matchPatternFile(entry_name, dir_iter_state.component_idx, dir_iter_state.is_last, dir_iter_state.pattern, dir_iter_state.next_pattern);
                                     if (matches) {
-                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path);
+                                        const prepared_path = try this.walker.prepareMatchedPath(entry_name, dir.dir_path) orelse continue;
                                         return .{ .result = prepared_path };
                                     }
 
@@ -546,7 +933,7 @@ pub fn GlobWalker_(
             idx: u32,
             kind: Kind,
             entry_start: u32 = 0,
-            fd: ?bun.FileDescriptor = null,
+            fd: ?Accessor.Handle = null,
 
             const Kind = enum {
                 directory,
@@ -561,7 +948,7 @@ pub fn GlobWalker_(
                 };
             }
 
-            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: bun.FileDescriptor) WorkItem {
+            fn newWithFd(path: []const u8, idx: u32, kind: Kind, fd: Accessor.Handle) WorkItem {
                 return .{
                     .path = path,
                     .idx = idx,
@@ -588,12 +975,21 @@ pub fn GlobWalker_(
             len: u32,
 
             syntax_hint: SyntaxHint = .None,
+            trailing_sep: bool = false,
             is_ascii: bool = false,
 
             /// Only used when component is not ascii
             unicode_set: bool = false,
             start_cp: u32 = 0,
             end_cp: u32 = 0,
+
+            pub fn patternSlice(this: *const Component, pattern: []const u8) []const u8 {
+                return pattern[this.start .. this.start + this.len - @as(u1, @bitCast(this.trailing_sep))];
+            }
+
+            pub fn patternSliceCp(this: *const Component, pattern: []u32) []u32 {
+                return pattern[this.start_cp .. this.end_cp - @as(u1, @bitCast(this.trailing_sep))];
+            }
 
             const SyntaxHint = enum {
                 None,
@@ -609,6 +1005,13 @@ pub fn GlobWalker_(
                 Dot,
                 /// ../
                 DotBack,
+
+                fn isSpecialSyntax(this: SyntaxHint) bool {
+                    return switch (this) {
+                        .Literal => false,
+                        else => true,
+                    };
+                }
             };
         };
 
@@ -623,7 +1026,6 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            errdefer arena.deinit();
             return try this.initWithCwd(
                 arena,
                 pattern,
@@ -646,15 +1048,12 @@ pub fn GlobWalker_(
             const ptr = @intFromPtr(this);
             log("GlobWalker(0x{x}) components:", .{ptr});
             for (components.items) |cmp| {
-                if (cmp.syntax_hint == .None) {
-                    continue;
-                }
                 switch (cmp.syntax_hint) {
                     .Single => log("  *", .{}),
                     .Double => log("  **", .{}),
                     .Dot => log("  .", .{}),
                     .DotBack => log("  ../", .{}),
-                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), pattern[cmp.start .. cmp.start + cmp.len] }),
+                    .Literal, .WildcardFilepath, .None => log("  hint={s} component_str={s}", .{ @tagName(cmp.syntax_hint), cmp.patternSlice(pattern) }),
                 }
             }
         }
@@ -672,26 +1071,32 @@ pub fn GlobWalker_(
             error_on_broken_symlinks: bool,
             only_files: bool,
         ) !Maybe(void) {
-            var patternComponents = ArrayList(Component){};
+            log("initWithCwd(cwd={s})", .{cwd});
+            this.* = .{
+                .cwd = cwd,
+                .pattern = pattern,
+                .dot = dot,
+                .absolute = absolute,
+                .follow_symlinks = follow_symlinks,
+                .error_on_broken_symlinks = error_on_broken_symlinks,
+                .only_files = only_files,
+                .basename_excluding_special_syntax_component_idx = 0,
+                .end_byte_of_basename_excluding_special_syntax = 0,
+            };
+
             try GlobWalker.buildPatternComponents(
                 arena,
-                &patternComponents,
+                &this.patternComponents,
                 pattern,
                 &this.cp_len,
                 &this.pattern_codepoints,
                 &this.has_relative_components,
+                &this.end_byte_of_basename_excluding_special_syntax,
+                &this.basename_excluding_special_syntax_component_idx,
             );
 
-            this.cwd = cwd;
-
-            this.patternComponents = patternComponents;
-            this.pattern = pattern;
+            // copy arena after all allocations are successful
             this.arena = arena.*;
-            this.dot = dot;
-            this.absolute = absolute;
-            this.follow_symlinks = follow_symlinks;
-            this.error_on_broken_symlinks = error_on_broken_symlinks;
-            this.only_files = only_files;
 
             if (bun.Environment.allow_assert) {
                 this.debugPatternComopnents();
@@ -702,6 +1107,7 @@ pub fn GlobWalker_(
 
         /// NOTE This also calls deinit on the arena, if you don't want to do that then
         pub fn deinit(this: *GlobWalker, comptime clear_arena: bool) void {
+            log("GlobWalker.deinit", .{});
             if (comptime clear_arena) {
                 this.arena.deinit();
             }
@@ -731,7 +1137,8 @@ pub fn GlobWalker_(
                 .result => |matched_path| matched_path,
             }) |path| {
                 log("walker: matched path: {s}", .{path});
-                try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(path));
+                // The paths are already put into this.matchedPaths, which we use for the output,
+                // so we don't need to do anything here
             }
 
             return Maybe(void).success;
@@ -743,7 +1150,7 @@ pub fn GlobWalker_(
             this: *GlobWalker,
             idx: u32,
             dir_path: *[:0]u8,
-            path_buf: *[bun.MAX_PATH_BYTES]u8,
+            path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
         ) u32 {
             var component_idx = idx;
@@ -806,7 +1213,7 @@ pub fn GlobWalker_(
             this: *GlobWalker,
             work_item_idx: u32,
             dir_path: *[:0]u8,
-            scratch_path_buf: *[bun.MAX_PATH_BYTES]u8,
+            scratch_path_buf: *bun.PathBuffer,
             encountered_dot_dot: *bool,
         ) u32 {
             var component_idx = work_item_idx;
@@ -895,7 +1302,7 @@ pub fn GlobWalker_(
         }
 
         /// A file can only match if:
-        /// a) it matches against the the last pattern, or
+        /// a) it matches against the last pattern, or
         /// b) it matches the next pattern, provided the current
         ///    pattern is a double wildcard and the next pattern is
         ///    not a double wildcard
@@ -911,6 +1318,8 @@ pub fn GlobWalker_(
             pattern: *Component,
             next_pattern: ?*Component,
         ) bool {
+            if (pattern.trailing_sep) return false;
+
             // Handle case b)
             if (!is_last) return pattern.syntax_hint == .Double and
                 component_idx + 1 == this.patternComponents.items.len -| 1 and
@@ -933,11 +1342,11 @@ pub fn GlobWalker_(
             return switch (pattern_component.syntax_hint) {
                 .Double, .Single => true,
                 .WildcardFilepath => if (comptime !isWindows)
-                    matchWildcardFilepath(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardFilepath(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 .Literal => if (comptime !isWindows)
-                    matchWildcardLiteral(this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len], filepath)
+                    matchWildcardLiteral(pattern_component.patternSlice(this.pattern), filepath)
                 else
                     this.matchPatternSlow(pattern_component, filepath),
                 else => this.matchPatternSlow(pattern_component, filepath),
@@ -949,7 +1358,7 @@ pub fn GlobWalker_(
             if (comptime !isWindows) {
                 if (pattern_component.is_ascii and isAllAscii(filepath))
                     return GlobAscii.match(
-                        this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                        pattern_component.patternSlice(this.pattern),
                         filepath,
                     );
             }
@@ -969,34 +1378,61 @@ pub fn GlobWalker_(
         }
 
         fn componentStringUnicodeWindows(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            return pattern_component.patternSliceCp(this.pattern_codepoints);
         }
 
         fn componentStringUnicodePosix(this: *GlobWalker, pattern_component: *Component) []const u32 {
-            if (pattern_component.unicode_set) return this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            if (pattern_component.unicode_set) return pattern_component.patternSliceCp(this.pattern_codepoints);
 
-            const codepoints = this.pattern_codepoints[pattern_component.start_cp..pattern_component.end_cp];
+            const codepoints = pattern_component.patternSliceCp(this.pattern_codepoints);
             GlobWalker.convertUtf8ToCodepoints(
                 codepoints,
-                this.pattern[pattern_component.start .. pattern_component.start + pattern_component.len],
+                pattern_component.patternSlice(this.pattern),
             );
             pattern_component.unicode_set = true;
             return codepoints;
         }
 
-        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !MatchedPath {
-            if (comptime !sentinel) return try this.arena.allocator().dupe(u8, symlink_full_path);
-            return try this.arena.allocator().dupeZ(u8, symlink_full_path);
+        inline fn matchedPathToBunString(matched_path: MatchedPath) BunString {
+            if (comptime sentinel) {
+                return BunString.fromBytes(matched_path[0 .. matched_path.len + 1]);
+            }
+            return BunString.fromBytes(matched_path);
         }
 
-        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: [:0]const u8) !MatchedPath {
+        fn prepareMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !?MatchedPath {
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), BunString.fromBytes(symlink_full_path));
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{symlink_full_path});
+                return null;
+            }
+            if (comptime !sentinel) {
+                const slice = try this.arena.allocator().dupe(u8, symlink_full_path);
+                result.key_ptr.* = matchedPathToBunString(slice);
+                return slice;
+            }
+            const slicez = try this.arena.allocator().dupeZ(u8, symlink_full_path);
+            result.key_ptr.* = matchedPathToBunString(slicez);
+            return slicez;
+        }
+
+        fn prepareMatchedPath(this: *GlobWalker, entry_name: []const u8, dir_name: []const u8) !?MatchedPath {
             const subdir_parts: []const []const u8 = &[_][]const u8{
                 dir_name[0..dir_name.len],
                 entry_name,
             };
-            const name = try this.join(subdir_parts);
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPutValue(this.arena.allocator(), name, {});
+            if (result.found_existing) {
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                this.arena.allocator().free(name_matched_path);
+                return null;
+            }
+            result.key_ptr.* = name;
             // if (comptime sentinel) return name[0 .. name.len - 1 :0];
-            return name;
+            log("prepared match: {s}", .{name_matched_path});
+            return name_matched_path;
         }
 
         fn appendMatchedPath(
@@ -1008,13 +1444,20 @@ pub fn GlobWalker_(
                 dir_name[0..dir_name.len],
                 entry_name,
             };
-            const name = try this.join(subdir_parts);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+            const name_matched_path = try this.join(subdir_parts);
+            const name = matchedPathToBunString(name_matched_path);
+            const result = try this.matchedPaths.getOrPut(this.arena.allocator(), name);
+            if (result.found_existing) {
+                this.arena.allocator().free(name_matched_path);
+                log("(dupe) prepared match: {s}", .{name_matched_path});
+                return;
+            }
+            result.key_ptr.* = name;
         }
 
         fn appendMatchedPathSymlink(this: *GlobWalker, symlink_full_path: []const u8) !void {
             const name = try this.arena.allocator().dupe(u8, symlink_full_path);
-            try this.matchedPaths.append(this.arena.allocator(), BunString.fromBytes(name));
+            try this.matchedPaths.put(this.arena.allocator(), BunString.fromBytes(name), {});
         }
 
         inline fn join(this: *GlobWalker, subdir_parts: []const []const u8) !MatchedPath {
@@ -1073,23 +1516,21 @@ pub fn GlobWalker_(
             return false;
         }
 
-        fn addComponent(
-            allocator: Allocator,
+        fn makeComponent(
             pattern: []const u8,
-            patternComponents: *ArrayList(Component),
             start_cp: u32,
             end_cp: u32,
             start_byte: u32,
             end_byte: u32,
             has_relative_patterns: *bool,
-        ) !void {
+        ) ?Component {
             var component: Component = .{
                 .start = start_byte,
                 .len = end_byte - start_byte,
                 .start_cp = start_cp,
                 .end_cp = end_cp,
             };
-            if (component.len == 0) return;
+            if (component.len == 0) return null;
 
             out: {
                 if (component.len == 1 and pattern[component.start] == '.') {
@@ -1163,7 +1604,13 @@ pub fn GlobWalker_(
                 component.is_ascii = true;
             }
 
-            try patternComponents.append(allocator, component);
+            if (pattern[component.start + component.len -| 1] == '/') {
+                component.trailing_sep = true;
+            } else if (comptime bun.Environment.isWindows) {
+                component.trailing_sep = pattern[component.start + component.len -| 1] == '\\';
+            }
+
+            return component;
         }
 
         fn buildPatternComponents(
@@ -1173,6 +1620,8 @@ pub fn GlobWalker_(
             out_cp_len: *u32,
             out_pattern_cp: *[]u32,
             has_relative_patterns: *bool,
+            end_byte_of_basename_excluding_special_syntax: *u32,
+            basename_excluding_special_syntax_component_idx: *u32,
         ) !void {
             var start_cp: u32 = 0;
             var start_byte: u32 = 0;
@@ -1182,23 +1631,35 @@ pub fn GlobWalker_(
 
             var cp_len: u32 = 0;
             var prevIsBackslash = false;
+            var saw_special = false;
             while (iter.next(&cursor)) : (cp_len += 1) {
                 const c = cursor.c;
 
                 switch (c) {
                     '\\' => {
                         if (comptime isWindows) {
-                            const end_cp = cp_len;
-                            try addComponent(
-                                arena.allocator(),
+                            var end_cp = cp_len;
+                            var end_byte = cursor.i;
+                            // is last char
+                            if (cursor.i + cursor.width == pattern.len) {
+                                end_cp += 1;
+                                end_byte += cursor.width;
+                            }
+                            if (makeComponent(
                                 pattern,
-                                patternComponents,
                                 start_cp,
                                 end_cp,
                                 start_byte,
-                                cursor.i,
+                                end_byte,
                                 has_relative_patterns,
-                            );
+                            )) |component| {
+                                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                                if (!saw_special) {
+                                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                                }
+                                try patternComponents.append(arena.allocator(), component);
+                            }
                             start_cp = cp_len + 1;
                             start_byte = cursor.i + cursor.width;
                             continue;
@@ -1219,16 +1680,21 @@ pub fn GlobWalker_(
                             end_cp += 1;
                             end_byte += cursor.width;
                         }
-                        try addComponent(
-                            arena.allocator(),
+                        if (makeComponent(
                             pattern,
-                            patternComponents,
                             start_cp,
                             end_cp,
                             start_byte,
                             end_byte,
                             has_relative_patterns,
-                        );
+                        )) |component| {
+                            saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                            if (!saw_special) {
+                                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                            }
+                            try patternComponents.append(arena.allocator(), component);
+                        }
                         start_cp = cp_len + 1;
                         start_byte = cursor.i + cursor.width;
                     },
@@ -1247,16 +1713,24 @@ pub fn GlobWalker_(
             out_pattern_cp.* = codepoints;
 
             const end_cp = cp_len;
-            try addComponent(
-                arena.allocator(),
+            if (makeComponent(
                 pattern,
-                patternComponents,
                 start_cp,
                 end_cp,
                 start_byte,
                 @intCast(pattern.len),
                 has_relative_patterns,
-            );
+            )) |component| {
+                saw_special = saw_special or component.syntax_hint.isSpecialSyntax();
+                if (!saw_special) {
+                    basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                    end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+                }
+                try patternComponents.append(arena.allocator(), component);
+            } else if (!saw_special) {
+                basename_excluding_special_syntax_component_idx.* = @intCast(patternComponents.items.len);
+                end_byte_of_basename_excluding_special_syntax.* = cursor.i + cursor.width;
+            }
         }
     };
 }
@@ -1678,4 +2152,37 @@ pub fn matchWildcardFilepath(glob: []const u8, path: []const u8) bool {
 
 pub fn matchWildcardLiteral(literal: []const u8, path: []const u8) bool {
     return std.mem.eql(u8, literal, path);
+}
+
+/// Returns true if the given string contains glob syntax,
+/// excluding those escaped with backslashes
+/// TODO: this doesn't play nicely with Windows directory separator and
+/// backslashing, should we just require the user to supply posix filepaths?
+pub fn detectGlobSyntax(potential_pattern: []const u8) bool {
+    // Negation only allowed in the beginning of the pattern
+    if (potential_pattern.len > 0 and potential_pattern[0] == '!') return true;
+
+    // In descending order of how popular the token is
+    const SPECIAL_SYNTAX: [4]u8 = comptime [_]u8{ '*', '{', '[', '?' };
+
+    inline for (SPECIAL_SYNTAX) |token| {
+        var slice = potential_pattern[0..];
+        while (slice.len > 0) {
+            if (std.mem.indexOfScalar(u8, slice, token)) |idx| {
+                // Check for even number of backslashes preceding the
+                // token to know that it's not escaped
+                var i = idx;
+                var backslash_count: u16 = 0;
+
+                while (i > 0 and potential_pattern[i - 1] == '\\') : (i -= 1) {
+                    backslash_count += 1;
+                }
+
+                if (backslash_count % 2 == 0) return true;
+                slice = slice[idx + 1 ..];
+            } else break;
+        }
+    }
+
+    return false;
 }

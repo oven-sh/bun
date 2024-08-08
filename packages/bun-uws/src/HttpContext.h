@@ -124,7 +124,7 @@ private:
 
             /* Signal broken HTTP request only if we have a pending request */
             if (httpResponseData->onAborted) {
-                httpResponseData->onAborted();
+                httpResponseData->onAborted((HttpResponse<SSL> *)s, httpResponseData->userData);
             }
 
             /* Destruct socket ext */
@@ -258,7 +258,7 @@ private:
                     }
 
                     /* We might respond in the handler, so do not change timeout after this */
-                    httpResponseData->inStream(data, fin);
+                    httpResponseData->inStream(static_cast<HttpResponse<SSL>*>(user), data.data(), data.length(), fin, httpResponseData->userData);
 
                     /* Was the socket closed? */
                     if (us_socket_is_closed(SSL, (struct us_socket_t *) user)) {
@@ -366,7 +366,7 @@ private:
 
                 /* We expect the developer to return whether or not write was successful (true).
                  * If write was never called, the developer should still return true so that we may drain. */
-                bool success = httpResponseData->callOnWritable(httpResponseData->offset);
+                bool success = httpResponseData->callOnWritable((HttpResponse<SSL> *)asyncSocket, httpResponseData->offset);
 
                 /* The developer indicated that their onWritable failed. */
                 if (!success) {
@@ -374,9 +374,7 @@ private:
                     return s;
                 }
 
-                /* We don't want to fall through since we don't want to mess with timeout.
-                 * It makes little sense to drain any backpressure when the user has registered onWritable. */
-                return s;
+                /* We need to drain any remaining buffered data if success == true*/    
             }
 
             /* Drain any socket buffer, this might empty our backpressure and thus finish the request */

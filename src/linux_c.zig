@@ -152,11 +152,11 @@ pub const SystemErrno = enum(u8) {
         return @enumFromInt(code);
     }
 
-    pub fn label(this: SystemErrno) ?[]const u8 {
+    pub fn label(this: SystemErrno) ?[:0]const u8 {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.EnumMap(SystemErrno, [:0]const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
 
@@ -293,8 +293,77 @@ pub const SystemErrno = enum(u8) {
     };
 };
 
+pub const UV_E2BIG: i32 = @intFromEnum(SystemErrno.E2BIG);
+pub const UV_EACCES: i32 = @intFromEnum(SystemErrno.EACCES);
+pub const UV_EADDRINUSE: i32 = @intFromEnum(SystemErrno.EADDRINUSE);
+pub const UV_EADDRNOTAVAIL: i32 = @intFromEnum(SystemErrno.EADDRNOTAVAIL);
+pub const UV_EAFNOSUPPORT: i32 = @intFromEnum(SystemErrno.EAFNOSUPPORT);
+pub const UV_EAGAIN: i32 = @intFromEnum(SystemErrno.EAGAIN);
+pub const UV_EALREADY: i32 = @intFromEnum(SystemErrno.EALREADY);
+pub const UV_EBADF: i32 = @intFromEnum(SystemErrno.EBADF);
+pub const UV_EBUSY: i32 = @intFromEnum(SystemErrno.EBUSY);
+pub const UV_ECANCELED: i32 = @intFromEnum(SystemErrno.ECANCELED);
+pub const UV_ECHARSET: i32 = -bun.windows.libuv.UV_ECHARSET;
+pub const UV_ECONNABORTED: i32 = @intFromEnum(SystemErrno.ECONNABORTED);
+pub const UV_ECONNREFUSED: i32 = @intFromEnum(SystemErrno.ECONNREFUSED);
+pub const UV_ECONNRESET: i32 = @intFromEnum(SystemErrno.ECONNRESET);
+pub const UV_EDESTADDRREQ: i32 = @intFromEnum(SystemErrno.EDESTADDRREQ);
+pub const UV_EEXIST: i32 = @intFromEnum(SystemErrno.EEXIST);
+pub const UV_EFAULT: i32 = @intFromEnum(SystemErrno.EFAULT);
+pub const UV_EHOSTUNREACH: i32 = @intFromEnum(SystemErrno.EHOSTUNREACH);
+pub const UV_EINTR: i32 = @intFromEnum(SystemErrno.EINTR);
+pub const UV_EINVAL: i32 = @intFromEnum(SystemErrno.EINVAL);
+pub const UV_EIO: i32 = @intFromEnum(SystemErrno.EIO);
+pub const UV_EISCONN: i32 = @intFromEnum(SystemErrno.EISCONN);
+pub const UV_EISDIR: i32 = @intFromEnum(SystemErrno.EISDIR);
+pub const UV_ELOOP: i32 = @intFromEnum(SystemErrno.ELOOP);
+pub const UV_EMFILE: i32 = @intFromEnum(SystemErrno.EMFILE);
+pub const UV_EMSGSIZE: i32 = @intFromEnum(SystemErrno.EMSGSIZE);
+pub const UV_ENAMETOOLONG: i32 = @intFromEnum(SystemErrno.ENAMETOOLONG);
+pub const UV_ENETDOWN: i32 = @intFromEnum(SystemErrno.ENETDOWN);
+pub const UV_ENETUNREACH: i32 = @intFromEnum(SystemErrno.ENETUNREACH);
+pub const UV_ENFILE: i32 = @intFromEnum(SystemErrno.ENFILE);
+pub const UV_ENOBUFS: i32 = @intFromEnum(SystemErrno.ENOBUFS);
+pub const UV_ENODEV: i32 = @intFromEnum(SystemErrno.ENODEV);
+pub const UV_ENOENT: i32 = @intFromEnum(SystemErrno.ENOENT);
+pub const UV_ENOMEM: i32 = @intFromEnum(SystemErrno.ENOMEM);
+pub const UV_ENONET: i32 = @intFromEnum(SystemErrno.ENONET);
+pub const UV_ENOSPC: i32 = @intFromEnum(SystemErrno.ENOSPC);
+pub const UV_ENOSYS: i32 = @intFromEnum(SystemErrno.ENOSYS);
+pub const UV_ENOTCONN: i32 = @intFromEnum(SystemErrno.ENOTCONN);
+pub const UV_ENOTDIR: i32 = @intFromEnum(SystemErrno.ENOTDIR);
+pub const UV_ENOTEMPTY: i32 = @intFromEnum(SystemErrno.ENOTEMPTY);
+pub const UV_ENOTSOCK: i32 = @intFromEnum(SystemErrno.ENOTSOCK);
+pub const UV_ENOTSUP: i32 = @intFromEnum(SystemErrno.ENOTSUP);
+pub const UV_EPERM: i32 = @intFromEnum(SystemErrno.EPERM);
+pub const UV_EPIPE: i32 = @intFromEnum(SystemErrno.EPIPE);
+pub const UV_EPROTO: i32 = @intFromEnum(SystemErrno.EPROTO);
+pub const UV_EPROTONOSUPPORT: i32 = @intFromEnum(SystemErrno.EPROTONOSUPPORT);
+pub const UV_EPROTOTYPE: i32 = @intFromEnum(SystemErrno.EPROTOTYPE);
+pub const UV_EROFS: i32 = @intFromEnum(SystemErrno.EROFS);
+pub const UV_ESHUTDOWN: i32 = @intFromEnum(SystemErrno.ESHUTDOWN);
+pub const UV_ESPIPE: i32 = @intFromEnum(SystemErrno.ESPIPE);
+pub const UV_ESRCH: i32 = @intFromEnum(SystemErrno.ESRCH);
+pub const UV_ETIMEDOUT: i32 = @intFromEnum(SystemErrno.ETIMEDOUT);
+pub const UV_ETXTBSY: i32 = @intFromEnum(SystemErrno.ETXTBSY);
+pub const UV_EXDEV: i32 = @intFromEnum(SystemErrno.EXDEV);
+pub const UV_EFBIG: i32 = @intFromEnum(SystemErrno.EFBIG);
+pub const UV_ENOPROTOOPT: i32 = @intFromEnum(SystemErrno.ENOPROTOOPT);
+pub const UV_ERANGE: i32 = @intFromEnum(SystemErrno.ERANGE);
+pub const UV_ENXIO: i32 = @intFromEnum(SystemErrno.ENXIO);
+pub const UV_EMLINK: i32 = @intFromEnum(SystemErrno.EMLINK);
+pub const UV_EHOSTDOWN: i32 = @intFromEnum(SystemErrno.EHOSTDOWN);
+pub const UV_EREMOTEIO: i32 = @intFromEnum(SystemErrno.EREMOTEIO);
+pub const UV_ENOTTY: i32 = @intFromEnum(SystemErrno.ENOTTY);
+pub const UV_EFTYPE: i32 = -bun.windows.libuv.UV_EFTYPE;
+pub const UV_EILSEQ: i32 = @intFromEnum(SystemErrno.EILSEQ);
+pub const UV_EOVERFLOW: i32 = @intFromEnum(SystemErrno.EOVERFLOW);
+pub const UV_ESOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
+pub const UV_ENODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
+pub const UV_EUNATCH: i32 = @intFromEnum(SystemErrno.EUNATCH);
+
 pub const preallocate_length = 2048 * 1024;
-pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t) anyerror!void {
+pub fn preallocate_file(fd: std.posix.fd_t, offset: std.posix.off_t, len: std.posix.off_t) anyerror!void {
     // https://gist.github.com/Jarred-Sumner/b37b93399b63cbfd86e908c59a0a37df
     //  ext4 NVME Linux kernel 5.17.0-1016-oem x86_64
     //
@@ -382,7 +451,7 @@ pub fn preallocate_file(fd: std.os.fd_t, offset: std.os.off_t, len: std.os.off_t
 /// transfers up to len bytes of data from the file descriptor fd_in
 /// to the file descriptor fd_out, where one of the file descriptors
 /// must refer to a pipe.
-pub fn splice(fd_in: std.os.fd_t, off_in: ?*i64, fd_out: std.os.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
+pub fn splice(fd_in: std.posix.fd_t, off_in: ?*i64, fd_out: std.posix.fd_t, off_out: ?*i64, len: usize, flags: u32) usize {
     return std.os.linux.syscall6(
         .splice,
         @as(usize, @bitCast(@as(isize, fd_in))),
@@ -448,7 +517,7 @@ pub fn getSystemLoadavg() [3]f64 {
 }
 
 pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
-    const uts = std.os.uname();
+    const uts = std.posix.uname();
     const result = bun.sliceTo(&uts.version, 0);
     bun.copy(u8, name_buffer, result);
 
@@ -456,7 +525,7 @@ pub fn get_version(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
 }
 
 pub fn get_release(name_buffer: *[bun.HOST_NAME_MAX]u8) []const u8 {
-    const uts = std.os.uname();
+    const uts = std.posix.uname();
     const result = bun.sliceTo(&uts.release, 0);
     bun.copy(u8, name_buffer, result);
 
@@ -475,11 +544,11 @@ pub const POSIX_SPAWN = struct {
     pub const SETSID = 0x80;
 };
 
-const fd_t = std.os.fd_t;
-const pid_t = std.os.pid_t;
-const mode_t = std.os.mode_t;
+const fd_t = std.posix.fd_t;
+const pid_t = std.posix.pid_t;
+const mode_t = std.posix.mode_t;
 const sigset_t = std.c.sigset_t;
-const sched_param = std.os.sched_param;
+const sched_param = std.posix.sched_param;
 
 pub const posix_spawnattr_t = extern struct {
     __flags: c_short,
@@ -548,7 +617,7 @@ const posix_spawn_file_actions_addfchdir_np_type = *const fn (actions: *posix_sp
 const posix_spawn_file_actions_addchdir_np_type = *const fn (actions: *posix_spawn_file_actions_t, path: [*:0]const u8) c_int;
 
 /// When not available, these functions will return 0.
-pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.os.fd_t) c_int {
+pub fn posix_spawn_file_actions_addfchdir_np(actions: *posix_spawn_file_actions_t, filedes: std.posix.fd_t) c_int {
     const function = bun.C.dlsym(posix_spawn_file_actions_addfchdir_np_type, "posix_spawn_file_actions_addfchdir_np") orelse
         return 0;
     return function(actions, filedes);
@@ -561,7 +630,7 @@ pub fn posix_spawn_file_actions_addchdir_np(actions: *posix_spawn_file_actions_t
     return function(actions, path);
 }
 
-pub extern fn vmsplice(fd: c_int, iovec: [*]const std.os.iovec, iovec_count: usize, flags: u32) isize;
+pub extern fn vmsplice(fd: c_int, iovec: [*]const std.posix.iovec, iovec_count: usize, flags: u32) isize;
 
 const net_c = @cImport({
     @cInclude("ifaddrs.h"); // getifaddrs, freeifaddrs
@@ -586,13 +655,34 @@ pub const F = struct {
 };
 
 pub const Mode = u32;
-pub const E = std.os.E;
-pub const S = std.os.S;
+pub const E = std.posix.E;
+pub const S = std.posix.S;
 
 pub extern "c" fn umask(Mode) Mode;
 
 pub fn getErrno(rc: anytype) E {
-    return std.c.getErrno(rc);
+    const Type = @TypeOf(rc);
+
+    return switch (Type) {
+        // raw system calls from std.os.linux.* will return usize
+        // the errno is stored in this value
+        usize => {
+            const signed: isize = @bitCast(rc);
+            const int = if (signed > -4096 and signed < 0) -signed else 0;
+            return @enumFromInt(int);
+        },
+
+        // glibc system call wrapper returns i32/int
+        // the errno is stored in a thread local variable
+        //
+        // TODO: the inclusion of  'u32' and 'isize' seems suspicous
+        i32, c_int, u32, isize, i64 => if (rc == -1)
+            @enumFromInt(std.c._errno().*)
+        else
+            .SUCCESS,
+
+        else => @compileError("Not implemented yet for type " ++ @typeName(Type)),
+    };
 }
 
 pub const getuid = std.os.linux.getuid;
@@ -623,20 +713,20 @@ pub const RWFFlagSupport = enum(u8) {
     }
 
     pub fn disable() void {
-        rwf_bool.store(.unsupported, .Monotonic);
+        rwf_bool.store(.unsupported, .monotonic);
     }
 
     /// Workaround for https://github.com/google/gvisor/issues/2601
     pub fn isMaybeSupported() bool {
         if (comptime !bun.Environment.isLinux) return false;
-        switch (rwf_bool.load(.Monotonic)) {
+        switch (rwf_bool.load(.monotonic)) {
             .unknown => {
                 if (isLinuxKernelVersionWithBuggyRWF_NONBLOCK()) {
-                    rwf_bool.store(.unsupported, .Monotonic);
+                    rwf_bool.store(.unsupported, .monotonic);
                     return false;
                 }
 
-                rwf_bool.store(.supported, .Monotonic);
+                rwf_bool.store(.supported, .monotonic);
                 return true;
             },
             .supported => {
@@ -653,17 +743,17 @@ pub const RWFFlagSupport = enum(u8) {
 
 pub extern "C" fn sys_preadv2(
     fd: c_int,
-    iov: [*]const std.os.iovec,
+    iov: [*]const std.posix.iovec,
     iovcnt: c_int,
-    offset: std.os.off_t,
+    offset: std.posix.off_t,
     flags: c_uint,
 ) isize;
 
 pub extern "C" fn sys_pwritev2(
     fd: c_int,
-    iov: [*]const std.os.iovec_const,
+    iov: [*]const std.posix.iovec_const,
     iovcnt: c_int,
-    offset: std.os.off_t,
+    offset: std.posix.off_t,
     flags: c_uint,
 ) isize;
 
@@ -674,3 +764,10 @@ pub extern "C" fn sys_pwritev2(
 pub const RENAME_NOREPLACE = 1 << 0;
 pub const RENAME_EXCHANGE = 1 << 1;
 pub const RENAME_WHITEOUT = 1 << 2;
+
+pub extern "C" fn quick_exit(code: c_int) noreturn;
+pub extern "C" fn memrchr(ptr: [*]const u8, val: c_int, len: usize) ?[*]const u8;
+
+pub const netdb = @cImport({
+    @cInclude("netdb.h");
+});

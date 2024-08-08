@@ -28,6 +28,10 @@ pub const Resolution = extern struct {
         return this.tag.isGit();
     }
 
+    pub fn canEnqueueInstallTask(this: *const Resolution) bool {
+        return this.tag.canEnqueueInstallTask();
+    }
+
     pub fn order(
         lhs: *const Resolution,
         rhs: *const Resolution,
@@ -117,8 +121,8 @@ pub const Resolution = extern struct {
         };
     }
 
-    pub fn fmtURL(this: *const Resolution, options: *const PackageManager.Options, string_bytes: []const u8) URLFormatter {
-        return URLFormatter{ .resolution = this, .buf = string_bytes, .options = options };
+    pub fn fmtURL(this: *const Resolution, string_bytes: []const u8) URLFormatter {
+        return URLFormatter{ .resolution = this, .buf = string_bytes };
     }
 
     pub fn fmtForDebug(this: *const Resolution, string_bytes: []const u8) DebugFormatter {
@@ -187,7 +191,6 @@ pub const Resolution = extern struct {
 
     pub const URLFormatter = struct {
         resolution: *const Resolution,
-        options: *const PackageManager.Options,
 
         buf: []const u8,
 
@@ -244,7 +247,7 @@ pub const Resolution = extern struct {
 
         pub fn format(formatter: DebugFormatter, comptime layout: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
             try writer.writeAll("Resolution{ .");
-            try writer.writeAll(std.enums.tagName(Tag, formatter.resolution.tag) orelse "invalid");
+            try writer.writeAll(bun.tagName(Tag, formatter.resolution.tag) orelse "invalid");
             try writer.writeAll(" = ");
             switch (formatter.resolution.tag) {
                 .npm => try formatter.resolution.value.npm.version.fmt(formatter.buf).format(layout, opts, writer),
@@ -336,6 +339,10 @@ pub const Resolution = extern struct {
 
         pub fn isGit(this: Tag) bool {
             return this == .git or this == .github or this == .gitlab;
+        }
+
+        pub fn canEnqueueInstallTask(this: Tag) bool {
+            return this == .npm or this == .local_tarball or this == .remote_tarball or this == .git or this == .github;
         }
     };
 };

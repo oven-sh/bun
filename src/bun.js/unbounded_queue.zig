@@ -1,13 +1,14 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const meta = std.meta;
 const atomic = std.atomic;
 const builtin = std.builtin;
 const testing = std.testing;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 
 const mpsc = @This();
 
@@ -57,87 +58,87 @@ pub fn UnboundedQueue(comptime T: type, comptime next_field: meta.FieldEnum(T)) 
         },
 
         pub fn push(self: *Self, src: *T) void {
-            assert(@atomicRmw(usize, &self.count, .Add, 1, .Release) >= 0);
+            assert(@atomicRmw(usize, &self.count, .Add, 1, .release) >= 0);
 
             @field(src, next) = null;
-            const old_back = @atomicRmw(?*T, &self.back, .Xchg, src, .AcqRel) orelse &self.front;
+            const old_back = @atomicRmw(?*T, &self.back, .Xchg, src, .acq_rel) orelse &self.front;
             @field(old_back, next) = src;
         }
 
         pub fn pushBatch(self: *Self, first: *T, last: *T, count: usize) void {
-            assert(@atomicRmw(usize, &self.count, .Add, count, .Release) >= 0);
+            assert(@atomicRmw(usize, &self.count, .Add, count, .release) >= 0);
 
             @field(last, next) = null;
-            const old_back = @atomicRmw(?*T, &self.back, .Xchg, last, .AcqRel) orelse &self.front;
+            const old_back = @atomicRmw(?*T, &self.back, .Xchg, last, .acq_rel) orelse &self.front;
             @field(old_back, next) = first;
         }
 
         pub fn pop(self: *Self) ?*T {
-            const first = @atomicLoad(?*T, &@field(self.front, next), .Acquire) orelse return null;
-            if (@atomicLoad(?*T, &@field(first, next), .Acquire)) |next_item| {
-                @atomicStore(?*T, &@field(self.front, next), next_item, .Monotonic);
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .Monotonic) >= 1);
+            const first = @atomicLoad(?*T, &@field(self.front, next), .acquire) orelse return null;
+            if (@atomicLoad(?*T, &@field(first, next), .acquire)) |next_item| {
+                @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
+                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
                 return first;
             }
-            const last = @atomicLoad(?*T, &self.back, .Acquire) orelse &self.front;
+            const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
             if (first != last) return null;
-            @atomicStore(?*T, &@field(self.front, next), null, .Monotonic);
-            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .AcqRel, .Acquire) == null) {
-                assert(@atomicRmw(usize, &self.count, .Sub, 1, .Monotonic) >= 1);
+            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
+            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
+                assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
                 return first;
             }
-            var next_item = @atomicLoad(?*T, &@field(first, next), .Acquire);
+            var next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
             while (next_item == null) : (atomic.spinLoopHint()) {
-                next_item = @atomicLoad(?*T, &@field(first, next), .Acquire);
+                next_item = @atomicLoad(?*T, &@field(first, next), .acquire);
             }
-            @atomicStore(?*T, &@field(self.front, next), next_item, .Monotonic);
-            assert(@atomicRmw(usize, &self.count, .Sub, 1, .Monotonic) >= 1);
+            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
+            assert(@atomicRmw(usize, &self.count, .Sub, 1, .monotonic) >= 1);
             return first;
         }
 
         pub fn popBatch(self: *Self) Self.Batch {
             var batch: Self.Batch = .{};
 
-            var front = @atomicLoad(?*T, &@field(self.front, next), .Acquire) orelse return batch;
+            var front = @atomicLoad(?*T, &@field(self.front, next), .acquire) orelse return batch;
             batch.front = front;
 
-            var next_item = @atomicLoad(?*T, &@field(front, next), .Acquire);
-            while (next_item) |next_node| : (next_item = @atomicLoad(?*T, &@field(next_node, next), .Acquire)) {
+            var next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
+            while (next_item) |next_node| : (next_item = @atomicLoad(?*T, &@field(next_node, next), .acquire)) {
                 batch.count += 1;
                 batch.last = front;
 
                 front = next_node;
             }
 
-            const last = @atomicLoad(?*T, &self.back, .Acquire) orelse &self.front;
+            const last = @atomicLoad(?*T, &self.back, .acquire) orelse &self.front;
             if (front != last) {
-                @atomicStore(?*T, &@field(self.front, next), front, .Release);
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .Monotonic) >= batch.count);
+                @atomicStore(?*T, &@field(self.front, next), front, .release);
+                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
                 return batch;
             }
 
-            @atomicStore(?*T, &@field(self.front, next), null, .Monotonic);
-            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .AcqRel, .Acquire) == null) {
+            @atomicStore(?*T, &@field(self.front, next), null, .monotonic);
+            if (@cmpxchgStrong(?*T, &self.back, last, &self.front, .acq_rel, .acquire) == null) {
                 batch.count += 1;
                 batch.last = front;
-                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .Monotonic) >= batch.count);
+                assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
                 return batch;
             }
 
-            next_item = @atomicLoad(?*T, &@field(front, next), .Acquire);
+            next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
             while (next_item == null) : (atomic.spinLoopHint()) {
-                next_item = @atomicLoad(?*T, &@field(front, next), .Acquire);
+                next_item = @atomicLoad(?*T, &@field(front, next), .acquire);
             }
 
             batch.count += 1;
-            @atomicStore(?*T, &@field(self.front, next), next_item, .Monotonic);
+            @atomicStore(?*T, &@field(self.front, next), next_item, .monotonic);
             batch.last = front;
-            assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .Monotonic) >= batch.count);
+            assert(@atomicRmw(usize, &self.count, .Sub, batch.count, .monotonic) >= batch.count);
             return batch;
         }
 
         pub fn peek(self: *Self) usize {
-            const count = @atomicLoad(usize, &self.count, .Acquire);
+            const count = @atomicLoad(usize, &self.count, .acquire);
             assert(count >= 0);
             return count;
         }

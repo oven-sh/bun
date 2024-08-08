@@ -4,11 +4,11 @@ const Environment = bun.Environment;
 const Global = bun.Global;
 const strings = bun.strings;
 const string = bun.string;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 
@@ -23,7 +23,7 @@ pub const Mode = enum {
     /// This must match the behavior of node.js, and supports bun <--> node.js/etc communication.
     json,
 
-    const Map = std.ComptimeStringMap(Mode, .{
+    const Map = bun.ComptimeStringMap(Mode, .{
         .{ "advanced", .advanced },
         .{ "json", .json },
     });
@@ -83,7 +83,7 @@ const advanced = struct {
 
         log("Received IPC message type {d} ({s}) len {d}", .{
             @intFromEnum(message_type),
-            std.enums.tagName(IPCMessageType, message_type) orelse "unknown",
+            bun.tagName(IPCMessageType, message_type) orelse "unknown",
             message_len,
         });
 
@@ -242,7 +242,7 @@ const SocketIPCData = struct {
 
     pub fn writeVersionPacket(this: *SocketIPCData) void {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 0);
+            bun.assert(this.has_written_version == 0);
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
@@ -258,7 +258,7 @@ const SocketIPCData = struct {
 
     pub fn serializeAndSend(ipc_data: *SocketIPCData, global: *JSGlobalObject, value: JSValue) bool {
         if (Environment.allow_assert) {
-            std.debug.assert(ipc_data.has_written_version == 1);
+            bun.assert(ipc_data.has_written_version == 1);
         }
 
         // TODO: probably we should not direct access ipc_data.outgoing.list.items here
@@ -267,10 +267,10 @@ const SocketIPCData = struct {
         const payload_length = serialize(ipc_data, &ipc_data.outgoing, global, value) catch
             return false;
 
-        std.debug.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
+        bun.assert(ipc_data.outgoing.list.items.len == start_offset + payload_length);
 
         if (start_offset == 0) {
-            std.debug.assert(ipc_data.outgoing.cursor == 0);
+            bun.assert(ipc_data.outgoing.cursor == 0);
             const n = ipc_data.socket.write(ipc_data.outgoing.list.items.ptr[start_offset..payload_length], false);
             if (n == payload_length) {
                 ipc_data.outgoing.reset();
@@ -346,7 +346,7 @@ const NamedPipeIPCData = struct {
 
     pub fn writeVersionPacket(this: *NamedPipeIPCData) void {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 0);
+            bun.assert(this.has_written_version == 0);
         }
         const bytes = getVersionPacket(this.mode);
         if (bytes.len > 0) {
@@ -364,7 +364,7 @@ const NamedPipeIPCData = struct {
 
     pub fn serializeAndSend(this: *NamedPipeIPCData, global: *JSGlobalObject, value: JSValue) bool {
         if (Environment.allow_assert) {
-            std.debug.assert(this.has_written_version == 1);
+            bun.assert(this.has_written_version == 1);
         }
 
         const start_offset = this.writer.outgoing.list.items.len;
@@ -372,10 +372,10 @@ const NamedPipeIPCData = struct {
         const payload_length: usize = serialize(this, &this.writer.outgoing, global, value) catch
             return false;
 
-        std.debug.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
+        bun.assert(this.writer.outgoing.list.items.len == start_offset + payload_length);
 
         if (start_offset == 0) {
-            std.debug.assert(this.writer.outgoing.cursor == 0);
+            bun.assert(this.writer.outgoing.cursor == 0);
             if (this.connected) {
                 _ = this.writer.flush();
             }
@@ -497,7 +497,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         break :brk global;
                     }
                     this.handleIPCClose();
-                    socket.close(0, null);
+                    socket.close(.failure);
                     return;
                 },
                 else => @panic("Unexpected globalThis type: " ++ @typeName(@TypeOf(this.globalThis))),
@@ -516,7 +516,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                         error.InvalidFormat => {
                             Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                             this.handleIPCClose();
-                            socket.close(0, null);
+                            socket.close(.failure);
                             return;
                         },
                     };
@@ -546,7 +546,7 @@ fn NewSocketIPCHandler(comptime Context: type) type {
                     error.InvalidFormat => {
                         Output.printErrorln("InvalidFormatError during IPC message handling", .{});
                         this.handleIPCClose();
-                        socket.close(0, null);
+                        socket.close(.failure);
                         return;
                     },
                 };
@@ -634,8 +634,8 @@ fn NewNamedPipeIPCHandler(comptime Context: type) type {
             ipc.incoming.len += @as(u32, @truncate(buffer.len));
             var slice = ipc.incoming.slice();
 
-            std.debug.assert(ipc.incoming.len <= ipc.incoming.cap);
-            std.debug.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
+            bun.assert(ipc.incoming.len <= ipc.incoming.cap);
+            bun.assert(bun.isSliceInBuffer(buffer, ipc.incoming.allocatedSlice()));
 
             const globalThis = switch (@typeInfo(@TypeOf(this.globalThis))) {
                 .Pointer => this.globalThis,

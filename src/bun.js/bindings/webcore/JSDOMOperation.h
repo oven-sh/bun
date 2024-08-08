@@ -49,7 +49,7 @@ public:
     static JSC::EncodedJSValue call(JSC::JSGlobalObject& lexicalGlobalObject, JSC::CallFrame& callFrame, const char* operationName)
     {
         auto throwScope = DECLARE_THROW_SCOPE(JSC::getVM(&lexicalGlobalObject));
-        
+
         auto* thisObject = cast(lexicalGlobalObject, callFrame);
         if constexpr (shouldThrow != CastedThisErrorBehavior::Assert) {
             if (UNLIKELY(!thisObject))
@@ -58,7 +58,7 @@ public:
             ASSERT(thisObject);
 
         ASSERT_GC_OBJECT_INHERITS(thisObject, JSClass::info());
-        
+
         // FIXME: We should refactor the binding generated code to use references for lexicalGlobalObject and thisObject.
         RELEASE_AND_RETURN(throwScope, (operation(&lexicalGlobalObject, &callFrame, thisObject)));
     }
@@ -70,5 +70,16 @@ public:
         return operation(&lexicalGlobalObject, &callFrame);
     }
 };
+
+// Rewrite all usages of JSC::createNotEnoughArgumentsError to use our own version.
+// Our version adds the "code" property from Node.js.
+JSC::JSObject* createNotEnoughArgumentsErrorBun(JSGlobalObject* globalObject);
+
+#ifndef createNotEnoughArgumentsError
+#define createNotEnoughArgumentsError WebCore::createNotEnoughArgumentsErrorBun
+#endif
+
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, ASCIILiteral message);
+void throwNodeRangeError(JSGlobalObject* lexicalGlobalObject, ThrowScope& scope, const String& message);
 
 } // namespace WebCore

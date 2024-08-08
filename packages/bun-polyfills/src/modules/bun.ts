@@ -410,6 +410,21 @@ export const readableStreamToArrayBuffer = ((stream: ReadableStream<ArrayBufferV
         return sink.end() as ArrayBuffer;
     })();
 }) satisfies typeof Bun.readableStreamToArrayBuffer;
+
+export const readableStreamToBytes = ((stream: ReadableStream<ArrayBufferView | ArrayBufferLike>): Uint8Array | Promise<Uint8Array> => {
+    return (async () => {
+        const sink = new ArrayBufferSink();
+        sink.start({ asUint8Array: true });
+        const reader = stream.getReader();
+        while (true) {
+            const { done, value } = await reader.read();
+            if (done) break;
+            sink.write(value);
+        }
+        return sink.end() as Uint8Array;
+    })();
+}) satisfies typeof Bun.readableStreamToBytes;
+
 export const readableStreamToText = (async (stream: ReadableStream<ArrayBufferView | ArrayBuffer>) => {
     let result = '';
     const reader = stream.pipeThrough(new TextDecoderStream()).getReader(); ReadableStreamDefaultReader
@@ -445,16 +460,19 @@ export const readableStreamToJSON = (async <T = unknown>(stream: ReadableStream<
     }
 }) satisfies typeof Bun.readableStreamToJSON;
 
-export const concatArrayBuffers = ((buffers) => {
+export const concatArrayBuffers = ((buffers, maxLength = Infinity, asUint8Array = false) => {
     let size = 0;
     for (const chunk of buffers) size += chunk.byteLength;
+    size = Math.min(size, maxLength);
     const buffer = new ArrayBuffer(size);
     const view = new Uint8Array(buffer);
     let offset = 0;
     for (const chunk of buffers) {
+        if (offset > size) break;
         view.set(new Uint8Array(chunk instanceof ArrayBuffer || chunk instanceof SharedArrayBuffer ? chunk : chunk.buffer), offset);
         offset += chunk.byteLength;
     }
+    if (asUint8Array) return view;
     return buffer;
 }) satisfies typeof Bun.concatArrayBuffers;
 

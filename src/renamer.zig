@@ -12,7 +12,7 @@ const C = bun.C;
 const std = @import("std");
 const Ref = @import("./ast/base.zig").Ref;
 const RefCtx = @import("./ast/base.zig").RefCtx;
-const logger = @import("root").bun.logger;
+const logger = bun.logger;
 const JSLexer = @import("./js_lexer.zig");
 
 pub const NoOpRenamer = struct {
@@ -35,7 +35,7 @@ pub const NoOpRenamer = struct {
         if (renamer.symbols.getConst(resolved)) |symbol| {
             return symbol.original_name;
         } else {
-            Global.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
+            Output.panic("Invalid symbol {s} in {s}", .{ ref, renamer.source.path.text });
         }
     }
 
@@ -383,6 +383,7 @@ pub fn assignNestedScopeSlots(allocator: std.mem.Allocator, module_scope: *js_as
 
 pub fn assignNestedScopeSlotsHelper(sorted_members: *std.ArrayList(u32), scope: *js_ast.Scope, symbols: []js_ast.Symbol, slot_to_copy: js_ast.SlotCounts) js_ast.SlotCounts {
     var slot = slot_to_copy;
+
     // Sort member map keys for determinism
     {
         sorted_members.clearRetainingCapacity();
@@ -470,7 +471,7 @@ pub const NumberRenamer = struct {
     allocator: std.mem.Allocator,
     temp_allocator: std.mem.Allocator,
     number_scope_pool: bun.HiveArray(NumberScope, 128).Fallback,
-    arena: @import("root").bun.ArenaAllocator,
+    arena: bun.ArenaAllocator,
     root: NumberScope = .{},
     name_stack_fallback: std.heap.StackFallbackAllocator(512) = undefined,
     name_temp_allocator: std.mem.Allocator = undefined,
@@ -538,7 +539,7 @@ pub const NumberRenamer = struct {
             .temp_allocator = temp_allocator,
             .names = try allocator.alloc(bun.BabyList(string), symbols.symbols_for_source.len),
             .number_scope_pool = undefined,
-            .arena = @import("root").bun.ArenaAllocator.init(temp_allocator),
+            .arena = bun.ArenaAllocator.init(temp_allocator),
         };
         renamer.name_stack_fallback = .{
             .buffer = undefined,
@@ -549,7 +550,7 @@ pub const NumberRenamer = struct {
         renamer.number_scope_pool = bun.HiveArray(NumberScope, 128).Fallback.init(renamer.arena.allocator());
         renamer.root.name_counts = root_names;
         if (comptime Environment.allow_assert and !Environment.isWindows) {
-            if (std.os.getenv("BUN_DUMP_SYMBOLS") != null)
+            if (std.posix.getenv("BUN_DUMP_SYMBOLS") != null)
                 symbols.dump();
         }
 
@@ -587,12 +588,12 @@ pub const NumberRenamer = struct {
             var value_iter = scope.members.valueIterator();
             while (value_iter.next()) |value_ref| {
                 if (comptime Environment.allow_assert)
-                    std.debug.assert(!value_ref.ref.isSourceContentsSlice());
+                    bun.assert(!value_ref.ref.isSourceContentsSlice());
 
                 remaining[0] = value_ref.ref.innerIndex();
                 remaining = remaining[1..];
             }
-            std.debug.assert(remaining.len == 0);
+            bun.assert(remaining.len == 0);
             std.sort.pdq(u32, sorted.items, {}, std.sort.asc(u32));
 
             for (sorted.items) |inner_index| {
@@ -616,7 +617,7 @@ pub const NumberRenamer = struct {
         // Ignore function argument scopes
         if (scope.kind == .function_args and scope.children.len == 1) {
             scope = scope.children.ptr[0];
-            std.debug.assert(scope.kind == .function_body);
+            bun.assert(scope.kind == .function_body);
         }
 
         while (true) {
@@ -635,7 +636,7 @@ pub const NumberRenamer = struct {
                 scope = scope.children.ptr[0];
                 if (scope.kind == .function_args and scope.children.len == 1) {
                     scope = scope.children.ptr[0];
-                    std.debug.assert(scope.kind == .function_body);
+                    bun.assert(scope.kind == .function_body);
                 }
             } else {
                 break;
@@ -696,7 +697,7 @@ pub const NumberRenamer = struct {
             pub fn find(this: *NumberScope, name: []const u8) NameUse {
                 // This version doesn't allocate
                 if (comptime Environment.allow_assert)
-                    std.debug.assert(JSLexer.isIdentifier(name));
+                    bun.assert(JSLexer.isIdentifier(name));
 
                 // avoid rehashing the same string over for each scope
                 const ctx = bun.StringHashMapContext.pre(name);

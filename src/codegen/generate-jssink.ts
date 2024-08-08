@@ -491,6 +491,7 @@ JSC_DEFINE_HOST_FUNCTION(${name}__doClose, (JSC::JSGlobalObject * lexicalGlobalO
 class ${prototypeName} final : public JSC::JSNonFinalObject {
 public:
     using Base = JSC::JSNonFinalObject;
+    static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
     static ${prototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
     {
@@ -524,6 +525,7 @@ STATIC_ASSERT_ISO_SUBSPACE_SHARABLE(${prototypeName}, ${prototypeName}::Base);
 class ${controllerPrototypeName} final : public JSC::JSNonFinalObject {
     public:
         using Base = JSC::JSNonFinalObject;
+        static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
     
         static ${controllerPrototypeName}* create(JSC::VM& vm, JSGlobalObject* globalObject, JSC::Structure* structure)
         {
@@ -711,7 +713,7 @@ void ${className}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }
@@ -722,7 +724,7 @@ void ${controller}::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     if (void* wrapped = thisObject->wrapped()) {
         analyzer.setWrappedObjectForCell(cell, wrapped);
         // if (thisObject->scriptExecutionContext())
-        //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        //     analyzer.setLabelForCell(cell, makeString("url ", thisObject->scriptExecutionContext()->url().string()));
     }
     Base::analyzeHeap(cell, analyzer);
 }

@@ -11,7 +11,6 @@ const C = bun.C;
 
 const std = @import("std");
 const Allocator = std.mem.Allocator;
-const ComptimeStringMap = @import("../comptime_string_map.zig").ComptimeStringMap;
 
 // https://github.com/Vexu/zuri/blob/master/src/zuri.zig#L61-L127
 pub const PercentEncoding = struct {
@@ -31,7 +30,7 @@ pub const PercentEncoding = struct {
 
     /// returns true if str starts with a valid path character or a percent encoded octet
     pub fn isPchar(str: []const u8) bool {
-        if (comptime Environment.allow_assert) std.debug.assert(str.len > 0);
+        if (comptime Environment.allow_assert) bun.assert(str.len > 0);
         return switch (str[0]) {
             'a'...'z', 'A'...'Z', '0'...'9', '-', '.', '_', '~', '!', '$', '&', '\'', '(', ')', '*', '+', ',', ';', '=', ':', '@' => true,
             '%' => str.len >= 3 and isHex(str[1]) and isHex(str[2]),
@@ -122,7 +121,7 @@ pub const DataURL = struct {
             const len = bun.base64.decodeLen(percent_decoded);
             const buf = try allocator.alloc(u8, len);
             const result = bun.base64.decode(buf, percent_decoded);
-            if (result.fail or result.written != len) {
+            if (!result.isSuccessful() or result.count != len) {
                 return error.Base64DecodeError;
             }
             return buf;

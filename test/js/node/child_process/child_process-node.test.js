@@ -187,14 +187,17 @@ describe("ChildProcess spawn bad stdio", () => {
       var __originalSpawn = ChildProcess.prototype.spawn;
       ChildProcess.prototype.spawn = function () {
         const err = __originalSpawn.apply(this, arguments);
-
         this.stdout.destroy();
         this.stderr.destroy();
 
         return err;
       };
 
-      let cmd = `${bunExe()} ${import.meta.dir}/spawned-child.js`;
+      let cmd =
+        target === "sleep"
+          ? // The process can exit before returning which breaks tests.
+            ((target = ""), `${bunExe()} -e "setTimeout(() => {}, 100)"`)
+          : `${bunExe()} ${path.join(import.meta.dir, "spawned-child.js")}`;
       if (target) cmd += " " + target;
       const child = exec(cmd, options, async (err, stdout, stderr) => {
         try {
@@ -230,11 +233,15 @@ describe("ChildProcess spawn bad stdio", () => {
   });
 
   it("should handle killed process", async () => {
-    await createChild({ timeout: 1 }, (err, stdout, stderr) => {
-      strictEqual(err.killed, true);
-      strictEqual(stdout, "");
-      strictEqual(stderr, "");
-    });
+    await createChild(
+      { timeout: 1 },
+      (err, stdout, stderr) => {
+        strictEqual(err.killed, true);
+        strictEqual(stdout, "");
+        strictEqual(stderr, "");
+      },
+      "sleep",
+    );
   });
 });
 
@@ -644,13 +651,13 @@ describe("fork", () => {
     });
   });
   describe("args", () => {
-    it("Ensure that first argument `modulePath` must be provided and be of type string", () => {
-      const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
-      invalidModulePath.forEach(modulePath => {
+    const invalidModulePath = [0, true, undefined, null, [], {}, () => {}, Symbol("t")];
+    invalidModulePath.forEach(modulePath => {
+      it(`Ensure that first argument \`modulePath\` must be provided and be of type string :: ${String(modulePath)}`, () => {
         expect(() => fork(modulePath, { env: bunEnv })).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${modulePath?.toString()}`,
+          message: `The "modulePath" argument must be of type string,Buffer,URL. Received ${String(modulePath)}`,
         });
       });
     });
@@ -698,15 +705,15 @@ describe("fork", () => {
         });
       },
     );
-    it("Ensure that the third argument should be type of object if provided", () => {
-      const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
-      invalidThirdArgs.forEach(arg => {
+    const invalidThirdArgs = [0, true, () => {}, Symbol("t")];
+    invalidThirdArgs.forEach(arg => {
+      it(`Ensure that the third argument should be type of object if provided :: ${String(arg)}`, () => {
         expect(() => {
           fork(fixtures.path("child-process-echo-options.js"), [], arg);
         }).toThrow({
           code: "ERR_INVALID_ARG_TYPE",
           name: "TypeError",
-          message: `The \"options\" argument must be of type object. Received ${arg?.toString()}`,
+          message: `The "options" argument must be of type object. Received ${String(arg)}`,
         });
       });
     });

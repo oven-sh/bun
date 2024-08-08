@@ -4,15 +4,14 @@ const bun = @import("root").bun;
 const C = bun.C;
 const string = bun.string;
 const strings = bun.strings;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const Environment = bun.Environment;
 const Global = bun.Global;
 const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
-const heap_allocator = bun.default_allocator;
 
 const libuv = bun.windows.libuv;
 pub const OS = struct {
-    pub fn create(globalObject: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn create(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
         const module = JSC.JSValue.createEmptyObject(globalObject, 16);
 
         module.put(globalObject, JSC.ZigString.static("cpus"), JSC.NewFunction(globalObject, JSC.ZigString.static("cpus"), 0, cpus, true));
@@ -52,7 +51,7 @@ pub const OS = struct {
         }
     };
 
-    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn cpus(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         return switch (Environment.os) {
@@ -63,11 +62,11 @@ pub const OS = struct {
         } catch {
             const err = JSC.SystemError{
                 .message = bun.String.static("Failed to get cpu information"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static(@tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR)),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
     }
 
@@ -76,25 +75,25 @@ pub const OS = struct {
         const values = JSC.JSValue.createEmptyArray(globalThis, 0);
         var num_cpus: u32 = 0;
 
-        // Use a large line buffer because the /proc/stat file can have a very long list of interrupts
-        var line_buffer: [1024 * 8]u8 = undefined;
+        var stack_fallback = std.heap.stackFallback(1024 * 8, bun.default_allocator);
+        var file_buf = std.ArrayList(u8).init(stack_fallback.get());
+        defer file_buf.deinit();
 
         // Read /proc/stat to get number of CPUs and times
         if (std.fs.openFileAbsolute("/proc/stat", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+            defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
+
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             // Skip the first line (aggregate of all CPUs)
-            // TODO: use indexOfNewline
-            try reader.skipUntilDelimiterOrEof('\n');
+            _ = line_iter.next();
 
             // Read each CPU line
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
-
+            while (line_iter.next()) |line| {
                 // CPU lines are formatted as `cpu0 user nice sys idle iowait irq softirq`
                 var toks = std.mem.tokenize(u8, line, " \t");
                 const cpu_name = toks.next();
@@ -125,35 +124,46 @@ pub const OS = struct {
         // Read /proc/cpuinfo to get model information (optional)
         if (std.fs.openFileAbsolute("/proc/cpuinfo", .{})) |file| {
             defer file.close();
-            // TODO: remove all usages of file.reader(). zig's std.io.Reader()
-            // is extremely slow and should rarely ever be used in Bun until
-            // that is fixed.
-            var buffered_reader = std.io.BufferedReader(8192, @TypeOf(file.reader())){ .unbuffered_reader = file.reader() };
-            var reader = buffered_reader.reader();
+
+            const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+            defer file_buf.clearRetainingCapacity();
+            const contents = file_buf.items[0..read];
+
+            var line_iter = std.mem.tokenizeScalar(u8, contents, '\n');
 
             const key_processor = "processor\t: ";
             const key_model_name = "model name\t: ";
 
             var cpu_index: u32 = 0;
-            while (try reader.readUntilDelimiterOrEof(&line_buffer, '\n')) |line| {
+            var has_model_name = true;
+            while (line_iter.next()) |line| {
                 if (strings.hasPrefixComptime(line, key_processor)) {
+                    if (!has_model_name) {
+                        const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                        cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
+                    }
                     // If this line starts a new processor, parse the index from the line
                     const digits = std.mem.trim(u8, line[key_processor.len..], " \t\n");
                     cpu_index = try std.fmt.parseInt(u32, digits, 10);
                     if (cpu_index >= num_cpus) return error.too_may_cpus;
+                    has_model_name = false;
                 } else if (strings.hasPrefixComptime(line, key_model_name)) {
                     // If this is the model name, extract it and store on the current cpu
                     const model_name = line[key_model_name.len..];
                     const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
-                    cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toValueGC(globalThis));
+                    cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(model_name).withEncoding().toJS(globalThis));
+                    has_model_name = true;
                 }
-                //TODO: special handling for ARM64 (no model name)?
+            }
+            if (!has_model_name) {
+                const cpu = JSC.JSObject.getIndex(values, globalThis, cpu_index);
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
             }
         } else |_| {
             // Initialize model name to "unknown"
             var it = values.arrayIterator(globalThis);
             while (it.next()) |cpu| {
-                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toValue(globalThis));
+                cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.static("unknown").withEncoding().toJS(globalThis));
             }
         }
 
@@ -166,8 +176,11 @@ pub const OS = struct {
             if (std.fs.openFileAbsolute(path, .{})) |file| {
                 defer file.close();
 
-                const bytes_read = try file.readAll(&line_buffer);
-                const digits = std.mem.trim(u8, line_buffer[0..bytes_read], " \n");
+                const read = try bun.sys.File.from(file).readToEndWithArrayList(&file_buf).unwrap();
+                defer file_buf.clearRetainingCapacity();
+                const contents = file_buf.items[0..read];
+
+                const digits = std.mem.trim(u8, contents, " \n");
                 const speed = (std.fmt.parseInt(u64, digits, 10) catch 0) / 1000;
 
                 cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(speed));
@@ -211,7 +224,7 @@ pub const OS = struct {
         //NOTE: sysctlbyname doesn't update len if it was large enough, so we
         // still have to find the null terminator.  All cpus can share the same
         // model name.
-        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toValueGC(globalThis);
+        const model_name = JSC.ZigString.init(std.mem.sliceTo(&model_name_buf, 0)).withEncoding().toJS(globalThis);
 
         // Get CPU speed
         var speed: u64 = 0;
@@ -271,7 +284,7 @@ pub const OS = struct {
             };
 
             const cpu = JSC.JSValue.createEmptyObject(globalThis, 3);
-            cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(bun.span(cpu_info.model)).withEncoding().toValueGC(globalThis));
+            cpu.put(globalThis, JSC.ZigString.static("model"), JSC.ZigString.init(bun.span(cpu_info.model)).withEncoding().toJS(globalThis));
             cpu.put(globalThis, JSC.ZigString.static("speed"), JSC.JSValue.jsNumber(cpu_info.speed));
             cpu.put(globalThis, JSC.ZigString.static("times"), times.toValue(globalThis));
 
@@ -281,33 +294,30 @@ pub const OS = struct {
         return values;
     }
 
-    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn endianness(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
-        return JSC.ZigString.init("LE").withEncoding().toValue(globalThis);
+        return JSC.ZigString.init("LE").withEncoding().toJS(globalThis);
     }
 
-    pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn freemem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.JSValue.jsNumberFromUint64(C.getFreeMemory());
     }
 
-    pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn getPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         var args_ = callframe.arguments(1);
         const arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
         if (arguments.len > 0 and !arguments[0].isNumber()) {
-            const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+            globalThis.ERR_INVALID_ARG_TYPE(
                 "getPriority() expects a number",
                 .{},
-                globalThis,
-            );
-            globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            ).throw();
+            return .undefined;
         }
 
         const pid = if (arguments.len > 0) arguments[0].asInt32() else 0;
@@ -322,20 +332,20 @@ pub const OS = struct {
 
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: uv_os_getpriority returned ESRCH (no such process)"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
                 //.info = info,
                 .errno = -3,
                 .syscall = bun.String.static("uv_os_getpriority"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         return JSC.JSValue.jsNumberFromInt32(priority);
     }
 
-    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn homedir(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         const dir: []const u8 = brk: {
@@ -350,10 +360,10 @@ pub const OS = struct {
             break :brk "unknown";
         };
 
-        return JSC.ZigString.init(dir).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(dir).withEncoding().toJS(globalThis);
     }
 
-    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn hostname(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows) {
@@ -373,15 +383,15 @@ pub const OS = struct {
                 }
             }
 
-            return JSC.ZigString.init("unknown").withEncoding().toValueGC(globalThis);
+            return JSC.ZigString.init("unknown").withEncoding().toJS(globalThis);
         }
 
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
 
-        return JSC.ZigString.init(std.os.gethostname(&name_buffer) catch "unknown").withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(std.posix.gethostname(&name_buffer) catch "unknown").withEncoding().toJS(globalThis);
     }
 
-    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn loadavg(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         const result = C.getSystemLoadavg();
@@ -392,7 +402,7 @@ pub const OS = struct {
         });
     }
 
-    pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn networkInterfaces(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         return switch (Environment.os) {
             .windows => networkInterfacesWindows(globalThis),
             else => networkInterfacesPosix(globalThis),
@@ -406,13 +416,13 @@ pub const OS = struct {
         if (rc != 0) {
             const err = JSC.SystemError{
                 .message = bun.String.static("A system error occurred: getifaddrs returned an error"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
-                .errno = @intFromEnum(std.os.errno(rc)),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
+                .errno = @intFromEnum(std.posix.errno(rc)),
                 .syscall = bun.String.static("getifaddrs"),
             };
 
             globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         defer C.freeifaddrs(interface_start);
 
@@ -432,9 +442,9 @@ pub const OS = struct {
             pub fn isLinkLayer(iface: *C.ifaddrs) bool {
                 if (iface.ifa_addr == null) return false;
                 return if (comptime Environment.isLinux)
-                    return iface.ifa_addr.*.sa_family == std.os.AF.PACKET
+                    return iface.ifa_addr.*.sa_family == std.posix.AF.PACKET
                 else if (comptime Environment.isMac)
-                    return iface.ifa_addr.?.*.family == std.os.AF.LINK
+                    return iface.ifa_addr.?.*.family == std.posix.AF.LINK
                 else
                     unreachable;
             }
@@ -464,8 +474,8 @@ pub const OS = struct {
             if (helpers.skip(iface) or helpers.isLinkLayer(iface)) continue;
 
             const interface_name = std.mem.sliceTo(iface.ifa_name, 0);
-            const addr = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_addr))));
-            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.os.sockaddr, @ptrCast(iface.ifa_netmask))));
+            const addr = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_addr))));
+            const netmask = std.net.Address.initPosix(@alignCast(@as(*std.posix.sockaddr, @ptrCast(iface.ifa_netmask))));
 
             var interface = JSC.JSValue.createEmptyObject(globalThis, 7);
 
@@ -475,8 +485,8 @@ pub const OS = struct {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (addr.any.family) {
-                    std.os.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
+                    std.posix.AF.INET => netmaskToCIDRSuffix(netmask.in.sa.addr),
+                    std.posix.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(netmask.in6.sa.addr))),
                     else => null,
                 };
 
@@ -493,10 +503,10 @@ pub const OS = struct {
                     const suffix_str = std.fmt.bufPrint(buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
                     // The full cidr value is the address + the suffix
                     const cidr_str = buf[start .. start + addr_str.len + suffix_str.len];
-                    cidr = JSC.ZigString.init(cidr_str).withEncoding().toValueGC(globalThis);
+                    cidr = JSC.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
                 }
 
-                interface.put(globalThis, JSC.ZigString.static("address"), JSC.ZigString.init(addr_str).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("address"), JSC.ZigString.init(addr_str).withEncoding().toJS(globalThis));
                 interface.put(globalThis, JSC.ZigString.static("cidr"), cidr);
             }
 
@@ -504,15 +514,15 @@ pub const OS = struct {
             {
                 var buf: [64]u8 = undefined;
                 const str = bun.fmt.formatIp(netmask, &buf) catch unreachable;
-                interface.put(globalThis, JSC.ZigString.static("netmask"), JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("netmask"), JSC.ZigString.init(str).withEncoding().toJS(globalThis));
             }
 
             // family <string> Either IPv4 or IPv6
             interface.put(globalThis, JSC.ZigString.static("family"), (switch (addr.any.family) {
-                std.os.AF.INET => JSC.ZigString.static("IPv4"),
-                std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                std.posix.AF.INET => JSC.ZigString.static("IPv4"),
+                std.posix.AF.INET6 => JSC.ZigString.static("IPv6"),
                 else => JSC.ZigString.static("unknown"),
-            }).toValueGC(globalThis));
+            }).toJS(globalThis));
 
             // mac <string> The MAC address of the network interface
             {
@@ -528,7 +538,7 @@ pub const OS = struct {
                     // This is the correct link-layer interface entry for the current interface,
                     //  cast to a link-layer socket address
                     if (comptime Environment.isLinux) {
-                        break @as(?*std.os.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
+                        break @as(?*std.posix.sockaddr.ll, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else if (comptime Environment.isMac) {
                         break @as(?*C.sockaddr_dl, @ptrCast(@alignCast(ll_iface.ifa_addr)));
                     } else {
@@ -541,14 +551,19 @@ pub const OS = struct {
                     //  hex characters and 5 for the colon separators
                     var mac_buf: [17]u8 = undefined;
                     const addr_data = if (comptime Environment.isLinux) ll_addr.addr else if (comptime Environment.isMac) ll_addr.sdl_data[ll_addr.sdl_nlen..] else @compileError("unreachable");
-                    const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
-                        addr_data[0], addr_data[1], addr_data[2],
-                        addr_data[3], addr_data[4], addr_data[5],
-                    }) catch unreachable;
-                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    if (addr_data.len < 6) {
+                        const mac = "00:00:00:00:00:00";
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    } else {
+                        const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
+                            addr_data[0], addr_data[1], addr_data[2],
+                            addr_data[3], addr_data[4], addr_data[5],
+                        }) catch unreachable;
+                        interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toJS(globalThis));
+                    }
                 } else {
                     const mac = "00:00:00:00:00:00";
-                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                    interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toJS(globalThis));
                 }
             }
 
@@ -556,7 +571,7 @@ pub const OS = struct {
             interface.put(globalThis, JSC.ZigString.static("internal"), JSC.JSValue.jsBoolean(helpers.isLoopback(iface)));
 
             // scopeid <number> The numeric IPv6 scope ID (only specified when family is IPv6)
-            if (addr.any.family == std.os.AF.INET6) {
+            if (addr.any.family == std.posix.AF.INET6) {
                 interface.put(globalThis, JSC.ZigString.static("scope_id"), JSC.JSValue.jsNumber(addr.in6.sa.scope_id));
             }
 
@@ -584,7 +599,7 @@ pub const OS = struct {
         if (err != 0) {
             const sys_err = JSC.SystemError{
                 .message = bun.String.static("uv_interface_addresses failed"),
-                .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                .code = bun.String.static("ERR_SYSTEM_ERROR"),
                 //.info = info,
                 .errno = err,
                 .syscall = bun.String.static("uv_interface_addresses"),
@@ -610,8 +625,8 @@ pub const OS = struct {
                 // Compute the CIDR suffix; returns null if the netmask cannot
                 //  be converted to a CIDR suffix
                 const maybe_suffix: ?u8 = switch (iface.address.address4.family) {
-                    std.os.AF.INET => netmaskToCIDRSuffix(iface.netmask.netmask4.addr),
-                    std.os.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(iface.netmask.netmask6.addr))),
+                    std.posix.AF.INET => netmaskToCIDRSuffix(iface.netmask.netmask4.addr),
+                    std.posix.AF.INET6 => netmaskToCIDRSuffix(@as(u128, @bitCast(iface.netmask.netmask6.addr))),
                     else => null,
                 };
 
@@ -630,10 +645,10 @@ pub const OS = struct {
                     const suffix_str = std.fmt.bufPrint(ip_buf[start + addr_str.len ..], "/{}", .{suffix}) catch unreachable;
                     // The full cidr value is the address + the suffix
                     const cidr_str = ip_buf[start .. start + addr_str.len + suffix_str.len];
-                    cidr = JSC.ZigString.init(cidr_str).withEncoding().toValueGC(globalThis);
+                    cidr = JSC.ZigString.init(cidr_str).withEncoding().toJS(globalThis);
                 }
 
-                interface.put(globalThis, JSC.ZigString.static("address"), JSC.ZigString.init(addr_str).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("address"), JSC.ZigString.init(addr_str).withEncoding().toJS(globalThis));
             }
 
             // netmask
@@ -643,14 +658,14 @@ pub const OS = struct {
                     std.net.Address.initPosix(@ptrCast(&iface.netmask.netmask4)),
                     &ip_buf,
                 ) catch unreachable;
-                interface.put(globalThis, JSC.ZigString.static("netmask"), JSC.ZigString.init(str).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("netmask"), JSC.ZigString.init(str).withEncoding().toJS(globalThis));
             }
             // family
             interface.put(globalThis, JSC.ZigString.static("family"), (switch (iface.address.address4.family) {
-                std.os.AF.INET => JSC.ZigString.static("IPv4"),
-                std.os.AF.INET6 => JSC.ZigString.static("IPv6"),
+                std.posix.AF.INET => JSC.ZigString.static("IPv4"),
+                std.posix.AF.INET6 => JSC.ZigString.static("IPv6"),
                 else => JSC.ZigString.static("unknown"),
-            }).toValueGC(globalThis));
+            }).toJS(globalThis));
 
             // mac
             {
@@ -658,7 +673,7 @@ pub const OS = struct {
                 const mac = std.fmt.bufPrint(&mac_buf, "{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}:{x:0>2}", .{
                     phys[0], phys[1], phys[2], phys[3], phys[4], phys[5],
                 }) catch unreachable;
-                interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toValueGC(globalThis));
+                interface.put(globalThis, JSC.ZigString.static("mac"), JSC.ZigString.init(mac).withEncoding().toJS(globalThis));
             }
 
             // internal
@@ -670,7 +685,7 @@ pub const OS = struct {
             interface.put(globalThis, JSC.ZigString.static("cidr"), cidr);
 
             // scopeid
-            if (iface.address.address4.family == std.os.AF.INET6) {
+            if (iface.address.address4.family == std.posix.AF.INET6) {
                 interface.put(globalThis, JSC.ZigString.static("scopeid"), JSC.JSValue.jsNumber(iface.address.address6.scope_id));
             }
 
@@ -692,19 +707,19 @@ pub const OS = struct {
         return ret;
     }
 
-    pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn platform(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
-        return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(Global.os_name).withEncoding().toJS(globalThis);
     }
 
-    pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn release(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-        return JSC.ZigString.init(C.getRelease(&name_buffer)).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(C.getRelease(&name_buffer)).withEncoding().toJS(globalThis);
     }
 
-    pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn setPriority(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         var args_ = callframe.arguments(2);
@@ -712,13 +727,13 @@ pub const OS = struct {
 
         if (arguments.len == 0) {
             const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE,
+                .ERR_INVALID_ARG_TYPE,
                 "The \"priority\" argument must be of type number. Received undefined",
                 .{},
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const pid = if (arguments.len == 2) arguments[0].coerce(i32, globalThis) else 0;
@@ -726,13 +741,13 @@ pub const OS = struct {
 
         if (priority < -20 or priority > 19) {
             const err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_OUT_OF_RANGE,
+                .ERR_OUT_OF_RANGE,
                 "The value of \"priority\" is out of range. It must be >= -20 && <= 19",
                 .{},
                 globalThis,
             );
             globalThis.vm().throwError(globalThis, err);
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const errcode = C.setProcessPriority(pid, priority);
@@ -740,60 +755,60 @@ pub const OS = struct {
             .SRCH => {
                 const err = JSC.SystemError{
                     .message = bun.String.static("A system error occurred: uv_os_setpriority returned ESRCH (no such process)"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
                     //.info = info,
                     .errno = -3,
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             .ACCES => {
                 const err = JSC.SystemError{
                     .message = bun.String.static("A system error occurred: uv_os_setpriority returned EACCESS (permission denied)"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static(@tagName(.ERR_SYSTEM_ERROR)),
                     //.info = info,
                     .errno = -13,
                     .syscall = bun.String.static("uv_os_setpriority"),
                 };
 
                 globalThis.vm().throwError(globalThis, err.toErrorInstance(globalThis));
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             },
             else => {},
         }
 
-        return JSC.JSValue.jsUndefined();
+        return .undefined;
     }
 
-    pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn totalmem(_: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         return JSC.JSValue.jsNumberFromUint64(C.getTotalMemory());
     }
 
-    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn @"type"(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
 
         if (comptime Environment.isWindows)
-            return JSC.ZigString.static("Windows_NT").toValue(globalThis)
+            return JSC.ZigString.static("Windows_NT").toJS(globalThis)
         else if (comptime Environment.isMac)
-            return JSC.ZigString.static("Darwin").toValue(globalThis)
+            return JSC.ZigString.static("Darwin").toJS(globalThis)
         else if (comptime Environment.isLinux)
-            return JSC.ZigString.static("Linux").toValue(globalThis);
+            return JSC.ZigString.static("Linux").toJS(globalThis);
 
-        return JSC.ZigString.init(Global.os_name).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(Global.os_name).withEncoding().toJS(globalThis);
     }
 
-    pub fn uptime(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn uptime(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         if (Environment.isWindows) {
             var uptime_value: f64 = undefined;
             const err = libuv.uv_uptime(&uptime_value);
             if (err != 0) {
                 const sys_err = JSC.SystemError{
                     .message = bun.String.static("failed to get system uptime"),
-                    .code = bun.String.static(@as(string, @tagName(JSC.Node.ErrorCode.ERR_SYSTEM_ERROR))),
+                    .code = bun.String.static("ERR_SYSTEM_ERROR"),
                     .errno = err,
                     .syscall = bun.String.static("uv_uptime"),
                 };
@@ -806,41 +821,36 @@ pub const OS = struct {
         return JSC.JSValue.jsNumberFromUint64(C.getSystemUptime());
     }
 
-    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn userInfo(globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSC.JSValue {
         const result = JSC.JSValue.createEmptyObject(globalThis, 5);
 
         result.put(globalThis, JSC.ZigString.static("homedir"), homedir(globalThis, callframe));
 
         if (comptime Environment.isWindows) {
-            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(bun.getenvZ("USERNAME") orelse "unknown").withEncoding().toJS(globalThis));
             result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(-1));
             result.put(globalThis, JSC.ZigString.static("shell"), JSC.JSValue.jsNull());
         } else {
             const username = bun.getenvZ("USER") orelse "unknown";
 
-            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toValueGC(globalThis));
-            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toValueGC(globalThis));
+            result.put(globalThis, JSC.ZigString.static("username"), JSC.ZigString.init(username).withEncoding().toJS(globalThis));
+            result.put(globalThis, JSC.ZigString.static("shell"), JSC.ZigString.init(bun.getenvZ("SHELL") orelse "unknown").withEncoding().toJS(globalThis));
 
-            if (comptime Environment.isLinux) {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(std.os.linux.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(std.os.linux.getgid()));
-            } else {
-                result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.darwin.getuid()));
-                result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.darwin.getgid()));
-            }
+            result.put(globalThis, JSC.ZigString.static("uid"), JSC.JSValue.jsNumber(C.getuid()));
+            result.put(globalThis, JSC.ZigString.static("gid"), JSC.JSValue.jsNumber(C.getgid()));
         }
 
         return result;
     }
 
-    pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn version(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
         var name_buffer: [bun.HOST_NAME_MAX]u8 = undefined;
-        return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toValueGC(globalThis);
+        return JSC.ZigString.init(C.getVersion(&name_buffer)).withEncoding().toJS(globalThis);
     }
 
-    inline fn getMachineName() []const u8 {
+    inline fn getMachineName() [:0]const u8 {
         return switch (@import("builtin").target.cpu.arch) {
             .arm => "arm",
             .aarch64 => "arm64",
@@ -855,9 +865,9 @@ pub const OS = struct {
         };
     }
 
-    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+    pub fn machine(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSC.JSValue {
         JSC.markBinding(@src());
-        return JSC.ZigString.static(comptime getMachineName()).toValue(globalThis);
+        return JSC.ZigString.static(comptime getMachineName()).toJS(globalThis);
     }
 };
 
@@ -865,7 +875,7 @@ pub const OS = struct {
 /// `@TypeOf(mask)` must be one of u32 (IPv4) or u128 (IPv6)
 fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const T = @TypeOf(mask);
-    comptime std.debug.assert(T == u32 or T == u128);
+    comptime bun.assert(T == u32 or T == u128);
 
     const mask_bits = @byteSwap(mask);
 
@@ -874,45 +884,4 @@ fn netmaskToCIDRSuffix(mask: anytype) ?u8 {
     const last_one = @bitSizeOf(T) - @ctz(mask_bits);
     if (first_zero < @bitSizeOf(T) and first_zero < last_one) return null;
     return first_zero;
-}
-test "netmaskToCIDRSuffix" {
-    const ipv4_tests = .{
-        .{ "255.255.255.255", 32 },
-        .{ "255.255.255.254", 31 },
-        .{ "255.255.255.252", 30 },
-        .{ "255.255.255.128", 25 },
-        .{ "255.255.255.0", 24 },
-        .{ "255.255.128.0", 17 },
-        .{ "255.255.0.0", 16 },
-        .{ "255.128.0.0", 9 },
-        .{ "255.0.0.0", 8 },
-        .{ "224.0.0.0", 3 },
-        .{ "192.0.0.0", 2 },
-        .{ "128.0.0.0", 1 },
-        .{ "0.0.0.0", 0 },
-
-        // invalid masks
-        .{ "255.0.0.255", null },
-        .{ "128.0.0.255", null },
-        .{ "128.0.0.1", null },
-    };
-    inline for (ipv4_tests) |t| {
-        const addr = try std.net.Address.parseIp4(t[0], 0);
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(addr.in.sa.addr));
-    }
-
-    const ipv6_tests = .{
-        .{ "ffff:ffff:ffff:ffff:ffff:ffff:ffff:ffff", 128 },
-        .{ "ffff:ffff:ffff:ffff::", 64 },
-        .{ "::", 0 },
-
-        // invalid masks
-        .{ "ff00:1::", null },
-        .{ "0:1::", null },
-    };
-    inline for (ipv6_tests) |t| {
-        const addr = try std.net.Address.parseIp6(t[0], 0);
-        const bits = @as(u128, @bitCast(addr.in6.sa.addr));
-        try std.testing.expectEqual(@as(?u8, t[1]), netmaskToCIDRSuffix(bits));
-    }
 }

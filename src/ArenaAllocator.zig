@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 const mem = std.mem;
 const Allocator = std.mem.Allocator;
 
@@ -132,7 +133,7 @@ pub const ArenaAllocator = struct {
             self.child_allocator.rawFree(alloc_buf, align_bits, @returnAddress());
             it = next_it;
         } else null;
-        std.debug.assert(maybe_first_node == null or maybe_first_node.?.next == null);
+        assert(maybe_first_node == null or maybe_first_node.?.next == null);
         // reset the state before we try resizing the buffers, so we definitely have reset the arena to 0.
         self.state.end_index = 0;
         if (maybe_first_node) |first_node| {
@@ -245,42 +246,3 @@ pub const ArenaAllocator = struct {
         }
     }
 };
-
-test "ArenaAllocator (reset with preheating)" {
-    var arena_allocator = ArenaAllocator.init(std.testing.allocator);
-    defer arena_allocator.deinit();
-    // provides some variance in the allocated data
-    var rng_src = std.rand.DefaultPrng.init(19930913);
-    const random = rng_src.random();
-    var rounds: usize = 25;
-    while (rounds > 0) {
-        rounds -= 1;
-        _ = arena_allocator.reset(.retain_capacity);
-        var alloced_bytes: usize = 0;
-        const total_size: usize = random.intRangeAtMost(usize, 256, 16384);
-        while (alloced_bytes < total_size) {
-            const size = random.intRangeAtMost(usize, 16, 256);
-            const alignment = 32;
-            const slice = try arena_allocator.allocator().alignedAlloc(u8, alignment, size);
-            try std.testing.expect(std.mem.isAligned(@intFromPtr(slice.ptr), alignment));
-            try std.testing.expectEqual(size, slice.len);
-            alloced_bytes += slice.len;
-        }
-    }
-}
-
-test "ArenaAllocator (reset while retaining a buffer)" {
-    var arena_allocator = ArenaAllocator.init(std.testing.allocator);
-    defer arena_allocator.deinit();
-    const a = arena_allocator.allocator();
-
-    // Create two internal buffers
-    _ = try a.alloc(u8, 1);
-    _ = try a.alloc(u8, 1000);
-
-    // Check that we have at least two buffers
-    try std.testing.expect(arena_allocator.state.buffer_list.first.?.next != null);
-
-    // This retains the first allocated buffer
-    try std.testing.expect(arena_allocator.reset(.{ .retain_with_limit = 1 }));
-}

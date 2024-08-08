@@ -1,4 +1,5 @@
 const std = @import("std");
+const bun = @import("root").bun;
 
 const debug = std.debug;
 const heap = std.heap;
@@ -251,7 +252,7 @@ fn testDiag(diag: Diagnostic, err: anyerror, expected: []const u8) void {
 
 pub fn Args(comptime Id: type, comptime params: []const Param(Id)) type {
     return struct {
-        arena: @import("root").bun.ArenaAllocator,
+        arena: bun.ArenaAllocator,
         clap: ComptimeClap(Id, params),
         exe_arg: ?[]const u8,
 
@@ -484,7 +485,7 @@ pub fn simpleHelp(
         if (desc_text.len == 0) continue;
 
         // create a string with spaces_len spaces
-        const default_allocator = @import("root").bun.default_allocator;
+        const default_allocator = bun.default_allocator;
 
         const flags_len = if (param.names.long) |l| l.len else 0;
         const num_spaces_after = max_spacing - flags_len;

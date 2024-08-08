@@ -1,17 +1,16 @@
-import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { bunEnv, bunExe } from "../../../harness";
+import { afterAll, beforeAll, expect, test } from "bun:test";
+import { bunEnv, bunExe, isCI, isWindows, tmpdirSync, toMatchNodeModulesAt } from "../../../harness";
 import { Subprocess } from "bun";
-import { copyFileSync, rmSync } from "fs";
+import { copyFileSync } from "fs";
 import { join } from "path";
 import { StringDecoder } from "string_decoder";
 import { cp, rm } from "fs/promises";
+import { install_test_helpers } from "bun:internal-for-testing";
+const { parseLockfile } = install_test_helpers;
 
-import { tmpdir } from "node:os";
+expect.extend({ toMatchNodeModulesAt });
 
-let root = join(
-  tmpdir(),
-  "bun-next-default-pages-dir-" + Math.random().toString(36).slice(2) + "-" + Date.now().toString(36),
-);
+let root = tmpdirSync();
 
 beforeAll(async () => {
   await rm(root, { recursive: true, force: true });
@@ -24,7 +23,8 @@ let dev_server: undefined | Subprocess<"ignore", "pipe", "inherit">;
 let baseUrl: string;
 let dev_server_pid: number | undefined = undefined;
 async function getDevServerURL() {
-  dev_server = Bun.spawn([bunExe(), "--bun", "node_modules/.bin/next", "dev", "--port=0"], {
+  console.log("Starting Next.js dev server");
+  dev_server = Bun.spawn([bunExe(), "--bun", "run", "next", "dev", "--port=0"], {
     cwd: root,
     env: {
       ...bunEnv,
@@ -34,7 +34,6 @@ async function getDevServerURL() {
     },
     stdio: ["ignore", "pipe", "inherit"],
   });
-  dev_server.unref();
   dev_server.stdout?.unref?.();
   var hasLoaded = false;
   dev_server_pid = dev_server.pid;
@@ -52,6 +51,7 @@ async function getDevServerURL() {
       }
     })
     .finally(() => {
+      console.log("Closing Next.js dev server");
       dev_server = undefined;
       dev_server_pid = undefined;
     });
@@ -76,7 +76,11 @@ async function getDevServerURL() {
     }
   }
 
-  readStream();
+  readStream()
+    .catch(e => reject(e))
+    .finally(() => {
+      dev_server.unref?.();
+    });
   await promise;
   return baseUrl;
 }
@@ -86,13 +90,14 @@ beforeAll(async () => {
 
   const install = Bun.spawnSync([bunExe(), "i"], {
     cwd: root,
-    env: bunEnv,
+    env: { ...bunEnv, BUN_INSTALL_CACHE_DIR: join(root, ".bun-install") },
     stdout: "inherit",
     stderr: "inherit",
     stdin: "inherit",
   });
   if (!install.success) {
-    throw new Error("Failed to install dependencies");
+    const reason = install.signalCode || `code ${install.exitCode}`;
+    throw new Error(`Failed to install dependencies: ${reason}`);
   }
 
   try {
@@ -111,66 +116,47 @@ afterAll(() => {
   }
 });
 
-test("ssr works for 100-ish requests", async () => {
-  expect(dev_server).not.toBeUndefined();
-  expect(baseUrl).not.toBeUndefined();
+// Chrome for Testing doesn't support arm64 yet
+//
+// https://github.com/GoogleChromeLabs/chrome-for-testing/issues/1
+// https://github.com/puppeteer/puppeteer/issues/7740
+const puppeteer_unsupported = process.platform === "linux" && process.arch === "arm64";
 
-  const batchSize = 16;
-  const promises = [];
-  for (let j = 0; j < 100; j += batchSize) {
-    for (let i = j; i < j + batchSize; i++) {
-      promises.push(
-        (async () => {
-          const x = await fetch(`${baseUrl}/?i=${i}`, {
-            headers: {
-              "Cache-Control": "private, no-cache, no-store, must-revalidate",
-            },
-          });
-          expect(x.status).toBe(200);
-          const text = await x.text();
-          console.count("Completed request");
-          expect(text).toContain(`>${Bun.version}</code>`);
-        })(),
-      );
-    }
-    await Promise.allSettled(promises);
-  }
+// https://github.com/oven-sh/bun/issues/11255
+test.skipIf(puppeteer_unsupported || (isWindows && isCI))(
+  "hot reloading works on the client (+ tailwind hmr)",
+  async () => {
+    expect(dev_server).not.toBeUndefined();
+    expect(baseUrl).not.toBeUndefined();
 
-  const x = await Promise.allSettled(promises);
-  const failing = x.filter(x => x.status === "rejected").map(x => x.reason!);
-  if (failing.length) {
-    throw new AggregateError(failing, failing.length + " requests failed", {});
-  }
-  for (const y of x) {
-    expect(y.status).toBe("fulfilled");
-  }
-}, 100000);
+    const lockfile = parseLockfile(root);
+    expect(lockfile).toMatchNodeModulesAt(root);
+    expect(lockfile).toMatchSnapshot();
 
-test("hot reloading works on the client (+ tailwind hmr)", async () => {
-  expect(dev_server).not.toBeUndefined();
-  expect(baseUrl).not.toBeUndefined();
-  var pid: number, exited;
-  let timeout = setTimeout(() => {
-    if (timeout && pid) {
-      process.kill?.(pid);
-      pid = 0;
+    var pid: number, exited;
+    let timeout = setTimeout(() => {
+      if (timeout && pid) {
+        process.kill?.(pid);
+        pid = 0;
 
-      if (dev_server_pid) {
-        process?.kill?.(dev_server_pid);
-        dev_server_pid = undefined;
+        if (dev_server_pid) {
+          process?.kill?.(dev_server_pid);
+          dev_server_pid = undefined;
+        }
       }
-    }
-  }, 30000).unref();
+    }, 30000).unref();
 
-  ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
-    cwd: root,
-    env: bunEnv,
-    stdio: ["ignore", "inherit", "inherit"],
-  }));
+    ({ exited, pid } = Bun.spawn([bunExe(), "test/dev-server-puppeteer.ts", baseUrl], {
+      cwd: root,
+      env: bunEnv,
+      stdio: ["ignore", "inherit", "inherit"],
+    }));
 
-  expect(await exited).toBe(0);
-  pid = 0;
-  clearTimeout(timeout);
-  // @ts-expect-error
-  timeout = undefined;
-}, 30000);
+    expect(await exited).toBe(0);
+    pid = 0;
+    clearTimeout(timeout);
+    // @ts-expect-error
+    timeout = undefined;
+  },
+  100_000,
+);

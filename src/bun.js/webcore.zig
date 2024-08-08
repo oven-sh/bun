@@ -4,13 +4,14 @@ pub usingnamespace @import("./webcore/streams.zig");
 pub usingnamespace @import("./webcore/blob.zig");
 pub usingnamespace @import("./webcore/request.zig");
 pub usingnamespace @import("./webcore/body.zig");
-
-const JSC = @import("root").bun.JSC;
+pub const ObjectURLRegistry = @import("./webcore/ObjectURLRegistry.zig");
+const JSC = bun.JSC;
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
 pub const AbortSignal = @import("./bindings/bindings.zig").AbortSignal;
 pub const JSValue = @import("./bindings/bindings.zig").JSValue;
+const Environment = bun.Environment;
 
 pub const Lifetime = enum {
     clone,
@@ -21,7 +22,7 @@ pub const Lifetime = enum {
 };
 
 /// https://html.spec.whatwg.org/multipage/timers-and-user-prompts.html#dom-alert
-fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -71,7 +72,7 @@ fn alert(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(
     return .undefined;
 }
 
-fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSC.JSValue {
+fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSC.JSValue {
     const arguments = callframe.arguments(1).slice();
     var output = bun.Output.writer();
     const has_message = arguments.len != 0;
@@ -121,6 +122,15 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
 
     switch (first_byte) {
         '\n' => return .false,
+        '\r' => {
+            const next_byte = reader.readByte() catch {
+                // They may have said yes, but the stdin is invalid.
+                return .false;
+            };
+            if (next_byte == '\n') {
+                return .false;
+            }
+        },
         'y', 'Y' => {
             const next_byte = reader.readByte() catch {
                 // They may have said yes, but the stdin is invalid.
@@ -132,13 +142,21 @@ fn confirm(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callcon
                 // 8. If the user responded positively, return true;
                 //    otherwise, the user responded negatively: return false.
                 return .true;
+            } else if (next_byte == '\r') {
+                //Check Windows style
+                const second_byte = reader.readByte() catch {
+                    return .false;
+                };
+                if (second_byte == '\n') {
+                    return .true;
+                }
             }
         },
         else => {},
     }
 
     while (reader.readByte()) |b| {
-        if (b == '\n') break;
+        if (b == '\n' or b == '\r') break;
     } else |_| {}
 
     // 8. If the user responded positively, return true; otherwise, the user
@@ -192,7 +210,7 @@ pub const Prompt = struct {
     pub fn call(
         globalObject: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) callconv(JSC.conv) JSC.JSValue {
         const arguments = callframe.arguments(3).slice();
         var state = std.heap.stackFallback(2048, bun.default_allocator);
         const allocator = state.get();
@@ -201,7 +219,7 @@ pub const Prompt = struct {
         const has_default = arguments.len >= 2;
         // 4. Set default to the result of optionally truncating default.
         // *  We don't really need to do this.
-        const default = if (has_default) arguments[1] else JSC.JSValue.jsNull();
+        const default = if (has_default) arguments[1] else .null;
 
         if (has_message) {
             // 2. Set message to the result of normalizing newlines given message.
@@ -214,7 +232,7 @@ pub const Prompt = struct {
 
             output.writeAll(message.slice()) catch {
                 // 1. If we cannot show simple dialogs for this, then return null.
-                return JSC.JSValue.jsNull();
+                return .null;
             };
         }
 
@@ -226,7 +244,7 @@ pub const Prompt = struct {
         //    default.
         output.writeAll(if (has_message) " " else "Prompt ") catch {
             // 1. If we cannot show simple dialogs for this, then return false.
-            return JSC.JSValue.jsBoolean(false);
+            return .false;
         };
 
         if (has_default) {
@@ -235,7 +253,7 @@ pub const Prompt = struct {
 
             output.print("[{s}] ", .{default_string.slice()}) catch {
                 // 1. If we cannot show simple dialogs for this, then return false.
-                return JSC.JSValue.jsBoolean(false);
+                return .false;
             };
         }
 
@@ -243,29 +261,46 @@ pub const Prompt = struct {
         // *  Not relevant in a server context.
         bun.Output.flush();
 
+        // unset `ENABLE_VIRTUAL_TERMINAL_INPUT` on windows. This prevents backspace from
+        // deleting the entire line
+        const original_mode: if (Environment.isWindows) ?bun.windows.DWORD else void = if (comptime Environment.isWindows)
+            bun.win32.unsetStdioModeFlags(0, bun.windows.ENABLE_VIRTUAL_TERMINAL_INPUT) catch null
+        else {};
+
+        defer if (comptime Environment.isWindows) {
+            if (original_mode) |mode| {
+                _ = bun.windows.SetConsoleMode(bun.win32.STDIN_FD.cast(), mode);
+            }
+        };
+
         // 7. Pause while waiting for the user's response.
         const reader = bun.Output.buffered_stdin.reader();
-
+        var second_byte: ?u8 = null;
         const first_byte = reader.readByte() catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return JSC.JSValue.jsNull();
+            return .null;
         };
 
         if (first_byte == '\n') {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
             return default;
+        } else if (first_byte == '\r') {
+            const second = reader.readByte() catch return .null;
+            second_byte = second;
+            if (second == '\n') return default;
         }
 
         var input = std.ArrayList(u8).initCapacity(allocator, 2048) catch {
             // 8. Let result be null if the user aborts, or otherwise the string
             //    that the user responded with.
-            return JSC.JSValue.jsNull();
+            return .null;
         };
         defer input.deinit();
 
         input.appendAssumeCapacity(first_byte);
+        if (second_byte) |second| input.appendAssumeCapacity(second);
 
         // All of this code basically just first tries to load the input into a
         // buffer of size 2048. If that is too small, then increase the buffer
@@ -275,29 +310,38 @@ pub const Prompt = struct {
             if (e != error.StreamTooLong) {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return JSC.JSValue.jsNull();
+                return .null;
             }
 
             input.ensureTotalCapacity(4096) catch {
                 // 8. Let result be null if the user aborts, or otherwise the string
                 //    that the user responded with.
-                return JSC.JSValue.jsNull();
+                return .null;
             };
 
             readUntilDelimiterArrayListAppendAssumeCapacity(reader, &input, '\n', 4096) catch |e2| {
                 if (e2 != error.StreamTooLong) {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return JSC.JSValue.jsNull();
+                    return .null;
                 }
 
                 readUntilDelimiterArrayListInfinity(reader, &input, '\n') catch {
                     // 8. Let result be null if the user aborts, or otherwise the string
                     //    that the user responded with.
-                    return JSC.JSValue.jsNull();
+                    return .null;
                 };
             };
         };
+
+        if (input.items.len > 0 and input.items[input.items.len - 1] == '\r') {
+            input.items.len -= 1;
+        }
+
+        if (comptime Environment.allow_assert) {
+            bun.assert(input.items.len > 0);
+            bun.assert(input.items[input.items.len - 1] != '\r');
+        }
 
         // 8. Let result be null if the user aborts, or otherwise the string
         //    that the user responded with.
@@ -309,13 +353,13 @@ pub const Prompt = struct {
         // *  Too complex for server context.
 
         // 9. Return result.
-        return result.toValueGC(globalObject);
+        return result.toJS(globalObject);
     }
 };
 
 pub const Crypto = struct {
     garbage: i32 = 0,
-    const BoringSSL = @import("root").bun.BoringSSL;
+    const BoringSSL = bun.BoringSSL;
 
     pub const doScryptSync = JSC.wrapInstanceMethod(Crypto, "scryptSync", false);
 
@@ -468,7 +512,7 @@ pub const Crypto = struct {
             // i don't think its a real scenario, but just in case
             buf = globalThis.allocator().alloc(u8, keylen) catch {
                 globalThis.throw("Failed to allocate memory", .{});
-                return JSC.JSValue.jsUndefined();
+                return .undefined;
             };
             needs_deinit = true;
         } else {
@@ -503,7 +547,7 @@ pub const Crypto = struct {
         return .zero;
     }
 
-    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: string, fmt: anytype) JSC.JSValue {
+    fn throwInvalidParams(globalThis: *JSC.JSGlobalObject, comptime error_type: @Type(.EnumLiteral), comptime message: [:0]const u8, fmt: anytype) JSC.JSValue {
         const err = switch (error_type) {
             .RangeError => globalThis.createRangeErrorInstanceWithCode(
                 .ERR_CRYPTO_INVALID_SCRYPT_PARAMS,
@@ -521,30 +565,30 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(2).slice();
 
         if (arguments.len < 2) {
             globalThis.throwInvalidArguments("Expected 2 typed arrays but got nothing", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         const array_buffer_a = arguments[0].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const a = array_buffer_a.byteSlice();
 
         const array_buffer_b = arguments[1].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[1].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const b = array_buffer_b.byteSlice();
 
         const len = a.len;
         if (b.len != len) {
             globalThis.throw("Input buffers must have the same byte length", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
         return JSC.jsBoolean(len == 0 or bun.BoringSSL.CRYPTO_memcmp(a.ptr, b.ptr, len) == 0);
     }
@@ -554,7 +598,7 @@ pub const Crypto = struct {
         globalThis: *JSC.JSGlobalObject,
         array_a: *JSC.JSUint8Array,
         array_b: *JSC.JSUint8Array,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const a = array_a.slice();
         const b = array_b.slice();
 
@@ -571,16 +615,16 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const arguments = callframe.arguments(1).slice();
         if (arguments.len == 0) {
             globalThis.throwInvalidArguments("Expected typed array but got nothing", .{});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         var array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
             globalThis.throwInvalidArguments("Expected typed array but got {s}", .{@tagName(arguments[0].jsType())});
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         };
         const slice = array_buffer.byteSlice();
 
@@ -593,7 +637,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         array: *JSC.JSUint8Array,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const slice = array.slice();
         randomData(globalThis, slice.ptr, slice.len);
         return @as(JSC.JSValue, @enumFromInt(@as(i64, @bitCast(@intFromPtr(array)))));
@@ -622,7 +666,7 @@ pub const Crypto = struct {
         _: *@This(),
         globalThis: *JSC.JSGlobalObject,
         _: *JSC.CallFrame,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -632,31 +676,10 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub fn randomInt(_: *@This(), _: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
-        const arguments = callframe.arguments(2).slice();
-
-        const min_value: ?JSValue = if (arguments.len > 0 and !arguments[0].isEmptyOrUndefinedOrNull()) arguments[0] else null;
-        const max_value: ?JSValue = if (arguments.len > 1 and !arguments[1].isEmptyOrUndefinedOrNull()) arguments[1] else null;
-
-        var at_least: u52 = 0;
-        var at_most: u52 = std.math.maxInt(u52);
-
-        if (min_value) |min| {
-            if (max_value) |max| {
-                if (min.isNumber()) at_least = min.to(u52);
-                if (max.isNumber()) at_most = max.to(u52);
-            } else {
-                if (min.isNumber()) at_most = min.to(u52);
-            }
-        }
-
-        return JSValue.jsNumberFromUint64(std.crypto.random.intRangeLessThan(u52, at_least, at_most));
-    }
-
     pub fn randomUUIDWithoutTypeChecks(
         _: *Crypto,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         const str, var bytes = bun.String.createUninitialized(.latin1, 36);
         defer str.deref();
 
@@ -668,7 +691,7 @@ pub const Crypto = struct {
         return str.toJS(globalThis);
     }
 
-    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*Crypto {
+    pub fn constructor(globalThis: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*Crypto {
         globalThis.throw("Crypto is not constructable", .{});
         return null;
     }

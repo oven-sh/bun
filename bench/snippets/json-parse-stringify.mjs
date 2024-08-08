@@ -54,4 +54,14 @@ bench("JSON.stringify(obj)", () => {
   globalThis.bar = JSON.stringify(obj);
 });
 
+var long_ascii = `"${"a".repeat(9999)}"`;
+bench("JSON.parse(`\"${'a'.repeat(9999)}\"`)", () => {
+  globalThis.bar = JSON.parse(long_ascii);
+});
+
+const long_emoji = `"${"🥟".repeat(9999)}"`;
+bench("JSON.parse(`\"${'🥟'.repeat(9999)}\"`)", () => {
+  globalThis.bar = JSON.parse(long_emoji);
+});
+
 await run();

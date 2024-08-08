@@ -1,0 +1,30 @@
+name: lint-cpp
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event_name == 'workflow_dispatch' && inputs.run-id  || github.ref }}
+  cancel-in-progress: true
+
+on:
+  workflow_dispatch:
+    inputs:
+      run-id:
+        type: string
+        description: The workflow ID to download artifacts (skips the build step)
+  pull_request:
+    paths:
+      - ".github/workflows/lint-cpp.yml"
+      - "**/*.cpp"
+      - "src/deps/**/*"
+      - "CMakeLists.txt"
+
+jobs:
+  lint-cpp:
+    if: ${{ !inputs.run-id }}
+    name: Lint C++
+    uses: ./.github/workflows/run-lint-cpp.yml
+    secrets: inherit
+    with:
+      pr-number: ${{ github.event.number }}

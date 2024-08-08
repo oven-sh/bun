@@ -64,9 +64,11 @@ struct us_loop_t {
 
 struct us_poll_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct {
-        signed int fd : 28; // we could have this unsigned if we wanted to, -1 should never be used
-        unsigned int poll_type : 4;
+        signed int fd : 27; // we could have this unsigned if we wanted to, -1 should never be used
+        unsigned int poll_type : 5;
     } state;
 };
+
+#undef FD_BITS
 
 #endif // EPOLL_KQUEUE_H

@@ -10,5 +10,11 @@ if ! [ "$1" == '--webkit' ]; then
   fi
 fi
 
-set -euxo pipefail
+set -exo pipefail
 git submodule update --init --recursive --progress --depth=1 --checkout $NAMES
+if [ "$FORCE_UPDATE_SUBMODULES" == "1" ]; then
+  # Set --force in CI.
+  git submodule update --init --recursive --progress --depth=1 --checkout --force $NAMES
+else
+  git submodule update --init --recursive --progress --depth=1 --checkout $NAMES
+fi

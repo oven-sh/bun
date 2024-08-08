@@ -240,7 +240,7 @@ test("navigator", () => {
   }
 });
 
-test("confirm (yes)", async () => {
+test("confirm (yes) unix newline", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
     stdio: ["pipe", "pipe", "pipe"],
@@ -258,7 +258,25 @@ test("confirm (yes)", async () => {
   expect(await new Response(proc.stderr).text()).toBe("Yes\n");
 });
 
-test("confirm (no)", async () => {
+test("confirm (yes) windows newline", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write("Y");
+  await proc.stdin.flush();
+
+  proc.stdin.write("\r\n"); // Windows-style newline
+  await proc.stdin.flush();
+
+  await proc.exited;
+
+  expect(await new Response(proc.stderr).text()).toBe("Yes\n");
+});
+
+test("confirm (no) unix newline", async () => {
   const proc = spawn({
     cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
     stdio: ["pipe", "pipe", "pipe"],
@@ -266,6 +284,20 @@ test("confirm (no)", async () => {
   });
 
   proc.stdin.write("poask\n");
+  await proc.stdin.flush();
+  await proc.exited;
+
+  expect(await new Response(proc.stderr).text()).toBe("No\n");
+});
+
+test("confirm (no) windows newline", async () => {
+  const proc = spawn({
+    cmd: [bunExe(), require("path").join(import.meta.dir, "./confirm-fixture.js")],
+    stdio: ["pipe", "pipe", "pipe"],
+    env: bunEnv,
+  });
+
+  proc.stdin.write("poask\r\n");
   await proc.stdin.flush();
   await proc.exited;
 

@@ -16,7 +16,10 @@ Features include:
 - Parameters (named & positional)
 - Prepared statements
 - Datatype conversions (`BLOB` becomes `Uint8Array`)
+- Map query results to classes without an ORM - `query.as(MyClass)`
 - The fastest performance of any SQLite driver for JavaScript
+- `bigint` support
+- Multi-query statements (e.g. `SELECT 1; SELECT 2;`) in a single call to database.run(query)
 
 The `bun:sqlite` module is roughly 3-6x faster than `better-sqlite3` and 8-9x faster than `deno.land/x/sqlite` for read queries. Each driver was benchmarked against the [Northwind Traders](https://github.com/jpwhite3/northwind-SQLite3/blob/46d5f8a64f396f87cd374d1600dbf521523980e8/Northwind_large.sqlite.zip) dataset. View and run the [benchmark source](https://github.com/oven-sh/bun/tree/main/bench/sqlite).
 
@@ -57,12 +60,45 @@ import { Database } from "bun:sqlite";
 const db = new Database("mydb.sqlite", { create: true });
 ```
 
+### Strict mode
+
+{% callout %}
+Added in Bun v1.1.14
+{% /callout %}
+
+By default, `bun:sqlite` requires binding parameters to include the `$`, `:`, or `@` prefix, and does not throw an error if a parameter is missing.
+
+To instead throw an error when a parameter is missing and allow binding without a prefix, set `strict: true` on the `Database` constructor:
+
+<!-- prettier-ignore -->
+```ts
+import { Database } from "bun:sqlite";
+
+const strict = new Database(
+  ":memory:", 
+  { strict: true }
+);
+
+// throws error because of the typo:
+const query = strict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
+
+const notStrict = new Database(
+  ":memory:"
+);
+// does not throw error:
+notStrict
+  .query("SELECT $message;")
+  .all({ messag: "Hello world" });
+```
+
 ### Load via ES module import
 
 You can also use an import attribute to load a database.
 
 ```ts
-import db from "./mydb.sqlite" with {"type": "sqlite"};
+import db from "./mydb.sqlite" with { "type": "sqlite" };
 
 console.log(db.query("select * from users LIMIT 1").get());
 ```
@@ -74,16 +110,39 @@ import { Database } from "bun:sqlite";
 const db = new Database("./mydb.sqlite");
 ```
 
-### `.close()`
+### `.close(throwOnError: boolean = false)`
 
-To close a database:
+To close a database connection, but allow existing queries to finish, call `.close(false)`:
 
 ```ts
 const db = new Database();
-db.close();
+// ... do stuff
+db.close(false);
 ```
 
-Note: `close()` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
+To close the database and throw an error if there are any pending queries, call `.close(true)`:
+
+```ts
+const db = new Database();
+// ... do stuff
+db.close(true);
+```
+
+Note: `close(false)` is called automatically when the database is garbage collected. It is safe to call multiple times but has no effect after the first.
+
+### `using` statement
+
+You can use the `using` statement to ensure that a database connection is closed when the `using` block is exited.
+
+```ts
+import { Database } from "bun:sqlite";
+
+{
+  using db = new Database("mydb.sqlite");
+  using query = db.query("select 'Hello world' as message;");
+  console.log(query.get()); // => { message: "Hello world" }
+}
+```
 
 ### `.serialize()`
 
@@ -128,6 +187,8 @@ db.exec("PRAGMA journal_mode = WAL;");
 
 {% details summary="What is WAL mode" %}
 In WAL mode, writes to the database are written directly to a separate file called the "WAL file" (write-ahead log). This file will be later integrated into the main database file. Think of it as a buffer for pending writes. Refer to the [SQLite docs](https://www.sqlite.org/wal.html) for a more detailed overview.
+
+On macOS, WAL files may be persistent by default. This is not a bug, it is how macOS configured the system version of SQLite.
 {% /details %}
 
 ## Statements
@@ -148,6 +209,47 @@ const query = db.query(`SELECT $param1, $param2;`);
 ```
 
 Values are bound to these parameters when the query is executed. A `Statement` can be executed with several different methods, each returning the results in a different form.
+
+### Binding values
+
+To bind values to a statement, pass an object to the `.all()`, `.get()`, `.run()`, or `.values()` method.
+
+```ts
+const query = db.query(`select $message;`);
+query.all({ $message: "Hello world" });
+```
+
+You can bind using positional parameters too:
+
+```ts
+const query = db.query(`select ?1;`);
+query.all("Hello world");
+```
+
+#### `strict: true` lets you bind values without prefixes
+
+{% callout %}
+Added in Bun v1.1.14
+{% /callout %}
+
+By default, the `$`, `:`, and `@` prefixes are **included** when binding values to named parameters. To bind without these prefixes, use the `strict` option in the `Database` constructor.
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", {
+  // bind values without prefixes
+  strict: true,
+});
+
+const query = db.query(`select $message;`);
+
+// strict: true
+query.all({ message: "Hello world" });
+
+// strict: false
+// query.all({ $message: "Hello world" });
+```
 
 ### `.all()`
 
@@ -175,15 +277,53 @@ Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sq
 
 ### `.run()`
 
-Use `.run()` to run a query and get back `undefined`. This is useful for queries schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
+Use `.run()` to run a query and get back `undefined`. This is useful for schema-modifying queries (e.g. `CREATE TABLE`) or bulk write operations.
 
 ```ts
 const query = db.query(`create table foo;`);
 query.run();
-// => undefined
+// {
+//   lastInsertRowid: 0,
+//   changes: 0,
+// }
 ```
 
 Internally, this calls [`sqlite3_reset`](https://www.sqlite.org/capi3ref.html#sqlite3_reset) and calls [`sqlite3_step`](https://www.sqlite.org/capi3ref.html#sqlite3_step) once. Stepping through all the rows is not necessary when you don't care about the results.
+
+{% callout %}
+Since Bun v1.1.14, `.run()` returns an object with two properties: `lastInsertRowid` and `changes`.
+{% /callout %}
+
+The `lastInsertRowid` property returns the ID of the last row inserted into the database. The `changes` property is the number of rows affected by the query.
+
+### `.as(Class)` - Map query results to a class
+
+{% callout %}
+Added in Bun v1.1.14
+{% /callout %}
+
+Use `.as(Class)` to run a query and get back the results as instances of a class. This lets you attach methods & getters/setters to results.
+
+```ts
+class Movie {
+  title: string;
+  year: number;
+
+  get isMarvel() {
+    return this.title.includes("Marvel");
+  }
+}
+
+const query = db.query("SELECT title, year FROM movies").as(Movie);
+const movies = query.all();
+const first = query.get();
+console.log(movies[0].isMarvel); // => true
+console.log(first.isMarvel); // => true
+```
+
+As a performance optimization, the class constructor is not called, default initializers are not run, and private fields are not accessible. This is more like using `Object.create` than `new`. The class's prototype is assigned to the object, methods are attached, and getters/setters are set up, but the constructor is not called.
+
+The database columns are set as properties on the class instance.
 
 ### `.values()`
 
@@ -274,6 +414,65 @@ const results = query.all("hello", "goodbye");
 ```
 
 {% /codetabs %}
+
+## Integers
+
+sqlite supports signed 64 bit integers, but JavaScript only supports signed 52 bit integers or arbitrary precision integers with `bigint`.
+
+`bigint` input is supported everywhere, but by default `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, set `safeInteger` option to `true` when creating a `Database` instance. This also validates that `bigint` passed to `bun:sqlite` do not exceed 64 bits.
+
+By default, `bun:sqlite` returns integers as `number` types. If you need to handle integers larger than 2^53, you can use the `bigint` type.
+
+### `safeIntegers: true`
+
+{% callout %}
+Added in Bun v1.1.14
+{% /callout %}
+
+When `safeIntegers` is `true`, `bun:sqlite` will return integers as `bigint` types:
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: true });
+const query = db.query(
+  `SELECT ${BigInt(Number.MAX_SAFE_INTEGER) + 102n} as max_int`,
+);
+const result = query.get();
+console.log(result.max_int); // => 9007199254741093n
+```
+
+When `safeIntegers` is `true`, `bun:sqlite` will throw an error if a `bigint` value in a bound parameter exceeds 64 bits:
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: true });
+db.run("CREATE TABLE test (id INTEGER PRIMARY KEY, value INTEGER)");
+
+const query = db.query("INSERT INTO test (value) VALUES ($value)");
+
+try {
+  query.run({ $value: BigInt(Number.MAX_SAFE_INTEGER) ** 2n });
+} catch (e) {
+  console.log(e.message); // => BigInt value '81129638414606663681390495662081' is out of range
+}
+```
+
+### `safeIntegers: false` (default)
+
+When `safeIntegers` is `false`, `bun:sqlite` will return integers as `number` types and truncate any bits beyond 53:
+
+```ts
+import { Database } from "bun:sqlite";
+
+const db = new Database(":memory:", { safeIntegers: false });
+const query = db.query(
+  `SELECT ${BigInt(Number.MAX_SAFE_INTEGER) + 102n} as max_int`,
+);
+const result = query.get();
+console.log(result.max_int); // => 9007199254741092
+```
 
 ## Transactions
 
@@ -387,6 +586,25 @@ db.loadExtension("myext");
 
 {% /details %}
 
+### .fileControl(cmd: number, value: any)
+
+To use the advanced `sqlite3_file_control` API, call `.fileControl(cmd, value)` on your `Database` instance.
+
+```ts
+import { Database, constants } from "bun:sqlite";
+
+const db = new Database();
+// Ensure WAL mode is NOT persistent
+// this prevents wal files from lingering after the database is closed
+db.fileControl(constants.SQLITE_FCNTL_PERSIST_WAL, 0);
+```
+
+`value` can be:
+
+- `number`
+- `TypedArray`
+- `undefined` or `null`
+
 ## Reference
 
 ```ts
@@ -403,12 +621,20 @@ class Database {
   );
 
   query<Params, ReturnType>(sql: string): Statement<Params, ReturnType>;
+  run(
+    sql: string,
+    params?: SQLQueryBindings,
+  ): { lastInsertRowid: number; changes: number };
+  exec = this.run;
 }
 
 class Statement<Params, ReturnType> {
   all(params: Params): ReturnType[];
   get(params: Params): ReturnType | undefined;
-  run(params: Params): void;
+  run(params: Params): {
+    lastInsertRowid: number;
+    changes: number;
+  };
   values(params: Params): unknown[][];
 
   finalize(): void; // destroy statement and clean up resources
@@ -417,6 +643,8 @@ class Statement<Params, ReturnType> {
   columnNames: string[]; // the column names of the result set
   paramsCount: number; // the number of parameters expected by the statement
   native: any; // the native object representing the statement
+
+  as(Class: new () => ReturnType): this;
 }
 
 type SQLQueryBindings =

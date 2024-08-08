@@ -43,7 +43,7 @@ static const int64_t kJSMaxInteger = 0x20000000000000LL - 1; // 2^53 - 1, larges
 
 static String rangeErrorString(double value, double min, double max)
 {
-    return makeString("Value ", value, " is outside the range [", min, ", ", max, ']');
+    return makeString("Value "_s, value, " is outside the range ["_s, min, ", "_s, max, ']');
 }
 
 static double enforceRange(JSGlobalObject& lexicalGlobalObject, double x, double minimum, double maximum)

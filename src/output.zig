@@ -2,13 +2,13 @@ const Output = @This();
 const bun = @import("root").bun;
 const std = @import("std");
 const Environment = @import("./env.zig");
-const string = @import("root").bun.string;
+const string = bun.string;
 const root = @import("root");
-const strings = @import("root").bun.strings;
-const StringTypes = @import("root").bun.StringTypes;
-const Global = @import("root").bun.Global;
-const ComptimeStringMap = @import("root").bun.ComptimeStringMap;
-const use_mimalloc = @import("root").bun.use_mimalloc;
+const strings = bun.strings;
+const StringTypes = bun.StringTypes;
+const Global = bun.Global;
+const ComptimeStringMap = bun.ComptimeStringMap;
+const use_mimalloc = bun.use_mimalloc;
 const writeStream = std.json.writeStream;
 const WriteStream = std.json.WriteStream;
 
@@ -23,7 +23,7 @@ var stderr_stream: Source.StreamType = undefined;
 var stdout_stream: Source.StreamType = undefined;
 var stdout_stream_set = false;
 const File = bun.sys.File;
-pub var terminal_size: std.os.winsize = .{
+pub var terminal_size: std.posix.winsize = .{
     .ws_row = 0,
     .ws_col = 0,
     .ws_xpixel = 0,
@@ -87,7 +87,7 @@ pub const Source = struct {
 
     pub fn configureThread() void {
         if (source_set) return;
-        std.debug.assert(stdout_stream_set);
+        bun.debugAssert(stdout_stream_set);
         source = Source.init(stdout_stream, stderr_stream);
     }
 
@@ -136,17 +136,23 @@ pub const Source = struct {
     export var bun_stdio_tty: [3]i32 = .{ 0, 0, 0 };
 
     const WindowsStdio = struct {
-        const w = std.os.windows;
+        const w = bun.windows;
 
-        // TODO: when https://github.com/ziglang/zig/pull/18692 merges, use std.os.windows for this
-        extern fn SetConsoleMode(console_handle: *anyopaque, mode: u32) u32;
-        extern fn SetStdHandle(nStdHandle: u32, hHandle: *anyopaque) u32;
-        extern fn GetConsoleOutputCP() u32;
-        pub extern "kernel32" fn SetConsoleCP(wCodePageID: std.os.windows.UINT) callconv(std.os.windows.WINAPI) std.os.windows.BOOL;
-
+        /// At program start, we snapshot the console modes of standard in, out, and err
+        /// so that we can restore them at program exit if they change. Restoration is
+        /// best-effort, and may not be applied if the process is killed abruptly.
         pub var console_mode = [3]?u32{ null, null, null };
         pub var console_codepage = @as(u32, 0);
         pub var console_output_codepage = @as(u32, 0);
+
+        pub export fn Bun__restoreWindowsStdio() callconv(.C) void {
+            restore();
+        }
+        comptime {
+            if (Environment.isWindows) {
+                _ = &Bun__restoreWindowsStdio;
+            }
+        }
 
         pub fn restore() void {
             const peb = std.os.windows.peb();
@@ -157,7 +163,7 @@ pub const Source = struct {
             const handles = &.{ &stdin, &stdout, &stderr };
             inline for (console_mode, handles) |mode, handle| {
                 if (mode) |m| {
-                    _ = SetConsoleMode(handle.*, m);
+                    _ = w.SetConsoleMode(handle.*, m);
                 }
             }
 
@@ -165,15 +171,15 @@ pub const Source = struct {
                 _ = w.kernel32.SetConsoleOutputCP(console_output_codepage);
 
             if (console_codepage != 0)
-                _ = SetConsoleCP(console_codepage);
+                _ = w.SetConsoleCP(console_codepage);
         }
 
         pub fn init() void {
-            bun.windows.libuv.uv_disable_stdio_inheritance();
+            w.libuv.uv_disable_stdio_inheritance();
 
-            const stdin = w.GetStdHandle(w.STD_INPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
-            const stdout = w.GetStdHandle(w.STD_OUTPUT_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
-            const stderr = w.GetStdHandle(w.STD_ERROR_HANDLE) catch bun.windows.INVALID_HANDLE_VALUE;
+            const stdin = std.os.windows.GetStdHandle(std.os.windows.STD_INPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
+            const stdout = std.os.windows.GetStdHandle(std.os.windows.STD_OUTPUT_HANDLE) catch w.INVALID_HANDLE_VALUE;
+            const stderr = std.os.windows.GetStdHandle(std.os.windows.STD_ERROR_HANDLE) catch w.INVALID_HANDLE_VALUE;
 
             bun.win32.STDERR_FD = if (stderr != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stderr) else bun.invalid_fd;
             bun.win32.STDOUT_FD = if (stdout != std.os.windows.INVALID_HANDLE_VALUE) bun.toFD(stdout) else bun.invalid_fd;
@@ -187,34 +193,48 @@ pub const Source = struct {
             _ = w.kernel32.SetConsoleOutputCP(CP_UTF8);
 
             console_codepage = w.kernel32.GetConsoleOutputCP();
-            _ = SetConsoleCP(CP_UTF8);
-
-            const ENABLE_VIRTUAL_TERMINAL_INPUT = 0x200;
-            const ENABLE_WRAP_AT_EOL_OUTPUT = 0x0002;
-            const ENABLE_PROCESSED_OUTPUT = 0x0001;
+            _ = w.SetConsoleCP(CP_UTF8);
 
             var mode: w.DWORD = undefined;
             if (w.kernel32.GetConsoleMode(stdin, &mode) != 0) {
                 console_mode[0] = mode;
                 bun_stdio_tty[0] = 1;
-                _ = SetConsoleMode(stdin, mode | ENABLE_VIRTUAL_TERMINAL_INPUT);
+                // There are no flags to set on standard in, but just in case something
+                // later modifies the mode, we can still reset it at the end of program run
+                //
+                // In the past, Bun would set ENABLE_VIRTUAL_TERMINAL_INPUT, which was not
+                // intentionally set for any purpose, and instead only caused problems.
             }
 
             if (w.kernel32.GetConsoleMode(stdout, &mode) != 0) {
                 console_mode[1] = mode;
                 bun_stdio_tty[1] = 1;
-                _ = SetConsoleMode(stdout, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = w.SetConsoleMode(stdout, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
 
             if (w.kernel32.GetConsoleMode(stderr, &mode) != 0) {
                 console_mode[2] = mode;
                 bun_stdio_tty[2] = 1;
-                _ = SetConsoleMode(stderr, ENABLE_PROCESSED_OUTPUT | w.ENABLE_VIRTUAL_TERMINAL_PROCESSING | ENABLE_WRAP_AT_EOL_OUTPUT | mode);
+                _ = w.SetConsoleMode(stderr, w.ENABLE_PROCESSED_OUTPUT | std.os.windows.ENABLE_VIRTUAL_TERMINAL_PROCESSING | w.ENABLE_WRAP_AT_EOL_OUTPUT | mode);
             }
         }
     };
 
     pub const Stdio = struct {
+        extern "C" var bun_is_stdio_null: [3]i32;
+
+        pub fn isStderrNull() bool {
+            return bun_is_stdio_null[2] == 1;
+        }
+
+        pub fn isStdoutNull() bool {
+            return bun_is_stdio_null[1] == 1;
+        }
+
+        pub fn isStdinNull() bool {
+            return bun_is_stdio_null[0] == 1;
+        }
+
         pub fn init() void {
             bun.C.bun_initialize_process();
 
@@ -228,7 +248,7 @@ pub const Source = struct {
             Output.Source.init(stdout, stderr)
                 .set();
 
-            if (comptime Environment.isDebug) {
+            if (comptime Environment.isDebug or Environment.enable_logs) {
                 initScopedDebugWriterAtStartup();
             }
         }
@@ -334,7 +354,7 @@ pub fn disableBuffering() void {
     if (comptime Environment.isNative) enable_buffering = false;
 }
 
-pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
+pub fn panic(comptime fmt: string, args: anytype) noreturn {
     @setCold(true);
 
     if (Output.isEmojiEnabled()) {
@@ -347,17 +367,17 @@ pub noinline fn panic(comptime fmt: string, args: anytype) noreturn {
 pub const WriterType: type = @TypeOf(Source.StreamType.quietWriter(undefined));
 
 pub fn errorWriter() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream.quietWriter();
 }
 
 pub fn errorStream() Source.StreamType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.error_stream;
 }
 
 pub fn writer() WriterType {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     return source.stream.quietWriter();
 }
 
@@ -520,7 +540,7 @@ pub fn debug(comptime fmt: string, args: anytype) void {
 }
 
 pub inline fn _debug(comptime fmt: string, args: anytype) void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
     println(fmt, args);
 }
 
@@ -531,8 +551,7 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
         std.fmt.format(source.stream.writer(), fmt, args) catch unreachable;
         root.console_log(root.Uint8Array.fromSlice(source.stream.buffer[0..source.stream.pos]));
     } else {
-        if (comptime Environment.allow_assert)
-            std.debug.assert(source_set);
+        bun.debugAssert(source_set);
 
         // There's not much we can do if this errors. Especially if it's something like BrokenPipe.
         if (enable_buffering) {
@@ -550,21 +569,25 @@ pub noinline fn print(comptime fmt: string, args: anytype) callconv(std.builtin.
 ///   BUN_DEBUG_foo=1
 /// To enable all logs, set the environment variable
 ///   BUN_DEBUG_ALL=1
-const _log_fn = fn (comptime fmt: string, args: anytype) void;
-pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
+const LogFunction = fn (comptime fmt: string, args: anytype) void;
+pub fn Scoped(comptime tag: anytype, comptime disabled: bool) type {
     const tagname = switch (@TypeOf(tag)) {
         @Type(.EnumLiteral) => @tagName(tag),
-        []const u8 => tag,
-        else => @compileError("Output.scoped expected @Type(.EnumLiteral) or []const u8, you gave: " ++ @typeName(@Type(tag))),
+        else => tag,
     };
-    if (comptime !Environment.isDebug or !Environment.isNative) {
+
+    if (comptime !Environment.isDebug and !Environment.enable_logs) {
         return struct {
+            pub fn isVisible() bool {
+                return false;
+            }
             pub fn log(comptime _: string, _: anytype) void {}
-        }.log;
+        };
     }
 
     return struct {
         const BufferedWriter = std.io.BufferedWriter(4096, bun.sys.File.QuietWriter);
+
         var buffered_writer: BufferedWriter = undefined;
         var out: BufferedWriter.Writer = undefined;
         var out_set = false;
@@ -572,22 +595,7 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
         var evaluated_disable = false;
         var lock = std.Thread.Mutex{};
 
-        /// Debug-only logs which should not appear in release mode
-        /// To enable a specific log at runtime, set the environment variable
-        ///   BUN_DEBUG_${TAG} to 1
-        /// For example, to enable the "foo" log, set the environment variable
-        ///   BUN_DEBUG_foo=1
-        /// To enable all logs, set the environment variable
-        ///   BUN_DEBUG_ALL=1
-        pub fn log(comptime fmt: string, args: anytype) void {
-            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
-                return log(fmt ++ "\n", args);
-            }
-
-            if (ScopedDebugWriter.disable_inside_log > 0) {
-                return;
-            }
-
+        pub fn isVisible() bool {
             if (!evaluated_disable) {
                 evaluated_disable = true;
                 if (bun.getenvZ("BUN_DEBUG_" ++ tagname)) |val| {
@@ -598,8 +606,33 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                     really_disable = really_disable or !strings.eqlComptime(val, "0");
                 }
             }
+            return !really_disable;
+        }
 
-            if (really_disable)
+        /// Debug-only logs which should not appear in release mode
+        /// To enable a specific log at runtime, set the environment variable
+        ///   BUN_DEBUG_${TAG} to 1
+        /// For example, to enable the "foo" log, set the environment variable
+        ///   BUN_DEBUG_foo=1
+        /// To enable all logs, set the environment variable
+        ///   BUN_DEBUG_ALL=1
+        pub fn log(comptime fmt: string, args: anytype) void {
+            if (!source_set) return;
+            if (fmt.len == 0 or fmt[fmt.len - 1] != '\n') {
+                return log(fmt ++ "\n", args);
+            }
+
+            if (ScopedDebugWriter.disable_inside_log > 0) {
+                return;
+            }
+
+            if (Environment.enable_logs) ScopedDebugWriter.disable_inside_log += 1;
+            defer {
+                if (Environment.enable_logs)
+                    ScopedDebugWriter.disable_inside_log -= 1;
+            }
+
+            if (!isVisible())
                 return;
 
             if (!out_set) {
@@ -632,7 +665,11 @@ pub fn scoped(comptime tag: anytype, comptime disabled: bool) _log_fn {
                 };
             }
         }
-    }.log;
+    };
+}
+
+pub fn scoped(comptime tag: anytype, comptime disabled: bool) LogFunction {
+    return Scoped(tag, disabled).log;
 }
 
 // Valid "colors":
@@ -663,8 +700,8 @@ pub const color_map = ComptimeStringMap(string, .{
     &.{ "yellow", ED ++ "33m" },
 });
 const RESET: string = "\x1b[0m";
-pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) [:0]const u8 {
+    if (comptime bun.fast_debug_build_mode)
         return fmt;
 
     comptime var new_fmt: [fmt.len * 4]u8 = undefined;
@@ -741,7 +778,7 @@ pub fn prettyFmt(comptime fmt: string, comptime is_enabled: bool) string {
         }
     };
 
-    return comptime new_fmt[0..new_fmt_i];
+    return comptime (new_fmt[0..new_fmt_i].* ++ .{0})[0..new_fmt_i :0];
 }
 
 pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime printer: anytype, comptime l: Destination) void {
@@ -753,7 +790,7 @@ pub noinline fn prettyWithPrinter(comptime fmt: string, args: anytype, comptime 
 }
 
 pub noinline fn prettyWithPrinterFn(comptime fmt: string, args: anytype, comptime printFn: anytype, ctx: anytype) void {
-    if (comptime @import("root").bun.fast_debug_build_mode)
+    if (comptime bun.fast_debug_build_mode)
         return printFn(ctx, comptime prettyFmt(fmt, false), args);
 
     if (enable_ansi_colors) {
@@ -811,9 +848,9 @@ pub noinline fn printError(comptime fmt: string, args: anytype) void {
 }
 
 pub const DebugTimer = struct {
-    timer: @import("root").bun.DebugOnly(std.time.Timer) = undefined,
+    timer: bun.DebugOnly(std.time.Timer) = undefined,
 
-    pub fn start() DebugTimer {
+    pub inline fn start() DebugTimer {
         if (comptime Environment.isDebug) {
             return DebugTimer{
                 .timer = std.time.Timer.start() catch unreachable,
@@ -825,17 +862,10 @@ pub const DebugTimer = struct {
 
     pub const WriteError = error{};
 
-    pub fn format(self: DebugTimer, comptime _: []const u8, opts: std.fmt.FormatOptions, writer_: anytype) WriteError!void {
+    pub fn format(self: DebugTimer, comptime _: []const u8, _: std.fmt.FormatOptions, w: anytype) WriteError!void {
         if (comptime Environment.isDebug) {
             var timer = self.timer;
-            var _opts = opts;
-            _opts.precision = 3;
-            std.fmt.formatFloatDecimal(
-                @as(f64, @floatCast(@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms)),
-                _opts,
-                writer_,
-            ) catch unreachable;
-            writer_.writeAll("ms") catch {};
+            w.print("{d:.3}ms", .{@as(f64, @floatFromInt(timer.read())) / std.time.ns_per_ms}) catch unreachable;
         }
     }
 };
@@ -850,9 +880,11 @@ pub inline fn warn(comptime fmt: []const u8, args: anytype) void {
     prettyErrorln("<yellow>warn<r><d>:<r> " ++ fmt, args);
 }
 
+const debugWarnScope = Scoped("debug warn", false);
+
 /// Print a yellow warning message, only in debug mode
 pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
-    if (Environment.isDebug) {
+    if (debugWarnScope.isVisible()) {
         prettyErrorln("<yellow>debug warn<r><d>:<r> " ++ fmt, args);
         flush();
     }
@@ -862,9 +894,15 @@ pub inline fn debugWarn(comptime fmt: []const u8, args: anytype) void {
 /// be a Zig error, or a string or enum. The error name is converted to a string and displayed
 /// in place of "error:", making it useful to print things like "EACCES: Couldn't open package.json"
 pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) void {
+    const T = @TypeOf(error_name);
+    const info = @typeInfo(T);
+
+    if (comptime T == bun.sys.Error or info == .Pointer and info.Pointer.child == bun.sys.Error) {
+        prettyErrorln("<r><red>error:<r><d>:<r> " ++ fmt, args ++ .{error_name});
+        return;
+    }
+
     const display_name, const is_comptime_name = display_name: {
-        const T = @TypeOf(error_name);
-        const info = @typeInfo(T);
 
         // Zig string literals are of type *const [n:0]u8
         // we assume that no one will pass this type from not using a string literal.
@@ -898,7 +936,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
         // enum literals
         if (info == .EnumLiteral) {
             const tag = @tagName(info);
-            comptime std.debug.assert(tag.len > 0); // how?
+            comptime bun.assert(tag.len > 0); // how?
             if (tag[0] != 'E') break :display_name .{ "E" ++ tag, true };
             break :display_name .{ tag, true };
         }
@@ -921,7 +959,7 @@ pub inline fn err(error_name: anytype, comptime fmt: []const u8, args: anytype) 
     }
 }
 
-const ScopedDebugWriter = struct {
+pub const ScopedDebugWriter = struct {
     pub var scoped_file_writer: File.QuietWriter = undefined;
     pub threadlocal var disable_inside_log: isize = 0;
 };
@@ -935,7 +973,7 @@ pub fn enableScopedDebugWriter() void {
 extern "c" fn getpid() c_int;
 
 pub fn initScopedDebugWriterAtStartup() void {
-    std.debug.assert(source_set);
+    bun.debugAssert(source_set);
 
     if (bun.getenvZ("BUN_DEBUG")) |path| {
         if (path.len > 0 and !strings.eql(path, "0") and !strings.eql(path, "false")) {
@@ -950,14 +988,10 @@ pub fn initScopedDebugWriterAtStartup() void {
             const path_fmt = std.mem.replaceOwned(u8, bun.default_allocator, path, "{pid}", pid) catch @panic("failed to allocate path");
             defer bun.default_allocator.free(path_fmt);
 
-            const fd = std.os.openat(
-                std.fs.cwd().fd,
-                path_fmt,
-                std.os.O.CREAT | std.os.O.WRONLY,
-                // on windows this is u0
-                if (Environment.isWindows) 0 else 0o644,
-            ) catch |err_| {
-                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(err_), path });
+            const fd = std.fs.cwd().createFile(path_fmt, .{
+                .mode = if (Environment.isPosix) 0o644 else 0,
+            }) catch |open_err| {
+                Output.panic("Failed to open file for debug output: {s} ({s})", .{ @errorName(open_err), path });
             };
             _ = bun.sys.ftruncate(bun.toFD(fd), 0); // windows
             ScopedDebugWriter.scoped_file_writer = File.from(fd).quietWriter();
@@ -968,7 +1002,7 @@ pub fn initScopedDebugWriterAtStartup() void {
     ScopedDebugWriter.scoped_file_writer = source.stream.quietWriter();
 }
 fn scopedWriter() File.QuietWriter {
-    if (comptime !Environment.isDebug) {
+    if (comptime !Environment.isDebug and !Environment.enable_logs) {
         @compileError("scopedWriter() should only be called in debug mode");
     }
 
@@ -977,7 +1011,7 @@ fn scopedWriter() File.QuietWriter {
 
 /// Print a red error message with "error: " as the prefix. For custom prefixes see `err()`
 pub inline fn errGeneric(comptime fmt: []const u8, args: anytype) void {
-    prettyErrorln("<red>error<r><d>:<r> " ++ fmt, args);
+    prettyErrorln("<r><red>error<r><d>:<r> " ++ fmt, args);
 }
 
 /// This struct is a workaround a Windows terminal bug.

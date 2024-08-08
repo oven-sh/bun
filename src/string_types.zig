@@ -16,7 +16,7 @@ pub const PathString = packed struct {
     ptr: PointerIntType = 0,
     len: PathInt = 0,
 
-    const JSC = @import("root").bun.JSC;
+    const JSC = bun.JSC;
 
     pub fn estimatedSize(this: *const PathString) usize {
         return @as(usize, this.len);
@@ -140,7 +140,7 @@ pub const SmolStr = packed struct {
     };
 
     comptime {
-        std.debug.assert(@sizeOf(SmolStr) == @sizeOf(Inlined));
+        bun.assert(@sizeOf(SmolStr) == @sizeOf(Inlined));
     }
 
     pub fn empty() SmolStr {

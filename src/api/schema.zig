@@ -1,4 +1,6 @@
 const std = @import("std");
+const bun = @import("root").bun;
+const js_ast = bun.JSAst;
 
 pub const Reader = struct {
     const Self = @This();
@@ -423,56 +425,7 @@ pub const Api = struct {
         }
     };
 
-    pub const StackFramePosition = packed struct {
-        /// source_offset
-        source_offset: i32 = 0,
-
-        /// line
-        line: i32 = 0,
-
-        /// line_start
-        line_start: i32 = 0,
-
-        /// line_stop
-        line_stop: i32 = 0,
-
-        /// column_start
-        column_start: i32 = 0,
-
-        /// column_stop
-        column_stop: i32 = 0,
-
-        /// expression_start
-        expression_start: i32 = 0,
-
-        /// expression_stop
-        expression_stop: i32 = 0,
-
-        pub fn decode(reader: anytype) anyerror!StackFramePosition {
-            var this = std.mem.zeroes(StackFramePosition);
-
-            this.source_offset = try reader.readValue(i32);
-            this.line = try reader.readValue(i32);
-            this.line_start = try reader.readValue(i32);
-            this.line_stop = try reader.readValue(i32);
-            this.column_start = try reader.readValue(i32);
-            this.column_stop = try reader.readValue(i32);
-            this.expression_start = try reader.readValue(i32);
-            this.expression_stop = try reader.readValue(i32);
-            return this;
-        }
-
-        pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeInt(this.source_offset);
-            try writer.writeInt(this.line);
-            try writer.writeInt(this.line_start);
-            try writer.writeInt(this.line_stop);
-            try writer.writeInt(this.column_start);
-            try writer.writeInt(this.column_stop);
-            try writer.writeInt(this.expression_start);
-            try writer.writeInt(this.expression_stop);
-        }
-    };
+    pub const StackFramePosition = bun.JSC.ZigStackFramePosition;
 
     pub const SourceLine = struct {
         /// line
@@ -871,12 +824,19 @@ pub const Api = struct {
         }
     };
 
-    pub const StringPointer = packed struct {
+    /// Represents a slice stored within an externally stored buffer. Safe to serialize.
+    /// Must be an extern struct to match with `headers-handwritten.h`.
+    pub const StringPointer = extern struct {
         /// offset
         offset: u32 = 0,
 
         /// length
         length: u32 = 0,
+
+        comptime {
+            bun.assert(@alignOf(StringPointer) == @alignOf(u32));
+            bun.assert(@sizeOf(StringPointer) == @sizeOf(u64));
+        }
 
         pub fn decode(reader: anytype) anyerror!StringPointer {
             var this = std.mem.zeroes(StringPointer);
@@ -889,6 +849,10 @@ pub const Api = struct {
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
             try writer.writeInt(this.offset);
             try writer.writeInt(this.length);
+        }
+
+        pub fn slice(this: @This(), bytes: []const u8) []const u8 {
+            return bytes[this.offset .. this.offset + this.length];
         }
     };
 
@@ -1731,6 +1695,12 @@ pub const Api = struct {
         /// conditions
         conditions: []const []const u8,
 
+        /// packages
+        packages: ?PackagesMode = null,
+
+        /// ignore_dce_annotations
+        ignore_dce_annotations: bool,
+
         pub fn decode(reader: anytype) anyerror!TransformOptions {
             var this = std.mem.zeroes(TransformOptions);
 
@@ -1817,6 +1787,9 @@ pub const Api = struct {
                     },
                     26 => {
                         this.conditions = try reader.readArray([]const u8);
+                    },
+                    27 => {
+                        this.packages = try reader.readValue(PackagesMode);
                     },
                     else => {
                         return error.InvalidMessage;
@@ -1933,14 +1906,36 @@ pub const Api = struct {
                 try writer.writeArray([]const u8, conditions);
             }
 
+            if (this.packages) |packages| {
+                try writer.writeFieldID(27);
+                try writer.writeValue([]const u8, packages);
+            }
+
             try writer.endMessage();
         }
     };
 
     pub const SourceMapMode = enum(u8) {
-        _none,
-        /// inline_into_file
-        inline_into_file,
+        none,
+
+        /// inline
+        @"inline",
+
+        /// external
+        external,
+
+        linked,
+
+        _,
+
+        pub fn jsonStringify(self: @This(), writer: anytype) !void {
+            return try writer.write(@tagName(self));
+        }
+    };
+
+    pub const PackagesMode = enum(u8) {
+        /// bundle
+        bundle,
 
         /// external
         external,
@@ -2776,6 +2771,27 @@ pub const Api = struct {
         /// token
         token: []const u8,
 
+        pub fn dupe(this: NpmRegistry, allocator: std.mem.Allocator) NpmRegistry {
+            const buf = allocator.alloc(u8, this.url.len + this.username.len + this.password.len + this.token.len) catch bun.outOfMemory();
+
+            var out: NpmRegistry = .{
+                .url = "",
+                .username = "",
+                .password = "",
+                .token = "",
+            };
+
+            var i: usize = 0;
+            inline for (std.meta.fields(NpmRegistry)) |field| {
+                const field_value = @field(this, field.name);
+                @memcpy(buf[i .. i + field_value.len], field_value);
+                @field(&out, field.name) = buf[i .. i + field_value.len];
+                i += field_value.len;
+            }
+
+            return out;
+        }
+
         pub fn decode(reader: anytype) anyerror!NpmRegistry {
             var this = std.mem.zeroes(NpmRegistry);
 
@@ -2792,14 +2808,101 @@ pub const Api = struct {
             try writer.writeValue(@TypeOf(this.password), this.password);
             try writer.writeValue(@TypeOf(this.token), this.token);
         }
+
+        pub const Parser = struct {
+            log: *bun.logger.Log,
+            source: *const bun.logger.Source,
+            allocator: std.mem.Allocator,
+
+            fn addError(this: *Parser, loc: bun.logger.Loc, comptime text: []const u8) !void {
+                this.log.addError(this.source, loc, text) catch unreachable;
+                return error.ParserError;
+            }
+
+            fn expectString(this: *Parser, expr: js_ast.Expr) !void {
+                switch (expr.data) {
+                    .e_string, .e_utf8_string => {},
+                    else => {
+                        this.log.addErrorFmt(this.source, expr.loc, this.allocator, "expected string but received {}", .{
+                            @as(js_ast.Expr.Tag, expr.data),
+                        }) catch unreachable;
+                        return error.ParserError;
+                    },
+                }
+            }
+
+            pub fn parseRegistryURLString(this: *Parser, str: *js_ast.E.String) !Api.NpmRegistry {
+                return try this.parseRegistryURLStringImpl(str.data);
+            }
+
+            pub fn parseRegistryURLStringImpl(this: *Parser, str: []const u8) !Api.NpmRegistry {
+                const url = bun.URL.parse(str);
+                var registry = std.mem.zeroes(Api.NpmRegistry);
+
+                // Token
+                if (url.username.len == 0 and url.password.len > 0) {
+                    registry.token = url.password;
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                } else if (url.username.len > 0 and url.password.len > 0) {
+                    registry.username = url.username;
+                    registry.password = url.password;
+
+                    registry.url = try std.fmt.allocPrint(this.allocator, "{s}://{}/{s}/", .{ url.displayProtocol(), url.displayHost(), std.mem.trim(u8, url.pathname, "/") });
+                } else {
+                    // Do not include a trailing slash. There might be parameters at the end.
+                    registry.url = url.href;
+                }
+
+                return registry;
+            }
+
+            fn parseRegistryObject(this: *Parser, obj: *js_ast.E.Object) !Api.NpmRegistry {
+                var registry = std.mem.zeroes(Api.NpmRegistry);
+
+                if (obj.get("url")) |url| {
+                    try this.expectString(url);
+                    const href = url.asString(this.allocator).?;
+                    // Do not include a trailing slash. There might be parameters at the end.
+                    registry.url = href;
+                }
+
+                if (obj.get("username")) |username| {
+                    try this.expectString(username);
+                    registry.username = username.asString(this.allocator).?;
+                }
+
+                if (obj.get("password")) |password| {
+                    try this.expectString(password);
+                    registry.password = password.asString(this.allocator).?;
+                }
+
+                if (obj.get("token")) |token| {
+                    try this.expectString(token);
+                    registry.token = token.asString(this.allocator).?;
+                }
+
+                return registry;
+            }
+
+            pub fn parseRegistry(this: *Parser, expr: js_ast.Expr) !Api.NpmRegistry {
+                switch (expr.data) {
+                    .e_string => |str| {
+                        return this.parseRegistryURLString(str);
+                    },
+                    .e_object => |obj| {
+                        return this.parseRegistryObject(obj);
+                    },
+                    else => {
+                        try this.addError(expr.loc, "Expected registry to be a URL string or an object");
+                        return std.mem.zeroes(Api.NpmRegistry);
+                    },
+                }
+            }
+        };
     };
 
     pub const NpmRegistryMap = struct {
-        /// scopes
-        scopes: []const []const u8,
-
-        /// registries
-        registries: []const NpmRegistry,
+        scopes: bun.StringArrayHashMapUnmanaged(NpmRegistry) = .{},
 
         pub fn decode(reader: anytype) anyerror!NpmRegistryMap {
             var this = std.mem.zeroes(NpmRegistryMap);
@@ -2810,8 +2913,8 @@ pub const Api = struct {
         }
 
         pub fn encode(this: *const @This(), writer: anytype) anyerror!void {
-            try writer.writeArray([]const u8, this.scopes);
-            try writer.writeArray(NpmRegistry, this.registries);
+            try writer.writeArray([]const u8, this.scopes.keys());
+            try writer.writeArray(NpmRegistry, this.scopes.values());
         }
     };
 

@@ -62,10 +62,11 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToASCII, (JSC::JSGlobalObject * globalObject, J
     UChar hostnameBuffer[hostnameBufferLength];
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
-    int32_t numCharactersConverted = uidna_nameToASCII(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+    const auto span = domain.span16();
+    int32_t numCharactersConverted = uidna_nameToASCII(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToASCIIErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     throwTypeError(globalObject, scope, "domainToASCII failed"_s);
     return JSC::JSValue::encode(jsUndefined());
@@ -131,10 +132,12 @@ JSC_DEFINE_HOST_FUNCTION(jsDomainToUnicode, (JSC::JSGlobalObject * globalObject,
     UErrorCode error = U_ZERO_ERROR;
     UIDNAInfo processingDetails = UIDNA_INFO_INITIALIZER;
 
-    int32_t numCharactersConverted = uidna_nameToUnicode(encoder, StringView(domain).characters16(), domain.length(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
+    const auto span = domain.span16();
+
+    int32_t numCharactersConverted = uidna_nameToUnicode(encoder, span.data(), span.size(), hostnameBuffer, hostnameBufferLength, &processingDetails, &error);
 
     if (U_SUCCESS(error) && !(processingDetails.errors & ~allowedNameToUnicodeErrors) && numCharactersConverted) {
-        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(hostnameBuffer, numCharactersConverted)));
+        return JSC::JSValue::encode(JSC::jsString(vm, WTF::String(std::span { hostnameBuffer, static_cast<unsigned int>(numCharactersConverted) })));
     }
     throwTypeError(globalObject, scope, "domainToUnicode failed"_s);
     return JSC::JSValue::encode(jsUndefined());

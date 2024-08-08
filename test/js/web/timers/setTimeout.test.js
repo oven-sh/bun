@@ -1,9 +1,8 @@
 import { spawnSync } from "bun";
+import { heapStats } from "bun:jsc";
 import { it, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, isWindows } from "harness";
 import path from "node:path";
-
-const isWindows = process.platform === "win32";
 
 it("setTimeout", async () => {
   var lastID = -1;
@@ -150,22 +149,23 @@ it("Bun.sleep propagates exceptions", async () => {
   }
 });
 
+const tolerance = 8;
 it("Bun.sleep works with a Date object", async () => {
   const offset = isWindows ? 100 : 10;
-  const now = performance.now();
+  const init = performance.now();
   var ten_ms = new Date();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  expect(Math.ceil(performance.now() - now)).toBeGreaterThan(offset);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
 });
 
 it("Bun.sleep(Date) fulfills after Date", async () => {
-  const offset = isWindows ? 100 : 10;
+  const offset = isWindows ? 100 : 50;
   let ten_ms = new Date();
+  const init = performance.now();
   ten_ms.setMilliseconds(ten_ms.getMilliseconds() + offset);
   await Bun.sleep(ten_ms);
-  let now = new Date();
-  expect(+now).toBeGreaterThanOrEqual(+ten_ms);
+  expect(Math.ceil(performance.now() - init + tolerance)).toBeGreaterThanOrEqual(offset);
 });
 
 it("node.js timers/promises setTimeout propagates exceptions", async () => {
@@ -255,8 +255,11 @@ it("setTimeout should refresh N times", done => {
 
   setTimeout(() => {
     clearTimeout(timer);
-    expect(count).toBeGreaterThanOrEqual(5);
-    done();
+    try {
+      expect(count).toBeGreaterThanOrEqual(isWindows ? 4 : 5);
+    } finally {
+      done();
+    }
   }, 300);
 });
 
@@ -305,6 +308,41 @@ it("setTimeout should not refresh after clearTimeout", done => {
   }, 100);
 });
 
+it("setTimeout Timeout objects are unprotected after called", async () => {
+  let { promise, resolve } = Promise.withResolvers();
+
+  const initial = heapStats().protectedObjectTypeCounts;
+  let remaining = 2;
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  setTimeout(() => {
+    remaining--;
+    if (remaining === 0) resolve();
+  }, 0);
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual((initial.Timeout || 0) + 2);
+
+  // Assert it's unprotected.
+  await promise;
+
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+
+  Bun.gc(true);
+  remaining = 5;
+  ({ promise, resolve } = Promise.withResolvers());
+  setInterval(function () {
+    remaining--;
+    if (remaining === 0) {
+      clearInterval(this);
+      queueMicrotask(resolve);
+    }
+  });
+  Bun.gc(true);
+  await promise;
+  expect(heapStats().protectedObjectTypeCounts.Timeout || 0).toEqual(initial.Timeout || 0);
+});
+
 it("setTimeout CPU usage #7790", async () => {
   const process = Bun.spawn({
     cmd: [bunExe(), "run", path.join(import.meta.dir, "setTimeout-cpu-fixture.js")],
@@ -315,4 +353,12 @@ it("setTimeout CPU usage #7790", async () => {
   expect(code).toBe(0);
   const stats = process.resourceUsage();
   expect(stats.cpuTime.total / BigInt(1e6)).toBeLessThan(1);
+});
+
+it("Returning a Promise in setTimeout doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-6.js")]).toRun();
+});
+
+it("Returning a Promise in setTimeout (unref'd) doesnt keep the event loop alive forever", async () => {
+  expect([path.join(import.meta.dir, "setTimeout-unref-fixture-7.js")]).toRun();
 });

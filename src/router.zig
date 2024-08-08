@@ -467,7 +467,7 @@ const RouteLoader = struct {
                                 // length is extended by one
                                 // entry.dir is a string with a trailing slash
                                 if (comptime Environment.isDebug) {
-                                    std.debug.assert(bun.path.isSepAny(entry.dir[base_dir.len - 1]));
+                                    bun.assert(bun.path.isSepAny(entry.dir[base_dir.len - 1]));
                                 }
 
                                 const public_dir = entry.dir.ptr[base_dir.len - 1 .. entry.dir.len];
@@ -529,7 +529,7 @@ pub const TinyPtr = packed struct {
         const right = @intFromPtr(in.ptr) + in.len;
         const end = @intFromPtr(parent.ptr) + parent.len;
         if (comptime Environment.isDebug) {
-            std.debug.assert(end < right);
+            bun.assert(end < right);
         }
 
         const length = @max(end, right) - right;
@@ -743,8 +743,8 @@ pub const Route = struct {
                 match_name = name[1..];
             }
 
-            if (Environment.allow_assert) std.debug.assert(match_name[0] != '/');
-            if (Environment.allow_assert) std.debug.assert(name[0] == '/');
+            if (Environment.allow_assert) bun.assert(match_name[0] != '/');
+            if (Environment.allow_assert) bun.assert(name[0] == '/');
         } else {
             name = Route.index_route_name;
             match_name = Route.index_route_name;
@@ -788,11 +788,11 @@ pub const Route = struct {
             PathString.init(abs_path_str);
 
         if (comptime Environment.allow_assert and Environment.isWindows) {
-            std.debug.assert(!strings.containsChar(name, '\\'));
-            std.debug.assert(!strings.containsChar(public_path, '\\'));
-            std.debug.assert(!strings.containsChar(match_name, '\\'));
-            std.debug.assert(!strings.containsChar(abs_path, '\\'));
-            std.debug.assert(!strings.containsChar(entry.base(), '\\'));
+            bun.assert(!strings.containsChar(name, '\\'));
+            bun.assert(!strings.containsChar(public_path, '\\'));
+            bun.assert(!strings.containsChar(match_name, '\\'));
+            bun.assert(!strings.containsChar(abs_path, '\\'));
+            bun.assert(!strings.containsChar(entry.base(), '\\'));
         }
 
         return Route{
@@ -842,7 +842,7 @@ pub fn match(app: *Router, comptime Server: type, server: Server, comptime Reque
             return;
         }
 
-        std.debug.assert(route.path.len > 0);
+        bun.assert(route.path.len > 0);
 
         if (comptime @hasField(std.meta.Child(Server), "watcher")) {
             if (server.watcher.watchloop_handle == null) {
@@ -940,7 +940,7 @@ pub const MockServer = struct {
 
 fn makeTest(cwd_path: string, data: anytype) !void {
     Output.initTest();
-    std.debug.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
+    bun.assert(cwd_path.len > 1 and !strings.eql(cwd_path, "/") and !strings.endsWith(cwd_path, "bun"));
     const bun_tests_dir = try std.fs.cwd().makeOpenPath("bun-test-scratch", .{});
     bun_tests_dir.deleteTree(cwd_path) catch {};
 
@@ -967,7 +967,7 @@ const expect = std.testing.expect;
 const expectEqual = std.testing.expectEqual;
 const expectEqualStrings = std.testing.expectEqualStrings;
 const expectStr = std.testing.expectEqualStrings;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 
 pub const Test = struct {
     pub fn makeRoutes(comptime testName: string, data: anytype) !Routes {
@@ -1217,7 +1217,7 @@ const Pattern = struct {
 
         var count: u16 = 0;
         var offset: RoutePathInt = 0;
-        std.debug.assert(input.len > 0);
+        bun.assert(input.len > 0);
         var kind: u4 = @intFromEnum(Tag.static);
         const end = @as(u32, @truncate(input.len - 1));
         while (offset < end) {

@@ -2,21 +2,21 @@ const std = @import("std");
 const Api = @import("../../api/schema.zig").Api;
 const MimeType = bun.http.MimeType;
 const ZigURL = @import("../../url.zig").URL;
-const HTTPClient = @import("root").bun.http;
+const HTTPClient = bun.http;
 
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const js = JSC.C;
 
 const Method = @import("../../http/method.zig").Method;
 
 const ObjectPool = @import("../../pool.zig").ObjectPool;
 const bun = @import("root").bun;
-const Output = @import("root").bun.Output;
-const MutableString = @import("root").bun.MutableString;
-const strings = @import("root").bun.strings;
-const string = @import("root").bun.string;
-const default_allocator = @import("root").bun.default_allocator;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const Output = bun.Output;
+const MutableString = bun.MutableString;
+const strings = bun.strings;
+const string = bun.string;
+const default_allocator = bun.default_allocator;
+const FeatureFlags = bun.FeatureFlags;
 const ArrayBuffer = @import("../base.zig").ArrayBuffer;
 const Properties = @import("../base.zig").Properties;
 
@@ -35,12 +35,10 @@ const JSGlobalObject = JSC.JSGlobalObject;
 const VirtualMachine = JSC.VirtualMachine;
 const Task = @import("../javascript.zig").Task;
 
-const picohttp = @import("root").bun.picohttp;
+const picohttp = bun.picohttp;
 
 pub const TextEncoder = struct {
     filler: u32 = 0,
-
-    const utf8_string: string = "utf-8";
 
     pub export fn TextEncoder__encode8(
         globalThis: *JSGlobalObject,
@@ -61,17 +59,17 @@ pub const TextEncoder = struct {
         if (slice.len <= buf.len / 2) {
             const result = strings.copyLatin1IntoUTF8(&buf, []const u8, slice);
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
-            std.debug.assert(result.written <= buf.len);
-            std.debug.assert(result.read == slice.len);
+            bun.assert(result.written <= buf.len);
+            bun.assert(result.read == slice.len);
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
-            std.debug.assert(result.written == array_buffer.len);
+            bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.byteSlice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
             const bytes = strings.allocateLatin1IntoUTF8(globalThis.bunVM().allocator, []const u8, slice) catch {
                 return JSC.toInvalidArguments("Out of memory", .{}, globalThis);
             };
-            std.debug.assert(bytes.len >= slice.len);
+            bun.assert(bytes.len >= slice.len);
             return ArrayBuffer.fromBytes(bytes, .Uint8Array).toJSUnchecked(globalThis, null);
         }
     }
@@ -104,10 +102,10 @@ pub const TextEncoder = struct {
                 return uint8array;
             }
             const uint8array = JSC.JSValue.createUninitializedUint8Array(globalThis, result.written);
-            std.debug.assert(result.written <= buf.len);
-            std.debug.assert(result.read == slice.len);
+            bun.assert(result.written <= buf.len);
+            bun.assert(result.read == slice.len);
             const array_buffer = uint8array.asArrayBuffer(globalThis).?;
-            std.debug.assert(result.written == array_buffer.len);
+            bun.assert(result.written == array_buffer.len);
             @memcpy(array_buffer.slice()[0..result.written], buf[0..result.written]);
             return uint8array;
         } else {
@@ -178,7 +176,7 @@ pub const TextEncoder = struct {
         globalThis: *JSGlobalObject,
         rope_str: *JSC.JSString,
     ) JSValue {
-        if (comptime Environment.allow_assert) std.debug.assert(rope_str.is8Bit());
+        if (comptime Environment.allow_assert) bun.assert(rope_str.is8Bit());
         var stack_buf: [2048]u8 = undefined;
         var buf_to_use: []u8 = &stack_buf;
         const length = rope_str.length();
@@ -198,7 +196,7 @@ pub const TextEncoder = struct {
         array.ensureStillAlive();
 
         if (encoder.any_non_ascii) {
-            return JSC.JSValue.jsUndefined();
+            return .undefined;
         }
 
         if (array.isEmpty()) {
@@ -413,7 +411,7 @@ pub const TextDecoder = struct {
     fatal: bool = false,
     encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
-    pub fn finalize(this: *TextDecoder) callconv(.C) void {
+    pub fn finalize(this: *TextDecoder) void {
         bun.default_allocator.destroy(this);
     }
 
@@ -422,13 +420,13 @@ pub const TextDecoder = struct {
     pub fn getIgnoreBOM(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.ignore_bom);
     }
     // pub fn setIgnoreBOM(
     //     this: *TextDecoder,
     //     _: *JSC.JSGlobalObject,
-    // ) callconv(.C) JSC.JSValue {
+    // )  JSC.JSValue {
     //     this.ignore_bom = JSValue.fromRef(this.ignore_bom).toBoolean();
     //     return true;
     // }
@@ -447,16 +445,15 @@ pub const TextDecoder = struct {
     pub fn getFatal(
         this: *TextDecoder,
         _: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
+    ) JSC.JSValue {
         return JSC.JSValue.jsBoolean(this.fatal);
     }
 
-    const utf8_string: string = "utf-8";
     pub fn getEncoding(
         this: *TextDecoder,
         globalThis: *JSC.JSGlobalObject,
-    ) callconv(.C) JSC.JSValue {
-        return ZigString.init(EncodingLabel.label.get(this.encoding).?).toValue(globalThis);
+    ) JSC.JSValue {
+        return ZigString.init(EncodingLabel.label.get(this.encoding).?).toJS(globalThis);
     }
     const Vector16 = std.meta.Vector(16, u16);
     const max_16_ascii: Vector16 = @splat(@as(u16, 127));
@@ -496,13 +493,13 @@ pub const TextDecoder = struct {
         // we can still allocate as UTF-16 and just copy the bytes
         if (i == slice.len) {
             if (comptime Slice == []u16) {
-                return ZigString.init16(slice).toValueGC(ctx);
+                return ZigString.init16(slice).toJS(ctx);
             } else {
                 var str = ZigString.init("");
                 str._unsafe_ptr_do_not_use = @as([*]const u8, @ptrCast(slice.ptr));
                 str.len = slice.len;
                 str.markUTF16();
-                return str.toValueGC(ctx.ptr());
+                return str.toJS(ctx.ptr());
             }
         }
 
@@ -582,15 +579,15 @@ pub const TextDecoder = struct {
         out._unsafe_ptr_do_not_use = @as([*]u8, @ptrCast(full.ptr));
         out.len = full.len;
         out.markUTF16();
-        return out.toValueGC(ctx.ptr());
+        return out.toJS(ctx.ptr());
     }
 
-    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(.C) JSValue {
+    pub fn decode(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
         const arguments_ = callframe.arguments(2);
         const arguments = arguments_.ptr[0..arguments_.len];
 
         if (arguments.len < 1 or arguments[0].isUndefined()) {
-            return ZigString.Empty.toValue(globalThis);
+            return ZigString.Empty.toJS(globalThis);
         }
 
         const array_buffer = arguments[0].asArrayBuffer(globalThis) orelse {
@@ -613,7 +610,7 @@ pub const TextDecoder = struct {
         return this.decodeSlice(globalThis, array_buffer.slice(), false);
     }
 
-    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) callconv(.C) JSValue {
+    pub fn decodeWithoutTypeChecks(this: *TextDecoder, globalThis: *JSC.JSGlobalObject, uint8array: *JSC.JSUint8Array) JSValue {
         return this.decodeSlice(globalThis, uint8array.slice(), false);
     }
 
@@ -621,7 +618,7 @@ pub const TextDecoder = struct {
         switch (this.encoding) {
             EncodingLabel.latin1 => {
                 if (strings.isAllASCII(buffer_slice)) {
-                    return ZigString.init(buffer_slice).toValueGC(globalThis);
+                    return ZigString.init(buffer_slice).toJS(globalThis);
                 }
 
                 // It's unintuitive that we encode Latin1 as UTF16 even though the engine natively supports Latin1 strings...
@@ -652,8 +649,7 @@ pub const TextDecoder = struct {
                     } else |err| {
                         switch (err) {
                             error.InvalidByteSequence => {
-                                const type_error = globalThis.createErrorInstanceWithCode(.ERR_ENCODING_INVALID_ENCODED_DATA, "Invalid byte sequence", .{});
-                                globalThis.throwValue(type_error);
+                                globalThis.ERR_ENCODING_INVALID_ENCODED_DATA("Invalid byte sequence", .{}).throw();
                                 return .zero;
                             },
                             error.OutOfMemory => {
@@ -678,7 +674,7 @@ pub const TextDecoder = struct {
                 }
 
                 // Experiment: using mimalloc directly is slightly slower
-                return ZigString.init(moved_buffer_slice_8).toValueGC(globalThis);
+                return ZigString.init(moved_buffer_slice_8).toJS(globalThis);
             },
 
             EncodingLabel.@"UTF-16LE" => {
@@ -703,7 +699,7 @@ pub const TextDecoder = struct {
     pub fn constructor(
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
-    ) callconv(.C) ?*TextDecoder {
+    ) ?*TextDecoder {
         var args_ = callframe.arguments(2);
         var arguments: []const JSC.JSValue = args_.ptr[0..args_.len];
 
@@ -960,7 +956,7 @@ pub const Encoder = struct {
 
     pub fn toString(input_ptr: [*]const u8, len: usize, global: *JSGlobalObject, comptime encoding: JSC.Node.Encoding) JSValue {
         if (len == 0)
-            return ZigString.Empty.toValue(global);
+            return ZigString.Empty.toJS(global);
 
         const input = input_ptr[0..len];
         const allocator = VirtualMachine.get().allocator;
@@ -988,11 +984,11 @@ pub const Encoder = struct {
 
                 // If we get here, it means we can safely assume the string is 100% ASCII characters
                 // For this, we rely on the GC to manage the memory to minimize potential for memory leaks
-                return ZigString.init(input).toValueGC(global);
+                return ZigString.init(input).toJS(global);
             },
             .ucs2, .utf16le => {
                 // Avoid incomplete characters
-                if (len / 2 == 0) return ZigString.Empty.toValue(global);
+                if (len / 2 == 0) return ZigString.Empty.toJS(global);
 
                 var output, const chars = bun.String.createUninitialized(.utf16, len / 2);
                 defer output.deref();
@@ -1008,7 +1004,7 @@ pub const Encoder = struct {
                 defer str.deref();
 
                 const wrote = strings.encodeBytesToHex(chars, input);
-                std.debug.assert(wrote == chars.len);
+                bun.assert(wrote == chars.len);
                 return str.toJS(global);
             },
 
@@ -1089,7 +1085,7 @@ pub const Encoder = struct {
             },
 
             .base64, .base64url => {
-                return bun.base64.decode(to_ptr[0..to_len], input[0..len]).written;
+                return bun.base64.decode(to_ptr[0..to_len], input[0..len]).count;
             },
         }
     }
@@ -1261,7 +1257,7 @@ pub const Encoder = struct {
                 const outlen = bun.base64.decodeLen(slice);
                 const to = allocator.alloc(u8, outlen) catch return &[_]u8{};
 
-                const wrote = bun.base64.decode(to[0..outlen], slice).written;
+                const wrote = bun.base64.decode(to[0..outlen], slice).count;
                 return to[0..wrote];
             },
         }

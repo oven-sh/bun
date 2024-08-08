@@ -65,7 +65,22 @@ public:
     bool isFiringEventListeners { false };
 };
 
-class EventTarget : public ScriptWrappable, public CanMakeWeakPtr<EventTarget> {
+// Do not make WeakPtrImplWithEventTargetData a derived class of DefaultWeakPtrImpl to catch the bug which uses incorrect impl class.
+class WeakPtrImplWithEventTargetData final : public WTF::WeakPtrImplBaseSingleThread<WeakPtrImplWithEventTargetData> {
+public:
+    EventTargetData& eventTargetData() { return m_eventTargetData; }
+    const EventTargetData& eventTargetData() const { return m_eventTargetData; }
+
+    template<typename T> WeakPtrImplWithEventTargetData(T* ptr)
+        : WTF::WeakPtrImplBaseSingleThread<WeakPtrImplWithEventTargetData>(ptr)
+    {
+    }
+
+private:
+    EventTargetData m_eventTargetData;
+};
+
+class EventTarget : public ScriptWrappable, public CanMakeWeakPtrWithBitField<EventTarget, WeakPtrFactoryInitialization::Lazy, WeakPtrImplWithEventTargetData> {
     WTF_MAKE_ISO_ALLOCATED(EventTarget);
 
 public:
@@ -79,6 +94,8 @@ public:
 
     WEBCORE_EXPORT virtual bool isNode() const;
     WEBCORE_EXPORT virtual bool isPaymentRequest() const;
+
+    bool isContextStopped() const;
 
     using AddEventListenerOptionsOrBoolean = std::variant<AddEventListenerOptions, bool>;
     WEBCORE_EXPORT void addEventListenerForBindings(const AtomString& eventType, RefPtr<EventListener>&&, AddEventListenerOptionsOrBoolean&&);

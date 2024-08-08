@@ -80,7 +80,7 @@ fn OverflowGroup(comptime Block: type) type {
         // ...right?
         const max = 4095;
         const UsedSize = std.math.IntFittingRange(0, max + 1);
-        const default_allocator = @import("root").bun.default_allocator;
+        const default_allocator = bun.default_allocator;
         used: UsedSize = 0,
         allocated: UsedSize = 0,
         ptrs: [max]*Block = undefined,
@@ -122,7 +122,7 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             }
 
             pub fn append(block: *Block, value: ValueType) *ValueType {
-                if (comptime Environment.allow_assert) std.debug.assert(block.used < count);
+                if (comptime Environment.allow_assert) bun.assert(block.used < count);
                 const index = block.used;
                 block.items[index] = value;
                 block.used +%= 1;
@@ -155,9 +155,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }
@@ -168,9 +168,9 @@ pub fn OverflowList(comptime ValueType: type, comptime count: comptime_int) type
             else
                 0;
 
-            if (comptime Environment.allow_assert) std.debug.assert(index.is_overflow);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.used >= block_id);
-            if (comptime Environment.allow_assert) std.debug.assert(this.list.ptrs[block_id].used > (index.index % count));
+            if (comptime Environment.allow_assert) bun.assert(index.is_overflow);
+            if (comptime Environment.allow_assert) bun.assert(this.list.used >= block_id);
+            if (comptime Environment.allow_assert) bun.assert(this.list.ptrs[block_id].used > (index.index % count));
 
             return &this.list.ptrs[block_id].items[index.index % count];
         }
@@ -188,7 +188,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
             prev: ?*OverflowBlock = null,
 
             pub fn append(this: *OverflowBlock, item: ValueType) !*ValueType {
-                const index = this.used.fetchAdd(1, .AcqRel);
+                const index = this.used.fetchAdd(1, .acq_rel);
                 if (index >= ChunkSize) return error.OutOfMemory;
                 this.data[index] = item;
                 return &this.data[index];
@@ -199,7 +199,7 @@ pub fn BSSList(comptime ValueType: type, comptime _count: anytype) type {
         const Self = @This();
 
         allocator: Allocator,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         head: *OverflowBlock = undefined,
         tail: OverflowBlock = OverflowBlock{},
         backing_buf: [count]ValueType = undefined,
@@ -288,7 +288,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
         allocator: Allocator,
         slice_buf: [count][]const u8 = undefined,
         slice_buf_used: u16 = 0,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         pub var instance: Self = undefined;
         var loaded: bool = false;
         // only need the mutex on append
@@ -347,7 +347,7 @@ pub fn BSSStringList(comptime _count: usize, comptime _item_length: usize) type 
             return try self.doAppend(AppendType, _value);
         }
 
-        threadlocal var lowercase_append_buf: [bun.MAX_PATH_BYTES]u8 = undefined;
+        threadlocal var lowercase_append_buf: bun.PathBuffer = undefined;
         pub fn appendLowerCase(self: *Self, comptime AppendType: type, _value: AppendType) ![]const u8 {
             self.mutex.lock();
             defer self.mutex.unlock();
@@ -465,7 +465,7 @@ pub fn BSSMap(comptime ValueType: type, comptime count: anytype, comptime store_
         index: IndexMap,
         overflow_list: Overflow = Overflow{},
         allocator: Allocator,
-        mutex: Mutex = Mutex.init(),
+        mutex: Mutex = .{},
         backing_buf: [count]ValueType = undefined,
         backing_buf_used: u16 = 0,
 

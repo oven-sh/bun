@@ -6,13 +6,14 @@
 // This is copy-pasted from Zig's source code to fix an issue with linking on macOS Catalina and earlier.
 
 const std = @import("std");
+const bun = @import("root").bun;
 const builtin = @import("builtin");
 const Futex = @This();
 
 const target = builtin.target;
 const single_threaded = builtin.single_threaded;
 
-const assert = std.debug.assert;
+const assert = bun.assert;
 const testing = std.testing;
 
 const Atomic = std.atomic.Value;
@@ -50,7 +51,7 @@ pub fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}
     // Avoid calling into the OS for no-op waits()
     if (timeout) |timeout_ns| {
         if (timeout_ns == 0) {
-            if (ptr.load(.SeqCst) != expect) return;
+            if (ptr.load(.seq_cst) != expect) return;
             return error.TimedOut;
         }
     }
@@ -132,8 +133,8 @@ const LinuxFutex = struct {
     const linux = std.os.linux;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
-        var ts: std.os.timespec = undefined;
-        var ts_ptr: ?*std.os.timespec = null;
+        var ts: std.posix.timespec = undefined;
+        var ts_ptr: ?*std.posix.timespec = null;
 
         // Futex timespec timeout is already in relative time.
         if (timeout) |timeout_ns| {
@@ -142,7 +143,7 @@ const LinuxFutex = struct {
             ts.tv_nsec = @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
         }
 
-        switch (linux.getErrno(linux.futex_wait(
+        switch (bun.C.getErrno(linux.futex_wait(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAIT,
             @as(i32, @bitCast(expect)),
@@ -159,7 +160,7 @@ const LinuxFutex = struct {
     }
 
     fn wake(ptr: *const Atomic(u32), num_waiters: u32) void {
-        switch (linux.getErrno(linux.futex_wake(
+        switch (bun.C.getErrno(linux.futex_wake(
             @as(*const i32, @ptrCast(ptr)),
             linux.FUTEX.PRIVATE_FLAG | linux.FUTEX.WAKE,
             std.math.cast(i32, num_waiters) orelse std.math.maxInt(i32),
@@ -173,7 +174,7 @@ const LinuxFutex = struct {
 };
 
 const DarwinFutex = struct {
-    const darwin = std.os.darwin;
+    const darwin = std.c;
 
     fn wait(ptr: *const Atomic(u32), expect: u32, timeout: ?u64) error{TimedOut}!void {
         // Darwin XNU 7195.50.7.100.1 introduced __ulock_wait2 and migrated code paths (notably pthread_cond_t) towards it:
@@ -208,7 +209,7 @@ const DarwinFutex = struct {
         };
 
         if (status >= 0) return;
-        switch (@as(std.os.E, @enumFromInt(-status))) {
+        switch (@as(std.posix.E, @enumFromInt(-status))) {
             .INTR => {},
             // Address of the futex is paged out. This is unlikely, but possible in theory, and
             // pthread/libdispatch on darwin bother to handle it. In this case we'll return
@@ -230,7 +231,7 @@ const DarwinFutex = struct {
             const status = darwin.__ulock_wake(flags, addr, 0);
 
             if (status >= 0) return;
-            switch (@as(std.os.E, @enumFromInt(-status))) {
+            switch (@as(std.posix.E, @enumFromInt(-status))) {
                 .INTR => continue, // spurious wake()
                 .FAULT => continue, // address of the lock was paged out
                 .NOENT => return, // nothing was woken up
@@ -251,7 +252,7 @@ const PosixFutex = struct {
             assert(std.c.pthread_mutex_lock(&bucket.mutex) == .SUCCESS);
             defer assert(std.c.pthread_mutex_unlock(&bucket.mutex) == .SUCCESS);
 
-            if (ptr.load(.SeqCst) != expect) {
+            if (ptr.load(.seq_cst) != expect) {
                 return;
             }
 
@@ -347,11 +348,11 @@ const PosixFutex = struct {
                 .notified => return,
             }
 
-            var ts: std.os.timespec = undefined;
-            var ts_ptr: ?*const std.os.timespec = null;
+            var ts: std.posix.timespec = undefined;
+            var ts_ptr: ?*const std.posix.timespec = null;
             if (timeout) |timeout_ns| {
                 ts_ptr = &ts;
-                std.os.clock_gettime(std.os.CLOCK_REALTIME, &ts) catch unreachable;
+                std.posix.clock_gettime(std.posix.CLOCK_REALTIME, &ts) catch unreachable;
                 ts.tv_sec += @as(@TypeOf(ts.tv_sec), @intCast(timeout_ns / std.time.ns_per_s));
                 ts.tv_nsec += @as(@TypeOf(ts.tv_nsec), @intCast(timeout_ns % std.time.ns_per_s));
                 if (ts.tv_nsec >= std.time.ns_per_s) {
@@ -399,174 +400,3 @@ const PosixFutex = struct {
         }
     });
 };
-
-test "Futex - wait/wake" {
-    var value = Atomic(u32).init(0);
-    Futex.wait(&value, 1, null) catch unreachable;
-
-    const wait_noop_result = Futex.wait(&value, 0, 0);
-    try testing.expectError(error.TimedOut, wait_noop_result);
-
-    const wait_longer_result = Futex.wait(&value, 0, std.time.ns_per_ms);
-    try testing.expectError(error.TimedOut, wait_longer_result);
-
-    Futex.wake(&value, 0);
-    Futex.wake(&value, 1);
-    Futex.wake(&value, std.math.maxInt(u32));
-}
-
-test "Futex - Signal" {
-    if (single_threaded) {
-        return error.SkipZigTest;
-    }
-
-    const Paddle = struct {
-        value: Atomic(u32) = Atomic(u32).init(0),
-        current: u32 = 0,
-
-        fn run(self: *@This(), hit_to: *@This()) !void {
-            var iterations: usize = 4;
-            while (iterations > 0) : (iterations -= 1) {
-                var value: u32 = undefined;
-                while (true) {
-                    value = self.value.load(.Acquire);
-                    if (value != self.current) break;
-                    Futex.wait(&self.value, self.current, null) catch unreachable;
-                }
-
-                try testing.expectEqual(value, self.current + 1);
-                self.current = value;
-
-                _ = hit_to.value.fetchAdd(1, .Release);
-                Futex.wake(&hit_to.value, 1);
-            }
-        }
-    };
-
-    var ping = Paddle{};
-    var pong = Paddle{};
-
-    const t1 = try std.Thread.spawn(.{}, Paddle.run, .{ &ping, &pong });
-    defer t1.join();
-
-    const t2 = try std.Thread.spawn(.{}, Paddle.run, .{ &pong, &ping });
-    defer t2.join();
-
-    _ = ping.value.fetchAdd(1, .Release);
-    Futex.wake(&ping.value, 1);
-}
-
-test "Futex - Broadcast" {
-    if (single_threaded) {
-        return error.SkipZigTest;
-    }
-
-    const Context = struct {
-        threads: [4]std.Thread = undefined,
-        broadcast: Atomic(u32) = Atomic(u32).init(0),
-        notified: Atomic(usize) = Atomic(usize).init(0),
-
-        const BROADCAST_EMPTY = 0;
-        const BROADCAST_SENT = 1;
-        const BROADCAST_RECEIVED = 2;
-
-        fn runSender(self: *@This()) !void {
-            self.broadcast.store(BROADCAST_SENT, .Monotonic);
-            Futex.wake(&self.broadcast, @as(u32, @intCast(self.threads.len)));
-
-            while (true) {
-                const broadcast = self.broadcast.load(.Acquire);
-                if (broadcast == BROADCAST_RECEIVED) break;
-                try testing.expectEqual(broadcast, BROADCAST_SENT);
-                Futex.wait(&self.broadcast, broadcast, null) catch unreachable;
-            }
-        }
-
-        fn runReceiver(self: *@This()) void {
-            while (true) {
-                const broadcast = self.broadcast.load(.Acquire);
-                if (broadcast == BROADCAST_SENT) break;
-                assert(broadcast == BROADCAST_EMPTY);
-                Futex.wait(&self.broadcast, broadcast, null) catch unreachable;
-            }
-
-            const notified = self.notified.fetchAdd(1, .Monotonic);
-            if (notified + 1 == self.threads.len) {
-                self.broadcast.store(BROADCAST_RECEIVED, .Release);
-                Futex.wake(&self.broadcast, 1);
-            }
-        }
-    };
-
-    var ctx = Context{};
-    for (ctx.threads) |*thread|
-        thread.* = try std.Thread.spawn(.{}, Context.runReceiver, .{&ctx});
-    defer for (ctx.threads) |thread|
-        thread.join();
-
-    // Try to wait for the threads to start before running runSender().
-    // NOTE: not actually needed for correctness.
-    std.time.sleep(16 * std.time.ns_per_ms);
-    try ctx.runSender();
-
-    const notified = ctx.notified.load(.Monotonic);
-    try testing.expectEqual(notified, ctx.threads.len);
-}
-
-test "Futex - Chain" {
-    if (single_threaded) {
-        return error.SkipZigTest;
-    }
-
-    const Signal = struct {
-        value: Atomic(u32) = Atomic(u32).init(0),
-
-        fn wait(self: *@This()) void {
-            while (true) {
-                const value = self.value.load(.Acquire);
-                if (value == 1) break;
-                assert(value == 0);
-                Futex.wait(&self.value, 0, null) catch unreachable;
-            }
-        }
-
-        fn notify(self: *@This()) void {
-            assert(self.value.load(.Unordered) == 0);
-            self.value.store(1, .Release);
-            Futex.wake(&self.value, 1);
-        }
-    };
-
-    const Context = struct {
-        completed: Signal = .{},
-        threads: [4]struct {
-            thread: std.Thread,
-            signal: Signal,
-        } = undefined,
-
-        fn run(self: *@This(), index: usize) void {
-            const this_signal = &self.threads[index].signal;
-
-            var next_signal = &self.completed;
-            if (index + 1 < self.threads.len) {
-                next_signal = &self.threads[index + 1].signal;
-            }
-
-            this_signal.wait();
-            next_signal.notify();
-        }
-    };
-
-    var ctx = Context{};
-    for (&ctx.threads, 0..) |*entry, index| {
-        entry.signal = .{};
-        entry.thread = try std.Thread.spawn(.{}, Context.run, .{ &ctx, index });
-    }
-
-    ctx.threads[0].signal.notify();
-    ctx.completed.wait();
-
-    for (ctx.threads) |entry| {
-        entry.thread.join();
-    }
-}

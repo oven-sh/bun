@@ -16,7 +16,7 @@ param(
 );
 
 # filter out 32 bit + ARM
-if ($env:PROCESSOR_ARCHITECTURE -ne "AMD64") {
+if (-not ((Get-CimInstance Win32_ComputerSystem)).SystemType -match "x64-based") {
   Write-Output "Install Failed:"
   Write-Output "Bun for Windows is currently only available for x86 64-bit Windows.`n"
   return 1
@@ -216,8 +216,12 @@ function Install-Bun {
   # http://community.sqlbackupandftp.com/t/error-1073741515-solved/1305
   if (($LASTEXITCODE -eq 3221225781) -or ($LASTEXITCODE -eq -1073741515)) # STATUS_DLL_NOT_FOUND
   { 
+    # TODO: as of July 2024, Bun has no external dependencies.
+    # I want to keep this error message in for a few months to ensure that
+    # if someone somehow runs into this, it can be reported.
     Write-Output "Install Failed - You are missing a DLL required to run bun.exe"
     Write-Output "This can be solved by installing the Visual C++ Redistributable from Microsoft:`nSee https://learn.microsoft.com/cpp/windows/latest-supported-vc-redist`nDirect Download -> https://aka.ms/vs/17/release/vc_redist.x64.exe`n`n"
+    Write-Output "The error above should be unreachable as Bun does not depend on this library. Please comment in https://github.com/oven-sh/bun/issues/8598 or open a new issue.`n`n"
     Write-Output "The command '${BunBin}\bun.exe --revision' exited with code ${LASTEXITCODE}`n"
     return 1
   }
@@ -277,7 +281,7 @@ function Install-Bun {
       New-ItemProperty -Path $RegistryKey -Name "DisplayName" -Value "Bun" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "InstallLocation" -Value "${BunRoot}" -PropertyType String -Force | Out-Null
       New-ItemProperty -Path $RegistryKey -Name "DisplayIcon" -Value $BunBin\bun.exe -PropertyType String -Force | Out-Null
-      New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`"" -PropertyType String -Force | Out-Null
+      New-ItemProperty -Path $RegistryKey -Name "UninstallString" -Value "powershell -c `"& `'$BunRoot\uninstall.ps1`' -PauseOnError`" -ExecutionPolicy Bypass" -PropertyType String -Force | Out-Null
     } catch {
       if ($rootKey -ne $null) {
         Remove-Item -Path $RegistryKey -Force

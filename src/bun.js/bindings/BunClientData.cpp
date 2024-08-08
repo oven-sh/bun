@@ -26,6 +26,8 @@
 namespace WebCore {
 using namespace JSC;
 
+RefPtr<JSC::SourceProvider> createBuiltinsSourceProvider();
+
 JSHeapData::JSHeapData(Heap& heap)
     : m_heapCellTypeForJSWorkerGlobalScope(JSC::IsoHeapCellType::Args<Zig::GlobalObject>())
     , m_domBuiltinConstructorSpace ISO_SUBSPACE_INIT(heap, heap.cellHeapCellType, JSDOMBuiltinConstructorBase)
@@ -38,15 +40,14 @@ JSHeapData::JSHeapData(Heap& heap)
 
 #define CLIENT_ISO_SUBSPACE_INIT(subspace) subspace(m_heapData->subspace)
 
-JSVMClientData::JSVMClientData(VM& vm)
-    : m_builtinFunctions(vm)
-    , m_builtinNames(vm)
+JSVMClientData::JSVMClientData(VM& vm, RefPtr<SourceProvider> sourceProvider)
+    : m_builtinNames(vm)
+    , m_builtinFunctions(vm, sourceProvider, m_builtinNames)
     , m_heapData(JSHeapData::ensureHeapData(vm.heap))
     , CLIENT_ISO_SUBSPACE_INIT(m_domBuiltinConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domConstructorSpace)
     , CLIENT_ISO_SUBSPACE_INIT(m_domNamespaceObjectSpace)
     , m_clientSubspaces(makeUnique<ExtendedDOMClientIsoSubspaces>())
-
 {
 }
 
@@ -72,17 +73,25 @@ JSVMClientData::~JSVMClientData()
 }
 void JSVMClientData::create(VM* vm, void* bunVM)
 {
-    JSVMClientData* clientData = new JSVMClientData(*vm);
+    auto provider = WebCore::createBuiltinsSourceProvider();
+    JSVMClientData* clientData = new JSVMClientData(*vm, provider);
     clientData->bunVM = bunVM;
-    vm->deferredWorkTimer->onAddPendingWork = Bun::JSCTaskScheduler::onAddPendingWork;
-    vm->deferredWorkTimer->onScheduleWorkSoon = Bun::JSCTaskScheduler::onScheduleWorkSoon;
-    vm->deferredWorkTimer->onCancelPendingWork = Bun::JSCTaskScheduler::onCancelPendingWork;
+    vm->deferredWorkTimer->onAddPendingWork = [clientData](Ref<JSC::DeferredWorkTimer::TicketData>&& ticket, JSC::DeferredWorkTimer::WorkType kind) -> void {
+        Bun::JSCTaskScheduler::onAddPendingWork(clientData, WTFMove(ticket), kind);
+    };
+    vm->deferredWorkTimer->onScheduleWorkSoon = [clientData](JSC::DeferredWorkTimer::Ticket ticket, JSC::DeferredWorkTimer::Task&& task) -> void {
+        Bun::JSCTaskScheduler::onScheduleWorkSoon(clientData, ticket, WTFMove(task));
+    };
+    vm->deferredWorkTimer->onCancelPendingWork = [clientData](JSC::DeferredWorkTimer::Ticket ticket) -> void {
+        Bun::JSCTaskScheduler::onCancelPendingWork(clientData, ticket);
+    };
 
     vm->clientData = clientData; // ~VM deletes this pointer.
     clientData->m_normalWorld = DOMWrapperWorld::create(*vm, DOMWrapperWorld::Type::Normal);
 
     vm->heap.addMarkingConstraint(makeUnique<WebCore::DOMGCOutputConstraint>(*vm, clientData->heapData()));
     vm->m_typedArrayController = adoptRef(new WebCoreTypedArrayController(true));
+    clientData->builtinFunctions().exportNames();
 }
 
 } // namespace WebCore

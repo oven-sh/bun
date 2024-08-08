@@ -30,9 +30,12 @@
 
 #include "config.h"
 #include "DOMFormData.h"
+#include "wtf/DebugHeap.h"
 #include <wtf/URLParser.h>
 
 namespace WebCore {
+
+DEFINE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 DOMFormData::DOMFormData(ScriptExecutionContext* context)
     : ContextDestructionObserver(context)
@@ -44,7 +47,7 @@ Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context)
     return adoptRef(*new DOMFormData(context));
 }
 
-Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, StringView urlEncodedString)
+Ref<DOMFormData> DOMFormData::create(ScriptExecutionContext* context, const StringView& urlEncodedString)
 {
     auto newFormData = adoptRef(*new DOMFormData(context));
     for (auto& entry : WTF::URLParser::parseURLEncodedForm(urlEncodedString)) {

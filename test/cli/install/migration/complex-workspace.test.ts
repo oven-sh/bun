@@ -1,11 +1,9 @@
 import fs from "fs";
 import path from "path";
-import { test, expect, describe, beforeAll } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { tmpdir } from "os";
-import { join } from "path";
+import { test, expect, describe, beforeAll, setDefaultTimeout } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
-let cwd = join(tmpdir(), "complex-workspace-test" + Math.random().toString(36).slice(2, 8));
+let cwd = tmpdirSync();
 
 function validate(packageName: string, version: string, realPackageName?: string) {
   test(`${packageName} is ${realPackageName ? `${realPackageName}@${version}` : version}`, () => {
@@ -37,6 +35,7 @@ function mustNotExist(filePath: string) {
 }
 
 beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
   fs.cpSync(path.join(import.meta.dir, "complex-workspace"), cwd, { recursive: true });
 });
 
@@ -44,7 +43,7 @@ test("the install succeeds", async () => {
   var subprocess = Bun.spawn([bunExe(), "reset.ts"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["inherit", "inherit", "inherit"],
   });
   await subprocess.exited;
   if (subprocess.exitCode != 0) {
@@ -55,7 +54,7 @@ test("the install succeeds", async () => {
   subprocess = Bun.spawn([bunExe(), "install"], {
     env: bunEnv,
     cwd,
-    stdio: ["ignore", "ignore", "ignore"],
+    stdio: ["inherit", "inherit", "inherit"],
   });
 
   await subprocess.exited;
@@ -63,7 +62,7 @@ test("the install succeeds", async () => {
     cwd = false as any;
     throw new Error("Failed to install");
   }
-}, 10000);
+});
 
 // bun-types
 validate("node_modules/bun-types", "1.0.0");
@@ -77,9 +76,7 @@ validate("node_modules/svelte", "4.1.2");
 validate("packages/second/node_modules/svelte", "4.1.0");
 validate("packages/with-postinstall/node_modules/svelte", "3.50.0");
 // validate("packages/body-parser/node_modules/svelte", "0.2.0", "public-install-test");
-// NOTE: bun hoists this dependency higher than npm
-// npm places this in node_modules/express
-validate("packages/second/node_modules/express", "1.0.0", "svelte");
+validate("node_modules/express", "1.0.0", "svelte");
 
 // install test
 // validate("node_modules/install-test", "0.3.0", "publicinstalltest");
@@ -96,9 +93,7 @@ mustNotExist("packages/second/node_modules/hello/version.txt");
 
 // body parser
 validate("node_modules/body-parser", "200.0.0");
-// NOTE: bun hoists this dependency higher than npm
-// npm places this in node_modules/not-body-parser
-validate("packages/second/node_modules/not-body-parser", "200.0.0", "body-parser");
+validate("node_modules/not-body-parser", "200.0.0", "body-parser");
 // NOTE: bun install doesnt properly handle npm aliased dependencies
 // validate("packages/second/node_modules/connect", "200.0.0", "body-parser");
 validate("packages/second/node_modules/body-parser", "3.21.2", "express");

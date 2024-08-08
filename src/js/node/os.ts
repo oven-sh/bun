@@ -122,4 +122,26 @@ function bound(obj) {
   };
 }
 
-export default bound($zig("node_os.zig", "OS.create"));
+const out = bound($zig("node_os.zig", "OS.create"));
+
+symbolToStringify(out, "arch");
+symbolToStringify(out, "availableParallelism");
+symbolToStringify(out, "endianness");
+symbolToStringify(out, "freemem");
+symbolToStringify(out, "homedir");
+symbolToStringify(out, "hostname");
+symbolToStringify(out, "platform");
+symbolToStringify(out, "release");
+symbolToStringify(out, "tmpdir");
+symbolToStringify(out, "totalmem");
+symbolToStringify(out, "type");
+symbolToStringify(out, "uptime");
+symbolToStringify(out, "version");
+symbolToStringify(out, "machine");
+function symbolToStringify(obj, key) {
+  obj[key][Symbol.toPrimitive] = function (hint) {
+    return obj[key]();
+  };
+}
+
+export default out;

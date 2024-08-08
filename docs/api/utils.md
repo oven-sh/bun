@@ -183,7 +183,7 @@ const currentFile = import.meta.url;
 Bun.openInEditor(currentFile);
 ```
 
-You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig)
+You can override this via the `debug.editor` setting in your [`bunfig.toml`](/docs/runtime/bunfig).
 
 ```toml-diff#bunfig.toml
 + [debug]
@@ -199,8 +199,6 @@ Bun.openInEditor(import.meta.url, {
   column: 5,
 });
 ```
-
-Bun.ArrayBufferSink;
 
 ## `Bun.deepEquals()`
 
@@ -251,11 +249,11 @@ Bun.deepEquals(new Foo(), { a: 1 }, true); // false
 
 Escapes the following characters from an input string:
 
-- `"` becomes `"&quot;"`
-- `&` becomes `"&amp;"`
-- `'` becomes `"&#x27;"`
-- `<` becomes `"&lt;"`
-- `>` becomes `"&gt;"`
+- `"` becomes `&quot;`
+- `&` becomes `&amp;`
+- `'` becomes `&#x27;`
+- `<` becomes `&lt;`
+- `>` becomes `&gt;`
 
 This function is optimized for large input. On an M1X, it processes 480 MB/s -
 20 GB/s, depending on how much data is being escaped and whether there is non-ascii
@@ -275,6 +273,7 @@ Bun.stringWidth("\u001b[31mhello\u001b[0m", { countAnsiEscapeCodes: true }); // 
 ```
 
 This is useful for:
+
 - Aligning text in a terminal
 - Quickly checking if a string contains ANSI escape codes
 - Measuring the width of a string in a terminal
@@ -372,7 +371,6 @@ npm/string-width 95,000 chars ansi+emoji+ascii     3.68 s/iter        (3.66 s â€
 
 {% /details %}
 
-
 TypeScript definition:
 
 ```ts
@@ -399,7 +397,6 @@ namespace Bun {
   ): number;
 }
 ```
-
 
 <!-- ## `Bun.enableANSIColors()` -->
 
@@ -602,6 +599,9 @@ stream; // => ReadableStream
 
 await Bun.readableStreamToArrayBuffer(stream);
 // => ArrayBuffer
+
+await Bun.readableStreamToBytes(stream);
+// => Uint8Array
 
 await Bun.readableStreamToBlob(stream);
 // => Blob

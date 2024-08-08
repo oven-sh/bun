@@ -1063,7 +1063,7 @@ pub const Listener = struct {
             var tls = TLSSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = undefined,
+                .socket = .{ .detached = {} },
                 .connection = connection,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
                 .server_name = server_name,
@@ -1082,7 +1082,7 @@ pub const Listener = struct {
             var tcp = TCPSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = undefined,
+                .socket = .{ .detached = {} },
                 .connection = null,
                 .protos = null,
                 .server_name = null,

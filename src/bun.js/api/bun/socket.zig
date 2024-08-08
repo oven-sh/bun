@@ -3029,7 +3029,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.socket = .{ .detached = {} };
-            this.unref();
+            this.deref();
             if (this.flags.is_active) {
                 const vm = this.handlers.vm;
                 this.flags.is_active = false;

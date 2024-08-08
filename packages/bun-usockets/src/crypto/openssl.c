@@ -300,6 +300,7 @@ int us_internal_handle_shutdown(struct us_internal_ssl_socket_t *s, int force_fa
       // 1 - We abort the connection to fast and we did not even start the first handshake
       // 2 - SSL is in a broken state
       // 3 - SSL is not broken but is in a state that we cannot recover from
+      s->fatal_error = 1;
       return 1;
     }
     return ret == 1;

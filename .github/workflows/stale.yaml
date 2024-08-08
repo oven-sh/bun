@@ -27,4 +27,4 @@ jobs:
           stale-pr-message: "This pull request is stale and may be closed due to inactivity."
           close-pr-message: "This pull request has been closed due to inactivity."
           repo-token: ${{ github.token }}
-          operations-per-run: 100
+          operations-per-run: 1000

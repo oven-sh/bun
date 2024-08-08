@@ -276,6 +276,15 @@ pub const Loader = struct {
         return this.map.get(_key);
     }
 
+    pub fn getTruthy(this: *const Loader, key: string) ?string {
+        if (this.get(key)) |val| {
+            if (val.len > 0 and !std.mem.eql(u8, val, "0")) {
+                return val;
+            }
+        }
+        return null;
+    }
+
     pub fn getAuto(this: *const Loader, key: string) string {
         // If it's "" or "$", it's not a variable
         if (key.len < 2 or key[0] != '$') {

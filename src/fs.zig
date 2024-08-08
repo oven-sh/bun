@@ -83,6 +83,29 @@ pub const FileSystem = struct {
         });
     }
 
+    pub fn TmpnameBuf(comptime extname: string) type {
+        if (!@inComptime()) @compileError("Only call this in comptime plz");
+
+        const hex_value: u64 = std.math.maxInt(u64);
+        const tmpname_id_number_: u32 = std.math.maxInt(u32);
+
+        var buf: [1024]u8 = undefined;
+        const str = std.fmt.bufPrintZ(buf[0..], ".{any}-{any}.{s}", .{
+            bun.fmt.hexIntLower(hex_value),
+            bun.fmt.hexIntUpper(tmpname_id_number_),
+            extname,
+        }) catch @compileError("Too big man");
+
+        // +1 for sentinel
+        const len = str.len + 1;
+        const sentinel_type = @typeInfo([:0]u8);
+        return @Type(std.builtin.Type{ .Array = std.builtin.Type.Array{
+            .child = u8,
+            .len = len,
+            .sentinel = sentinel_type.Pointer.sentinel,
+        } });
+    }
+
     pub var max_fd: std.posix.fd_t = 0;
 
     pub inline fn setMaxFd(fd: std.posix.fd_t) void {

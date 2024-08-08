@@ -1,7 +1,7 @@
 name: Close inactive issues
 on:
-  schedule:
-    - cron: "15 * * * *"
+  # schedule:
+  #   - cron: "15 * * * *"
   workflow_dispatch:
 
 jobs:
@@ -27,4 +27,4 @@ jobs:
           stale-pr-message: "This pull request is stale and may be closed due to inactivity."
           close-pr-message: "This pull request has been closed due to inactivity."
           repo-token: ${{ github.token }}
-          debug-only: true
+          operations-per-run: 100

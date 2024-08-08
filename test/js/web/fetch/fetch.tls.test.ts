@@ -250,6 +250,7 @@ it("fetch timeout works on tls", async () => {
       signal: AbortSignal.timeout(TIMEOUT),
       tls: { ca: cert1.cert },
     }).then(res => res.text());
+    expect.unreachable();
   } catch (e) {
     expect(e.name).toBe("TimeoutError");
   } finally {

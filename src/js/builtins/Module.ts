@@ -78,7 +78,9 @@ export function overridableRequire(this: CommonJSModuleRecord, id: string) {
       const namespace = Loader.getModuleNamespaceObject(esm!.module);
       return (mod.exports =
         // if they choose a module
-        namespace.__esModule ? namespace : Object.create(namespace, { __esModule: { value: true } }));
+        namespace.__esModule || !("default" in namespace)
+          ? namespace
+          : Object.create(namespace, { __esModule: { value: true } }));
     }
   }
 

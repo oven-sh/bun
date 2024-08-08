@@ -1,10 +1,10 @@
-import { mkdtempSync, symlinkSync } from "fs";
+import { symlinkSync } from "fs";
 import path from "path";
-import os from "os";
+import { tmpdirSync } from "harness";
 
 export function createTempDirectoryWithBrokenSymlinks() {
   // Create a temporary directory
-  const tempDir = mkdtempSync(path.join(os.tmpdir(), "fixtures_symlink_"));
+  const tempDir = tmpdirSync();
 
   // Define broken symlink targets (non-existent paths)
   const brokenTargets = ["non_existent_file.txt", "non_existent_dir"];
@@ -19,7 +19,7 @@ export function createTempDirectoryWithBrokenSymlinks() {
   return tempDir;
 }
 
-export function tempFixturesDir() {
+export function tempFixturesDir(baseDir: string = import.meta.dir) {
   const files: Record<string, string | Record<string, string>> = {
     ".directory": {
       "file.md": "",
@@ -61,10 +61,15 @@ export function tempFixturesDir() {
     return dir;
   }
 
-  const dir = path.join(import.meta.dir, "fixtures");
+  const dir = path.join(baseDir, "fixtures");
   fs.mkdirSync(dir, { recursive: true });
 
   impl(dir, files);
 
   return dir;
 }
+
+export const prepareEntries: (entries: string[]) => string[] =
+  process.platform == "win32"
+    ? entries => entries.sort().map(entry => entry.replaceAll("\\", "/"))
+    : entries => entries.sort();

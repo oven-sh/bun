@@ -5,7 +5,7 @@ import { isAscii } from "buffer";
 // MSVC has a max of 16k characters per string literal
 // Combining string literals didn't support constexpr apparently
 // so we have to do this the gigantic array way
-export function fmtCPPString(str: string, nullTerminated: boolean = true) {
+export function fmtCPPCharArray(str: string, nullTerminated: boolean = true) {
   const normalized = str + "\n";
 
   var remain = normalized;
@@ -18,11 +18,21 @@ export function fmtCPPString(str: string, nullTerminated: boolean = true) {
       .join(",") +
     (nullTerminated ? ",0" : "") +
     "}";
-  return [chars, normalized.length + (nullTerminated ? 1 : 0)];
+  return [chars, normalized.length + (nullTerminated ? 1 : 0)] as const;
+}
+
+export function addCPPCharArray(str: string, nullTerminated: boolean = true) {
+  const normalized = str.trim() + "\n";
+  return (
+    normalized
+      .split("")
+      .map(a => a.charCodeAt(0))
+      .join(",") + (nullTerminated ? ",0" : "")
+  );
 }
 
 export function declareASCIILiteral(name: string, value: string) {
-  const [chars, count] = fmtCPPString(value);
+  const [chars, count] = fmtCPPCharArray(value, true);
   return `static constexpr const char ${name}Bytes[${count}] = ${chars};
 static constexpr ASCIILiteral ${name} = ASCIILiteral::fromLiteralUnsafe(${name}Bytes);`;
 }
@@ -79,4 +89,43 @@ export function writeIfNotChanged(file: string, contents: string) {
     fs.mkdirSync(path.dirname(file), { recursive: true });
     fs.writeFileSync(file, contents);
   }
+
+  if (fs.readFileSync(file, "utf8") !== contents) {
+    throw new Error(`Failed to write file ${file}`);
+  }
+}
+
+export function readdirRecursiveWithExclusionsAndExtensionsSync(
+  dir: string,
+  exclusions: string[],
+  exts: string[],
+): string[] {
+  const entries = fs.readdirSync(dir, { withFileTypes: true });
+  return entries.flatMap(entry => {
+    if (exclusions.includes(entry.name)) return [];
+    const fullPath = path.join(dir, entry.name);
+    return entry.isDirectory()
+      ? readdirRecursiveWithExclusionsAndExtensionsSync(fullPath, exclusions, exts)
+      : exts.includes(path.extname(fullPath))
+        ? fullPath
+        : [];
+  });
+}
+
+export function pathToUpperSnakeCase(filepath: string) {
+  return filepath
+    .replace(/^.*?:/, "")
+    .split(/[-_./\\]/g)
+    .join("_")
+    .toUpperCase();
+}
+
+export function camelCase(string: string) {
+  return string
+    .split(/[\s_]/)
+    .map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1).toLowerCase() : e.toLowerCase()));
+}
+
+export function pascalCase(string: string) {
+  return string.split(/[\s_]/).map((e, i) => (i ? e.charAt(0).toUpperCase() + e.slice(1) : e.toLowerCase()));
 }

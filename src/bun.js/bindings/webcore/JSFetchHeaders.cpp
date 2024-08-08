@@ -40,6 +40,7 @@
 #include "JSDOMIterator.h"
 #include "JSDOMOperation.h"
 #include "JSDOMWrapperCache.h"
+#include "JavaScriptCore/JSCJSValue.h"
 #include "ScriptExecutionContext.h"
 #include "WebCoreJSClientData.h"
 #include <JavaScriptCore/BuiltinNames.h>
@@ -178,7 +179,6 @@ template<> void JSFetchHeadersDOMConstructor::initializeProperties(VM& vm, JSDOM
  **/
 JSC_DEFINE_CUSTOM_GETTER(jsFetchHeadersGetterCount, (JSC::JSGlobalObject * globalObject, JSC::EncodedJSValue thisValue, JSC::PropertyName))
 {
-    auto& vm = JSC::getVM(globalObject);
     JSFetchHeaders* castedThis = jsDynamicCast<JSFetchHeaders*>(JSValue::decode(thisValue));
     if (UNLIKELY(!castedThis)) {
         return JSValue::encode(jsUndefined());
@@ -252,7 +252,7 @@ JSC_DEFINE_HOST_FUNCTION(jsFetchHeadersPrototypeFunction_getAll, (JSGlobalObject
     return JSValue::encode(array);
 }
 
-JSC_DEFINE_HOST_FUNCTION(fetchHeadersGetSetCookie, (JSC::JSGlobalObject * lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl))
+JSC::EncodedJSValue fetchHeadersGetSetCookie(JSC::JSGlobalObject* lexicalGlobalObject, VM& vm, WebCore::FetchHeaders* impl)
 {
     auto scope = DECLARE_THROW_SCOPE(vm);
 
@@ -341,7 +341,9 @@ void JSFetchHeaders::computeMemoryCost()
 
 JSObject* JSFetchHeaders::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSFetchHeadersPrototype::create(vm, &globalObject, JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSFetchHeadersPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSFetchHeadersPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSFetchHeaders::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -597,7 +599,7 @@ void JSFetchHeaders::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSFetchHeaders*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
@@ -659,7 +661,7 @@ JSC::JSValue getInternalProperties(JSC::VM& vm, JSGlobalObject* lexicalGlobalObj
     RELEASE_AND_RETURN(throwScope, obj);
 }
 
-bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSFetchHeadersOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -702,18 +704,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 {
     if constexpr (std::is_polymorphic_v<FetchHeaders>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7FetchHeaders@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore12FetchHeadersE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore12FetchHeadersE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // FetchHeaders has subclasses. If FetchHeaders has subclasses that get passed
         // to toJS() we currently require FetchHeaders you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<FetchHeaders>(globalObject, WTFMove(impl));

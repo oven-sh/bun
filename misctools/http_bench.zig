@@ -31,7 +31,6 @@ const params = [_]clap.Param(clap.Help){
     clap.parseParam("-b, --body <STR>           HTTP request body as a string") catch unreachable,
     clap.parseParam("-f, --file <STR>           File path to load as body") catch unreachable,
     clap.parseParam("-n, --count <INT>          How many runs? Default 10") catch unreachable,
-    clap.parseParam("-t, --timeout <INT>        Max duration per request") catch unreachable,
     clap.parseParam("-r, --retry <INT>          Max retry count") catch unreachable,
     clap.parseParam("--no-gzip                  Disable gzip") catch unreachable,
     clap.parseParam("--no-deflate               Disable deflate") catch unreachable,
@@ -63,8 +62,8 @@ const MethodNames = std.ComptimeStringMap(Method, .{
     .{ "head", Method.HEAD },
 });
 
-var file_path_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
-var cwd_buf: [bun.MAX_PATH_BYTES + 1]u8 = undefined;
+var file_path_buf: bun.PathBuffer = undefined;
+var cwd_buf: bun.PathBuffer = undefined;
 
 pub const Arguments = struct {
     url: URL,
@@ -75,7 +74,6 @@ pub const Arguments = struct {
     body: string = "",
     turbo: bool = false,
     count: usize = 10,
-    timeout: usize = 0,
     repeat: usize = 0,
     concurrency: u16 = 32,
 
@@ -91,7 +89,7 @@ pub const Arguments = struct {
             return err;
         };
 
-        var positionals = args.positionals();
+        const positionals = args.positionals();
         var raw_args: std.ArrayListUnmanaged(string) = undefined;
 
         if (positionals.len > 0) {
@@ -111,20 +109,20 @@ pub const Arguments = struct {
 
         if (args.option("--file")) |file_path| {
             if (file_path.len > 0) {
-                var cwd = try std.process.getCwd(&cwd_buf);
+                const cwd = try std.process.getCwd(&cwd_buf);
                 var parts = [_]string{file_path};
-                var absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
+                const absolute_path = path_handler.joinAbsStringBuf(cwd, &file_path_buf, &parts, .auto);
                 file_path_buf[absolute_path.len] = 0;
                 file_path_buf[absolute_path.len + 1] = 0;
-                var absolute_path_len = absolute_path.len;
-                var absolute_path_ = file_path_buf[0..absolute_path_len :0];
+                const absolute_path_len = absolute_path.len;
+                const absolute_path_ = file_path_buf[0..absolute_path_len :0];
 
                 var body_file = std.fs.openFileAbsoluteZ(absolute_path_, .{ .mode = .read_only }) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> opening file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
 
-                var file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
+                const file_contents = body_file.readToEndAlloc(allocator, try body_file.getEndPos()) catch |err| {
                     Output.printErrorln("<r><red>{s}<r> reading file {s}", .{ @errorName(err), absolute_path });
                     Global.exit(1);
                 };
@@ -165,10 +163,6 @@ pub const Arguments = struct {
             // .keep_alive = !args.flag("--no-keep-alive"),
             .concurrency = std.fmt.parseInt(u16, args.option("--max-concurrency") orelse "32", 10) catch 32,
             .turbo = args.flag("--turbo"),
-            .timeout = std.fmt.parseInt(usize, args.option("--timeout") orelse "0", 10) catch |err| {
-                Output.prettyErrorln("<r><red>{s}<r> parsing timeout", .{@errorName(err)});
-                Global.exit(1);
-            },
             .count = std.fmt.parseInt(usize, args.option("--count") orelse "10", 10) catch |err| {
                 Output.prettyErrorln("<r><red>{s}<r> parsing count", .{@errorName(err)});
                 Global.exit(1);
@@ -177,7 +171,7 @@ pub const Arguments = struct {
     }
 };
 
-const HTTP = @import("root").bun.http;
+const HTTP = bun.http;
 const NetworkThread = HTTP.NetworkThread;
 
 var stdout_: std.fs.File = undefined;
@@ -190,7 +184,7 @@ pub fn main() anyerror!void {
 
     defer Output.flush();
 
-    var args = try Arguments.parse(default_allocator);
+    const args = try Arguments.parse(default_allocator);
 
     var channel = try default_allocator.create(HTTP.HTTPChannel);
     channel.* = HTTP.HTTPChannel.init();
@@ -198,7 +192,7 @@ pub fn main() anyerror!void {
     try channel.buffer.ensureTotalCapacity(args.count);
 
     try NetworkThread.init();
-    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .Monotonic);
+    if (args.concurrency > 0) HTTP.AsyncHTTP.max_simultaneous_requests.store(args.concurrency, .monotonic);
     const Group = struct {
         response_body: MutableString = undefined,
         context: HTTP.HTTPChannelContext = undefined,
@@ -211,7 +205,7 @@ pub fn main() anyerror!void {
         var batch = Batch{};
         while (i < args.count) : (i += 1) {
             groups[i] = Group{};
-            var response_body = &groups[i].response_body;
+            const response_body = &groups[i].response_body;
             response_body.* = try MutableString.init(default_allocator, 1024);
 
             var ctx = &groups[i].context;
@@ -225,7 +219,6 @@ pub fn main() anyerror!void {
                     args.headers_buf,
                     response_body,
                     "",
-                    args.timeout,
                 ),
             };
             ctx.http.client.verbose = args.verbose;
@@ -284,7 +277,7 @@ pub fn main() anyerror!void {
                 Output.printError(" err: {s}\n", .{@errorName(err)});
             } else {
                 fail_count += 1;
-                Output.prettyError(" Uh-oh: {s}\n", .{@tagName(http.state.loadUnchecked())});
+                Output.prettyError(" Uh-oh: {s}\n", .{@tagName(http.state.raw)});
             }
 
             Output.flush();

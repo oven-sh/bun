@@ -232,16 +232,23 @@ bool ReadableStream::isLocked(JSGlobalObject* globalObject, JSReadableStream* re
 
 bool ReadableStream::isDisturbed(JSGlobalObject* globalObject, JSReadableStream* readableStream)
 {
-    auto clientData = WebCore::clientData(globalObject->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream->getDirect(globalObject->vm(), privateName).isTrue();
+    return readableStream->disturbed();
 }
 
 bool ReadableStream::isDisturbed() const
 {
-    auto clientData = WebCore::clientData(globalObject()->vm());
-    auto& privateName = clientData->builtinNames().disturbedPrivateName();
-    return readableStream()->getDirect(globalObject()->vm(), privateName).isTrue();
+    return readableStream()->disturbed();
+}
+
+JSC_DEFINE_HOST_FUNCTION(jsFunctionTransferToNativeReadableStream, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
+{
+    auto& vm = lexicalGlobalObject->vm();
+    auto throwScope = DECLARE_THROW_SCOPE(vm);
+
+    auto* readableStream = jsDynamicCast<JSReadableStream*>(callFrame->argument(0));
+    readableStream->setTransferred();
+    readableStream->setDisturbed(true);
+    return JSValue::encode(jsUndefined());
 }
 
 }

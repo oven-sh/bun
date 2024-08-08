@@ -1,3 +1,3 @@
 // @ts-nocheck
 export * from "../runtime.js";
-export { default as regeneratorRuntime } from "./regenerator";
+// export { default as regeneratorRuntime } from "./regenerator";

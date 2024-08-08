@@ -31,68 +31,122 @@ const ParseArgsError = error{ParseError};
 /// Represents a slice of a JSValue array
 const ArgsSlice = struct {
     array: JSValue,
-    start: usize,
-    end: usize,
+    start: u32,
+    end: u32,
+
+    pub inline fn get(this: ArgsSlice, globalThis: *JSGlobalObject, i: u32) JSValue {
+        return this.array.getIndex(globalThis, this.start + i);
+    }
 };
 
-const TokenKind = enum { positional, option, @"option-terminator" };
+/// Helper ref to either a JSValue or a String,
+/// used in order to avoid creating unneeded JSValue as much as possible
+const ValueRef = union(Tag) {
+    jsvalue: JSValue,
+    bunstr: String,
+
+    const Tag = enum { jsvalue, bunstr };
+
+    pub fn asBunString(this: ValueRef, globalObject: *JSGlobalObject) bun.String {
+        return switch (this) {
+            .jsvalue => |str| str.toBunString(globalObject),
+            .bunstr => |str| return str,
+        };
+    }
+
+    pub fn asJSValue(this: ValueRef, globalObject: *JSGlobalObject) JSValue {
+        return switch (this) {
+            .jsvalue => |str| str,
+            .bunstr => |str| return str.toJS(globalObject),
+        };
+    }
+};
+
+const TokenKind = enum {
+    positional,
+    option,
+    @"option-terminator",
+
+    const COUNT = @typeInfo(TokenKind).Enum.fields.len;
+};
 const Token = union(TokenKind) {
-    positional: struct { index: i32, value: JSValue },
+    positional: struct { index: u32, value: ValueRef },
     option: OptionToken,
-    @"option-terminator": struct { index: i32 },
+    @"option-terminator": struct { index: u32 },
 };
 
 const OptionToken = struct {
-    index: i32,
-    name: JSValue,
+    index: u32,
+    name: ValueRef,
     parse_type: enum {
         lone_short_option,
         short_option_and_value,
         lone_long_option,
         long_option_and_value,
     },
-    value: JSValue,
+    value: ValueRef,
     inline_value: bool,
+    optgroup_idx: ?u32 = null,
     option_idx: ?usize,
 
     /// The full raw arg string (e.g. "--arg=1").
-    /// It might not exist as-is on the input "args" list, like in the case of short option groups
-    raw: JSValue,
+    /// If the value existed as-is in the input "args" list, it is stored as so, otherwise is null
+    raw: ValueRef,
 
-    /// Returns the name of the arg including any dashes and excluding inline values, as a bun string
-    ///
-    /// Note: callee must call `.deref()` on the resulting string once done
-    fn makeRawNameString(this: *const OptionToken, globalThis: *JSGlobalObject) !String {
-        switch (this.parse_type) {
-            .lone_short_option, .lone_long_option => {
-                var str = this.raw.toBunString(globalThis);
-                str.ref();
-                return str;
-            },
-            .short_option_and_value => {
-                const raw = this.raw.toBunString(globalThis);
-                return try String.createFromConcat(globalThis.allocator(), &[_]String{ String.static("-"), raw.substringWithLen(1, 2) });
-            },
-            .long_option_and_value => {
-                const raw = this.raw.toBunString(globalThis);
-                const equal_index = raw.indexOfCharU8('=').?;
-                var str = raw.substringWithLen(0, equal_index);
-                str.ref();
-                return str;
-            },
+    const RawNameFormatter = struct {
+        token: OptionToken,
+        globalThis: *JSGlobalObject,
+
+        /// Formats the raw name of the arg (includes any dashes and excludes inline values)
+        pub fn format(this: RawNameFormatter, comptime fmt: []const u8, opts: std.fmt.FormatOptions, writer: anytype) !void {
+            const token = this.token;
+            const raw = token.raw.asBunString(this.globalThis);
+            if (token.optgroup_idx) |optgroup_idx| {
+                try raw.substringWithLen(optgroup_idx, optgroup_idx + 1).format(fmt, opts, writer);
+            } else {
+                switch (token.parse_type) {
+                    .lone_short_option, .lone_long_option => {
+                        try raw.format(fmt, opts, writer);
+                    },
+                    .short_option_and_value => {
+                        var susbtr = raw.substringWithLen(0, 2);
+                        try susbtr.format(fmt, opts, writer);
+                    },
+                    .long_option_and_value => {
+                        const equal_index = raw.indexOfAsciiChar('=').?;
+                        var substr = raw.substringWithLen(0, equal_index);
+                        try substr.format(fmt, opts, writer);
+                    },
+                }
+            }
         }
-    }
+    };
 
-    /// Returns the name of the arg including any dashes and excluding inline values, as a JSValue
-    fn makeRawNameJSValue(this: *const OptionToken, globalThis: *JSGlobalObject) !JSValue {
-        return switch (this.parse_type) {
-            .lone_short_option, .lone_long_option => this.raw,
-            else => {
-                var str = try this.makeRawNameString(globalThis);
-                defer str.deref();
-                return str.toJSConst(globalThis);
-            },
-        };
+    /// Returns the raw name of the arg (includes any dashes and excludes inline values), as a JSValue
+    fn makeRawNameJSValue(this: OptionToken, globalThis: *JSGlobalObject) JSValue {
+        if (this.optgroup_idx) |optgroup_idx| {
+            const raw = this.raw.asBunString(globalThis);
+            var buf: [8]u8 = undefined;
+            const str = std.fmt.bufPrint(&buf, "-{}", .{raw.substringWithLen(optgroup_idx, optgroup_idx + 1)}) catch unreachable;
+            return String.fromUTF8(str).toJS(globalThis);
+        } else {
+            switch (this.parse_type) {
+                .lone_short_option, .lone_long_option => {
+                    return this.raw.asJSValue(globalThis);
+                },
+                .short_option_and_value => {
+                    var raw = this.raw.asBunString(globalThis);
+                    var substr = raw.substringWithLen(0, 2);
+                    return substr.toJS(globalThis);
+                },
+                .long_option_and_value => {
+                    var raw = this.raw.asBunString(globalThis);
+                    const equal_index = raw.indexOfAsciiChar('=').?;
+                    var substr = raw.substringWithLen(0, equal_index);
+                    return substr.toJS(globalThis);
+                },
+            }
+        }
     }
 };
 
@@ -131,24 +185,23 @@ fn getDefaultArgs(globalThis: *JSGlobalObject) !ArgsSlice {
 }
 
 /// In strict mode, throw for possible usage errors like "--foo --bar" where foo was defined as a string-valued arg
-fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
-    if (!token.inline_value and isOptionLikeValue(token.value.toBunString(globalThis))) {
-        const raw_name = try token.makeRawNameString(globalThis);
-        defer raw_name.deref();
+fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) ParseArgsError!void {
+    if (!token.inline_value and isOptionLikeValue(token.value.asBunString(globalThis))) {
+        const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
         // Only show short example if user used short option.
         var err: JSValue = undefined;
-        if (raw_name.hasPrefixComptime("--")) {
+        if (token.raw.asBunString(globalThis).hasPrefixComptime("--")) {
             err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '{}=-XYZ'.",
                 .{ raw_name, raw_name, raw_name },
                 globalThis,
             );
         } else {
-            const token_name = token.name.toBunString(globalThis);
+            const token_name = token.name.asBunString(globalThis);
             err = JSC.toTypeError(
-                JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                 "Option '{}' argument is ambiguous.\nDid you forget to specify the option argument for '{}'?\nTo specify an option argument starting with a dash use '--{}=-XYZ' or '{}-XYZ'.",
                 .{ raw_name, raw_name, token_name, raw_name },
                 globalThis,
@@ -160,34 +213,34 @@ fn checkOptionLikeValue(globalThis: *JSGlobalObject, token: OptionToken) !void {
 }
 
 /// In strict mode, throw for usage errors.
-fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) !void {
+fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefinition, allow_positionals: bool, token: OptionToken) ParseArgsError!void {
     if (token.option_idx) |option_idx| {
         const option = options[option_idx];
         switch (option.type) {
-            .string => if (!token.value.isString()) {
+            .string => if (token.value == .jsvalue and !token.value.jsvalue.isString()) {
                 const err = JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s} <value>' argument missing",
                     .{
-                        if (option.short_name != null) "-" else "",
-                        if (option.short_name) |chr| &[_]u8{chr} else "",
-                        if (option.short_name != null) ", " else "",
-                        token.name.toBunString(globalThis),
+                        if (!option.short_name.isEmpty()) "-" else "",
+                        option.short_name,
+                        if (!option.short_name.isEmpty()) ", " else "",
+                        token.name.asBunString(globalThis),
                     },
                     globalThis,
                 );
                 globalThis.vm().throwError(globalThis, err);
                 return error.ParseError;
             },
-            .boolean => if (!token.value.isUndefined()) {
+            .boolean => if (token.value != .jsvalue or !token.value.jsvalue.isUndefined()) {
                 const err = JSC.toTypeError(
-                    JSC.Node.ErrorCode.ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
+                    .ERR_PARSE_ARGS_INVALID_OPTION_VALUE,
                     "Option '{s}{s}{s}--{s}' does not take an argument",
                     .{
-                        if (option.short_name != null) "-" else "",
-                        if (option.short_name) |chr| &[_]u8{chr} else "",
-                        if (option.short_name != null) ", " else "",
-                        token.name.toBunString(globalThis),
+                        if (!option.short_name.isEmpty()) "-" else "",
+                        option.short_name,
+                        if (!option.short_name.isEmpty()) ", " else "",
+                        token.name.asBunString(globalThis),
                     },
                     globalThis,
                 );
@@ -196,16 +249,15 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
             },
         }
     } else {
-        const raw_name = try token.makeRawNameString(globalThis);
-        defer raw_name.deref();
+        const raw_name = OptionToken.RawNameFormatter{ .token = token, .globalThis = globalThis };
 
         const err = if (allow_positionals) (JSC.toTypeError(
-            JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNKNOWN_OPTION,
-            "Unknown option '{}'. To specify a positional 'argument starting with a '-', place it at the end of the command after '--', as in '-- \"{}\"",
+            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
+            "Unknown option '{}'. To specify a positional argument starting with a '-', place it at the end of the command after '--', as in '-- \"{}\"",
             .{ raw_name, raw_name },
             globalThis,
         )) else (JSC.toTypeError(
-            JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNKNOWN_OPTION,
+            .ERR_PARSE_ARGS_UNKNOWN_OPTION,
             "Unknown option '{}'",
             .{raw_name},
             globalThis,
@@ -217,18 +269,21 @@ fn checkOptionUsage(globalThis: *JSGlobalObject, options: []const OptionDefiniti
 
 /// Store the option value in `values`.
 /// Parameters:
-/// - `long_option`: long option name e.g. "foo"
-/// - `optionValue`: value from user args
+/// - `option_name`: long option name e.g. "foo"
+/// - `option_value`: value from user args
 /// - `options`: option configs, from `parseArgs({ options })`
 /// - `values`: option values returned in `values` by parseArgs
-fn storeOption(globalThis: *JSGlobalObject, long_option: JSValue, option_value: JSValue, option_idx: ?usize, options: []const OptionDefinition, values: JSValue) void {
-    if (long_option.toBunString(globalThis).eqlComptime("__proto__")) {
+fn storeOption(globalThis: *JSGlobalObject, option_name: ValueRef, option_value: ValueRef, option_idx: ?usize, options: []const OptionDefinition, values: JSValue) void {
+    var key = option_name.asBunString(globalThis);
+    if (key.eqlComptime("__proto__")) {
         return;
     }
 
+    var value = option_value.asJSValue(globalThis);
+
     // We store based on the option value rather than option type,
     // preserving the users intent for author to deal with.
-    const new_value = if (option_value.isUndefined()) JSValue.true else option_value;
+    const new_value = if (value.isUndefined()) JSValue.true else value;
 
     const is_multiple = if (option_idx) |idx| options[idx].multiple else false;
     if (is_multiple) {
@@ -236,18 +291,15 @@ fn storeOption(globalThis: *JSGlobalObject, long_option: JSValue, option_value: 
         // values[long_option] starts out not present,
         // first value is added as new array [new_value],
         // subsequent values are pushed to existing array.
-        var key = long_option.toBunString(globalThis);
         if (values.getOwn(globalThis, key)) |value_list| {
             value_list.push(globalThis, new_value);
         } else {
-            var key_zig = key.toZigString();
             var value_list = JSValue.createEmptyArray(globalThis, 1);
             value_list.putIndex(globalThis, 0, new_value);
-            values.put(globalThis, &key_zig, value_list);
+            values.putMayBeIndex(globalThis, &key, value_list);
         }
     } else {
-        var key_zig = long_option.getZigString(globalThis);
-        values.put(globalThis, &key_zig, new_value);
+        values.putMayBeIndex(globalThis, &key, new_value);
     }
 }
 
@@ -257,7 +309,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
     var iter = JSC.JSPropertyIterator(.{
         .skip_empty_name = false,
         .include_value = true,
-    }).init(globalThis, options_obj.asObjectRef());
+    }).init(globalThis, options_obj);
     defer iter.deinit();
 
     while (iter.next()) |long_option| {
@@ -276,11 +328,11 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
             try validateString(globalThis, short_option, "options.{s}.short", .{option.long_name});
             var short_option_str = short_option.toBunString(globalThis);
             if (short_option_str.length() != 1) {
-                const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
+                const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, "options.{s}.short must be a single character", .{option.long_name}, globalThis);
                 globalThis.vm().throwError(globalThis, err);
                 return error.ParseError;
             }
-            option.short_name = short_option_str.charAtU8(0);
+            option.short_name = short_option_str;
         }
 
         if (obj.getOwn(globalThis, "multiple")) |multiple_value| {
@@ -314,7 +366,7 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
         log("[OptionDef] \"{s}\" (type={s}, short={s}, multiple={d}, default={?})", .{
             String.init(long_option),
             @tagName(option.type),
-            if (option.short_name) |chr| &[_]u8{chr} else "none",
+            if (!option.short_name.isEmpty()) option.short_name else String.static("none"),
             @intFromBool(option.multiple),
             option.default_value,
         });
@@ -327,46 +379,38 @@ fn parseOptionDefinitions(globalThis: *JSGlobalObject, options_obj: JSValue, opt
 /// - option (along with value, if any)
 /// - positional
 /// - option-terminator
-fn tokenizeArgs(globalThis: *JSGlobalObject, args: ArgsSlice, options: []const OptionDefinition, tokens: *std.ArrayList(Token)) !void {
-    var index: i32 = -1;
-    var group_count: i32 = 0;
+fn tokenizeArgs(
+    comptime T: type,
+    globalThis: *JSGlobalObject,
+    args: ArgsSlice,
+    options: []const OptionDefinition,
+    ctx: *T,
+    emitToken: fn (ctx: *T, token: Token) ParseArgsError!void,
+) !void {
+    const num_args: u32 = args.end - args.start;
+    var index: u32 = 0;
+    while (index < num_args) : (index += 1) {
+        const arg_ref: ValueRef = ValueRef{ .jsvalue = args.get(globalThis, index) };
+        const arg = arg_ref.asBunString(globalThis);
 
-    // build a queue of args to process, because new args can be inserted during the processing
-    var queue_allocator = std.heap.stackFallback(32 * @sizeOf(JSValue), globalThis.allocator());
-    var queue = try std.ArrayList(JSValue).initCapacity(queue_allocator.get(), args.end - args.start);
-    defer queue.deinit();
-    for (args.start..args.end) |i| {
-        queue.appendAssumeCapacity(args.array.getIndex(globalThis, @truncate(i)));
-    }
+        const token_rawtype = classifyToken(arg, options);
+        log(" [Arg #{d}] {s} ({s})", .{ index, @tagName(token_rawtype), arg });
 
-    var queue_pos: usize = 0;
-
-    while (queue_pos < queue.items.len) : (queue_pos += 1) {
-        const arg_jsvalue: JSValue = queue.items[queue_pos];
-        const arg = arg_jsvalue.toBunString(globalThis);
-        if (group_count > 0) {
-            group_count -= 1;
-        } else {
-            index += 1;
-        }
-
-        log("  (processing arg #{d}: \"{s}\")", .{ index, arg });
-
-        const token_subtype = classifyToken(arg, options);
-        log(" [Token #{d}] {s} ({s})", .{ index, @tagName(token_subtype), arg });
-
-        switch (token_subtype) {
+        switch (token_rawtype) {
             // Check if `arg` is an options terminator.
             // Guideline 10 in https://pubs.opengroup.org/onlinepubs/9699919799/basedefs/V1_chap12.html
             .option_terminator => {
                 // Everything after a bare '--' is considered a positional argument.
-                try tokens.append(Token{ .@"option-terminator" = .{ .index = index } });
-                queue_pos += 1;
+                try emitToken(ctx, Token{ .@"option-terminator" = .{
+                    .index = index,
+                } });
                 index += 1;
-                while (queue_pos < queue.items.len) : (queue_pos += 1) {
-                    var value = queue.items[queue_pos].toBunString(globalThis);
-                    try tokens.append(Token{ .positional = .{ .index = index, .value = value.toJSConst(globalThis) } });
-                    index += 1;
+
+                while (index < num_args) : (index += 1) {
+                    try emitToken(ctx, Token{ .positional = .{
+                        .index = index,
+                        .value = ValueRef{ .jsvalue = args.get(globalThis, index) },
+                    } });
                 }
                 break; // Finished processing args, leave while loop.
             },
@@ -374,110 +418,119 @@ fn tokenizeArgs(globalThis: *JSGlobalObject, args: ArgsSlice, options: []const O
             // isLoneShortOption
             .lone_short_option => {
                 // e.g. '-f'
-                const short_option = arg.charAtU8(1);
+                const short_option = arg.substringWithLen(1, 2);
                 const option_idx = findOptionByShortName(short_option, options);
                 const option_type: OptionValueType = if (option_idx) |idx| options[idx].type else .boolean;
-                var value = JSValue.undefined;
+                var value = ValueRef{ .jsvalue = JSValue.undefined };
                 var has_inline_value = true;
-                if (option_type == .string and queue_pos + 1 < queue.items.len) {
+                if (option_type == .string and index + 1 < num_args) {
                     // e.g. '-f', "bar"
-                    queue_pos += 1;
-                    value = queue.items[queue_pos];
+                    value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
                     has_inline_value = false;
                     log("   (lone_short_option consuming next token as value)", .{});
                 }
-                try tokens.append(Token{ .option = .{
+                try emitToken(ctx, Token{ .option = .{
                     .index = index,
                     .value = value,
                     .inline_value = has_inline_value,
-                    .name = if (option_idx) |idx| options[idx].long_name.toJSConst(globalThis) else arg.substringWithLen(1, 2).toJSConst(globalThis),
+                    .name = ValueRef{ .bunstr = if (option_idx) |idx| options[idx].long_name else arg.substringWithLen(1, 2) },
                     .parse_type = .lone_short_option,
-                    .raw = arg_jsvalue,
+                    .raw = arg_ref,
                     .option_idx = option_idx,
                 } });
 
-                if (!has_inline_value) {
-                    index += 1;
-                }
+                if (!has_inline_value) index += 1;
             },
 
             // isShortOptionGroup
             .short_option_group => {
                 // Expand -fXzy to -f -X -z -y
-                var num_short_options: usize = 0;
-                var string_option_index: ?usize = null;
+                const original_arg_idx = index;
                 const arg_len = arg.length();
-                for (1..arg_len) |i| {
-                    group_count += 1;
-                    const short_option = arg.charAtU8(i);
-                    const option_type: OptionValueType = if (findOptionByShortName(short_option, options)) |idx| options[idx].type else .boolean;
-                    if (option_type != .string or i == arg_len - 1) {
+                for (1..arg_len) |idx_in_optgroup| {
+                    const short_option = arg.substringWithLen(idx_in_optgroup, idx_in_optgroup + 1);
+                    const option_idx = findOptionByShortName(short_option, options);
+                    const option_type: OptionValueType = if (option_idx) |idx| options[idx].type else .boolean;
+                    if (option_type != .string or idx_in_optgroup == arg_len - 1) {
                         // Boolean option, or last short in group. Well formed.
-                        num_short_options += 1;
+
+                        // Immediately process as a lone_short_option (e.g. from input -abc, process -a -b -c)
+                        var value = ValueRef{ .jsvalue = JSValue.undefined };
+                        var has_inline_value = true;
+                        if (option_type == .string and index + 1 < num_args) {
+                            // e.g. '-f', "bar"
+                            value = ValueRef{ .jsvalue = args.get(globalThis, index + 1) };
+                            has_inline_value = false;
+                            log("   (short_option_group short option consuming next token as value)", .{});
+                        }
+                        try emitToken(ctx, Token{ .option = .{
+                            .index = original_arg_idx,
+                            .optgroup_idx = @intCast(idx_in_optgroup),
+                            .value = value,
+                            .inline_value = has_inline_value,
+                            .name = ValueRef{ .bunstr = if (option_idx) |i| options[i].long_name else short_option },
+                            .parse_type = .lone_short_option,
+                            .raw = arg_ref,
+                            .option_idx = option_idx,
+                        } });
+
+                        if (!has_inline_value) index += 1;
                     } else {
                         // String option in middle. Yuck.
                         // Expand -abfFILE to -a -b -fFILE
-                        string_option_index = i;
+
+                        // Immediately process as a short_option_and_value
+                        try emitToken(ctx, Token{ .option = .{
+                            .index = original_arg_idx,
+                            .optgroup_idx = @intCast(idx_in_optgroup),
+                            .value = ValueRef{ .bunstr = arg.substring(idx_in_optgroup + 1) },
+                            .inline_value = true,
+                            .name = ValueRef{ .bunstr = if (option_idx) |i| options[i].long_name else short_option },
+                            .parse_type = .short_option_and_value,
+                            .raw = arg_ref,
+                            .option_idx = option_idx,
+                        } });
+
                         break; // finished short group
                     }
-                }
-                var num_args_to_enqueue: usize = num_short_options + if (string_option_index != null) @as(usize, 1) else @as(usize, 0);
-                _ = try queue.addManyAt(queue_pos + 1, num_args_to_enqueue);
-                if (num_short_options > 0) {
-                    var buf: [2]u8 = undefined;
-                    buf[0] = '-';
-                    for (0..num_short_options) |i| {
-                        buf[1] = arg.charAtU8(1 + i);
-                        queue.items[queue_pos + 1 + i] = String.init(&buf).toJSConst(globalThis);
-                        log("  ((enqueued: \"{s}\"))", .{String.init(&buf)});
-                    }
-                }
-                if (string_option_index) |i| {
-                    const new_arg = try String.createFromConcat(globalThis.allocator(), &[_]String{ String.static("-"), arg.substring(i) });
-                    defer new_arg.deref();
-                    queue.items[queue_pos + 1 + num_short_options] = new_arg.toJSConst(globalThis);
-                    log("  ((enqueued: \"{s}\"))", .{new_arg});
                 }
             },
 
             .short_option_and_value => {
                 // e.g. -fFILE
-                const short_option = arg.charAtU8(1);
+                const short_option = arg.substringWithLen(1, 2);
                 const option_idx = findOptionByShortName(short_option, options);
                 const value = arg.substring(2);
 
-                try tokens.append(Token{ .option = .{
+                try emitToken(ctx, Token{ .option = .{
                     .index = index,
-                    .value = value.toJSConst(globalThis),
+                    .value = ValueRef{ .bunstr = value },
                     .inline_value = true,
-                    .name = if (option_idx) |idx| options[idx].long_name.toJSConst(globalThis) else arg.substringWithLen(1, 2).toJSConst(globalThis),
+                    .name = ValueRef{ .bunstr = if (option_idx) |idx| options[idx].long_name else arg.substringWithLen(1, 2) },
                     .parse_type = .short_option_and_value,
-                    .raw = arg_jsvalue,
+                    .raw = ValueRef{ .bunstr = arg.substringWithLen(0, 2) },
                     .option_idx = option_idx,
                 } });
             },
 
             .lone_long_option => {
                 // e.g. '--foo'
-                var long_option = arg.substring(2);
+                const long_option = arg.substring(2);
                 var value: ?JSValue = null;
-                var has_inline_value = true;
-                var option_idx = findOptionByLongName(long_option, options);
+                const option_idx = findOptionByLongName(long_option, options);
                 const option_type: OptionValueType = if (option_idx) |idx| options[idx].type else .boolean;
-                if (option_type == .string and queue_pos + 1 < queue.items.len) {
+                if (option_type == .string and index + 1 < num_args) {
                     // e.g. '--foo', "bar"
-                    queue_pos += 1;
-                    value = queue.items[queue_pos];
-                    has_inline_value = false;
+                    value = args.get(globalThis, index + 1);
                     log("  (consuming next as value)", .{});
                 }
-                try tokens.append(Token{ .option = .{
+                try emitToken(ctx, Token{ .option = .{
                     .index = index,
-                    .value = value orelse JSValue.jsUndefined(),
-                    .inline_value = has_inline_value,
-                    .name = long_option.toJSConst(globalThis),
+                    .value = ValueRef{ .jsvalue = value orelse JSValue.jsUndefined() },
+                    .inline_value = (value == null),
+                    .name = ValueRef{ .bunstr = long_option },
                     .parse_type = .lone_long_option,
-                    .raw = arg_jsvalue,
+                    .raw = arg_ref,
                     .option_idx = option_idx,
                 } });
                 if (value != null) index += 1;
@@ -485,80 +538,121 @@ fn tokenizeArgs(globalThis: *JSGlobalObject, args: ArgsSlice, options: []const O
 
             .long_option_and_value => {
                 // e.g. --foo=barconst
-                const equal_index = arg.indexOfCharU8('=');
+                const equal_index = arg.indexOfAsciiChar('=');
                 const long_option = arg.substringWithLen(2, equal_index.?);
                 const value = arg.substring(equal_index.? + 1);
 
-                try tokens.append(Token{ .option = .{
+                try emitToken(ctx, Token{ .option = .{
                     .index = index,
-                    .value = value.toJSConst(globalThis),
+                    .value = ValueRef{ .bunstr = value },
                     .inline_value = true,
-                    .name = long_option.toJSConst(globalThis),
+                    .name = ValueRef{ .bunstr = long_option },
                     .parse_type = .long_option_and_value,
-                    .raw = arg_jsvalue,
+                    .raw = arg_ref,
                     .option_idx = findOptionByLongName(long_option, options),
                 } });
             },
 
             .positional => {
-                try tokens.append(Token{ .positional = .{ .index = index, .value = arg.toJSConst(globalThis) } });
+                try emitToken(ctx, Token{ .positional = .{
+                    .index = index,
+                    .value = arg_ref,
+                } });
             },
         }
     }
 }
 
-/// Create the parseArgs result "tokens" field
-/// This field is opt-in, and people usually don't ask for it,
-/// so only create the js values if they are needed
-pub fn createOutputTokensArray(globalThis: *JSGlobalObject, tokens: []const Token) !JSValue {
-    const kinds_count = @typeInfo(TokenKind).Enum.fields.len;
-    var kinds_jsvalues: [kinds_count]?JSValue = [_]?JSValue{null} ** kinds_count;
+const ParseArgsState = struct {
+    globalThis: *JSGlobalObject,
 
-    var result = JSC.JSValue.createEmptyArray(globalThis, tokens.len);
-    for (tokens, 0..) |token_generic, i| {
-        const obj_fields_count: usize = switch (token_generic) {
-            .option => |token| if (token.value.isUndefined()) 4 else 6,
-            .positional => 3,
-            .@"option-terminator" => 2,
-        };
+    option_defs: []const OptionDefinition,
+    allow_positionals: bool,
+    strict: bool,
 
-        // reuse JSValue for the kind names: "positional", "option", "option-terminator"
-        var kind_idx = @intFromEnum(token_generic);
-        var kind_jsvalue = kinds_jsvalues[kind_idx] orelse kindval: {
-            var val = String.static(@as(string, @tagName(token_generic))).toJSConst(globalThis);
-            kinds_jsvalues[kind_idx] = val;
-            break :kindval val;
-        };
+    // Output
+    values: JSValue,
+    positionals: JSValue,
+    tokens: JSValue,
 
-        var obj = JSValue.createEmptyObject(globalThis, obj_fields_count);
-        obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
+    /// To reuse JSValue for the "kind" field in the output tokens array ("positional", "option", "option-terminator")
+    kinds_jsvalues: [TokenKind.COUNT]?JSValue = [_]?JSValue{null} ** TokenKind.COUNT,
+
+    pub fn handleToken(this: *ParseArgsState, token_generic: Token) ParseArgsError!void {
+        var globalThis = this.globalThis;
+
         switch (token_generic) {
             .option => |token| {
-                obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
-                obj.put(globalThis, ZigString.static("name"), token.name);
-                obj.put(globalThis, ZigString.static("rawName"), try token.makeRawNameJSValue(globalThis));
-
-                // only for boolean options, it is "undefined"
-                obj.put(globalThis, ZigString.static("value"), token.value);
-                obj.put(globalThis, ZigString.static("inlineValue"), if (token.value.isUndefined()) JSValue.undefined else JSValue.jsBoolean(token.inline_value));
+                if (this.strict) {
+                    try checkOptionUsage(globalThis, this.option_defs, this.allow_positionals, token);
+                    try checkOptionLikeValue(globalThis, token);
+                }
+                storeOption(globalThis, token.name, token.value, token.option_idx, this.option_defs, this.values);
             },
             .positional => |token| {
-                obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
-                obj.put(globalThis, ZigString.static("value"), token.value);
+                if (!this.allow_positionals) {
+                    const err = JSC.toTypeError(
+                        .ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
+                        "Unexpected argument '{s}'. This command does not take positional arguments",
+                        .{token.value.asBunString(globalThis)},
+                        globalThis,
+                    );
+                    globalThis.vm().throwError(globalThis, err);
+                    return error.ParseError;
+                }
+                const value = token.value.asJSValue(globalThis);
+                this.positionals.push(globalThis, value);
             },
-            .@"option-terminator" => |token| {
-                obj.put(globalThis, ZigString.static("index"), JSValue.jsNumberFromInt32(token.index));
-            },
+            .@"option-terminator" => {},
         }
-        result.putIndex(globalThis, @intCast(i), obj);
+
+        // Append to the parseArgs result "tokens" field
+        // This field is opt-in, and people usually don't ask for it, so only create the js values if they are asked for
+        if (!this.tokens.isUndefined()) {
+            const num_properties: usize = switch (token_generic) {
+                .option => |token| if (token.value == .jsvalue and token.value.jsvalue.isUndefined()) 4 else 6,
+                .positional => 3,
+                .@"option-terminator" => 2,
+            };
+
+            // reuse JSValue for the kind names: "positional", "option", "option-terminator"
+            const kind_idx = @intFromEnum(token_generic);
+            const kind_jsvalue = this.kinds_jsvalues[kind_idx] orelse kindval: {
+                const val = String.static(@tagName(token_generic)).toJS(globalThis);
+                this.kinds_jsvalues[kind_idx] = val;
+                break :kindval val;
+            };
+
+            var obj = JSValue.createEmptyObject(globalThis, num_properties);
+            obj.put(globalThis, ZigString.static("kind"), kind_jsvalue);
+            switch (token_generic) {
+                .option => |token| {
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, ZigString.static("name"), token.name.asJSValue(globalThis));
+                    obj.put(globalThis, ZigString.static("rawName"), token.makeRawNameJSValue(globalThis));
+
+                    // value exists only for string options, otherwise the property exists with "undefined" as value
+                    var value = token.value.asJSValue(globalThis);
+                    obj.put(globalThis, ZigString.static("value"), value);
+                    obj.put(globalThis, ZigString.static("inlineValue"), if (value.isUndefined()) JSValue.undefined else JSValue.jsBoolean(token.inline_value));
+                },
+                .positional => |token| {
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                    obj.put(globalThis, ZigString.static("value"), token.value.asJSValue(globalThis));
+                },
+                .@"option-terminator" => |token| {
+                    obj.put(globalThis, ZigString.static("index"), JSValue.jsNumber(token.index));
+                },
+            }
+            this.tokens.push(globalThis, obj);
+        }
     }
-    return result;
-}
+};
 
 pub fn parseArgs(
     globalThis: *JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSValue {
+) JSValue {
     JSC.markBinding(@src());
     const arguments = callframe.arguments(1).slice();
     const config = if (arguments.len > 0) arguments[0] else JSValue.undefined;
@@ -569,6 +663,11 @@ pub fn parseArgs(
         }
         return JSValue.undefined;
     };
+}
+
+comptime {
+    const parseArgsFn = JSC.toJSHostFunction(parseArgs);
+    @export(parseArgsFn, .{ .name = "Bun__NodeUtil__jsParseArgs" });
 }
 
 pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue {
@@ -583,7 +682,7 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
 
     // Phase 0.A: Get and validate type of input args
     var args: ArgsSlice = undefined;
-    const config_args_or_null = if (config) |c| c.getOwn(globalThis, "args") else null;
+    const config_args_or_null: ?JSValue = if (config) |c| c.getOwn(globalThis, "args") else null;
     if (config_args_or_null) |config_args| {
         try validateArray(globalThis, config_args, "args", .{}, null);
         args = .{
@@ -623,50 +722,29 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
 
     //
     // Phase 1: tokenize the args string-array
-    //
-    log("Phase 1: tokenize args (args.len={d})", .{args.end - args.start});
-
-    var tokens_allocator = std.heap.stackFallback(32 * @sizeOf(Token), globalThis.allocator());
-    var tokens = try std.ArrayList(Token).initCapacity(tokens_allocator.get(), args.end - args.start);
-    defer tokens.deinit();
-
-    try tokenizeArgs(globalThis, args, option_defs.items, &tokens);
-
-    //
+    //  +
     // Phase 2: process tokens into parsed option values and positionals
     //
-    log("Phase 2: parse options from tokens (tokens.len={d})", .{tokens.items.len});
+    log("Phase 1+2: tokenize args (args.len={d})", .{args.end - args.start});
 
     // note that "values" needs to have a null prototype instead of Object, to avoid issues such as "values.toString"` being defined
-    var result_values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
-    var result_positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
-    var result_positionals_len: u32 = 0;
-    for (tokens.items) |t| {
-        switch (t) {
-            .option => |token| {
-                if (strict) {
-                    try checkOptionUsage(globalThis, option_defs.items, allow_positionals, token);
-                    try checkOptionLikeValue(globalThis, token);
-                }
-                storeOption(globalThis, token.name, token.value, token.option_idx, option_defs.items, result_values);
-            },
-            .positional => |token| {
-                if (!allow_positionals) {
-                    const err = JSC.toTypeError(
-                        JSC.Node.ErrorCode.ERR_PARSE_ARGS_UNEXPECTED_POSITIONAL,
-                        "Unexpected argument '{s}'. This command does not take positional arguments",
-                        .{token.value.toBunString(globalThis)},
-                        globalThis,
-                    );
-                    globalThis.vm().throwError(globalThis, err);
-                    return error.ParseError;
-                }
-                result_positionals.putIndex(globalThis, result_positionals_len, token.value);
-                result_positionals_len += 1;
-            },
-            else => {},
-        }
-    }
+    const values = JSValue.createEmptyObjectWithNullPrototype(globalThis);
+    const positionals = JSC.JSValue.createEmptyArray(globalThis, 0);
+    const tokens = if (return_tokens) JSC.JSValue.createEmptyArray(globalThis, 0) else JSValue.undefined;
+
+    var state = ParseArgsState{
+        .globalThis = globalThis,
+
+        .option_defs = option_defs.items,
+        .allow_positionals = allow_positionals,
+        .strict = strict,
+
+        .values = values,
+        .positionals = positionals,
+        .tokens = tokens,
+    };
+
+    try tokenizeArgs(ParseArgsState, globalThis, args, option_defs.items, &state, ParseArgsState.handleToken);
 
     //
     // Phase 3: fill in default values for missing args
@@ -676,25 +754,24 @@ pub fn parseArgsImpl(globalThis: *JSGlobalObject, config_obj: JSValue) !JSValue 
     for (option_defs.items) |option| {
         if (option.default_value) |default_value| {
             if (!option.long_name.eqlComptime("__proto__")) {
-                if (result_values.getOwn(globalThis, option.long_name) == null) {
+                if (state.values.getOwn(globalThis, option.long_name) == null) {
                     log("  Setting \"{}\" to default value", .{option.long_name});
-                    result_values.put(globalThis, &option.long_name.toZigString(), default_value);
+                    state.values.putMayBeIndex(globalThis, &option.long_name, default_value);
                 }
             }
         }
     }
 
     //
-    // Phase 4: build the resulting object: `{ values: [...], positionals: [...], tokens?: [...] }`
+    // Phase 4: build the resulting object: `{ values: {...}, positionals: [...], tokens?: [...] }`
     //
     log("Phase 4: Build result object", .{});
 
     var result = JSValue.createEmptyObject(globalThis, if (return_tokens) 3 else 2);
     if (return_tokens) {
-        const result_tokens = try createOutputTokensArray(globalThis, tokens.items);
-        result.put(globalThis, ZigString.static("tokens"), result_tokens);
+        result.put(globalThis, ZigString.static("tokens"), state.tokens);
     }
-    result.put(globalThis, ZigString.static("values"), result_values);
-    result.put(globalThis, ZigString.static("positionals"), result_positionals);
+    result.put(globalThis, ZigString.static("values"), state.values);
+    result.put(globalThis, ZigString.static("positionals"), state.positionals);
     return result;
 }

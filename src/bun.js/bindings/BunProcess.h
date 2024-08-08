@@ -20,14 +20,13 @@ class Process : public WebCore::JSEventEmitter {
     LazyProperty<Process, Structure> m_memoryUsageStructure;
     LazyProperty<Process, JSObject> m_bindingUV;
     LazyProperty<Process, JSObject> m_bindingNatives;
+    WriteBarrier<Unknown> m_uncaughtExceptionCaptureCallback;
 
 public:
     Process(JSC::Structure* structure, WebCore::JSDOMGlobalObject& globalObject, Ref<WebCore::EventEmitter>&& impl)
         : Base(structure, globalObject, WTFMove(impl))
     {
     }
-
-    void emitSignalEvent(int signalNumber);
 
     DECLARE_EXPORT_INFO;
 
@@ -37,6 +36,8 @@ public:
     }
 
     ~Process();
+
+    bool m_isExitCodeObservable = false;
 
     static constexpr unsigned StructureFlags = Base::StructureFlags | HasStaticPropertyTable;
 
@@ -71,6 +72,16 @@ public:
     }
 
     void finishCreation(JSC::VM& vm);
+
+    inline void setUncaughtExceptionCaptureCallback(JSC::JSValue callback)
+    {
+        m_uncaughtExceptionCaptureCallback.set(vm(), this, callback);
+    }
+
+    inline JSC::JSValue getUncaughtExceptionCaptureCallback()
+    {
+        return m_uncaughtExceptionCaptureCallback.get();
+    }
 
     inline Structure* cpuUsageStructure() { return m_cpuUsageStructure.getInitializedOnMainThread(this); }
     inline Structure* memoryUsageStructure() { return m_memoryUsageStructure.getInitializedOnMainThread(this); }

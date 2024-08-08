@@ -49,7 +49,6 @@ Despite the name, it isn't an array and supports none of the array methods and o
 
 ```ts
 const buf = new ArrayBuffer(8);
-
 buf.byteLength; // => 8
 
 const slice = buf.slice(0, 4); // returns new ArrayBuffer
@@ -62,23 +61,23 @@ To do anything interesting we need a construct known as a "view". A view is a cl
 
 The `DataView` class is a lower-level interface for reading and manipulating the data in an `ArrayBuffer`.
 
-Below we create a new `DataView` and set the first byte to 5.
+Below we create a new `DataView` and set the first byte to 3.
 
 ```ts
 const buf = new ArrayBuffer(4);
-// [0x0, 0x0, 0x0, 0x0]
+// [0b00000000, 0b00000000, 0b00000000, 0b00000000]
 
 const dv = new DataView(buf);
 dv.setUint8(0, 3); // write value 3 at byte offset 0
 dv.getUint8(0); // => 3
-// [0x11, 0x0, 0x0, 0x0]
+// [0b00000011, 0b00000000, 0b00000000, 0b00000000]
 ```
 
 Now let's write a `Uint16` at byte offset `1`. This requires two bytes. We're using the value `513`, which is `2 * 256 + 1`; in bytes, that's `00000010 00000001`.
 
 ```ts
 dv.setUint16(1, 513);
-// [0x11, 0x10, 0x1, 0x0]
+// [0b00000011, 0b00000010, 0b00000001, 0b00000000]
 
 console.log(dv.getUint16(1)); // => 513
 ```
@@ -396,7 +395,7 @@ Bun implements `Buffer`, a Node.js API for working with binary data that pre-dat
 
 ```ts
 const buf = Buffer.from("hello world");
-// => Buffer(16) [ 116, 104, 105, 115, 32, 105, 115, 32, 97, 32, 115, 116, 114, 105, 110, 103 ]
+// => Buffer(11) [ 104, 101, 108, 108, 111, 32, 119, 111, 114, 108, 100 ]
 
 buf.length; // => 11
 buf[0]; // => 104, ascii for 'h'
@@ -887,15 +886,25 @@ new Response(stream).arrayBuffer();
 Bun.readableStreamToArrayBuffer(stream);
 ```
 
+#### To `Uint8Array`
+
+```ts
+// with Response
+new Response(stream).bytes();
+
+// with Bun function
+Bun.readableStreamToBytes(stream);
+```
+
 #### To `TypedArray`
 
 ```ts
 // with Response
 const buf = await new Response(stream).arrayBuffer();
-new Uint8Array(buf);
+new Int8Array(buf);
 
 // with Bun function
-new Uint8Array(Bun.readableStreamToArrayBuffer(stream));
+new Int8Array(Bun.readableStreamToArrayBuffer(stream));
 ```
 
 #### To `DataView`

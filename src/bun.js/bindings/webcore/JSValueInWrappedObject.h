@@ -26,9 +26,9 @@
 
 #include "DOMWrapperWorld.h"
 #include "JSDOMWrapper.h"
-#include <JavaScriptCore/JSCJSValue.h>
+#include <JavaScriptCore/JSCJSValueInlines.h>
 #include <JavaScriptCore/SlotVisitor.h>
-#include <JavaScriptCore/Weak.h>
+#include <JavaScriptCore/WeakInlines.h>
 #include <variant>
 
 namespace WebCore {
@@ -51,18 +51,13 @@ public:
     void setWeakly(JSC::JSValue);
     JSC::JSValue getValue(JSC::JSValue nullValue = JSC::jsUndefined()) const;
 
-    // FIXME: Remove this once IDBRequest semantic bug is fixed.
-    // https://bugs.webkit.org/show_bug.cgi?id=236278
-    void setWithoutBarrier(JSValueInWrappedObject&);
-
 private:
     // Keep in mind that all of these fields are accessed concurrently without lock from concurrent GC thread.
     JSC::JSValue m_nonCell {};
     JSC::Weak<JSC::JSCell> m_cell {};
 };
 
-JSC::JSValue cachedPropertyValue(JSC::ThrowScope&, JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue(JSC::ThrowScope&)>&);
-JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const Function<JSC::JSValue()>&);
+JSC::JSValue cachedPropertyValue(JSC::ThrowScope&, JSC::JSGlobalObject&, const JSDOMObject& owner, JSValueInWrappedObject& cacheSlot, const auto&);
 
 inline JSValueInWrappedObject::JSValueInWrappedObject(JSC::JSValue value)
 {
@@ -115,25 +110,7 @@ inline void JSValueInWrappedObject::clear()
     m_cell.clear();
 }
 
-inline void JSValueInWrappedObject::setWithoutBarrier(JSValueInWrappedObject& other)
-{
-    JSC::Weak weak { other.m_cell.get() };
-    WTF::storeStoreFence(); // Ensure Weak is fully initialized for concurrent access.
-    m_nonCell = other.m_nonCell;
-    m_cell = WTFMove(weak);
-}
-
-inline JSC::JSValue cachedPropertyValue(JSC::JSGlobalObject& lexicalGlobalObject, const JSDOMObject& owner, JSValueInWrappedObject& cachedValue, const Function<JSC::JSValue()>& function)
-{
-    if (cachedValue && isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()))
-        return cachedValue.getValue();
-    auto value = function();
-    cachedValue.set(lexicalGlobalObject.vm(), &owner, cloneAcrossWorlds(lexicalGlobalObject, owner, value));
-    ASSERT(isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()));
-    return cachedValue.getValue();
-}
-
-inline JSC::JSValue cachedPropertyValue(JSC::ThrowScope& throwScope, JSC::JSGlobalObject& lexicalGlobalObject, const JSDOMObject& owner, JSValueInWrappedObject& cachedValue, const Function<JSC::JSValue(JSC::ThrowScope&)>& function)
+inline JSC::JSValue cachedPropertyValue(JSC::ThrowScope& throwScope, JSC::JSGlobalObject& lexicalGlobalObject, const JSDOMObject& owner, JSValueInWrappedObject& cachedValue, const auto& function)
 {
     if (cachedValue && isWorldCompatible(lexicalGlobalObject, cachedValue.getValue()))
         return cachedValue.getValue();

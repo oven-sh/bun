@@ -40,6 +40,7 @@
 // #include "WorkerLoaderProxy.h"
 // #include "WorkerThread.h"
 #include <wtf/CallbackAggregator.h>
+#include <wtf/Identified.h>
 #include <wtf/HashMap.h>
 #include <wtf/IsoMallocInlines.h>
 #include <wtf/MainThread.h>
@@ -72,7 +73,7 @@ static HashMap<BroadcastChannelIdentifier, ScriptExecutionContextIdentifier>& ch
 //     return { WTFMove(topOrigin), WTFMove(securityOrigin) };
 // }
 
-class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main> {
+class BroadcastChannel::MainThreadBridge : public ThreadSafeRefCounted<MainThreadBridge, WTF::DestructionThread::Main>, public Identified<BroadcastChannelIdentifier> {
 public:
     static Ref<MainThreadBridge> create(BroadcastChannel& channel, const String& name, ScriptExecutionContext& context)
     {
@@ -82,9 +83,9 @@ public:
     void registerChannel(ScriptExecutionContext&);
     void unregisterChannel();
     void postMessage(Ref<SerializedScriptValue>&&);
+    void detach() { m_broadcastChannel = nullptr; };
 
     String name() const { return m_name.isolatedCopy(); }
-    BroadcastChannelIdentifier identifier() const { return m_identifier; }
     ScriptExecutionContextIdentifier contextId() const { return m_contextId; }
 
 private:
@@ -92,9 +93,7 @@ private:
 
     void ensureOnMainThread(Function<void(void*)>&&);
 
-    // WeakPtr<BroadcastChannel, WeakPtrImplWithEventTargetData> m_broadcastChannel;
-    WeakPtr<BroadcastChannel> m_broadcastChannel;
-    const BroadcastChannelIdentifier m_identifier;
+    WeakPtr<BroadcastChannel, WeakPtrImplWithEventTargetData> m_broadcastChannel;
     const String m_name; // Main thread only.
     ScriptExecutionContextIdentifier m_contextId;
     // PartitionedSecurityOrigin m_origin; // Main thread only.
@@ -102,7 +101,6 @@ private:
 
 BroadcastChannel::MainThreadBridge::MainThreadBridge(BroadcastChannel& channel, const String& name, ScriptExecutionContext& context)
     : m_broadcastChannel(channel)
-    , m_identifier(BroadcastChannelIdentifier::generate())
     , m_name(name.isolatedCopy())
     , m_contextId(context.identifier())
 // , m_origin(partitionedSecurityOriginFromContext(*channel.scriptExecutionContext()).isolatedCopy())
@@ -132,8 +130,8 @@ void BroadcastChannel::MainThreadBridge::registerChannel(ScriptExecutionContext&
     Ref protectedThis { *this };
 
     ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), contextId = context.identifier()](auto& context) mutable {
-        context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->m_identifier);
-        channelToContextIdentifier().add(protectedThis->m_identifier, contextId);
+        context.broadcastChannelRegistry().registerChannel(protectedThis->m_name, protectedThis->identifier());
+        channelToContextIdentifier().add(protectedThis->identifier(), contextId);
     });
 }
 
@@ -142,8 +140,8 @@ void BroadcastChannel::MainThreadBridge::unregisterChannel()
     Ref protectedThis { *this };
 
     ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis)](auto& context) {
-        context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->m_identifier);
-        channelToContextIdentifier().remove(protectedThis->m_identifier);
+        context.broadcastChannelRegistry().unregisterChannel(protectedThis->m_name, protectedThis->identifier());
+        channelToContextIdentifier().remove(protectedThis->identifier());
     });
 }
 
@@ -152,7 +150,7 @@ void BroadcastChannel::MainThreadBridge::postMessage(Ref<SerializedScriptValue>&
     Ref protectedThis { *this };
 
     ScriptExecutionContext::ensureOnMainThread([protectedThis = WTFMove(protectedThis), message = WTFMove(message)](auto& context) mutable {
-        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->m_identifier, WTFMove(message));
+        context.broadcastChannelRegistry().postMessage(protectedThis->m_name, protectedThis->identifier(), WTFMove(message));
     });
 }
 
@@ -173,6 +171,7 @@ BroadcastChannel::BroadcastChannel(ScriptExecutionContext& context, const String
 BroadcastChannel::~BroadcastChannel()
 {
     close();
+    m_mainThreadBridge->detach();
     {
         Locker locker { allBroadcastChannelsLock };
         allBroadcastChannels().remove(m_mainThreadBridge->identifier());

@@ -20,6 +20,10 @@ function generate(name) {
         fn: "doReload",
         length: 2,
       },
+      "@@dispose": {
+        fn: "dispose",
+        length: 0,
+      },
       stop: {
         fn: "doStop",
         length: 1,
@@ -40,6 +44,12 @@ function generate(name) {
       },
       pendingWebSockets: {
         getter: "getPendingWebSockets",
+      },
+      ref: {
+        fn: "doRef",
+      },
+      unref: {
+        fn: "doUnref",
       },
       hostname: {
         getter: "getHostname",

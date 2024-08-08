@@ -258,14 +258,15 @@ bool findHTTPHeaderName(StringView stringView, HTTPHeaderName& headerName)
         return false;
 
     if (stringView.is8Bit()) {
-        if (auto nameAndString = HTTPHeaderNamesHash::findHeaderNameImpl(reinterpret_cast<const char*>(stringView.characters8()), length)) {
+        if (auto nameAndString = HTTPHeaderNamesHash::findHeaderNameImpl(reinterpret_cast<const char*>(stringView.span8().data()), length)) {
             headerName = nameAndString->headerName;
             return true;
         }
     } else {
         LChar characters[maxHTTPHeaderNameLength];
+        const auto span = stringView.span16();
         for (unsigned i = 0; i < length; ++i) {
-            UChar character = stringView.characters16()[i];
+            UChar character = span.data()[i];
             if (!isASCII(character))
                 return false;
                 

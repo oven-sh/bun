@@ -1,5 +1,4 @@
 #include "InternalModuleRegistry.h"
-
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/BuiltinUtils.h>
 #include <JavaScriptCore/JSFunction.h>
@@ -8,7 +7,10 @@
 #include <JavaScriptCore/VMTrapsInlines.h>
 #include <JavaScriptCore/JSModuleLoader.h>
 
+#include <utility>
+
 #include "InternalModuleRegistryConstants.h"
+#include "wtf/Forward.h"
 
 namespace Bun {
 
@@ -39,13 +41,14 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
     maybeAddCodeCoverage(vm, source);                                                       \
     JSFunction* func                                                                        \
         = JSFunction::create(                                                               \
-            vm,                                                                             \
+            vm, globalObject,                                                               \
             createBuiltinExecutable(                                                        \
                 vm, source,                                                                 \
                 Identifier(),                                                               \
                 ImplementationVisibility::Public,                                           \
                 ConstructorKind::None,                                                      \
-                ConstructAbility::CannotConstruct)                                          \
+                ConstructAbility::CannotConstruct,                                          \
+                InlineAttribute::None)                                                      \
                 ->link(vm, nullptr, source),                                                \
             static_cast<JSC::JSGlobalObject*>(globalObject));                               \
                                                                                             \
@@ -71,11 +74,11 @@ static void maybeAddCodeCoverage(JSC::VM& vm, const JSC::SourceCode& code)
 JSValue initializeInternalModuleFromDisk(
     JSGlobalObject* globalObject,
     VM& vm,
-    WTF::String moduleName,
+    const WTF::String& moduleName,
     WTF::String fileBase,
-    WTF::String urlString)
+    const WTF::String& urlString)
 {
-    WTF::String file = makeString(BUN_DYNAMIC_JS_LOAD_PATH, "/"_s, fileBase);
+    WTF::String file = makeString(ASCIILiteral::fromLiteralUnsafe(BUN_DYNAMIC_JS_LOAD_PATH), "/"_s, WTFMove(fileBase));
     if (auto contents = WTF::FileSystemImpl::readEntireFile(file)) {
         auto string = WTF::String::fromUTF8(contents.value());
         INTERNAL_MODULE_REGISTRY_GENERATE_(globalObject, vm, string, moduleName, urlString);

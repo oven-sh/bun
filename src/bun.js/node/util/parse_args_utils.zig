@@ -1,17 +1,25 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const testing = std.testing;
-const String = if (@import("builtin").is_test) TestString else @import("root").bun.String;
-const JSValue = if (@import("builtin").is_test) usize else @import("root").bun.JSC.JSValue;
+const String = if (@import("builtin").is_test) TestString else bun.String;
+const JSValue = if (@import("builtin").is_test) usize else bun.JSC.JSValue;
 
 pub const OptionValueType = enum { boolean, string };
 
 /// Metadata of an option known to the args parser,
 /// i.e. the values passed to `parseArgs(..., { options: <values> })`
 pub const OptionDefinition = struct {
+    // e.g. "abc" for --abc
     long_name: String,
-    short_name: ?u8 = null,
+
+    /// e.g. "a" for -a
+    /// if len is 0, it has no short name
+    short_name: String = String.empty,
+
     type: OptionValueType = .boolean,
+
     multiple: bool = false,
+
     default_value: ?JSValue = null,
 };
 
@@ -41,10 +49,10 @@ pub inline fn classifyToken(arg: String, options: []const OptionDefinition) Toke
         }
     } else if (len > 2) {
         if (arg.hasPrefixComptime("--")) {
-            return if ((arg.indexOfCharU8('=') orelse 0) >= 3) .long_option_and_value else .lone_long_option;
+            return if ((arg.indexOfAsciiChar('=') orelse 0) >= 3) .long_option_and_value else .lone_long_option;
         } else if (arg.hasPrefixComptime("-")) {
-            const first_letter: u8 = arg.charAtU8(1);
-            const option_idx = findOptionByShortName(first_letter, options);
+            const first_char = arg.substringWithLen(1, 2);
+            const option_idx = findOptionByShortName(first_char, options);
             if (option_idx) |i| {
                 return if (options[i].type == .string) .short_option_and_value else return .short_option_group;
             } else {
@@ -70,13 +78,13 @@ pub fn isOptionLikeValue(value: String) bool {
 /// findOptionByShortName('b', {
 ///   options: { bar: { short: 'b' } }
 /// }) // returns "bar"
-pub fn findOptionByShortName(short_name: u8, options: []const OptionDefinition) ?usize {
+pub fn findOptionByShortName(short_name: String, options: []const OptionDefinition) ?usize {
     var long_option_index: ?usize = null;
     for (options, 0..) |option, i| {
-        if (option.short_name == short_name) {
+        if (short_name.eql(option.short_name)) {
             return i;
         }
-        if (option.long_name.length() == 1 and option.long_name.charAtU8(0) == short_name) {
+        if (option.long_name.length() == 1 and short_name.eql(option.long_name)) {
             long_option_index = i;
         }
     }

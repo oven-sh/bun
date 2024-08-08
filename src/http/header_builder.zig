@@ -1,10 +1,11 @@
 const HeaderBuilder = @This();
 const StringBuilder = @import("../string_builder.zig");
 const Headers = @import("./headers.zig");
-const string = @import("root").bun.string;
+const string = bun.string;
 const HTTPClient = @import("../http.zig");
 const Api = @import("../api/schema.zig").Api;
 const std = @import("std");
+const bun = @import("root").bun;
 
 content: StringBuilder = StringBuilder{},
 header_count: u64 = 0,

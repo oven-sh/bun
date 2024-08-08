@@ -1,15 +1,14 @@
-import assert from "assert";
 import { Subprocess } from "bun";
 import { beforeEach, describe, expect, test } from "bun:test";
 import { realpathSync, chmodSync, existsSync, mkdirSync, readdirSync, rmSync, writeFileSync } from "fs";
-import { bunEnv, bunExe, bunRun } from "harness";
+import { bunEnv, bunExe, bunRun, tmpdirSync } from "harness";
 import { tmpdir } from "os";
 import { join } from "path";
 
-function dummyFile(size: number, cache_bust: string, value: string) {
+function dummyFile(size: number, cache_bust: string, value: string | { code: string }) {
   const data = Buffer.alloc(size);
   data.write("/*" + cache_bust);
-  const end = `*/\nconsole.log(${JSON.stringify(value)});`;
+  const end = `*/\nconsole.log(${(value as any).code ?? JSON.stringify(value)});`;
   data.fill("*", 2 + cache_bust.length, size - end.length, "utf-8");
   data.write(end, size - end.length, "utf-8");
   return data;
@@ -51,7 +50,7 @@ beforeEach(() => {
     removeCache();
   }
 
-  temp_dir = join(tmpdir(), `bun-test-transpiler-cache-${Date.now()}-` + (Math.random() * 81023).toString(36).slice(2));
+  temp_dir = tmpdirSync();
   mkdirSync(temp_dir, { recursive: true });
   temp_dir = realpathSync(temp_dir);
   cache_dir = join(temp_dir, ".cache");
@@ -63,17 +62,27 @@ describe("transpiler cache", () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile((50 * 1024 * 1.5) | 0, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
-    assert(existsSync(cache_dir));
+    expect(existsSync(cache_dir)).toBeTrue();
     expect(newCacheCount()).toBe(1);
     const b = bunRun(join(temp_dir, "a.js"), env);
     expect(b.stdout == "a");
+    expect(newCacheCount()).toBe(0);
+  });
+  test("works with empty files", async () => {
+    writeFileSync(join(temp_dir, "a.js"), "//" + "a".repeat(50 * 1024 * 1.5));
+    const a = bunRun(join(temp_dir, "a.js"), env);
+    expect(a.stdout == "");
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+    const b = bunRun(join(temp_dir, "a.js"), env);
+    expect(b.stdout == "");
     expect(newCacheCount()).toBe(0);
   });
   test("ignores files under 50kb", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024 - 1, "1", "a"));
     const a = bunRun(join(temp_dir, "a.js"), env);
     expect(a.stdout == "a");
-    assert(!existsSync(cache_dir));
+    expect(!existsSync(cache_dir)).toBeTrue();
   });
   test("it is indeed content addressable", async () => {
     writeFileSync(join(temp_dir, "a.js"), dummyFile(50 * 1024, "1", "b"));
@@ -122,7 +131,7 @@ describe("transpiler cache", () => {
 
     await Promise.all(processes.map(x => x.exited));
 
-    assert(!killing);
+    expect(!killing).toBeTrue();
 
     remover.kill(9);
 
@@ -159,5 +168,18 @@ describe("transpiler cache", () => {
     expect(a.stdout == "b");
 
     chmodSync(join(cache_dir), "777");
+  });
+  test("does not inline process.env", () => {
+    writeFileSync(
+      join(temp_dir, "a.js"),
+      dummyFile((50 * 1024 * 1.5) | 0, "1", { code: "process.env.NODE_ENV, process.env.HELLO" }),
+    );
+    const a = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: undefined, HELLO: "1" });
+    expect(a.stdout == "development 1");
+    expect(existsSync(cache_dir)).toBeTrue();
+    expect(newCacheCount()).toBe(1);
+    const b = bunRun(join(temp_dir, "a.js"), { ...env, NODE_ENV: "production", HELLO: "5" });
+    expect(b.stdout == "production 5");
+    expect(newCacheCount()).toBe(0);
   });
 });

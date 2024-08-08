@@ -7,7 +7,7 @@ pub const MemorySettings = extern struct {
 };
 
 inline fn auto_disable() void {
-    if (comptime @import("root").bun.FeatureFlags.disable_lolhtml)
+    if (comptime bun.FeatureFlags.disable_lolhtml)
         unreachable;
 }
 
@@ -87,6 +87,11 @@ pub const HTMLRewriter = opaque {
             output_sink_user_data: *anyopaque,
             strict: bool,
         ) ?*HTMLRewriter;
+
+        pub fn deinit(this: *HTMLRewriter.Builder) void {
+            auto_disable();
+            this.lol_html_rewriter_builder_free();
+        }
 
         extern fn lol_html_rewriter_builder_add_document_content_handlers(
             builder: *HTMLRewriter.Builder,
@@ -257,7 +262,7 @@ pub const HTMLRewriter = opaque {
                     auto_disable();
 
                     @setRuntimeSafety(false);
-                    var this = @as(*OutputSinkType, @ptrCast(@alignCast(user_data)));
+                    const this = @as(*OutputSinkType, @ptrCast(@alignCast(user_data)));
                     switch (len) {
                         0 => Done(this),
                         else => Writer(this, ptr[0..len]),
@@ -586,7 +591,7 @@ pub const HTMLString = extern struct {
             return bun.String.createExternal(bytes, true, @constCast(bytes.ptr), &deinit_external);
         }
         defer this.deinit();
-        return bun.String.create(bytes);
+        return bun.String.createUTF8(bytes);
     }
 
     pub fn toJS(this: HTMLString, globalThis: *bun.JSC.JSGlobalObject) bun.JSC.JSValue {

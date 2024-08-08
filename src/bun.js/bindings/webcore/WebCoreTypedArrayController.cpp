@@ -35,14 +35,14 @@
 
 #include <JavaScriptCore/JSArrayBuffer.h>
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 static inline WebCore::JSDOMGlobalObject* getDefaultGlobal(JSC::JSGlobalObject* lexicalGlobalObject)
 {
     if (auto* global = jsDynamicCast<WebCore::JSDOMGlobalObject*>(lexicalGlobalObject)) {
         return global;
     }
 
-    return Bun__getDefaultGlobal();
+    return Bun__getDefaultGlobalObject();
 }
 
 namespace WebCore {
@@ -73,10 +73,10 @@ bool WebCoreTypedArrayController::isAtomicsWaitAllowedOnCurrentThread()
     return m_allowAtomicsWait;
 }
 
-bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, const char** reason)
+bool WebCoreTypedArrayController::JSArrayBufferOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, JSC::AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     if (UNLIKELY(reason))
-        *reason = "ArrayBuffer is opaque root";
+        *reason = "ArrayBuffer is opaque root"_s;
     auto& wrapper = *JSC::jsCast<JSC::JSArrayBuffer*>(handle.slot()->asCell());
     return visitor.containsOpaqueRoot(wrapper.impl());
 }

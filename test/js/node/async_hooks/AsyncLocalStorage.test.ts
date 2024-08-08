@@ -1,5 +1,6 @@
 import { AsyncLocalStorage, AsyncResource } from "async_hooks";
 import { describe, expect, test } from "bun:test";
+import { bunExe, bunEnv } from "harness";
 
 describe("AsyncLocalStorage", () => {
   test("throw inside of AsyncLocalStorage.run() will be passed out", () => {
@@ -233,7 +234,8 @@ describe("async context passes through", () => {
       expect(s.getStore()).toBe("value");
 
       const x = Bun.spawn({
-        cmd: ["echo", "hello"],
+        cmd: [bunExe(), "help"],
+        env: bunEnv,
         onExit(subprocess, exitCode, signalCode, error) {
           value = s.getStore()!;
           resolve();
@@ -251,7 +253,7 @@ describe("async context passes through", () => {
     await s.run("value", async () => {
       expect(s.getStore()).toBe("value");
 
-      const server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(request, server) {
           return new Response(s.getStore()!);
@@ -438,12 +440,11 @@ describe("async context passes through", () => {
   test("Websocket Server", async () => {
     const s = new AsyncLocalStorage<string>();
     let values_server: string[] = [];
-    let resolve: () => void;
-    const promise = new Promise<void>(r => (resolve = r));
+    const { promise, resolve } = Promise.withResolvers();
     await s.run("value", async () => {
       expect(s.getStore()).toBe("value");
 
-      const server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(request, server) {
           if (server.upgrade(request)) return null as any;
@@ -470,20 +471,19 @@ describe("async context passes through", () => {
       ws.addEventListener("close", () => {
         resolve();
       });
+      await promise;
     });
     expect(s.getStore()).toBe(undefined);
-    await promise;
     expect(values_server).toEqual(["open:value", "message:value", "close:value"]);
   });
   test.todo("WebSocket client", async () => {
     const s = new AsyncLocalStorage<string>();
     let values_client: string[] = [];
-    let resolve: () => void;
-    const promise = new Promise<void>(r => (resolve = r));
+    const { promise, resolve } = Promise.withResolvers();
     await s.run("value", async () => {
       expect(s.getStore()).toBe("value");
 
-      const server = Bun.serve({
+      using server = Bun.serve({
         port: 0,
         fetch(request, server) {
           if (server.upgrade(request)) return null as any;

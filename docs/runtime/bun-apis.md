@@ -30,17 +30,20 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - File I/O
-- [`Bun.file`](/docs/api/file-io#reading-files-bun-file) [`Bun.write`](/docs/api/file-io#writing-files-bun-write)
+- [`Bun.file`](/docs/api/file-io#reading-files-bun-file)
+  [`Bun.write`](/docs/api/file-io#writing-files-bun-write)
 
 ---
 
 - Child processes
-- [`Bun.spawn`](/docs/api/spawn#spawn-a-process-bun-spawn) [`Bun.spawnSync`](/docs/api/spawn#blocking-api-bun-spawnsync)
+- [`Bun.spawn`](/docs/api/spawn#spawn-a-process-bun-spawn)
+  [`Bun.spawnSync`](/docs/api/spawn#blocking-api-bun-spawnsync)
 
 ---
 
 - TCP
-- [`Bun.listen`](/docs/api/tcp#start-a-server-bun-listen) [`Bun.connect`](/docs/api/tcp#start-a-server-bun-listen)
+- [`Bun.listen`](/docs/api/tcp#start-a-server-bun-listen)
+  [`Bun.connect`](/docs/api/tcp#start-a-server-bun-listen)
 
 ---
 
@@ -60,7 +63,8 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - Hashing
-- [`Bun.hash`](/docs/api/hashing#bun-hash) [`Bun.CryptoHasher`](/docs/api/hashing#bun-cryptohasher)
+- [`Bun.hash`](/docs/api/hashing#bun-hash)
+  [`Bun.CryptoHasher`](/docs/api/hashing#bun-cryptohasher)
 
 ---
 
@@ -100,6 +104,26 @@ Click the link in the right column to jump to the associated documentation.
 ---
 
 - Utilities
-- [`Bun.version`](/docs/api/utils#bun-version) [`Bun.revision`](/docs/api/utils#bun-revision) [`Bun.env`](/docs/api/utils#bun-env) [`Bun.main`](/docs/api/utils#bun-main) [`Bun.sleep()`](/docs/api/utils#bun-sleep) [`Bun.sleepSync()`](/docs/api/utils#bun-sleepsync) [`Bun.which()`](/docs/api/utils#bun-which) [`Bun.peek()`](/docs/api/utils#bun-peek) [`Bun.openInEditor()`](/docs/api/utils#bun-openineditor) [`Bun.deepEquals()`](/docs/api/utils#bun-deepequals) [`Bun.escapeHTML()`](/docs/api/utils#bun-escapehtml) [`Bun.fileURLToPath()`](/docs/api/utils#bun-fileurltopath) [`Bun.pathToFileURL()`](/docs/api/utils#bun-pathtofileurl) [`Bun.gzipSync()`](/docs/api/utils#bun-gzipsync) [`Bun.gunzipSync()`](/docs/api/utils#bun-gunzipsync) [`Bun.deflateSync()`](/docs/api/utils#bun-deflatesync) [`Bun.inflateSync()`](/docs/api/utils#bun-inflatesync) [`Bun.inspect()`](/docs/api/utils#bun-inspect) [`Bun.nanoseconds()`](/docs/api/utils#bun-nanoseconds) [`Bun.readableStreamTo*()`](/docs/api/utils#bun-readablestreamto) [`Bun.resolveSync()`](/docs/api/utils#bun-resolvesync)
+- [`Bun.version`](/docs/api/utils#bun-version)
+  [`Bun.revision`](/docs/api/utils#bun-revision)
+  [`Bun.env`](/docs/api/utils#bun-env)
+  [`Bun.main`](/docs/api/utils#bun-main)
+  [`Bun.sleep()`](/docs/api/utils#bun-sleep)
+  [`Bun.sleepSync()`](/docs/api/utils#bun-sleepsync)
+  [`Bun.which()`](/docs/api/utils#bun-which)
+  [`Bun.peek()`](/docs/api/utils#bun-peek)
+  [`Bun.openInEditor()`](/docs/api/utils#bun-openineditor)
+  [`Bun.deepEquals()`](/docs/api/utils#bun-deepequals)
+  [`Bun.escapeHTML()`](/docs/api/utils#bun-escapehtml)
+  [`Bun.fileURLToPath()`](/docs/api/utils#bun-fileurltopath)
+  [`Bun.pathToFileURL()`](/docs/api/utils#bun-pathtofileurl)
+  [`Bun.gzipSync()`](/docs/api/utils#bun-gzipsync)
+  [`Bun.gunzipSync()`](/docs/api/utils#bun-gunzipsync)
+  [`Bun.deflateSync()`](/docs/api/utils#bun-deflatesync)
+  [`Bun.inflateSync()`](/docs/api/utils#bun-inflatesync)
+  [`Bun.inspect()`](/docs/api/utils#bun-inspect)
+  [`Bun.nanoseconds()`](/docs/api/utils#bun-nanoseconds)
+  [`Bun.readableStreamTo*()`](/docs/api/utils#bun-readablestreamto)
+  [`Bun.resolveSync()`](/docs/api/utils#bun-resolvesync)
 
 {% /table %}

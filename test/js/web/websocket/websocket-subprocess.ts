@@ -11,3 +11,15 @@ ws.onmessage = message => {
     }, 300);
   }
 };
+
+ws.onclose = () => {
+  console.log("Closed!");
+};
+
+ws.onerror = e => {
+  console.error(e);
+};
+
+ws.onopen = () => {
+  console.log("Connected!");
+};

@@ -207,8 +207,8 @@ After cloning a template, `bun create` will automatically remove the `"bun-creat
 
 ---
 
-- `GITHUB_ACCESS_TOKEN`
-- This lets `bun create` work with private repositories or if you get rate-limited
+- `GITHUB_TOKEN` (or `GITHUB_ACCESS_TOKEN`)
+- This lets `bun create` work with private repositories or if you get rate-limited. `GITHUB_TOKEN` is chosen over `GITHUB_ACCESS_TOKEN` if both exist.
 
 {% /table %}
 
@@ -244,7 +244,7 @@ ELSE IF local template
 5. Auto-detect the npm client, preferring `pnpm`, `yarn` (v1), and lastly `npm`
 6. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
 7. Run `${npmClient} install` unless `--no-install` is passed OR no dependencies are in package.json
-8. Run any tasks defined in `"bun-create": { "preinstall" }` with the npm client
+8. Run any tasks defined in `"bun-create": { "postinstall" }` with the npm client
 9. Run `git init; git add -A .; git commit -am "Initial Commit";`
 
    - Rename `gitignore` to `.gitignore`. NPM automatically removes `.gitignore` files from appearing in packages.

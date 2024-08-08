@@ -73,10 +73,10 @@ extern "C" size_t TextEncoder__encodeInto8(const LChar* stringPtr, size_t string
 extern "C" size_t TextEncoder__encodeInto16(const UChar* stringPtr, size_t stringLen, void* ptr, size_t len);
 extern "C" JSC::EncodedJSValue TextEncoder__encodeRopeString(JSC::JSGlobalObject* lexicalGlobalObject, JSC::JSString* str);
 
-extern "C" {
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSTextEncoder*, DOMJIT::IDLJSArgumentType<IDLDOMString>));
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> source, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination));
-}
+// extern "C" {
+// static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSTextEncoder*, DOMJIT::IDLJSArgumentType<IDLDOMString>));
+// static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> source, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination));
+// }
 
 template<> TextEncoder::EncodeIntoResult convertDictionary<TextEncoder::EncodeIntoResult>(JSGlobalObject& lexicalGlobalObject, JSValue value)
 {
@@ -214,94 +214,97 @@ template<> void JSTextEncoderDOMConstructor::initializeProperties(VM& vm, JSDOMG
     putDirect(vm, vm.propertyNames->prototype, JSTextEncoder::prototype(vm, globalObject), JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::DontEnum | JSC::PropertyAttribute::DontDelete);
 }
 
-constexpr JSC::DFG::AbstractHeapKind heapKinds[4] = { JSC::DFG::HeapObjectCount };
+// static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
+//     jsTextEncoderEncodeWithoutTypeCheck,
+//     JSTextEncoder::info(),
+//     // https://github.com/oven-sh/bun/issues/9226
+//     // It's not totally clear what the correct side effects are for this function, so we just make it conservative for now.
+//     JSC::DOMJIT::Effect {},
+//     DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
 
-// TODO: figure out why the test fails after JSC upgrade and re-enable this!
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoRead[4] = { JSC::DFG::Heap, JSC::DFG::MiscFields, JSC::DFG::TypedArrayProperties, JSC::DFG::Absolute };
-// constexpr JSC::DFG::AbstractHeapKind encodeIntoWrite[4] = { JSC::DFG::SideState, JSC::DFG::Absolute, JSC::DFG::JSCell_structureID, JSC::DFG::HeapObjectCount };
+// static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
+//     jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
+//     JSTextEncoder::info(),
 
-static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck(
-    jsTextEncoderEncodeWithoutTypeCheck,
-    JSTextEncoder::info(),
-    JSC::DOMJIT::Effect::forReadWriteKinds(heapKinds, heapKinds),
-    DOMJIT::IDLResultTypeFilter<IDLUint8Array>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value);
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck(
-    jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck,
-    JSTextEncoder::info(),
-
-    JSC::DOMJIT::Effect {},
-    // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
-    DOMJIT::IDLResultTypeFilter<IDLObject>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
-    DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
+//     JSC::DOMJIT::Effect {},
+//     // JSC::DOMJIT::Effect::forReadWriteKinds(encodeIntoRead, encodeIntoWrite),
+//     DOMJIT::IDLResultTypeFilter<IDLObject>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLDOMString>::value,
+//     DOMJIT::IDLArgumentTypeFilter<IDLUint8Array>::value);
 
 /* Hash table for prototype */
 
 static const HashTableValue JSTextEncoderPrototypeTableValues[] = {
     { "constructor"_s, static_cast<unsigned>(JSC::PropertyAttribute::DontEnum), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoderConstructor, 0 } },
     { "encoding"_s, static_cast<unsigned>(JSC::PropertyAttribute::ReadOnly | JSC::PropertyAttribute::CustomAccessor | JSC::PropertyAttribute::DOMAttribute), NoIntrinsic, { HashTableValue::GetterSetterType, jsTextEncoder_encoding, 0 } },
-    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
-    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
+    // TODO: bring these back after fix issue with globalObject pointer argument in `encodeInto`
+    // REPRO:
+    // 1. bun create docusaurus
+    // 2. bun ./node_modules/.bin/docusaurus build --no-minify
+    // https://github.com/oven-sh/bun/issues/12335
+    // { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encode, &DOMJITSignatureForJSTextEncoderEncodeWithoutTypeCheck } },
+    // { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsTextEncoderPrototypeFunction_encodeInto, &DOMJITSignatureForJSTextEncoderEncodeIntoWithoutTypeCheck } },
+    { "encode"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encode, 1 } },
+    { "encodeInto"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsTextEncoderPrototypeFunction_encodeInto, 2 } },
 };
 
-JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto throwScope = DECLARE_THROW_SCOPE(vm);
-    JSC::EncodedJSValue res;
-    String str;
-    if (input->is8Bit()) {
-        if (input->isRope()) {
-            GCDeferralContext gcDeferralContext(vm);
-            auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
-            if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
-                RELEASE_AND_RETURN(throwScope, encodedValue);
-            }
-        }
+// JSC_DEFINE_JIT_OPERATION(jsTextEncoderEncodeWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> input))
+// {
+//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     IGNORE_WARNINGS_BEGIN("frame-address")
+//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+//     IGNORE_WARNINGS_END
+//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+//     auto throwScope = DECLARE_THROW_SCOPE(vm);
+//     JSC::EncodedJSValue res;
+//     String str;
+//     if (input->is8Bit()) {
+//         if (input->isRope()) {
+//             GCDeferralContext gcDeferralContext(vm);
+//             auto encodedValue = TextEncoder__encodeRopeString(lexicalGlobalObject, input);
+//             if (!JSC::JSValue::decode(encodedValue).isUndefined()) {
+//                 RELEASE_AND_RETURN(throwScope, { encodedValue });
+//             }
+//         }
 
-        str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
-    } else {
-        str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
-    }
+//         str = input->value(lexicalGlobalObject);
+//         res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
+//     } else {
+//         str = input->value(lexicalGlobalObject);
+//         res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
+//     }
 
-    if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
-        throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
-        return encodedJSValue();
-    }
+//     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
+//         throwScope.throwException(lexicalGlobalObject, JSC::JSValue::decode(res));
+//         return { encodedJSValue() };
+//     }
 
-    RELEASE_AND_RETURN(throwScope, res);
-}
+//     RELEASE_AND_RETURN(throwScope, { res });
+// }
 
-JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto source = sourceStr->value(lexicalGlobalObject);
-    size_t res = 0;
-    if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
-    } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
-    }
+// JSC_DEFINE_JIT_OPERATION(jsTextEncoderPrototypeFunction_encodeIntoWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSTextEncoder* castedThis, DOMJIT::IDLJSArgumentType<IDLDOMString> sourceStr, DOMJIT::IDLJSArgumentType<IDLUint8Array> destination))
+// {
+//     VM& vm = JSC::getVM(lexicalGlobalObject);
+//     IGNORE_WARNINGS_BEGIN("frame-address")
+//     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
+//     IGNORE_WARNINGS_END
+//     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
+//     String source = sourceStr->value(lexicalGlobalObject);
+//     size_t res = 0;
+//     if (!source.is8Bit()) {
+//         res = TextEncoder__encodeInto16(source.span16().data(), source.length(), destination->vector(), destination->byteLength());
+//     } else {
+//         res = TextEncoder__encodeInto8(source.span8().data(), source.length(), destination->vector(), destination->byteLength());
+//     }
 
-    Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
-    auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
-    result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
-    result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
+//     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+//     auto* result = JSC::constructEmptyObject(vm, globalObject->encodeIntoObjectStructure());
+//     result->putDirectOffset(vm, 0, JSC::jsNumber(static_cast<uint32_t>(res)));
+//     result->putDirectOffset(vm, 1, JSC::jsNumber(static_cast<uint32_t>(res >> 32)));
 
-    return JSValue::encode(result);
-}
+//     return { JSValue::encode(result) };
+// }
 
 const ClassInfo JSTextEncoderPrototype::s_info = { "TextEncoder"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(JSTextEncoderPrototype) };
 
@@ -329,7 +332,9 @@ void JSTextEncoder::finishCreation(VM& vm)
 
 JSObject* JSTextEncoder::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSTextEncoderPrototype::create(vm, &globalObject, JSTextEncoderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSTextEncoderPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSTextEncoderPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSTextEncoder::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -391,10 +396,10 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeBody(JSC:
         }
 
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode8(lexicalGlobalObject, str.characters8(), str.length());
+        res = TextEncoder__encode8(lexicalGlobalObject, str.span8().data(), str.length());
     } else {
         str = input->value(lexicalGlobalObject);
-        res = TextEncoder__encode16(lexicalGlobalObject, str.characters16(), str.length());
+        res = TextEncoder__encode16(lexicalGlobalObject, str.span16().data(), str.length());
     }
 
     if (UNLIKELY(JSC::JSValue::decode(res).isObject() && JSC::JSValue::decode(res).getObject()->isErrorInstance())) {
@@ -428,9 +433,11 @@ static inline JSC::EncodedJSValue jsTextEncoderPrototypeFunction_encodeIntoBody(
 
     size_t res = 0;
     if (!source.is8Bit()) {
-        res = TextEncoder__encodeInto16(source.characters16(), source.length(), destination->vector(), destination->byteLength());
+        const auto span = source.span16();
+        res = TextEncoder__encodeInto16(span.data(), span.size(), destination->vector(), destination->byteLength());
     } else {
-        res = TextEncoder__encodeInto8(source.characters8(), source.length(), destination->vector(), destination->byteLength());
+        const auto span = source.span8();
+        res = TextEncoder__encodeInto8(span.data(), span.size(), destination->vector(), destination->byteLength());
     }
 
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
@@ -462,11 +469,11 @@ void JSTextEncoder::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSTextEncoder*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSTextEncoderOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSTextEncoderOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -499,18 +506,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     if constexpr (std::is_polymorphic_v<TextEncoder>) {
 #if ENABLE(BINDING_INTEGRITY)
-        const void* actualVTablePointer = getVTablePointer(impl.ptr());
+        // const void* actualVTablePointer = getVTablePointer(impl.ptr());
 #if PLATFORM(WIN)
         void* expectedVTablePointer = __identifier("??_7TextEncoder@WebCore@@6B@");
 #else
-        void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
+        // void* expectedVTablePointer = &_ZTVN7WebCore11TextEncoderE[2];
 #endif
 
         // If you hit this assertion you either have a use after free bug, or
         // TextEncoder has subclasses. If TextEncoder has subclasses that get passed
         // to toJS() we currently require TextEncoder you to opt out of binding hardening
         // by adding the SkipVTableValidation attribute to the interface IDL definition
-        RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+        // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
 #endif
     }
     return createWrapper<TextEncoder>(globalObject, WTFMove(impl));

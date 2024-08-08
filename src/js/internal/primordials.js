@@ -88,7 +88,6 @@ export default {
   makeSafe, // exported for testing
   Array,
   ArrayFrom: Array.from,
-  ArrayIsArray: Array.isArray,
   ArrayPrototypeFlat: uncurryThis(Array.prototype.flat),
   ArrayPrototypeFilter: uncurryThis(Array.prototype.filter),
   ArrayPrototypeForEach,
@@ -146,7 +145,6 @@ export default {
   ObjectPrototypeToString: uncurryThis(Object.prototype.toString),
   ObjectSeal: Object.seal,
   ObjectSetPrototypeOf: Object.setPrototypeOf,
-  ReflectApply: $getByIdDirect(Reflect, "apply"),
   ReflectOwnKeys: Reflect.ownKeys,
   RegExp,
   RegExpPrototypeExec: uncurryThis(RegExp.prototype.exec),

@@ -133,10 +133,10 @@ pub fn LinearFifo(
             if (self.buf.len >= size) return;
             if (buffer_type == .Dynamic) {
                 const new_size = if (powers_of_two) math.ceilPowerOfTwo(usize, size) catch return error.OutOfMemory else size;
-                var buf = try self.allocator.alloc(T, new_size);
+                const buf = try self.allocator.alloc(T, new_size);
                 if (self.count > 0) {
                     var new_bytes = std.mem.sliceAsBytes(buf);
-                    var old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
+                    const old_bytes = std.mem.sliceAsBytes(self.readableSlice(0));
                     @memcpy(new_bytes[0..old_bytes.len], old_bytes);
                     self.allocator.free(self.buf);
                 }
@@ -274,7 +274,7 @@ pub fn LinearFifo(
                 slice = self.writableSlice(0);
             }
 
-            std.debug.assert(slice.len >= size);
+            bun.assert(slice.len >= size);
             return slice[0..size];
         }
 
@@ -418,8 +418,7 @@ test "LinearFifo(u8, .Dynamic)" {
     try testing.expectEqualSlices(u8, "HELLO", fifo.readableSlice(0));
 
     {
-        var i: usize = 0;
-        while (i < 5) : (i += 1) {
+        for (0..5) |i| {
             try fifo.write(&[_]u8{fifo.peekItem(i)});
         }
         try testing.expectEqual(@as(usize, 10), fifo.readableLength());
@@ -452,8 +451,7 @@ test "LinearFifo(u8, .Dynamic)" {
     {
         const buf = try fifo.writableWithSize(12);
         try testing.expectEqual(@as(usize, 12), buf.len);
-        var i: u8 = 0;
-        while (i < 10) : (i += 1) {
+        for (0..10) |i| {
             buf[i] = i + 'a';
         }
         fifo.update(10);

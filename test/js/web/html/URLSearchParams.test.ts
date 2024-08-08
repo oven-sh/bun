@@ -155,3 +155,19 @@ describe("URLSearchParams", () => {
     });
   });
 });
+
+it(".delete second argument", () => {
+  const params = new URLSearchParams("a=1&a=2&b=3");
+  params.delete("a", 1);
+  params.delete("b", undefined);
+  expect(params + "").toBe("a=2");
+});
+
+it(".has second argument", () => {
+  const params = new URLSearchParams("a=1&a=2&b=3");
+  expect(params.has("a", 1)).toBe(true);
+  expect(params.has("a", 2)).toBe(true);
+  expect(params.has("a", 3)).toBe(false);
+  expect(params.has("b", 3)).toBe(true);
+  expect(params.has("b", 4)).toBe(false);
+});

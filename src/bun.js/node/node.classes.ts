@@ -429,12 +429,22 @@ export default [
         getter: "getName",
         cache: true,
       },
+      path: {
+        getter: "getPath",
+        cache: true,
+      },
+      parentPath: {
+        // @since node v20.12.x
+        getter: "getPath",
+        cache: true,
+      },
     },
   }),
   define({
     name: "NodeJSFS",
     construct: true,
-    finalize: false,
+    noConstructor: true,
+    finalize: true,
 
     klass: {},
     proto: {

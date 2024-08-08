@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ...
-      - uses: actions/checkout@v3
-+     - uses: oven-sh/setup-bun@v1
+      - uses: actions/checkout@v4
++     - uses: oven-sh/setup-bun@v2
 
       # run any `bun` or `bunx` command
 +     - run: bun install
@@ -33,7 +33,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       # ...
-      - uses: oven-sh/setup-bun@v1
+      - uses: oven-sh/setup-bun@v2
 +       with:
 +         bun-version: 1.0.11 # or "latest", "canary", <sha>
 ```

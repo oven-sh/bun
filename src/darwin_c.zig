@@ -1,15 +1,15 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const builtin = @import("builtin");
-const os = std.os;
+const posix = std.posix;
 const mem = std.mem;
 const Stat = std.fs.File.Stat;
 const Kind = std.fs.File.Kind;
 const StatError = std.fs.File.StatError;
 const off_t = std.c.off_t;
-const errno = os.errno;
+const errno = posix.errno;
 const zeroes = mem.zeroes;
-
+const This = @This();
 pub extern "c" fn copyfile(from: [*:0]const u8, to: [*:0]const u8, state: ?std.c.copyfile_state_t, flags: u32) c_int;
 pub const COPYFILE_STATE_SRC_FD = @as(c_int, 1);
 pub const COPYFILE_STATE_SRC_FILENAME = @as(c_int, 2);
@@ -142,7 +142,7 @@ pub extern "c" fn clonefile(src: [*:0]const u8, dest: [*:0]const u8, flags: c_in
 
 // benchmarking this did nothing on macOS
 // i verified it wasn't returning -1
-pub fn preallocate_file(_: os.fd_t, _: off_t, _: off_t) !void {
+pub fn preallocate_file(_: posix.fd_t, _: off_t, _: off_t) !void {
     //     pub const struct_fstore = extern struct {
     //     fst_flags: c_uint,
     //     fst_posmode: c_int,
@@ -288,20 +288,21 @@ pub const SystemErrno = enum(u8) {
     pub const max = 107;
 
     pub fn init(code: anytype) ?SystemErrno {
-        if (comptime std.meta.trait.isSignedInt(@TypeOf(code))) {
-            if (code < 0)
-                return init(-code);
+        if (code < 0) {
+            if (code <= -max) {
+                return null;
+            }
+            return @enumFromInt(-code);
         }
-
         if (code >= max) return null;
-        return @as(SystemErrno, @enumFromInt(code));
+        return @enumFromInt(code);
     }
 
-    pub fn label(this: SystemErrno) ?[]const u8 {
+    pub fn label(this: SystemErrno) ?[:0]const u8 {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.EnumMap(SystemErrno, [:0]const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
         map.put(.E2BIG, "Argument list too long");
@@ -414,6 +415,75 @@ pub const SystemErrno = enum(u8) {
     };
 };
 
+pub const UV_E2BIG: i32 = @intFromEnum(SystemErrno.E2BIG);
+pub const UV_EACCES: i32 = @intFromEnum(SystemErrno.EACCES);
+pub const UV_EADDRINUSE: i32 = @intFromEnum(SystemErrno.EADDRINUSE);
+pub const UV_EADDRNOTAVAIL: i32 = @intFromEnum(SystemErrno.EADDRNOTAVAIL);
+pub const UV_EAFNOSUPPORT: i32 = @intFromEnum(SystemErrno.EAFNOSUPPORT);
+pub const UV_EAGAIN: i32 = @intFromEnum(SystemErrno.EAGAIN);
+pub const UV_EALREADY: i32 = @intFromEnum(SystemErrno.EALREADY);
+pub const UV_EBADF: i32 = @intFromEnum(SystemErrno.EBADF);
+pub const UV_EBUSY: i32 = @intFromEnum(SystemErrno.EBUSY);
+pub const UV_ECANCELED: i32 = @intFromEnum(SystemErrno.ECANCELED);
+pub const UV_ECHARSET: i32 = -bun.windows.libuv.UV__ECHARSET;
+pub const UV_ECONNABORTED: i32 = @intFromEnum(SystemErrno.ECONNABORTED);
+pub const UV_ECONNREFUSED: i32 = @intFromEnum(SystemErrno.ECONNREFUSED);
+pub const UV_ECONNRESET: i32 = @intFromEnum(SystemErrno.ECONNRESET);
+pub const UV_EDESTADDRREQ: i32 = @intFromEnum(SystemErrno.EDESTADDRREQ);
+pub const UV_EEXIST: i32 = @intFromEnum(SystemErrno.EEXIST);
+pub const UV_EFAULT: i32 = @intFromEnum(SystemErrno.EFAULT);
+pub const UV_EHOSTUNREACH: i32 = @intFromEnum(SystemErrno.EHOSTUNREACH);
+pub const UV_EINTR: i32 = @intFromEnum(SystemErrno.EINTR);
+pub const UV_EINVAL: i32 = @intFromEnum(SystemErrno.EINVAL);
+pub const UV_EIO: i32 = @intFromEnum(SystemErrno.EIO);
+pub const UV_EISCONN: i32 = @intFromEnum(SystemErrno.EISCONN);
+pub const UV_EISDIR: i32 = @intFromEnum(SystemErrno.EISDIR);
+pub const UV_ELOOP: i32 = @intFromEnum(SystemErrno.ELOOP);
+pub const UV_EMFILE: i32 = @intFromEnum(SystemErrno.EMFILE);
+pub const UV_EMSGSIZE: i32 = @intFromEnum(SystemErrno.EMSGSIZE);
+pub const UV_ENAMETOOLONG: i32 = @intFromEnum(SystemErrno.ENAMETOOLONG);
+pub const UV_ENETDOWN: i32 = @intFromEnum(SystemErrno.ENETDOWN);
+pub const UV_ENETUNREACH: i32 = @intFromEnum(SystemErrno.ENETUNREACH);
+pub const UV_ENFILE: i32 = @intFromEnum(SystemErrno.ENFILE);
+pub const UV_ENOBUFS: i32 = @intFromEnum(SystemErrno.ENOBUFS);
+pub const UV_ENODEV: i32 = @intFromEnum(SystemErrno.ENODEV);
+pub const UV_ENOENT: i32 = @intFromEnum(SystemErrno.ENOENT);
+pub const UV_ENOMEM: i32 = @intFromEnum(SystemErrno.ENOMEM);
+pub const UV_ENONET: i32 = -bun.windows.libuv.UV_ENONET;
+pub const UV_ENOSPC: i32 = @intFromEnum(SystemErrno.ENOSPC);
+pub const UV_ENOSYS: i32 = @intFromEnum(SystemErrno.ENOSYS);
+pub const UV_ENOTCONN: i32 = @intFromEnum(SystemErrno.ENOTCONN);
+pub const UV_ENOTDIR: i32 = @intFromEnum(SystemErrno.ENOTDIR);
+pub const UV_ENOTEMPTY: i32 = @intFromEnum(SystemErrno.ENOTEMPTY);
+pub const UV_ENOTSOCK: i32 = @intFromEnum(SystemErrno.ENOTSOCK);
+pub const UV_ENOTSUP: i32 = @intFromEnum(SystemErrno.ENOTSUP);
+pub const UV_EPERM: i32 = @intFromEnum(SystemErrno.EPERM);
+pub const UV_EPIPE: i32 = @intFromEnum(SystemErrno.EPIPE);
+pub const UV_EPROTO: i32 = @intFromEnum(SystemErrno.EPROTO);
+pub const UV_EPROTONOSUPPORT: i32 = @intFromEnum(SystemErrno.EPROTONOSUPPORT);
+pub const UV_EPROTOTYPE: i32 = @intFromEnum(SystemErrno.EPROTOTYPE);
+pub const UV_EROFS: i32 = @intFromEnum(SystemErrno.EROFS);
+pub const UV_ESHUTDOWN: i32 = @intFromEnum(SystemErrno.ESHUTDOWN);
+pub const UV_ESPIPE: i32 = @intFromEnum(SystemErrno.ESPIPE);
+pub const UV_ESRCH: i32 = @intFromEnum(SystemErrno.ESRCH);
+pub const UV_ETIMEDOUT: i32 = @intFromEnum(SystemErrno.ETIMEDOUT);
+pub const UV_ETXTBSY: i32 = @intFromEnum(SystemErrno.ETXTBSY);
+pub const UV_EXDEV: i32 = @intFromEnum(SystemErrno.EXDEV);
+pub const UV_EFBIG: i32 = @intFromEnum(SystemErrno.EFBIG);
+pub const UV_ENOPROTOOPT: i32 = @intFromEnum(SystemErrno.ENOPROTOOPT);
+pub const UV_ERANGE: i32 = @intFromEnum(SystemErrno.ERANGE);
+pub const UV_ENXIO: i32 = @intFromEnum(SystemErrno.ENXIO);
+pub const UV_EMLINK: i32 = @intFromEnum(SystemErrno.EMLINK);
+pub const UV_EHOSTDOWN: i32 = @intFromEnum(SystemErrno.EHOSTDOWN);
+pub const UV_EREMOTEIO: i32 = -bun.windows.libuv.UV_EREMOTEIO;
+pub const UV_ENOTTY: i32 = @intFromEnum(SystemErrno.ENOTTY);
+pub const UV_EFTYPE: i32 = @intFromEnum(SystemErrno.EFTYPE);
+pub const UV_EILSEQ: i32 = @intFromEnum(SystemErrno.EILSEQ);
+pub const UV_EOVERFLOW: i32 = @intFromEnum(SystemErrno.EOVERFLOW);
+pub const UV_ESOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
+pub const UV_ENODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
+pub const UV_EUNATCH: i32 = -bun.windows.libuv.UV_EUNATCH;
+
 // Courtesy of https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-stub.h
 pub const struct_CFArrayCallBacks = opaque {};
 pub const CFIndex = c_long;
@@ -483,15 +553,14 @@ pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
 pub fn getFreeMemory() u64 {
-    // NOT IMPLEMENTED YET
-    return 1024 * 1024;
+    return @extern(*const fn () callconv(.C) u64, .{ .name = "Bun__Os__getFreeMemory" })();
 }
 
 pub fn getTotalMemory() u64 {
     var memory_: [32]c_ulonglong = undefined;
     var size: usize = memory_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "hw.memsize",
         &memory_,
         &size,
@@ -511,7 +580,7 @@ pub fn getSystemUptime() u64 {
     var uptime_: [16]struct_BootTime = undefined;
     var size: usize = uptime_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "kern.boottime",
         &uptime_,
         &size,
@@ -532,7 +601,7 @@ pub fn getSystemLoadavg() [3]f64 {
     var loadavg_: [24]struct_LoadAvg = undefined;
     var size: usize = loadavg_.len;
 
-    std.os.sysctlbynameZ(
+    std.posix.sysctlbynameZ(
         "vm.loadavg",
         &loadavg_,
         &size,
@@ -544,10 +613,10 @@ pub fn getSystemLoadavg() [3]f64 {
 
     const loadavg = loadavg_[0];
     const scale = @as(f64, @floatFromInt(loadavg.fscale));
-    return [3]f64{
-        @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
-        @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
+    return .{
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[0])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[1])) / scale,
+        if (scale == 0.0) 0 else @as(f64, @floatFromInt(loadavg.ldavg[2])) / scale,
     };
 }
 
@@ -566,8 +635,8 @@ pub const PROCESSOR_INFO_MAX = 1024;
 
 pub extern fn host_processor_info(host: std.c.host_t, flavor: processor_flavor_t, out_processor_count: *std.c.natural_t, out_processor_info: *processor_info_array_t, out_processor_infoCnt: *std.c.mach_msg_type_number_t) std.c.E;
 
-pub extern fn getuid(...) std.os.uid_t;
-pub extern fn getgid(...) std.os.gid_t;
+pub extern fn getuid(...) std.posix.uid_t;
+pub extern fn getgid(...) std.posix.gid_t;
 
 pub extern fn get_process_priority(pid: c_uint) i32;
 pub extern fn set_process_priority(pid: c_uint, priority: c_int) i32;
@@ -616,11 +685,11 @@ const IO_CTL_RELATED = struct {
         return (x >> @as(c_int, 8)) & @as(c_int, 0xff);
     }
     pub const IOCPARM_MAX = IOCPARM_MASK + @as(c_int, 1);
-    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hexadecimal));
-    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hexadecimal));
-    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hexadecimal));
+    pub const IOC_VOID = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x20000000, .hex));
+    pub const IOC_OUT = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x40000000, .hex));
+    pub const IOC_IN = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0x80000000, .hex));
     pub const IOC_INOUT = IOC_IN | IOC_OUT;
-    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hexadecimal));
+    pub const IOC_DIRMASK = @import("std").zig.c_translation.cast(u32, @import("std").zig.c_translation.promoteIntLiteral(c_int, 0xe0000000, .hex));
     pub inline fn _IOC(inout: anytype, group: anytype, num: anytype, len: anytype) @TypeOf(((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num) {
         return ((inout | ((len & IOCPARM_MASK) << @as(c_int, 16))) | (group << @as(c_int, 8))) | num;
     }
@@ -733,9 +802,9 @@ pub const ifaddrs = extern struct {
     ifa_next: ?*ifaddrs,
     ifa_name: [*:0]u8,
     ifa_flags: c_uint,
-    ifa_addr: ?*std.os.sockaddr,
-    ifa_netmask: ?*std.os.sockaddr,
-    ifa_dstaddr: ?*std.os.sockaddr,
+    ifa_addr: ?*std.posix.sockaddr,
+    ifa_netmask: ?*std.posix.sockaddr,
+    ifa_dstaddr: ?*std.posix.sockaddr,
     ifa_data: *anyopaque,
 };
 pub extern fn getifaddrs(*?*ifaddrs) c_int;
@@ -765,15 +834,57 @@ pub const sockaddr_dl = extern struct {
 
 pub usingnamespace @cImport({
     @cInclude("sys/spawn.h");
+    @cInclude("sys/fcntl.h");
+    @cInclude("sys/socket.h");
 });
+
+pub const F = struct {
+    pub const DUPFD_CLOEXEC = This.F_DUPFD_CLOEXEC;
+    pub const DUPFD = This.F_DUPFD;
+};
 
 // it turns out preallocating on APFS on an M1 is slower.
 // so this is a linux-only optimization for now.
 pub const preallocate_length = std.math.maxInt(u51);
 
-pub const Mode = std.os.mode_t;
+pub const Mode = std.posix.mode_t;
 
-pub const E = std.os.E;
+pub const E = std.posix.E;
+pub const S = std.posix.S;
+
 pub fn getErrno(rc: anytype) E {
-    return std.c.getErrno(rc);
+    if (rc == -1) {
+        return @enumFromInt(std.c._errno().*);
+    } else {
+        return .SUCCESS;
+    }
 }
+
+pub extern "c" fn umask(Mode) Mode;
+
+// #define RENAME_SECLUDE                  0x00000001
+// #define RENAME_SWAP                     0x00000002
+// #define RENAME_EXCL                     0x00000004
+// #define RENAME_RESERVED1                0x00000008
+// #define RENAME_NOFOLLOW_ANY             0x00000010
+pub const RENAME_SECLUDE = 0x00000001;
+pub const RENAME_SWAP = 0x00000002;
+pub const RENAME_EXCL = 0x00000004;
+pub const RENAME_RESERVED1 = 0x00000008;
+pub const RENAME_NOFOLLOW_ANY = 0x00000010;
+
+// int renameatx_np(int fromfd, const char *from, int tofd, const char *to, unsigned int flags);
+pub extern "c" fn renameatx_np(fromfd: c_int, from: ?[*:0]const u8, tofd: c_int, to: ?[*:0]const u8, flags: c_uint) c_int;
+
+pub const CLOCK_REALTIME = 0;
+pub const CLOCK_MONOTONIC = 6;
+pub const CLOCK_MONOTONIC_RAW = 4;
+pub const CLOCK_MONOTONIC_RAW_APPROX = 5;
+pub const CLOCK_UPTIME_RAW = 8;
+pub const CLOCK_UPTIME_RAW_APPROX = 9;
+pub const CLOCK_PROCESS_CPUTIME_ID = 12;
+pub const CLOCK_THREAD_CPUTIME_ID = 1;
+
+pub const netdb = @cImport({
+    @cInclude("netdb.h");
+});

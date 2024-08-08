@@ -1,11 +1,12 @@
-const JSC = @import("root").bun.JSC;
+const bun = @import("root").bun;
+const JSC = bun.JSC;
 const std = @import("std");
 const Flavor = JSC.Node.Flavor;
 const ArgumentsSlice = JSC.Node.ArgumentsSlice;
-const system = std.os.system;
+const system = std.posix.system;
 const Maybe = JSC.Maybe;
 const Encoding = JSC.Node.Encoding;
-const FeatureFlags = @import("root").bun.FeatureFlags;
+const FeatureFlags = bun.FeatureFlags;
 const Args = JSC.Node.NodeFS.Arguments;
 const d = JSC.d;
 
@@ -13,11 +14,9 @@ const NodeFSFunction = fn (
     this: *JSC.Node.NodeJSFS,
     globalObject: *JSC.JSGlobalObject,
     callframe: *JSC.CallFrame,
-) callconv(.C) JSC.JSValue;
+) JSC.JSValue;
 
-pub const toJSTrait = std.meta.trait.hasFn("toJS");
-pub const fromJSTrait = std.meta.trait.hasFn("fromJS");
-const NodeFSFunctionEnum = JSC.Node.DeclEnum(JSC.Node.NodeFS);
+const NodeFSFunctionEnum = std.meta.DeclEnum(JSC.Node.NodeFS);
 
 fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Function = @field(JSC.Node.NodeFS, @tagName(FunctionEnum));
@@ -28,18 +27,19 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
     const Arguments = comptime function.params[1].type.?;
     const FormattedName = comptime [1]u8{std.ascii.toUpper(@tagName(FunctionEnum)[0])} ++ @tagName(FunctionEnum)[1..];
     const Result = comptime JSC.Maybe(@field(JSC.Node.NodeFS.ReturnType, FormattedName));
+    _ = Result;
 
     const NodeBindingClosure = struct {
         pub fn bind(
             this: *JSC.Node.NodeJSFS,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var exceptionref: JSC.C.JSValueRef = null;
 
             var arguments = callframe.arguments(8);
 
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
             defer slice.deinit();
 
             const args = if (comptime Arguments != void)
@@ -61,33 +61,18 @@ fn callSync(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
                 globalObject.throwValue(exception1);
                 return .zero;
             }
-
-            const result: Result = Function(
+            var result = Function(
                 &this.node_fs,
                 args,
                 comptime Flavor.sync,
             );
-
             switch (result) {
                 .err => |err| {
                     globalObject.throwValue(JSC.JSValue.c(err.toJS(globalObject)));
                     return .zero;
                 },
-                .result => |res| {
-                    if (comptime Result.ReturnType != void) {
-                        const out = JSC.JSValue.c(JSC.To.JS.withType(Result.ReturnType, res, globalObject, &exceptionref));
-                        const exception = JSC.JSValue.c(exceptionref);
-                        if (exception != .zero) {
-                            globalObject.throwValue(exception);
-                            return .zero;
-                        }
-
-                        return out;
-                    } else {
-                        return JSC.JSValue.jsUndefined();
-                    }
-
-                    unreachable;
+                .result => |*res| {
+                    return globalObject.toJS(res, .temporary);
                 },
             }
         }
@@ -108,10 +93,11 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
             _: *JSC.Node.NodeJSFS,
             globalObject: *JSC.JSGlobalObject,
             callframe: *JSC.CallFrame,
-        ) callconv(.C) JSC.JSValue {
+        ) JSC.JSValue {
             var arguments = callframe.arguments(8);
 
-            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.ptr[0..arguments.len]);
+            var slice = ArgumentsSlice.init(globalObject.bunVM(), arguments.slice());
+            slice.will_be_async = true;
             var exceptionref: JSC.C.JSValueRef = null;
             const args = if (comptime Arguments != void)
                 (Arguments.fromJS(globalObject, &slice, &exceptionref) orelse {
@@ -153,13 +139,24 @@ fn call(comptime FunctionEnum: NodeFSFunctionEnum) NodeFSFunction {
 }
 
 pub const NodeJSFS = struct {
-    node_fs: JSC.Node.NodeFS = undefined,
+    node_fs: JSC.Node.NodeFS = .{},
 
     pub usingnamespace JSC.Codegen.JSNodeJSFS;
+    pub usingnamespace bun.New(@This());
 
-    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) callconv(.C) ?*@This() {
+    pub fn constructor(globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) ?*@This() {
         globalObject.throw("Not a constructor", .{});
         return null;
+    }
+
+    pub fn finalize(this: *JSC.Node.NodeJSFS) void {
+        if (this.node_fs.vm) |vm| {
+            if (vm.node_fs == &this.node_fs) {
+                return;
+            }
+        }
+
+        this.destroy();
     }
 
     pub const access = call(.access);
@@ -244,11 +241,11 @@ pub const NodeJSFS = struct {
     pub const fdatasyncSync = callSync(.fdatasync);
     pub const fdatasync = call(.fdatasync);
 
-    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getDirent(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.Node.Dirent.getConstructor(globalThis);
     }
 
-    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) callconv(.C) JSC.JSValue {
+    pub fn getStats(_: *NodeJSFS, globalThis: *JSC.JSGlobalObject) JSC.JSValue {
         return JSC.Node.StatsSmall.getConstructor(globalThis);
     }
 
@@ -261,3 +258,13 @@ pub const NodeJSFS = struct {
     pub const opendir = notimpl;
     pub const opendirSync = notimpl;
 };
+
+pub fn createBinding(globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+    const module = NodeJSFS.new(.{});
+
+    const vm = globalObject.bunVM();
+    if (vm.standalone_module_graph != null)
+        module.node_fs.vm = vm;
+
+    return module.toJS(globalObject);
+}

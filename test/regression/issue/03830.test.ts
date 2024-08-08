@@ -1,16 +1,13 @@
-// test/regression/issue/03830.test.ts
-
 import { it, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
-import { mkdirSync, rmSync, writeFileSync, readFileSync, mkdtempSync, realpathSync } from "fs";
-import { tmpdir } from "os";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { mkdirSync, rmSync, writeFileSync, realpathSync } from "fs";
 import { join } from "path";
 
 it("macros should not lead to seg faults under any given input", async () => {
   // this test code follows the same structure as and
   // is based on the code for testing issue 4893
 
-  let testDir = mkdtempSync(join(tmpdir(), "issue3830-"));
+  let testDir = tmpdirSync();
 
   // Clean up from prior runs if necessary
   rmSync(testDir, { recursive: true, force: true });
@@ -27,6 +24,6 @@ it("macros should not lead to seg faults under any given input", async () => {
     stderr: "pipe",
   });
 
-  expect(stderr.toString().trim().replaceAll(testDir, "[dir]")).toMatchSnapshot();
+  expect(stderr.toString().trim().replaceAll(testDir, "[dir]").replaceAll("\\", "/")).toMatchSnapshot();
   expect(exitCode).toBe(1);
 });

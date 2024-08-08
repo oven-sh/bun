@@ -14,6 +14,7 @@
 // ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF OR
 // IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
 
+import { unsortedPrereleases } from "./semver-fixture.js";
 const { satisfies, order } = Bun.semver;
 
 function testSatisfiesExact(left: any, right: any, expected: boolean) {
@@ -93,6 +94,8 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-r2", "1.2.3-r100"],
       ["1.2.3-r100", "1.2.3-R2"],
       ["1.0.0-pre.a.b", "1.0.0-pre.a"],
+      ["1.0.0-alpha.22-alpha.jkwejf334jkj43", "1.0.0-alpha.3"],
+      ["1.0.0-alpha.1beta", "1.0.0-alpha.2"],
     ];
     for (const [left, right] of tests) {
       expect(order(left, right)).toBe(1);
@@ -100,6 +103,27 @@ describe("Bun.semver.order()", () => {
       expect(order(left, left)).toBe(0);
       expect(order(right, right)).toBe(0);
     }
+  });
+
+  // not supported by semver, but supported by Bun
+  test.each([
+    ["0", "0.0"],
+    ["1", "1.0"],
+    ["1.2", "1.2.0"],
+    ["1.x", "1.0.x"],
+    ["1.x.x", "1.0.x"],
+    ["2.x", "1.x"],
+    ["2.x", "2.1"],
+    ["2", "1"],
+    ["3.*", "3.1"],
+    ["3.2.*", "3.2.0"],
+    ["4294967295.4294967295.x", "4294967295.4294967295.4294967294"],
+    ["*", "4294967295.4294967295.4294967294"],
+  ])('loose compare("%s", "%s")', (left, right) => {
+    expect(order(left, right)).toBe(1);
+    expect(order(right, left)).toBe(-1);
+    expect(order(left, left)).toBe(0);
+    expect(order(right, right)).toBe(0);
   });
 
   test("equality", () => {
@@ -142,6 +166,10 @@ describe("Bun.semver.order()", () => {
       ["1.2.3-beta+build", "1.2.3-beta+otherbuild"],
       ["1.2.3+build", "1.2.3+otherbuild"],
       ["  v1.2.3+build", "1.2.3+otherbuild"],
+
+      ["1.1.1-next.0 ", "1.1.1-next.0    "],
+      ["1.1.1-next.0.a ", "1.1.1-next.0.a    "],
+      ["1.1.1-next.0.a+abc ", "1.1.1-next.0.a+jkejf    "],
     ];
 
     for (const [left, right] of tests) {
@@ -315,6 +343,18 @@ describe("Bun.semver.satisfies()", () => {
     testSatisfies("1.2 - 1.3 || 5.0", "5.0.2", true);
     testSatisfies("5.0 || 1.2 - 1.3", "5.0.2", true);
     testSatisfies("5.0 || 1.2 - 1.3 || >8", "9.0.2", true);
+
+    testSatisfies(">=0.34.0-next.3 <1.0.0", "0.34.0-next.8", true);
+    testSatisfies("<1.0.0", "0.34.0-next.8", false);
+
+    testSatisfies("<=7.0.0", "7.0.0-rc2", false);
+    testSatisfies(">=7.0.0", "7.0.0-rc2", false);
+    testSatisfies("<=7.0.0-rc2", "7.0.0-rc2", true);
+    testSatisfies(">=7.0.0-rc2", "7.0.0-rc2", true);
+
+    testSatisfies("^1.2.3-pr.1 || >=1.2.4-alpha", "1.2.4-alpha.notready", true);
+
+    testSatisfies("^3.0.0-next.0||^3.0.0", "3.0.0-next.2", true);
 
     const notPassing = [
       "0.1.0",
@@ -567,6 +607,10 @@ describe("Bun.semver.satisfies()", () => {
       // ["<=0.7.x", "0.7.0-asdf", { includePrerelease: true }],
 
       // [">=1.0.0 <=1.1.0", "1.1.0-pre", { includePrerelease: true }],
+
+      // https://github.com/oven-sh/bun/issues/8040
+      [">=3.3.0-beta.1 <3.4.0-beta.3", "3.3.1"],
+      ["^3.3.0-beta.1", "3.4.0"],
     ];
 
     for (const [range, version] of tests) {
@@ -680,10 +724,17 @@ describe("Bun.semver.satisfies()", () => {
       [">=1.0.0 <1.1.0-pre", "1.1.0-pre"],
 
       ["== 1.0.0 || foo", "2.0.0"],
+
+      // https://github.com/oven-sh/bun/issues/8040
+      [">=3.3.0-beta.1 <3.4.0-beta.3", "3.4.5"],
     ];
 
     for (const [range, version] of tests) {
       expect(satisfies(version, range)).toBeFalse();
     }
+  });
+
+  test("pre-release snapshot", () => {
+    expect(unsortedPrereleases.sort(Bun.semver.order)).toMatchSnapshot();
   });
 });

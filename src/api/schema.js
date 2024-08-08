@@ -12,6 +12,7 @@ const Loader = {
   "11": 11,
   "12": 12,
   "13": 13,
+  "14": 14,
   "jsx": 1,
   "js": 2,
   "ts": 3,
@@ -25,6 +26,7 @@ const Loader = {
   "base64": 11,
   "dataurl": 12,
   "text": 13,
+  "sqlite": 14,
 };
 const LoaderKeys = {
   "1": "jsx",
@@ -40,6 +42,7 @@ const LoaderKeys = {
   "11": "base64",
   "12": "dataurl",
   "13": "text",
+  "14": "sqlite",
   "jsx": "jsx",
   "js": "js",
   "ts": "ts",
@@ -53,6 +56,7 @@ const LoaderKeys = {
   "base64": "base64",
   "dataurl": "dataurl",
   "text": "text",
+  "sqlite": "sqlite",
 };
 const FrameworkEntryPointType = {
   "1": 1,
@@ -144,14 +148,9 @@ function encodeStackFrame(message, bb) {
 function decodeStackFramePosition(bb) {
   var result = {};
 
-  result["source_offset"] = bb.readInt32();
   result["line"] = bb.readInt32();
-  result["line_start"] = bb.readInt32();
-  result["line_stop"] = bb.readInt32();
-  result["column_start"] = bb.readInt32();
-  result["column_stop"] = bb.readInt32();
-  result["expression_start"] = bb.readInt32();
-  result["expression_stop"] = bb.readInt32();
+  result["column"] = bb.readInt32();
+
   return result;
 }
 
@@ -3060,6 +3059,10 @@ function decodeBunInstall(bb) {
         result["exact"] = !!bb.readByte();
         break;
 
+      case 21:
+        result["concurrent_scripts"] = bb.readUint32();
+        break;
+
       default:
         throw new Error("Attempted to parse invalid message");
     }
@@ -3191,6 +3194,12 @@ function encodeBunInstall(message, bb) {
   if (value != null) {
     bb.writeByte(20);
     bb.writeByte(value);
+  }
+
+  var value = message["concurrent_scripts"];
+  if (value != null) {
+    bb.writeByte(21);
+    bb.writeUint32(value);
   }
   bb.writeByte(0);
 }

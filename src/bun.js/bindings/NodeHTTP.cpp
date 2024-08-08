@@ -1,4 +1,5 @@
 #include "root.h"
+#include "JSDOMGlobalObjectInlines.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/GlobalObjectMethodTable.h>
 #include "helpers.h"
@@ -8,6 +9,7 @@
 #include "JavaScriptCore/InternalFieldTuple.h"
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "JavaScriptCore/ObjectConstructor.h"
+#include "JavaScriptCore/JSFunction.h"
 #include "wtf/URL.h"
 #include "JSFetchHeaders.h"
 #include "JSDOMExceptionHandling.h"
@@ -96,7 +98,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
     auto scope = DECLARE_THROW_SCOPE(vm);
     auto& builtinNames = WebCore::builtinNames(vm);
     std::string_view fullURLStdStr = request->getFullUrl();
-    String fullURL = String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length());
+    String fullURL = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(fullURLStdStr.data()), fullURLStdStr.length() });
 
     {
         PutPropertySlot slot(objectValue, false);
@@ -154,6 +156,10 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
                 methodString = "FETCH"_s;
                 break;
             }
+            if (methodView == std::string_view("purge", 5)) {
+                methodString = "PURGE"_s;
+                break;
+            }
 
             break;
         }
@@ -161,10 +167,6 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         case 6: {
             if (methodView == std::string_view("delete", 6)) {
                 methodString = "DELETE"_s;
-                break;
-            }
-            if (methodView == std::string_view("purge", 6)) {
-                methodString = "PURGE"_s;
                 break;
             }
 
@@ -176,12 +178,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
                 methodString = "CONNECT"_s;
                 break;
             }
-
-            break;
-        }
-
-        case 8: {
-            if (methodView == std::string_view("options", 8)) {
+            if (methodView == std::string_view("options", 7)) {
                 methodString = "OPTIONS"_s;
                 break;
             }
@@ -191,7 +188,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
         }
 
         if (methodString.isNull()) {
-            methodString = String::fromUTF8ReplacingInvalidSequences(reinterpret_cast<const LChar*>(methodView.data()), methodView.length());
+            methodString = String::fromUTF8ReplacingInvalidSequences({ reinterpret_cast<const LChar*>(methodView.data()), methodView.length() });
         }
         objectValue->put(objectValue, globalObject, builtinNames.methodPublicName(), jsString(vm, methodString), slot);
         RETURN_IF_EXCEPTION(scope, {});
@@ -212,7 +209,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
 
     for (auto it = request->begin(); it != request->end(); ++it) {
         auto pair = *it;
-        StringView nameView = StringView(reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length());
+        StringView nameView = StringView(std::span { reinterpret_cast<const LChar*>(pair.first.data()), pair.first.length() });
         LChar* data = nullptr;
         auto value = String::createUninitialized(pair.second.length(), data);
         if (pair.second.length() > 0)
@@ -226,7 +223,7 @@ static EncodedJSValue assignHeadersFromUWebSockets(uWS::HttpRequest* request, JS
             nameString = WTF::httpHeaderNameStringImpl(name);
             lowercasedNameString = nameString;
         } else {
-            nameString = String(nameView.characters8(), nameView.length());
+            nameString = nameView.toString();
             lowercasedNameString = nameString.convertToASCIILowercase();
         }
 
@@ -263,10 +260,11 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPAssignHeaders, (JSGlobalObject * globalObject, Ca
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
 
-    JSValue requestValue = callFrame->argument(0);
-    JSObject* objectValue = callFrame->argument(1).getObject();
-
-    JSC::InternalFieldTuple* tuple = JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get());
+    // This is an internal binding.
+    JSValue requestValue = callFrame->uncheckedArgument(0);
+    JSObject* objectValue = callFrame->uncheckedArgument(1).getObject();
+    JSC::InternalFieldTuple* tuple = jsCast<JSC::InternalFieldTuple*>(callFrame->uncheckedArgument(2));
+    ASSERT(callFrame->argumentCount() == 3);
 
     JSValue headersValue = JSValue();
     JSValue urlValue = JSValue();
@@ -406,4 +404,36 @@ JSC_DEFINE_HOST_FUNCTION(jsHTTPSetHeader, (JSGlobalObject * globalObject, CallFr
 
     return JSValue::encode(jsUndefined());
 }
+
+JSValue createNodeHTTPInternalBinding(Zig::GlobalObject* globalObject)
+{
+    auto* obj = constructEmptyObject(globalObject);
+    VM& vm = globalObject->vm();
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "setHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 3, "setHeader"_s, jsHTTPSetHeader, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "getHeader"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "getHeader"_s, jsHTTPGetHeader, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "assignHeaders"_s)),
+        JSC::JSFunction::create(vm, globalObject, 2, "assignHeaders"_s, jsHTTPAssignHeaders, ImplementationVisibility::Public), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Response"_s)),
+        globalObject->JSResponseConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Request"_s)),
+        globalObject->JSRequestConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Blob"_s)),
+        globalObject->JSBlobConstructor(), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "Headers"_s)),
+        WebCore::JSFetchHeaders::getConstructor(vm, globalObject), 0);
+    obj->putDirect(
+        vm, JSC::PropertyName(JSC::Identifier::fromString(vm, "headersTuple"_s)),
+        JSC::InternalFieldTuple::create(vm, globalObject->m_internalFieldTupleStructure.get()), 0);
+    return obj;
 }
+
+} // namespace Bun

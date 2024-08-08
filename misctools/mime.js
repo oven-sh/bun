@@ -21,7 +21,7 @@ const withExtensions = [
         return !!json[key]?.extensions?.length;
       })
       .flatMap(mime => {
-        return [...new Set([...json[mime].extensions])].map(ext => {
+        return [...new Set(json[mime].extensions)].map(ext => {
           return [`.{.@"${ext}", all.@"${mime}"}`];
         });
       })

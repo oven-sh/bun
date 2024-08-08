@@ -1,4 +1,6 @@
 import { it, expect, describe } from "bun:test";
+import { tmpdirSync } from "harness";
+import { join } from "path";
 import util from "util";
 
 it("prototype", () => {
@@ -43,8 +45,42 @@ it("getters", () => {
     },
   };
 
-  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter]," + "\n" + "}");
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
   expect(called).toBe(false);
+});
+
+it("setters", () => {
+  const obj = {
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Setter]," + "\n" + "}");
+  var called = false;
+  const objWithThrowingGetter = {
+    get foo() {
+      called = true;
+      throw new Error("Test failed!");
+    },
+    set foo(v) {
+      called = true;
+      throw new Error("Test failed!");
+    },
+  };
+
+  expect(Bun.inspect(objWithThrowingGetter)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
+  expect(called).toBe(false);
+});
+
+it("getter/setters", () => {
+  const obj = {
+    get foo() {
+      return 42;
+    },
+
+    set foo(x) {},
+  };
+
+  expect(Bun.inspect(obj)).toBe("{\n" + "  foo: [Getter/Setter]," + "\n" + "}");
 });
 
 it("Timeout", () => {
@@ -68,7 +104,8 @@ it("when prototype defines the same property, don't print the same property twic
 it("Blob inspect", () => {
   expect(Bun.inspect(new Blob(["123"]))).toBe(`Blob (3 bytes)`);
   expect(Bun.inspect(new Blob(["123".repeat(900)]))).toBe(`Blob (2.70 KB)`);
-  expect(Bun.inspect(Bun.file("/tmp/file.txt"))).toBe(`FileRef ("/tmp/file.txt") {
+  const tmpFile = join(tmpdirSync(), "file.txt");
+  expect(Bun.inspect(Bun.file(tmpFile))).toBe(`FileRef ("${tmpFile}") {
   type: "text/plain;charset=utf-8"
 }`);
   expect(Bun.inspect(Bun.file(123))).toBe(`FileRef (fd: 123) {
@@ -140,7 +177,32 @@ it("MessageEvent", () => {
   expect(Bun.inspect(new MessageEvent("message", { data: 123 }))).toBe(
     `MessageEvent {
   type: "message",
-  data: 123
+  data: 123,
+}`,
+  );
+});
+
+it("MessageEvent with no data set", () => {
+  expect(Bun.inspect(new MessageEvent("message"))).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
+}`,
+  );
+});
+
+it("MessageEvent with deleted data", () => {
+  const event = new MessageEvent("message");
+  Object.defineProperty(event, "data", {
+    value: 123,
+    writable: true,
+    configurable: true,
+  });
+  delete event.data;
+  expect(Bun.inspect(event)).toBe(
+    `MessageEvent {
+  type: "message",
+  data: null,
 }`,
   );
 });
@@ -186,8 +248,8 @@ it("BigIntArray", () => {
   }
 });
 
-it("FloatArray", () => {
-  for (let TypedArray of [Float32Array, Float64Array]) {
+for (let TypedArray of [Float32Array, Float64Array]) {
+  it(TypedArray.name + " " + Math.fround(42.68), () => {
     const buffer = new TypedArray([Math.fround(42.68)]);
     const input = Bun.inspect(buffer);
 
@@ -197,8 +259,22 @@ it("FloatArray", () => {
         `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
       );
     }
-  }
-});
+  });
+
+  it(TypedArray.name + " " + 42.68, () => {
+    const buffer = new TypedArray([42.68]);
+    const input = Bun.inspect(buffer);
+
+    expect(input).toBe(
+      `${TypedArray.name}(${buffer.length}) [ ${[TypedArray === Float32Array ? Math.fround(42.68) : 42.68].join(", ")} ]`,
+    );
+    for (let i = 1; i < buffer.length + 1; i++) {
+      expect(Bun.inspect(buffer.subarray(i))).toBe(
+        `${TypedArray.name}(${buffer.length - i}) [ ` + [...buffer.subarray(i)].join(", ") + " ]",
+      );
+    }
+  });
+}
 
 it("jsx with two elements", () => {
   const input = Bun.inspect(
@@ -283,6 +359,15 @@ it("inspect", () => {
 </div>`.trim(),
   );
   expect(Bun.inspect(BigInt(32))).toBe("32n");
+  expect(Bun.inspect({ call: 1, not_call: 2, prototype: 4 })).toBe(
+    `
+{
+  call: 1,
+  not_call: 2,
+  prototype: 4,
+}
+    `.trim(),
+  );
 });
 
 describe("latin1 supplemental", () => {
@@ -310,11 +395,12 @@ describe("latin1 supplemental", () => {
   });
 });
 
+const tmpdir = tmpdirSync();
 const fixture = [
   () => globalThis,
-  () => Bun.file("/tmp/log.txt").stream(),
-  () => Bun.file("/tmp/log.1.txt").stream().getReader(),
-  () => Bun.file("/tmp/log.2.txt").writer(),
+  () => Bun.file(join(tmpdir, "log.txt")).stream(),
+  () => Bun.file(join(tmpdir, "log.1.txt")).stream().getReader(),
+  () => Bun.file(join(tmpdir, "log.2.txt")).writer(),
   () =>
     new WritableStream({
       write(chunk) {},
@@ -424,6 +510,34 @@ describe("Functions with names", () => {
   for (let closure of closures) {
     it(JSON.stringify(closure.toString()), () => {
       expect(Bun.inspect(closure())).toBe("[Function: f]");
+    });
+  }
+});
+
+it("Bun.inspect array with non-indexed properties", () => {
+  const a = [1, 2, 3];
+  a.length = 42;
+  a[18] = 24;
+  a.potato = "hello";
+  console.log(a);
+  expect(Bun.inspect(a)).toBe(`[
+  1, 2, 3, 15 x empty items, 24, 23 x empty items, potato: "hello"
+]`);
+});
+
+describe("console.logging function displays async and generator names", async () => {
+  const cases = [function a() {}, async function b() {}, function* c() {}, async function* d() {}];
+
+  const expected_logs = [
+    "[Function: a]",
+    "[AsyncFunction: b]",
+    "[GeneratorFunction: c]",
+    "[AsyncGeneratorFunction: d]",
+  ];
+
+  for (let i = 0; i < cases.length; i++) {
+    it(expected_logs[i], () => {
+      expect(Bun.inspect(cases[i])).toBe(expected_logs[i]);
     });
   }
 });

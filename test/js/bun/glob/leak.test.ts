@@ -14,7 +14,7 @@ describe("leaks", () => {
         Bun.gc(true);
         (function () {
           const glob = new Bun.Glob("**/*");
-          Array.from(glob.scanSync({ cwd: '${cwd}' }));
+          Array.from(glob.scanSync({ cwd: '${escapeCwd(cwd)}' }));
         })();
         Bun.gc(true);
         const val = process.memoryUsage.rss();
@@ -40,7 +40,7 @@ describe("leaks", () => {
         Bun.gc(true);
         await (async function () {
           const glob = new Bun.Glob("**/*");
-          await Array.fromAsync(glob.scan({ cwd: '${cwd}' }));
+          await Array.fromAsync(glob.scan({ cwd: '${escapeCwd(cwd)}' }));
         })();
         Bun.gc(true);
         const val = process.memoryUsage.rss();
@@ -59,3 +59,8 @@ describe("leaks", () => {
     expect(exitCode).toBe(0);
   });
 });
+
+function escapeCwd(cwd: string): string {
+  if (process.platform == "win32") return cwd.replaceAll("\\", "\\\\");
+  return cwd;
+}

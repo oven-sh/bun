@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_HTTPRESPONSE_H
 #define UWS_HTTPRESPONSE_H
 
@@ -75,19 +75,11 @@ public:
     void writeMark() {
         /* Date is always written */
         writeHeader("Date", std::string_view(((LoopData *) us_loop_ext(us_socket_context_loop(SSL, (us_socket_context(SSL, (us_socket_t *) this)))))->date, 29));
-
-        /* You can disable this altogether */
-// #ifndef UWS_HTTPRESPONSE_NO_WRITEMARK
-//         if (!Super::getLoopData()->noMark) {
-//             /* We only expose major version */
-//             writeHeader("uWebSockets", "20");
-//         }
-// #endif
     }
 
     /* Returns true on success, indicating that it might be feasible to write more data.
      * Will start timeout if stream reaches totalSize or write failure. */
-    bool internalEnd(std::string_view data, uintmax_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
+    bool internalEnd(std::string_view data, uint64_t totalSize, bool optional, bool allowContentLength = true, bool closeConnection = false) {
         /* Write status if not already done */
         writeStatus(HTTP_200_OK);
 
@@ -435,7 +427,7 @@ public:
 
     /* Try and end the response. Returns [true, true] on success.
      * Starts a timeout in some cases. Returns [ok, hasResponded] */
-    std::pair<bool, bool> tryEnd(std::string_view data, uintmax_t totalSize = 0, bool closeConnection = false) {
+    std::pair<bool, bool> tryEnd(std::string_view data, uint64_t totalSize = 0, bool closeConnection = false) {
         return {internalEnd(data, totalSize, true, true, closeConnection), hasResponded()};
     }
 
@@ -451,8 +443,8 @@ public:
             httpResponseData->state |= HttpResponseData<SSL>::HTTP_WRITE_CALLED; 
         }
 
-        /* Terminating 0 chunk */
-        Super::write("\r\n0\r\n\r\n", 7);
+        /* This will be sent always when state is HTTP_WRITE_CALLED inside internalEnd, so no need to write the terminating 0 chunk here */
+        /* Super::write("\r\n0\r\n\r\n", 7); */
 
         return internalEnd({nullptr, 0}, 0, false, false, closeConnection);
     }
@@ -491,14 +483,14 @@ public:
     }
 
     /* Get the current byte write offset for this Http response */
-    uintmax_t getWriteOffset() {
+    uint64_t getWriteOffset() {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         return httpResponseData->offset;
     }
 
     /* If you are messing around with sendfile you might want to override the offset. */
-    void overrideWriteOffset(uintmax_t offset) {
+    void overrideWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->offset = offset;
@@ -514,13 +506,14 @@ public:
      /* Corks the response if possible. Leaves already corked socket be. */
     HttpResponse *cork(MoveOnlyFunction<void()> &&handler) {
         if (!Super::isCorked() && Super::canCork()) {
+            LoopData *loopData = Super::getLoopData();
             Super::cork();
             handler();
 
             /* The only way we could possibly have changed the corked socket during handler call, would be if 
              * the HTTP socket was upgraded to WebSocket and caused a realloc. Because of this we cannot use "this"
              * from here downwards. The corking is done with corkUnchecked() in upgrade. It steals cork. */
-            auto *newCorkedSocket = Super::corkedSocket();
+            auto *newCorkedSocket = loopData->corkedSocket;
 
             /* If nobody is corked, it means most probably that large amounts of data has
              * been written and the cork buffer has already been sent off and uncorked.
@@ -565,32 +558,55 @@ public:
     }
 
     /* Attach handler for writable HTTP response */
-    HttpResponse *onWritable(MoveOnlyFunction<bool(uintmax_t)> &&handler) {
+    HttpResponse *onWritable(void* userData, HttpResponseData<SSL>::OnWritableCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
-        httpResponseData->onWritable = std::move(handler);
+        httpResponseData->userData = userData;
+        httpResponseData->onWritable = handler;
+        return this;
+    }
+
+    /* Remove handler for writable HTTP response */
+    HttpResponse *clearOnWritable() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onWritable = nullptr;
         return this;
     }
 
     /* Attach handler for aborted HTTP request */
-    HttpResponse *onAborted(MoveOnlyFunction<void()> &&handler) {
+    HttpResponse *onAborted(void* userData,  HttpResponseData<SSL>::OnAbortedCallback handler) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
-
-        httpResponseData->onAborted = std::move(handler);
+        
+        httpResponseData->userData = userData;
+        httpResponseData->onAborted = handler;
         return this;
     }
+    HttpResponse* clearOnWritableAndAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
+        httpResponseData->onWritable = nullptr;
+        httpResponseData->onAborted = nullptr;
+        return this;
+    }
+    HttpResponse* clearOnAborted() {
+        HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
+
+        httpResponseData->onAborted = nullptr;
+        return this;
+    }
     /* Attach a read handler for data sent. Will be called with FIN set true if last segment. */
-    void onData(MoveOnlyFunction<void(std::string_view, bool)> &&handler) {
+    void onData(void* userData, HttpResponseData<SSL>::OnDataCallback handler) { 
         HttpResponseData<SSL> *data = getHttpResponseData();
-        data->inStream = std::move(handler);
+        data->userData = userData;
+        data->inStream = handler;
 
         /* Always reset this counter here */
         data->received_bytes_per_timeout = 0;
     }
 
 
-    void setWriteOffset(uintmax_t offset) {
+    void setWriteOffset(uint64_t offset) {
         HttpResponseData<SSL> *httpResponseData = getHttpResponseData();
 
         httpResponseData->offset = offset;

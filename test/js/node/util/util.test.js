@@ -24,6 +24,7 @@
 import { expect, describe, it } from "bun:test";
 import util from "util";
 import assert from "assert";
+import "harness";
 // const context = require('vm').runInNewContext; // TODO: Use a vm polyfill
 
 const strictEqual = (...args) => {
@@ -324,5 +325,79 @@ describe("util", () => {
     expect(util.formatWithOptions({ colors: true }, "wow(%o)", { obj: true })).toBe(
       "wow({ obj: \u001B[33mtrue\u001B[39m })",
     );
+  });
+
+  it("styleText", () => {
+    [undefined, null, false, 5n, 5, Symbol(), () => {}, {}, []].forEach(invalidOption => {
+      assert.throws(
+        () => {
+          util.styleText(invalidOption, "test");
+        },
+        {
+          code: "ERR_INVALID_ARG_VALUE",
+        },
+      );
+      assert.throws(
+        () => {
+          util.styleText("red", invalidOption);
+        },
+        {
+          code: "ERR_INVALID_ARG_TYPE",
+        },
+      );
+    });
+
+    assert.throws(
+      () => {
+        util.styleText("invalid", "text");
+      },
+      {
+        code: "ERR_INVALID_ARG_VALUE",
+      },
+    );
+
+    assert.strictEqual(util.styleText("red", "test"), "\u001b[31mtest\u001b[39m");
+  });
+
+  describe("getSystemErrorName", () => {
+    for (const item of ["test", {}, []]) {
+      it(`throws when passing: ${item}`, () => {
+        expect(() => util.getSystemErrorName(item)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+      });
+    }
+
+    for (const item of [0, 1, Infinity, -Infinity, NaN]) {
+      it(`throws when passing: ${item}`, () => {
+        expect(() => util.getSystemErrorName(item)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+      });
+    }
+
+    const proc = Bun.spawnSync({
+      cmd: [
+        "node",
+        "-e",
+        "console.log(JSON.stringify([...require('node:util').getSystemErrorMap().entries()].map((v) => [v[0], v[1][0]])));",
+      ],
+      stdio: ["ignore", "pipe", "pipe"],
+    });
+    for (const [code, name] of JSON.parse(proc.stdout.toString())) {
+      it(`getSystemErrorName(${code}) should be ${name}`, () => {
+        expect(util.getSystemErrorName(code)).toBe(name);
+      });
+    }
+
+    it("getSystemErrorName(-4096) should be unknown", () => {
+      expect(util.getSystemErrorName(-4096)).toBe("Unknown system error -4096");
+    });
+
+    // these are the windows/fallback codes and they should match node in either returning the correct name or 'Unknown system error'.
+    // eg on linux getSystemErrorName(-4034) should return unkown and not 'ERANGE' since errno defines it as -34 for that platform.
+    for (let i = -4095; i <= -4023; i++) {
+      it(`negative space: getSystemErrorName(${i}) is correct`, () => {
+        const cmd = ["node", "-e", `console.log(JSON.stringify(util.getSystemErrorName(${i})));`];
+        const stdio = ["ignore", "pipe", "pipe"];
+        expect(util.getSystemErrorName(i)).toEqual(JSON.parse(Bun.spawnSync({ cmd, stdio }).stdout.toString()));
+      });
+    }
   });
 });

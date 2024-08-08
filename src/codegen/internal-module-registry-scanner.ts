@@ -7,6 +7,7 @@ export function createInternalModuleRegistry(basedir: string) {
     .flatMap(dir => readdirRecursive(path.join(basedir, dir)))
     .filter(file => file.endsWith(".js") || (file.endsWith(".ts") && !file.endsWith(".d.ts")))
     .map(file => file.slice(basedir.length + 1))
+    .map(x => x.replaceAll("\\", "/"))
     .sort();
 
   // Create the Internal Module Registry
@@ -15,15 +16,18 @@ export function createInternalModuleRegistry(basedir: string) {
     const prefix = moduleList[i].startsWith("node/")
       ? "node:"
       : moduleList[i].startsWith("bun:")
-      ? "bun:"
-      : moduleList[i].startsWith("internal/")
-      ? "internal/"
-      : undefined;
+        ? "bun:"
+        : moduleList[i].startsWith("internal/")
+          ? "internal/"
+          : undefined;
     if (prefix) {
       const id = prefix + moduleList[i].slice(prefix.length).replaceAll(".", "/").slice(0, -3);
       internalRegistry.set(id, i);
     }
   }
+
+  moduleList.push("internal-for-testing.ts");
+  internalRegistry.set("bun:internal-for-testing", moduleList.length - 1);
 
   // Native Module registry
   const nativeModuleH = fs.readFileSync(path.join(basedir, "../bun.js/modules/_NativeModule.h"), "utf8");
@@ -55,9 +59,6 @@ export function createInternalModuleRegistry(basedir: string) {
   }
 
   const requireTransformer = (specifier: string, from: string) => {
-    // this one is deprecated
-    if (specifier === "$shared") specifier = "./internal/shared.ts";
-
     const directMatch = internalRegistry.get(specifier);
     if (directMatch) return codegenRequireId(`${directMatch}/*${specifier}*/`);
 
@@ -69,7 +70,7 @@ export function createInternalModuleRegistry(basedir: string) {
       resolveSyncOrNull(specifier, path.join(basedir, path.dirname(from))) ?? resolveSyncOrNull(specifier, basedir);
 
     if (relativeMatch) {
-      const found = moduleList.indexOf(path.relative(basedir, relativeMatch));
+      const found = moduleList.indexOf(path.relative(basedir, relativeMatch).replaceAll("\\", "/"));
       if (found === -1) {
         throw new Error(
           `Builtin Bundler: "${specifier}" cannot be imported here because it doesn't get a module ID. Only files in "src/js" besides "src/js/builtins" can be used here. Note that the 'node:' or 'bun:' prefix is required here. `,

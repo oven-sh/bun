@@ -1,7 +1,7 @@
 const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
 const JSGlobalObject = JSC.JSGlobalObject;
 const ZigString = JSC.ZigString;
@@ -16,23 +16,22 @@ pub fn getTypeName(globalObject: *JSGlobalObject, value: JSValue) ZigString {
 
 pub fn throwErrInvalidArgValue(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);
-    const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_VALUE, fmt, args, globalThis);
+    const err = JSC.toTypeError(.ERR_INVALID_ARG_VALUE, fmt, args, globalThis);
     globalThis.vm().throwError(globalThis, err);
     return error.InvalidArgument;
 }
 
 pub fn throwErrInvalidArgTypeWithMessage(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);
-    const err = JSC.toTypeError(JSC.Node.ErrorCode.ERR_INVALID_ARG_TYPE, fmt, args, globalThis);
-    globalThis.vm().throwError(globalThis, err);
+    globalThis.ERR_INVALID_ARG_TYPE(fmt, args).throw();
     return error.InvalidArgument;
 }
 
@@ -50,7 +49,7 @@ pub fn throwErrInvalidArgType(
 
 pub fn throwRangeError(
     globalThis: *JSGlobalObject,
-    comptime fmt: string,
+    comptime fmt: [:0]const u8,
     args: anytype,
 ) !void {
     @setCold(true);
@@ -232,6 +231,7 @@ pub fn validateUndefined(globalThis: *JSGlobalObject, value: JSValue, comptime n
 
 pub fn validateStringEnum(comptime T: type, globalThis: *JSGlobalObject, value: JSValue, comptime name_fmt: string, name_args: anytype) !T {
     const str = value.toBunString(globalThis);
+    defer str.deref();
     inline for (@typeInfo(T).Enum.fields) |enum_field| {
         if (str.eqlComptime(enum_field.name))
             return @field(T, enum_field.name);

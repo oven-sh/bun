@@ -1,15 +1,11 @@
 import { createTest } from "node-harness";
-const { describe, expect, it } = createTest(import.meta.path);
-//@ts-ignore
-const $lazy = globalThis[Symbol.for("Bun.lazy")];
-const tlsInternals = $lazy("internal/tls");
+import { TLSBinding } from "bun:internal-for-testing";
+const { describe, expect } = createTest(import.meta.path);
 
-describe("node/tls", () => {
-  // this is only exposed on debug builds so we skip on release builds
-  const test = tlsInternals ? it : it.skip;
+const { canonicalizeIP, rootCertificates } = TLSBinding;
 
+describe("NodeTLS.cpp", () => {
   test("canonicalizeIP", () => {
-    const { canonicalizeIP } = tlsInternals;
     expect(canonicalizeIP("127.0.0.1")).toBe("127.0.0.1");
     expect(canonicalizeIP("10.1.0.1")).toBe("10.1.0.1");
     expect(canonicalizeIP("::1")).toBe("::1");
@@ -29,7 +25,6 @@ describe("node/tls", () => {
   });
 
   test("rootCertificates", () => {
-    const { rootCertificates } = tlsInternals;
     expect(rootCertificates).toBeInstanceOf(Array);
     expect(rootCertificates.length).toBeGreaterThan(0);
     expect(typeof rootCertificates[0]).toBe("string");

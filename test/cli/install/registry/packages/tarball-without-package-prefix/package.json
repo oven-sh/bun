@@ -1,0 +1,41 @@
+{
+	"name": "tarball-without-package-prefix",
+	"versions": {
+		"1.0.0": {
+			"name": "tarball-without-package-prefix",
+			"version": "1.0.0",
+			"_id": "tarball-without-package-prefix@1.0.0",
+			"_integrity": "sha512-y0COXVWAOSOmlEUSs3lO2FrF6ezZYwDukqADrMMaJap5/wO6gvMQ8XI/GoT0ht187owxlrvUjQEwdfTpSqORRg==",
+			"_resolved": "/Users/dylan/code/tarball-without-package-prefix-1.0.0.tgz",
+			"_from": "file:tarball-without-package-prefix-1.0.0.tgz",
+			"_nodeVersion": "22.2.0",
+			"_npmVersion": "10.7.0",
+			"dist": {
+				"integrity": "sha512-y0COXVWAOSOmlEUSs3lO2FrF6ezZYwDukqADrMMaJap5/wO6gvMQ8XI/GoT0ht187owxlrvUjQEwdfTpSqORRg==",
+				"shasum": "f5dd68309b11f1b61802d8be9db02e7e97d98907",
+				"tarball": "http://localhost:4873/tarball-without-package-prefix/-/tarball-without-package-prefix-1.0.0.tgz"
+			},
+			"contributors": []
+		}
+	},
+	"time": {
+		"modified": "2024-06-14T07:12:59.803Z",
+		"created": "2024-06-14T07:12:59.803Z",
+		"1.0.0": "2024-06-14T07:12:59.803Z"
+	},
+	"users": {},
+	"dist-tags": {
+		"latest": "1.0.0"
+	},
+	"_uplinks": {},
+	"_distfiles": {},
+	"_attachments": {
+		"tarball-without-package-prefix-1.0.0.tgz": {
+			"shasum": "f5dd68309b11f1b61802d8be9db02e7e97d98907",
+			"version": "1.0.0"
+		}
+	},
+	"_rev": "",
+	"_id": "tarball-without-package-prefix",
+	"readme": "ERROR: No README data found!"
+}

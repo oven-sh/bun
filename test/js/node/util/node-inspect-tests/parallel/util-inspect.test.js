@@ -24,29 +24,9 @@ import util, { inspect } from "util";
 import vm from "vm";
 import { MessageChannel } from "worker_threads";
 import url from "url";
+import { isWindows } from "harness";
 const noop = () => {};
 const mustCallChecks = [];
-
-//? Bun does not have this function yet
-assert.doesNotMatch = (string, regexp, message) => {
-  try {
-    assert.match(string, regexp, message);
-    throw null;
-  } catch (e) {
-    if (e === null) {
-      const msg =
-        message || `The input was expected to not match the regular expression ${regexp}. Input:\n'${string}'`;
-      throw new assert.AssertionError({
-        message: msg,
-        actual: string,
-        expected: regexp,
-        operator: "doesNotMatch",
-        stackStartFn: assert.doesNotMatch,
-      });
-    }
-    // pass
-  }
-};
 
 test("no assertion failures", () => {
   assert.strictEqual(util.inspect(1), "1");
@@ -2733,7 +2713,7 @@ test("no assertion failures 3", () => {
     const originalCWD = process.cwd();
 
     process.cwd = () =>
-      process.platform === "win32"
+      isWindows
         ? "C:\\workspace\\node-test-binary-windows js-suites-%percent-encoded\\node"
         : "/home/user directory/repository%encoded/node";
 
@@ -2757,7 +2737,7 @@ test("no assertion failures 3", () => {
     ];
     const err = new Error("CWD is grayed out, even cwd that are percent encoded!");
     err.stack = stack.join("\n");
-    if (process.platform === "win32") {
+    if (isWindows) {
       err.stack = stack.map(frame => (frame.includes("node:") ? frame : frame.replace(/\//g, "\\"))).join("\n");
     }
     const escapedCWD = util.inspect(process.cwd()).slice(1, -1);
@@ -2781,7 +2761,7 @@ test("no assertion failures 3", () => {
           if (!line.includes("foo") && !line.includes("aaa")) {
             expected = `\u001b[90m${expected}\u001b[39m`;
           }
-        } else if (process.platform === "win32") {
+        } else if (isWindows) {
           expected = expected.replace(/\//g, "\\");
         }
         assert.strictEqual(line, expected);
@@ -2789,7 +2769,7 @@ test("no assertion failures 3", () => {
 
     // Check ESM
     //const encodedCwd = url.pathToFileURL(process.cwd());
-    const sl = process.platform === "win32" ? "\\" : "/";
+    const sl = isWindows ? "\\" : "/";
 
     // Use a fake stack to verify the expected colored outcome.
     //? Something goes wrong with these file URLs but Bun doesn't use those in errors anyway so it's fine (for now at least)
@@ -2812,11 +2792,9 @@ test("no assertion failures 3", () => {
 
     // ESM without need for encoding
     process.cwd = () =>
-      process.platform === "win32"
-        ? "C:\\workspace\\node-test-binary-windows-js-suites\\node"
-        : "/home/user/repository/node";
+      isWindows ? "C:\\workspace\\node-test-binary-windows-js-suites\\node" : "/home/user/repository/node";
     let expectedCwd = process.cwd();
-    if (process.platform === "win32") {
+    if (isWindows) {
       expectedCwd = `/${expectedCwd.replace(/\\/g, "/")}`;
     }
     // Use a fake stack to verify the expected colored outcome.

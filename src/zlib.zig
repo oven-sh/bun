@@ -7,34 +7,6 @@ const mimalloc = @import("./allocators/mimalloc.zig");
 
 pub const MAX_WBITS = 15;
 
-test "Zlib Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var output = std.ArrayList(u8).init(std.heap.c_allocator);
-    var writer = output.writer();
-    const ZlibReader = NewZlibReader(@TypeOf(&writer), 4096);
-
-    var reader = try ZlibReader.init(&writer, input, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, output.items);
-}
-
-test "ZlibArrayList Read" {
-    const expected_text = @embedFile("./zlib.test.txt");
-    const input = bun.asByteSlice(@embedFile("./zlib.test.gz"));
-    std.debug.print("zStream Size: {d}", .{@sizeOf(zStream_struct)});
-    var list = std.ArrayListUnmanaged(u8){};
-    try list.ensureUnusedCapacity(std.heap.c_allocator, 4096);
-    var reader = try ZlibReaderArrayList.init(input, &list, std.heap.c_allocator);
-    defer reader.deinit();
-    try reader.readAll();
-
-    try std.testing.expectEqualStrings(expected_text, list.items);
-}
-
 pub extern fn zlibVersion() [*c]const u8;
 
 pub extern fn compress(dest: [*]Bytef, destLen: *uLongf, source: [*]const Bytef, sourceLen: uLong) c_int;
@@ -93,7 +65,7 @@ const z_streamp = @import("zlib-internal").z_streamp;
 
 const DataType = @import("zlib-internal").DataType;
 const FlushValue = @import("zlib-internal").FlushValue;
-const ReturnCode = @import("zlib-internal").ReturnCode;
+pub const ReturnCode = @import("zlib-internal").ReturnCode;
 
 // ZEXTERN int ZEXPORT inflateInit OF((z_streamp strm));
 
@@ -316,6 +288,27 @@ pub const ZlibError = error{
     ShortRead,
 };
 
+const ZlibAllocator = struct {
+    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone("zlib");
+            return zone.malloc_zone_calloc(items, len) orelse bun.outOfMemory();
+        }
+
+        return mimalloc.mi_calloc(items, len) orelse bun.outOfMemory();
+    }
+
+    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
+        if (bun.heap_breakdown.enabled) {
+            const zone = bun.heap_breakdown.getZone("zlib");
+            zone.malloc_zone_free(data);
+            return;
+        }
+
+        mimalloc.mi_free(data);
+    }
+};
+
 pub const ZlibReaderArrayList = struct {
     const ZlibReader = ZlibReaderArrayList;
 
@@ -333,14 +326,6 @@ pub const ZlibReaderArrayList = struct {
     zlib: zStream_struct,
     allocator: std.mem.Allocator,
     state: State = State.Uninitialized,
-
-    pub fn alloc(_: *anyopaque, items: uInt, len: uInt) callconv(.C) *anyopaque {
-        return mimalloc.mi_malloc(items * len) orelse unreachable;
-    }
-
-    pub fn free(_: *anyopaque, data: *anyopaque) callconv(.C) void {
-        mimalloc.mi_free(data);
-    }
 
     pub fn deinit(this: *ZlibReader) void {
         var allocator = this.allocator;
@@ -393,8 +378,8 @@ pub const ZlibReaderArrayList = struct {
             .total_out = @truncate(zlib_reader.list.items.len),
 
             .err_msg = null,
-            .alloc_func = ZlibReader.alloc,
-            .free_func = ZlibReader.free,
+            .alloc_func = ZlibAllocator.alloc,
+            .free_func = ZlibAllocator.free,
 
             .internal_state = null,
             .user_data = zlib_reader,

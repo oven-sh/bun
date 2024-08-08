@@ -91,6 +91,9 @@ frozenLockfile = false
 
 # equivalent to `--dry-run` flag
 dryRun = false
+
+# equivalent to `--concurrent-scripts` flag
+concurrentScripts = 16 # (cpu count or GOMAXPROCS) x2
 ```
 
 {% /details %}

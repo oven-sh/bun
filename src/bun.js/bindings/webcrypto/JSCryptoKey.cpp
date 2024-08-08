@@ -98,9 +98,9 @@ template<> std::optional<CryptoKey::Type> parseEnumeration<CryptoKey::Type>(JSGl
     return std::nullopt;
 }
 
-template<> const char* expectedEnumerationValues<CryptoKey::Type>()
+template<> ASCIILiteral expectedEnumerationValues<CryptoKey::Type>()
 {
-    return "\"public\", \"private\", \"secret\"";
+    return "\"public\", \"private\", \"secret\""_s;
 }
 
 // Attributes
@@ -196,11 +196,11 @@ void JSCryptoKey::finishCreation(VM& vm)
     // static_assert(!std::is_base_of<ActiveDOMObject, CryptoKey>::value, "Interface is not marked as [ActiveDOMObject] even though implementation class subclasses ActiveDOMObject.");
 }
 
-
-
 JSObject* JSCryptoKey::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSCryptoKeyPrototype::create(vm, &globalObject, JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSCryptoKeyPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSCryptoKeyPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSCryptoKey::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -318,16 +318,14 @@ void JSCryptoKey::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSCryptoKey*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     if (thisObject->scriptExecutionContext())
-        analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+        analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, const char** reason)
+bool JSCryptoKeyOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
-    auto* jsCryptoKey = jsCast<JSCryptoKey*>(handle.slot()->asCell());
-    CryptoKey* owner = &jsCryptoKey->wrapped();
     if (UNLIKELY(reason))
-        *reason = "Reachable from CryptoKey";
+        *reason = "Reachable from CryptoKey"_s;
     return visitor.containsOpaqueRoot(context);
 }
 

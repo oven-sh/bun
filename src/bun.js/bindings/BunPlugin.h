@@ -6,8 +6,8 @@
 #include <JavaScriptCore/Strong.h>
 #include "helpers.h"
 
-extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
-extern "C" JSC_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPlugin);
+BUN_DECLARE_HOST_FUNCTION(jsFunctionBunPluginClear);
 
 namespace Zig {
 
@@ -70,9 +70,14 @@ public:
         }
 
         VirtualModuleMap* virtualModules = nullptr;
+        bool mustDoExpensiveRelativeLookup = false;
         JSC::EncodedJSValue run(JSC::JSGlobalObject* globalObject, BunString* namespaceString, BunString* path);
 
+        bool hasVirtualModules() const { return virtualModules != nullptr; }
+
         void addModuleMock(JSC::VM& vm, const String& path, JSC::JSObject* mock);
+
+        std::optional<String> resolveVirtualModule(const String& path, const String& from);
 
         ~OnLoad()
         {

@@ -4,7 +4,6 @@ namespace Zig {
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
                                JSC::JSObject *object) {
-  JSC::VM &vm = globalObject->vm();
   gcProtectNullTolerant(object);
   return [object](JSC::JSGlobalObject *lexicalGlobalObject,
                   JSC::Identifier moduleKey,
@@ -38,7 +37,6 @@ generateObjectModuleSourceCode(JSC::JSGlobalObject *globalObject,
 JSC::SyntheticSourceProvider::SyntheticSourceGenerator
 generateObjectModuleSourceCodeForJSON(JSC::JSGlobalObject *globalObject,
                                       JSC::JSObject *object) {
-  JSC::VM &vm = globalObject->vm();
   gcProtectNullTolerant(object);
   return [object](JSC::JSGlobalObject *lexicalGlobalObject,
                   JSC::Identifier moduleKey,
@@ -92,8 +90,6 @@ generateJSValueModuleSourceCode(JSC::JSGlobalObject *globalObject,
                  Vector<JSC::Identifier, 4> &exportNames,
                  JSC::MarkedArgumentBuffer &exportValues) -> void {
     JSC::VM &vm = lexicalGlobalObject->vm();
-    GlobalObject *globalObject =
-        reinterpret_cast<GlobalObject *>(lexicalGlobalObject);
     exportNames.append(vm.propertyNames->defaultKeyword);
     exportValues.append(value);
 

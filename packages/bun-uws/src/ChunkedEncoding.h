@@ -29,18 +29,18 @@
 
 namespace uWS {
 
-    constexpr uint32_t STATE_HAS_SIZE = 0x80000000;
-    constexpr uint32_t STATE_IS_CHUNKED = 0x40000000;
-    constexpr uint32_t STATE_SIZE_MASK = 0x3FFFFFFF;
-    constexpr uint32_t STATE_IS_ERROR = 0xFFFFFFFF;
-    constexpr uint32_t STATE_SIZE_OVERFLOW = 0x0F000000;
+    constexpr uint64_t STATE_HAS_SIZE = 1ull << (sizeof(uint64_t) * 8 - 1);//0x80000000;
+    constexpr uint64_t STATE_IS_CHUNKED = 1ull << (sizeof(uint64_t) * 8 - 2);//0x40000000;
+    constexpr uint64_t STATE_SIZE_MASK = ~(3ull << (sizeof(uint64_t) * 8 - 2));//0x3FFFFFFF;
+    constexpr uint64_t STATE_IS_ERROR = ~0ull;//0xFFFFFFFF;
+    constexpr uint64_t STATE_SIZE_OVERFLOW = 0x0Full << (sizeof(uint64_t) * 8 - 8);//0x0F000000;
 
-    inline unsigned int chunkSize(unsigned int state) {
+    inline unsigned int chunkSize(uint64_t state) {
         return state & STATE_SIZE_MASK;
     }
 
     /* Reads hex number until CR or out of data to consume. Updates state. Returns bytes consumed. */
-    inline void consumeHexNumber(std::string_view &data, unsigned int &state) {
+    inline void consumeHexNumber(std::string_view &data, uint64_t &state) {
         /* Consume everything higher than 32 */
         while (data.length() && data.data()[0] > 32) {
 
@@ -59,9 +59,9 @@ namespace uWS {
             }
 
             // extract state bits
-            unsigned int bits = /*state &*/ STATE_IS_CHUNKED;
+            uint64_t bits = /*state &*/ STATE_IS_CHUNKED;
 
-            state = (state & STATE_SIZE_MASK) * 16u + number;
+            state = (state & STATE_SIZE_MASK) * 16ull + number;
 
             state |= bits;
             data.remove_prefix(1);
@@ -78,7 +78,7 @@ namespace uWS {
         }
     }
 
-    inline void decChunkSize(unsigned int &state, unsigned int by) {
+    inline void decChunkSize(uint64_t &state, unsigned int by) {
 
         //unsigned int bits = state & STATE_IS_CHUNKED;
 
@@ -87,21 +87,21 @@ namespace uWS {
         //state |= bits;
     }
 
-    inline bool hasChunkSize(unsigned int state) {
+    inline bool hasChunkSize(uint64_t state) {
         return state & STATE_HAS_SIZE;
     }
 
     /* Are we in the middle of parsing chunked encoding? */
-    inline bool isParsingChunkedEncoding(unsigned int state) {
+    inline bool isParsingChunkedEncoding(uint64_t state) {
         return state & ~STATE_SIZE_MASK;
     }
 
-    inline bool isParsingInvalidChunkedEncoding(unsigned int state) {
+    inline bool isParsingInvalidChunkedEncoding(uint64_t state) {
         return state == STATE_IS_ERROR;
     }
 
     /* Returns next chunk (empty or not), or if all data was consumed, nullopt is returned. */
-    static std::optional<std::string_view> getNextChunk(std::string_view &data, unsigned int &state, bool trailer = false) {
+    static std::optional<std::string_view> getNextChunk(std::string_view &data, uint64_t &state, bool trailer = false) {
         while (data.length()) {
 
             // if in "drop trailer mode", just drop up to what we have as size
@@ -166,7 +166,7 @@ namespace uWS {
                 /* We will consume all our input data */
                 std::string_view emitSoon;
                 if (chunkSize(state) > 2) {
-                    unsigned int maximalAppEmit = chunkSize(state) - 2;
+                    uint64_t maximalAppEmit = chunkSize(state) - 2;
                     if (data.length() > maximalAppEmit) {
                         emitSoon = data.substr(0, maximalAppEmit);
                     } else {
@@ -194,10 +194,10 @@ namespace uWS {
 
         std::string_view *data;
         std::optional<std::string_view> chunk;
-        unsigned int *state;
+        uint64_t *state;
         bool trailer;
 
-        ChunkIterator(std::string_view *data, unsigned int *state, bool trailer = false) : data(data), state(state), trailer(trailer) {
+        ChunkIterator(std::string_view *data, uint64_t *state, bool trailer = false) : data(data), state(state), trailer(trailer) {
             chunk = uWS::getNextChunk(*data, *state, trailer);
         }
 

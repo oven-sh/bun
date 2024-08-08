@@ -138,7 +138,9 @@ void JSTransformStreamDefaultController::finishCreation(VM& vm)
 
 JSObject* JSTransformStreamDefaultController::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSTransformStreamDefaultControllerPrototype::create(vm, &globalObject, JSTransformStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSTransformStreamDefaultControllerPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSTransformStreamDefaultControllerPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSTransformStreamDefaultController::prototype(VM& vm, JSDOMGlobalObject& globalObject)

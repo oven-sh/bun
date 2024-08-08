@@ -1,15 +1,18 @@
-import { mkdtempSync } from "fs";
 import { join } from "path";
-import { tmpdir } from "os";
 import { readFileSync, writeFileSync } from "fs";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
+import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 function install(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
-    stdin: "ignore",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "inherit",
     env: bunEnv,
   });
@@ -23,8 +26,8 @@ function installExpectFail(cwd: string, args: string[]) {
   const exec = Bun.spawnSync({
     cmd: [bunExe(), ...args],
     cwd,
-    stdout: "pipe",
-    stdin: "ignore",
+    stdout: "inherit",
+    stdin: "inherit",
     stderr: "inherit",
     env: bunEnv,
   });
@@ -42,15 +45,16 @@ function versionOf(cwd: string, path: string) {
 
 function ensureLockfileDoesntChangeOnBunI(cwd: string) {
   install(cwd, ["install"]);
-  const lockb_hash = new Bun.CryptoHasher("sha256").update(readFileSync(join(cwd, "bun.lockb"))).digest();
+  const lockb1 = readFileSync(join(cwd, "bun.lockb"));
   install(cwd, ["install", "--frozen-lockfile"]);
   install(cwd, ["install", "--force"]);
-  const lockb_hash2 = new Bun.CryptoHasher("sha256").update(readFileSync(join(cwd, "bun.lockb"))).digest();
-  expect(lockb_hash).toEqual(lockb_hash2);
+  const lockb2 = readFileSync(join(cwd, "bun.lockb"));
+
+  expect(lockb1.toString("hex")).toEqual(lockb2.toString("hex"));
 }
 
 test("overrides affect your own packages", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -62,12 +66,11 @@ test("overrides affect your own packages", async () => {
   );
   install(tmp, ["install", "lodash"]);
   expect(versionOf(tmp, "node_modules/lodash/package.json")).toBe("4.0.0");
-
   ensureLockfileDoesntChangeOnBunI(tmp);
 });
 
 test("overrides affects all dependencies", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -84,7 +87,7 @@ test("overrides affects all dependencies", async () => {
 });
 
 test("overrides being set later affects all dependencies", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -112,7 +115,7 @@ test("overrides being set later affects all dependencies", async () => {
 });
 
 test("overrides to npm specifier", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -124,11 +127,7 @@ test("overrides to npm specifier", async () => {
   );
   install(tmp, ["install", "express@4.18.2"]);
 
-  // BUG: the npm specifier is hoisted https://github.com/oven-sh/bun/issues/6433
-  // const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
-  const bytes = JSON.parse(
-    readFileSync(join(tmp, "node_modules/body-parser/node_modules/bytes/package.json"), "utf-8"),
-  );
+  const bytes = JSON.parse(readFileSync(join(tmp, "node_modules/bytes/package.json"), "utf-8"));
 
   expect(bytes.name).toBe("lodash");
   expect(bytes.version).toBe("4.0.0");
@@ -137,7 +136,7 @@ test("overrides to npm specifier", async () => {
 });
 
 test("changing overrides makes the lockfile changed, prevent frozen install", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({
@@ -163,7 +162,7 @@ test("changing overrides makes the lockfile changed, prevent frozen install", as
 });
 
 test("overrides reset when removed", async () => {
-  const tmp = mkdtempSync(join(tmpdir(), "bun-pm-test"));
+  const tmp = tmpdirSync();
   writeFileSync(
     join(tmp, "package.json"),
     JSON.stringify({

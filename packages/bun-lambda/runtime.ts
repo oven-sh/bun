@@ -279,7 +279,7 @@ async function sendResponse(response: unknown): Promise<void> {
   }
   await fetch(`runtime/invocation/${requestId}/response`, {
     method: "POST",
-    body: response === null ? null : (typeof response === 'string' ? response : JSON.stringify(response)),
+    body: response === null ? null : typeof response === "string" ? response : JSON.stringify(response),
   });
 }
 
@@ -290,7 +290,7 @@ function formatBody(body?: string, isBase64Encoded?: boolean): string | null {
   if (!isBase64Encoded) {
     return body;
   }
-  return Buffer.from(body).toString("base64");
+  return Buffer.from(body, "base64").toString("utf8");
 }
 
 type HttpEventV1 = {
@@ -594,8 +594,8 @@ class LambdaServer implements Server {
       typeof options.port === "number"
         ? options.port
         : typeof options.port === "string"
-        ? parseInt(options.port)
-        : this.port;
+          ? parseInt(options.port)
+          : this.port;
     this.hostname = options.hostname ?? this.hostname;
     this.development = options.development ?? this.development;
   }

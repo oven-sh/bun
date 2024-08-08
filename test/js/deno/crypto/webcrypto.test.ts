@@ -2,7 +2,7 @@
 // Copyright 2018+ the Deno authors. All rights reserved. MIT license.
 // https://raw.githubusercontent.com/denoland/deno/main/cli/tests/unit/webcrypto_test.ts
 import { createDenoTest } from "deno:harness";
-const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path);
+const { test, assert, assertEquals, assertNotEquals, assertRejects } = createDenoTest(import.meta.path, 10_000);
 test(async function testImportArrayBufferKey() {
     const subtle = window.crypto.subtle;
     assert(subtle);
@@ -598,7 +598,7 @@ test(async function generateImportHmacJwk() {
 });
 const pkcs8TestVectors = [
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsaEncryption.pem",
+        pem: "id_rsaEncryption.pem",
         hash: "SHA-256"
     }
 ];
@@ -642,15 +642,15 @@ test({
 });
 const nonInteroperableVectors = [
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss.pem",
+        pem: "id_rsassaPss.pem",
         hash: "SHA-256"
     },
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss_default.pem",
+        pem: "id_rsassaPss_default.pem",
         hash: "SHA-1"
     },
     {
-        pem: "cli/tests/testdata/webcrypto/id_rsassaPss_saltLen_30.pem",
+        pem: "id_rsassaPss_saltLen_30.pem",
         hash: "SHA-1"
     }
 ];
@@ -991,7 +991,7 @@ test(async function testWrapKey() {
     });
     assert(wrappedKey instanceof ArrayBuffer);
     assertEquals(wrappedKey.byteLength, 512);
-});
+},);
 test.ignore(async function testAesKeyGen() {
     const key = await crypto.subtle.generateKey({
         name: "AES-GCM",

@@ -1,5 +1,6 @@
 const std = @import("std");
-const assert = std.debug.assert;
+const bun = @import("root").bun;
+const assert = bun.assert;
 const mem = std.mem;
 const testing = std.testing;
 
@@ -66,7 +67,7 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
         }
 
         pub const Fallback = struct {
-            hive: HiveArray(T, capacity),
+            hive: if (capacity > 0) HiveArray(T, capacity) else void,
             allocator: std.mem.Allocator,
 
             pub const This = @This();
@@ -74,37 +75,53 @@ pub fn HiveArray(comptime T: type, comptime capacity: u16) type {
             pub fn init(allocator: std.mem.Allocator) This {
                 return .{
                     .allocator = allocator,
-                    .hive = HiveArray(T, capacity).init(),
+                    .hive = if (capacity > 0) HiveArray(T, capacity).init() else {},
                 };
             }
 
             pub fn get(self: *This) *T {
-                if (self.hive.get()) |value| {
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        return value;
+                    }
                 }
 
                 return self.allocator.create(T) catch unreachable;
             }
 
             pub fn getAndSeeIfNew(self: *This, new: *bool) *T {
-                if (self.hive.get()) |value| {
-                    new.* = false;
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        new.* = false;
+                        return value;
+                    }
                 }
 
                 return self.allocator.create(T) catch unreachable;
             }
 
             pub fn tryGet(self: *This) !*T {
-                if (self.hive.get()) |value| {
-                    return value;
+                if (comptime capacity > 0) {
+                    if (self.hive.get()) |value| {
+                        return value;
+                    }
                 }
 
                 return try self.allocator.create(T);
             }
 
+            pub fn in(self: *const This, value: *const T) bool {
+                if (comptime capacity > 0) {
+                    if (self.hive.in(value)) return true;
+                }
+
+                return false;
+            }
+
             pub fn put(self: *This, value: *T) void {
-                if (self.hive.put(value)) return;
+                if (comptime capacity > 0) {
+                    if (self.hive.put(value)) return;
+                }
 
                 self.allocator.destroy(value);
             }
@@ -121,12 +138,12 @@ test "HiveArray" {
     var a = HiveArray(Int, size).init();
 
     {
-        var b = a.get().?;
+        const b = a.get().?;
         try testing.expect(a.get().? != b);
         try testing.expectEqual(a.indexOf(b), 0);
         try testing.expect(a.put(b));
         try testing.expect(a.get().? == b);
-        var c = a.get().?;
+        const c = a.get().?;
         c.* = 123;
         var d: Int = 12345;
         try testing.expect(a.put(&d) == false);
@@ -135,16 +152,13 @@ test "HiveArray" {
 
     a.available = @TypeOf(a.available).initFull();
     {
-        var i: u63 = 0;
-        while (i < size) {
-            var b = a.get().?;
+        for (0..size) |i| {
+            const b = a.get().?;
             try testing.expectEqual(a.indexOf(b), i);
             try testing.expect(a.put(b));
             try testing.expect(a.get().? == b);
-            i = i + 1;
         }
-        i = 0;
-        while (i < size) : (i += 1) {
+        for (0..size) |_| {
             try testing.expect(a.get() == null);
         }
     }

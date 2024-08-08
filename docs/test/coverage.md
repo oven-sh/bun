@@ -52,14 +52,40 @@ It is possible to specify a coverage threshold in `bunfig.toml`. If your test su
 coverageThreshold = 0.9
 
 # to set different thresholds for lines and functions
-coverageThreshold = { line = 0.9, function = 0.9 }
+coverageThreshold = { lines = 0.9, functions = 0.9 }
 ```
 
 ### Sourcemaps
 
-Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `false`; this will rarely be desirable outside of advanced use cases.
+Internally, Bun transpiles all files by default, so Bun automatically generates an internal [source map](https://web.dev/source-maps/) that maps lines of your original source code onto Bun's internal representation. If for any reason you want to disable this, set `test.coverageIgnoreSourcemaps` to `true`; this will rarely be desirable outside of advanced use cases.
 
 ```toml
 [test]
 coverageIgnoreSourcemaps = true   # default false
+```
+
+### Coverage reporters
+
+By default, coverage reports will be printed to the console.
+
+For persistent code coverage reports in CI environments and for other tools, you can pass a `--coverage-reporter=lcov` CLI option or `coverageReporter` option in `bunfig.toml`.
+
+```toml
+[test]
+coverageReporter  = ["text", "lcov"]  # default ["text"]
+coverageDir = "path/to/somewhere"  # default "coverage"
+```
+
+| Reporter | Description                                                                 |
+| -------- | --------------------------------------------------------------------------- |
+| `text`   | Prints a text summary of the coverage to the console.                       |
+| `lcov`   | Save coverage in [lcov](https://github.com/linux-test-project/lcov) format. |
+
+#### lcov coverage reporter
+
+To generate an lcov report, you can use the `lcov` reporter. This will generate an `lcov.info` file in the `coverage` directory.
+
+```toml
+[test]
+coverageReporter = "lcov"
 ```

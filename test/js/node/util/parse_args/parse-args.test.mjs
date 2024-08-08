@@ -1,7 +1,7 @@
 import { describe, test, expect } from "bun:test";
 import { parseArgs } from "node:util";
 
-describe.todo("parseArgs", () => {
+describe("parseArgs", () => {
   // Test file adapted from Node v21
   const expectToThrowErrorMatching = (fn, errorPattern) => {
     let error = undefined;
@@ -971,5 +971,97 @@ describe.todo("parseArgs", () => {
     expect(() => {
       parseArgs({ args, options });
     }).toThrow(/"options\.alpha\.default" property must be of type string/);
+  });
+});
+
+//
+// Tests not from node
+//
+
+describe("parseArgs extra tests", () => {
+  test("accepts numeric options", () => {
+    const result = parseArgs({
+      allowPositionals: true,
+      strict: false,
+      args: ["--111", "-1", "-234", "8888", "-5", "-6x", "9999", "--222", "-7a", "--1aa"],
+    });
+
+    expect(Object.keys(result.values)).toHaveLength(12);
+    expect(result.positionals).toHaveLength(2);
+  });
+
+  describe("unicode support", () => {
+    // node allows characters of 1/2 bytes as short option names, but not 3/4
+    const U1 = "$"; // 1 byte
+    const U2 = "€"; // 2 bytes
+    const U3 = "𐐷"; // 3 bytes
+    const U4 = "𤭢"; // 4 bytes
+
+    test("utf8 1/2 bytes", () => {
+      const result = parseArgs({
+        allowPositionals: true,
+        tokens: true,
+        strict: false,
+        args: [`-${U1}`, `-${U2}`, "--bún"],
+      });
+      expect(result.values).toEqual({
+        [U1]: true,
+        [U2]: true,
+        "bún": true,
+      });
+    });
+
+    test("utf8 3/4 bytes", () => {
+      // node splits the 3/4-byte utf8 codepoints into two u16 characters,
+      // so a short option with a 4-byte codepoint, ends up being a short option group.
+      // for now mimic node behavior (but that might change)
+      const result = parseArgs({
+        allowPositionals: true,
+        tokens: true,
+        strict: false,
+        args: [`-${U3}`, `-${U4}`, `--${U3}-arg`],
+      });
+      expect(result.values).toEqual({
+        [U3.charAt(0)]: true,
+        [U3.charAt(1)]: true,
+        [U4.charAt(0)]: true,
+        [U4.charAt(1)]: true,
+        [`${U3}-arg`]: true,
+      });
+    });
+  });
+
+  describe("stress test", () => {
+    test("1000 options", () => {
+      const result = parseArgs({
+        allowPositionals: true,
+        strict: false,
+        args: ""
+          .padStart(1000)
+          .split("")
+          .map((_, i) => `--arg${i}`),
+      });
+      expect(Object.keys(result.values)).toHaveLength(1000);
+    });
+
+    test("100 mixed several times", () => {
+      let result;
+      for (let i = 0; i < 1000; ++i) {
+        result = parseArgs({
+          allowPositionals: true,
+          strict: false,
+          args: ""
+            .padStart(100)
+            .split("")
+            .map((_, i) => {
+              if (i % 17 === 0) return `-abc`;
+              if (i % 7 === 0) return `-${String.fromCharCode(97) + ((i / 10) | 0)}`;
+              return `--arg${i}`;
+            }),
+        });
+        Bun.gc();
+      }
+      expect(Object.keys(result.values)).toHaveLength(93);
+    });
   });
 });

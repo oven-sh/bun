@@ -170,23 +170,6 @@ for (const { body, fn } of bodyTypes) {
       describe("ReadableStream", () => {
         const streams = [
           {
-            label: "empty stream",
-            stream: () => new ReadableStream(),
-            content: "",
-            skip: true, // hangs
-          },
-          {
-            label: "custom stream",
-            stream: () =>
-              new ReadableStream({
-                start(controller) {
-                  controller.enqueue("hello\n");
-                },
-              }),
-            content: "hello\n",
-            skip: true, // hangs
-          },
-          {
             label: "direct stream",
             stream: () =>
               new ReadableStream({
@@ -262,6 +245,17 @@ for (const { body, fn } of bodyTypes) {
         });
         test(`"${string}"`, async () => {
           expect(await fn(string).arrayBuffer()).toStrictEqual(buffer.buffer);
+        });
+      });
+      describe("bytes()", () => {
+        test("undefined", async () => {
+          expect(await fn().bytes()).toStrictEqual(new Uint8Array(0));
+        });
+        test("null", async () => {
+          expect(await fn(null).bytes()).toStrictEqual(new Uint8Array(0));
+        });
+        test(`"${string}"`, async () => {
+          expect(await fn(string).bytes()).toStrictEqual(new Uint8Array(buffer));
         });
       });
       describe("text()", () => {
@@ -624,7 +618,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe("new Response()", () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Response();
           expect(result).toHaveProperty("bodyUsed", false);
@@ -637,7 +631,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe('new Request(url, {method: "POST" })', () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Request("https://example.com", { method: "POST" });
           expect(result).toHaveProperty("bodyUsed", false);
@@ -650,7 +644,7 @@ for (const { body, fn } of bodyTypes) {
     });
 
     describe("new Request(url)", () => {
-      ["text", "arrayBuffer", "blob"].map(method => {
+      ["text", "arrayBuffer", "bytes", "blob"].map(method => {
         test(method, async () => {
           const result = new Request("https://example.com");
           expect(result).toHaveProperty("bodyUsed", false);

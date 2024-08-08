@@ -25,7 +25,6 @@
 
 #include "config.h"
 #include "ReadableStreamSource.h"
-
 namespace WebCore {
 
 ReadableStreamSource::~ReadableStreamSource() = default;

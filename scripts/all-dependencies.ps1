@@ -4,11 +4,16 @@ param(
 
 $ErrorActionPreference = 'Stop'
 
-$DidAnything = $false;
+. (Join-Path $PSScriptRoot "env.ps1")
+if ($env:CI -eq "true") {
+  & (Join-Path $PSScriptRoot "update-submodules.ps1")
+}
 
-$BUN_BASE_DIR = if ($env:BUN_BASE_DIR) { $env:BUN_BASE_DIR } else { Join-Path $PSScriptRoot '..' }
-$BUN_DEPS_DIR = if ($env:BUN_DEPS_DIR) { $env:BUN_DEPS_DIR } else { Join-Path $BUN_BASE_DIR 'src\deps' }
-$BUN_DEPS_OUT_DIR = if ($env:BUN_DEPS_OUT_DIR) { $env:BUN_DEPS_OUT_DIR } else { $BUN_DEPS_DIR }
+if ($env:RELEASE -eq "1") {
+  $Force = $true
+}
+
+$DidAnything = $false;
 
 function Build-Dependency {
   param(
@@ -48,9 +53,6 @@ function Build-Dependency {
 }
 
 Build-Dependency `
-  -Script "base64" `
-  -Outputs @("base64.lib")
-Build-Dependency `
   -Script "boringssl" `
   -Outputs @("crypto.lib", "ssl.lib", "decrepit.lib")
 Build-Dependency `
@@ -65,9 +67,9 @@ Build-Dependency `
 Build-Dependency `
   -Script "mimalloc" `
   -Outputs @("mimalloc.lib")
-# Build-Dependency `
-#   -Script "tinycc" `
-#   -Outputs @("tcc.lib")
+Build-Dependency `
+  -Script "tinycc" `
+  -Outputs @("tcc.lib")
 Build-Dependency `
   -Script "zlib" `
   -Outputs @("zlib.lib")
@@ -80,6 +82,10 @@ Build-Dependency `
 Build-Dependency `
   -Script "lshpack" `
   -Outputs @("lshpack.lib")
+
+Build-Dependency `
+  -Script "libdeflate" `
+  -Outputs @("deflate.lib")
 
 if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"

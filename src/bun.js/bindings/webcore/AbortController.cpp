@@ -29,7 +29,9 @@
 #include "AbortSignal.h"
 #include "DOMException.h"
 #include "JSDOMException.h"
-// #include <wtf/IsoMallocInlines.h>
+#include <wtf/IsoMallocInlines.h>
+#include "WebCoreOpaqueRoot.h"
+#include "WebCoreOpaqueRootInlines.h"
 
 namespace WebCore {
 
@@ -55,10 +57,21 @@ AbortSignal& AbortController::signal()
 void AbortController::abort(JSDOMGlobalObject& globalObject, JSC::JSValue reason)
 {
     ASSERT(reason);
-    if (reason.isUndefined())
-        reason = toJS(&globalObject, &globalObject, DOMException::create(AbortError));
+    if (reason.isUndefined()) {
+        protectedSignal()->signalAbort(&globalObject, CommonAbortReason::UserAbort);
+    } else {
+        protectedSignal()->signalAbort(reason);
+    }
+}
 
-    m_signal->signalAbort(reason);
+WebCoreOpaqueRoot AbortController::opaqueRoot()
+{
+    return root(&signal());
+}
+
+Ref<AbortSignal> AbortController::protectedSignal() const
+{
+    return m_signal;
 }
 
 }

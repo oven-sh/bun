@@ -40,7 +40,7 @@ pub const RegularExpression = opaque {
 
     // Simple boolean matcher
     pub inline fn matches(this: *RegularExpression, str: bun.String) bool {
-        return Yarr__RegularExpression__matches(this, str) > 0;
+        return Yarr__RegularExpression__matches(this, str) >= 0;
     }
 
     pub inline fn searchRev(this: *RegularExpression, str: bun.String) i32 {

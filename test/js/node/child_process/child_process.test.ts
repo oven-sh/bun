@@ -1,18 +1,37 @@
-import { describe, it, expect } from "bun:test";
-import { ChildProcess, spawn, execFile, exec, fork, spawnSync, execFileSync, execSync } from "node:child_process";
-import { tmpdir } from "node:os";
+import { describe, it, expect, afterAll, beforeEach } from "bun:test";
+import { ChildProcess, spawn, execFile, exec, spawnSync, execFileSync, execSync } from "node:child_process";
 import { promisify } from "node:util";
-import { bunExe, bunEnv } from "harness";
+import { bunExe, bunEnv, isWindows, tmpdirSync, nodeExe, shellExe } from "harness";
 import path from "path";
-
+import { semver } from "bun";
+import fs from "fs";
 const debug = process.env.DEBUG ? console.log : () => {};
 
-const platformTmpDir = require("fs").realpathSync(tmpdir());
+const originalProcessEnv = process.env;
+beforeEach(() => {
+  process.env = { ...bunEnv };
+  // Github actions might filter these out
+  for (const key in process.env) {
+    if (key.toUpperCase().startsWith("TLS_")) {
+      delete process.env[key];
+    }
+  }
+});
 
-// Semver regex: https://gist.github.com/jhorsman/62eeea161a13b80e39f5249281e17c39?permalink_comment_id=2896416#gistcomment-2896416
-// Not 100% accurate, but good enough for this test
-const SEMVER_REGEX =
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(-[a-zA-Z\d][-a-zA-Z.\d]*)?(\+[a-zA-Z\d][-a-zA-Z.\d]*)?$/;
+afterAll(() => {
+  process.env = originalProcessEnv;
+});
+
+function isValidSemver(string: string): boolean {
+  const cmp = string.replaceAll("-debug", "").trim();
+  const valid = semver.satisfies(cmp, "*");
+
+  if (!valid) {
+    console.error(`Invalid semver: ${JSON.stringify(cmp)}`);
+  }
+
+  return valid;
+}
 
 describe("ChildProcess.spawn()", () => {
   it("should emit `spawn` on spawn", async () => {
@@ -43,21 +62,16 @@ describe("ChildProcess.spawn()", () => {
 
 describe("spawn()", () => {
   it("should spawn a process", () => {
-    const child = spawn("echo", ["hello"]);
+    const child = spawn("bun", ["-v"]);
     expect(!!child).toBe(true);
   });
 
   it("should disallow invalid filename", () => {
-    let child;
-    let child2;
-    try {
-      // @ts-ignore
-      child = spawn(123);
-      // @ts-ignore
-      child2 = spawn(["echo", "hello"]);
-    } catch (e) {}
-    expect(!!child).toBe(false);
-    expect(!!child2).toBe(false);
+    // @ts-ignore
+    expect(() => spawn(123)).toThrow({
+      message: 'The "file" argument must be of type string. Received 123',
+      code: "ERR_INVALID_ARG_TYPE",
+    });
   });
 
   it("should allow stdout to be read via Node stream.Readable `data` events", async () => {
@@ -74,7 +88,7 @@ describe("spawn()", () => {
         debug(`stderr: ${data}`);
       });
     });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim().replace("-debug", ""))).toBe(true);
   });
 
   it("should allow stdout to be read via .read() API", async () => {
@@ -93,7 +107,7 @@ describe("spawn()", () => {
         resolve(finalData);
       });
     });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    expect(isValidSemver(result.trim())).toBe(true);
   });
 
   it("should accept stdio option with 'ignore' for no stdio fds", async () => {
@@ -116,18 +130,19 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set cwd", async () => {
-    const child = spawn("pwd", { cwd: platformTmpDir });
+    const tmpdir = tmpdirSync();
     const result: string = await new Promise(resolve => {
+      const child = spawn(bunExe(), ["-e", "console.log(process.cwd())"], { cwd: tmpdir, env: bunEnv });
       child.stdout.on("data", data => {
         resolve(data.toString());
       });
     });
-    expect(result.trim()).toBe(platformTmpDir);
+    expect(result.trim()).toBe(tmpdir);
   });
 
   it("should allow us to write to stdin", async () => {
-    const child = spawn("tee");
     const result: string = await new Promise(resolve => {
+      const child = spawn(bunExe(), ["-e", "process.stdin.pipe(process.stdout)"], { env: bunEnv });
       child.stdin.write("hello");
       child.stdout.on("data", data => {
         resolve(data.toString());
@@ -137,7 +152,7 @@ describe("spawn()", () => {
   });
 
   it("should allow us to timeout hanging processes", async () => {
-    const child = spawn("sleep", ["2"], { timeout: 3 });
+    const child = spawn(shellExe(), ["-c", "sleep", "2"], { timeout: 3 });
     const start = performance.now();
     let end: number;
     await new Promise(resolve => {
@@ -151,24 +166,28 @@ describe("spawn()", () => {
   });
 
   it("should allow us to set env", async () => {
-    async function getChildEnv(env: any): Promise<string> {
-      const child = spawn("env", { env: env });
+    async function getChildEnv(env: any): Promise<object> {
       const result: string = await new Promise(resolve => {
-        let output = "";
+        const child = spawn(bunExe(), ["-e", "process.stdout.write(JSON.stringify(process.env))"], { env });
         child.stdout.on("data", data => {
-          output += data;
-        });
-        child.stdout.on("end", () => {
-          resolve(output);
+          resolve(data.toString());
         });
       });
-      return result;
+      return JSON.parse(result);
     }
 
-    expect(/TEST\=test/.test(await getChildEnv({ TEST: "test" }))).toBe(true);
-    expect(await getChildEnv({})).toStrictEqual("");
-    expect(await getChildEnv(undefined)).not.toStrictEqual("");
-    expect(await getChildEnv(null)).not.toStrictEqual("");
+    // on Windows, there's a set of environment variables which are always set
+    if (isWindows) {
+      expect(await getChildEnv({ TEST: "test" })).toMatchObject({ TEST: "test" });
+      expect(await getChildEnv({})).toMatchObject({});
+      expect(await getChildEnv(undefined)).not.toStrictEqual({});
+      expect(await getChildEnv(null)).not.toStrictEqual({});
+    } else {
+      expect(await getChildEnv({ TEST: "test" })).toStrictEqual({ TEST: "test" });
+      expect(await getChildEnv({})).toStrictEqual({});
+      expect(await getChildEnv(undefined)).toStrictEqual(process.env);
+      expect(await getChildEnv(null)).toStrictEqual(process.env);
+    }
   });
 
   it("should allow explicit setting of argv0", async () => {
@@ -177,7 +196,16 @@ describe("spawn()", () => {
       resolve = resolve1;
     });
     process.env.NO_COLOR = "1";
-    const child = spawn("node", ["--help"], { argv0: bunExe() });
+    const node = nodeExe();
+    const bun = bunExe();
+    const child = spawn(
+      node || bun,
+      ["-e", "console.log(JSON.stringify([process.argv0, fs.realpathSync(process.argv[0])]))"],
+      {
+        argv0: bun,
+        stdio: ["inherit", "pipe", "inherit"],
+      },
+    );
     delete process.env.NO_COLOR;
     let msg = "";
 
@@ -190,28 +218,39 @@ describe("spawn()", () => {
     });
 
     const result = await promise;
-    expect(/bun.sh\/docs/.test(result)).toBe(true);
+    expect(JSON.parse(result)).toStrictEqual([bun, fs.realpathSync(node || bun)]);
   });
 
-  it("should allow us to spawn in a shell", async () => {
-    const result1: string = await new Promise(resolve => {
-      const child1 = spawn("echo", ["$0"], { shell: true });
-      child1.stdout.on("data", data => {
-        resolve(data.toString());
+  it("should allow us to spawn in the default shell", async () => {
+    const shellPath: string = await new Promise(resolve => {
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell: true });
+      child.stdout.on("data", data => {
+        resolve(data.toString().trim());
       });
     });
-    const result2: string = await new Promise(resolve => {
-      const child2 = spawn("echo", ["$0"], { shell: "bash" });
-      child2.stdout.on("data", data => {
-        resolve(data.toString());
-      });
-    });
-    expect(result1.trim()).toBe(Bun.which("sh"));
-    expect(result2.trim()).toBe(Bun.which("bash"));
+
+    // On Windows, the default shell is cmd.exe, which does not support this
+    if (isWindows) {
+      expect(shellPath).not.toBeEmpty();
+    } else {
+      expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
+    }
   });
+
+  it("should allow us to spawn in a specified shell", async () => {
+    const shell = shellExe();
+    const shellPath: string = await new Promise(resolve => {
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell });
+      child.stdout.on("data", data => {
+        resolve(data.toString().trim());
+      });
+    });
+    expect(fs.existsSync(shellPath), `${shellPath} does not exist`).toBe(true);
+  });
+
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
+    expect(isValidSemver(stdout.trim())).toBe(true);
   });
 });
 
@@ -225,7 +264,7 @@ describe("execFile()", () => {
         resolve(stdout);
       });
     });
-    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+    expect(isValidSemver(result.toString().trim())).toBe(true);
   });
 });
 
@@ -239,7 +278,7 @@ describe("exec()", () => {
         resolve(stdout);
       });
     });
-    expect(SEMVER_REGEX.test(result.toString().trim())).toBe(true);
+    expect(isValidSemver(result.toString().trim())).toBe(true);
   });
 
   it("should return an object w/ stdout and stderr when promisified", async () => {
@@ -249,28 +288,29 @@ describe("exec()", () => {
     expect(typeof result.stderr).toBe("string");
 
     const { stdout, stderr } = result;
-    expect(SEMVER_REGEX.test(stdout.trim())).toBe(true);
+    expect(isValidSemver(stdout.trim())).toBe(true);
     expect(stderr.trim()).toBe("");
   });
 });
 
 describe("spawnSync()", () => {
   it("should spawn a process synchronously", () => {
-    const { stdout } = spawnSync("echo", ["hello"], { encoding: "utf8" });
-    expect(stdout.trim()).toBe("hello");
+    const { stdout } = spawnSync("bun", ["-v"], { encoding: "utf8" });
+    expect(isValidSemver(stdout.trim())).toBe(true);
   });
 });
 
 describe("execFileSync()", () => {
   it("should execute a file synchronously", () => {
-    const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8" });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    const result = execFileSync(bunExe(), ["-v"], { encoding: "utf8", env: process.env });
+    expect(isValidSemver(result.trim())).toBe(true);
   });
 
   it("should allow us to pass input to the command", () => {
     const result = execFileSync("node", [import.meta.dir + "/spawned-child.js", "STDIN"], {
       input: "hello world!",
       encoding: "utf8",
+      env: process.env,
     });
     expect(result.trim()).toBe("data: hello world!");
   });
@@ -278,37 +318,9 @@ describe("execFileSync()", () => {
 
 describe("execSync()", () => {
   it("should execute a command in the shell synchronously", () => {
-    const result = execSync("bun -v", { encoding: "utf8" });
-    expect(SEMVER_REGEX.test(result.trim())).toBe(true);
+    const result = execSync(bunExe() + " -v", { encoding: "utf8", env: bunEnv });
+    expect(isValidSemver(result.trim())).toBe(true);
   });
-});
-
-describe("Bun.spawn()", () => {
-  it("should return exit code 0 on successful execution", async () => {
-    const proc = Bun.spawn({
-      cmd: ["echo", "hello"],
-      stdout: "pipe",
-    });
-
-    for await (const chunk of proc.stdout) {
-      const text = new TextDecoder().decode(chunk);
-      expect(text.trim()).toBe("hello");
-    }
-
-    const result = await new Promise(resolve => {
-      const maybeExited = Bun.peek(proc.exited);
-      if (maybeExited === proc.exited) {
-        proc.exited.then(code => resolve(code));
-      } else {
-        resolve(maybeExited);
-      }
-    });
-    expect(result).toBe(0);
-  });
-  // it("should fail when given an invalid cwd", () => {
-  //   const child = Bun.spawn({ cmd: ["echo", "hello"], cwd: "/invalid" });
-  //   expect(child.pid).toBe(undefined);
-  // });
 });
 
 it("should call close and exit before process exits", async () => {
@@ -317,16 +329,64 @@ it("should call close and exit before process exits", async () => {
     cwd: import.meta.dir,
     env: bunEnv,
     stdout: "pipe",
+    stdin: "inherit",
+    stderr: "inherit",
   });
-  await proc.exited;
-  expect(proc.exitCode).toBe(0);
-  let data = "";
-  const reader = proc.stdout.getReader();
-  while (true) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    data += new TextDecoder().decode(value);
-  }
+  const data = await new Response(proc.stdout).text();
   expect(data).toContain("closeHandler called");
   expect(data).toContain("exithHandler called");
+  expect(await proc.exited).toBe(0);
 });
+
+it("it accepts stdio passthrough", async () => {
+  const package_dir = tmpdirSync();
+
+  await fs.promises.writeFile(
+    path.join(package_dir, "package.json"),
+    JSON.stringify({
+      "name": "npm-run-all-test",
+      "version": "1.0.0",
+      "type": "module",
+      "scripts": {
+        "all": "run-p echo-hello echo-world",
+        "echo-hello": "echo hello",
+        "echo-world": "echo world",
+      },
+      "devDependencies": {
+        "npm-run-all": "4.1.5",
+      },
+    }),
+  );
+
+  let { stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "install"],
+    cwd: package_dir,
+    stdio: ["inherit", "inherit", "inherit"],
+    env: bunEnv,
+  });
+  expect(await exited).toBe(0);
+
+  ({ stdout, stderr, exited } = Bun.spawn({
+    cmd: [bunExe(), "--bun", "run", "all"],
+    cwd: package_dir,
+    stdio: ["ignore", "pipe", "pipe"],
+    env: bunEnv,
+  }));
+  const [err, out, exitCode] = await Promise.all([new Response(stderr).text(), new Response(stdout).text(), exited]);
+  try {
+    // This command outputs in either `["hello", "world"]` or `["world", "hello"]` order.
+    expect([err.split("\n")[0], ...err.split("\n").slice(1, -1).sort(), err.split("\n").at(-1)]).toEqual([
+      "$ run-p echo-hello echo-world",
+      "$ echo hello",
+      "$ echo world",
+      "",
+    ]);
+    expect(out.split("\n").slice(0, -1).sort()).toStrictEqual(["hello", "world"].sort());
+    expect(exitCode).toBe(0);
+  } catch (e) {
+    console.error({ exitCode });
+    console.log(err);
+    console.log(out);
+    throw e;
+  }
+}, 10000);

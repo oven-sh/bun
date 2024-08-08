@@ -40,6 +40,7 @@ export class TestServer {
       GRPC_TEST_USE_TLS: this.useTls ? "true" : "false",
       GRPC_TEST_OPTIONS: JSON.stringify(this.#options),
       GRPC_SERVICE_TYPE: this.service_type.toString(),
+      "grpc-node.max_session_memory": 1024,
     });
     this.address = result.address as AddressInfo;
     this.url = result.url as string;
@@ -149,7 +150,10 @@ export enum ConnectivityState {
 export class MockSubchannel implements grpc.experimental.SubchannelInterface {
   private state: grpc.connectivityState;
   private listeners: Set<grpc.experimental.ConnectivityStateListener> = new Set();
-  constructor(private readonly address: string, initialState: grpc.connectivityState = grpc.connectivityState.IDLE) {
+  constructor(
+    private readonly address: string,
+    initialState: grpc.connectivityState = grpc.connectivityState.IDLE,
+  ) {
     this.state = initialState;
   }
   getConnectivityState(): grpc.connectivityState {

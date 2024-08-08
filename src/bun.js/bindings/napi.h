@@ -80,7 +80,10 @@ public:
     JSC::JSValue value() const
     {
         if (refCount == 0) {
-            if (!weakValueRef.isSet()) {
+            // isSet() can return true even if the value was cleared
+            // so we must check if the value is clear
+            // if the value is unset, isClear() will return true
+            if (weakValueRef.isClear()) {
                 return JSC::JSValue {};
             }
 
@@ -101,6 +104,8 @@ public:
     ~NapiRef()
     {
         strongRef.clear();
+        // The weak ref can lead to calling the destructor
+        // so we must first clear the weak ref before we call the finalizer
         weakValueRef.clear();
     }
 
@@ -155,13 +160,13 @@ public:
         return Structure::create(vm, globalObject, prototype, TypeInfo(JSFunctionType, StructureFlags), info());
     }
 
-    FFIFunction constructor()
+    CFFIFunction constructor()
     {
         return m_constructor;
     }
 
     void* dataPtr = nullptr;
-    FFIFunction m_constructor = nullptr;
+    CFFIFunction m_constructor = nullptr;
     NapiRef* napiRef = nullptr;
 
 private:
@@ -192,17 +197,11 @@ public:
 
     DECLARE_INFO;
 
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject, Structure* structure)
+    static NapiPrototype* create(VM& vm, Structure* structure)
     {
         NapiPrototype* footprint = new (NotNull, allocateCell<NapiPrototype>(vm)) NapiPrototype(vm, structure);
         footprint->finishCreation(vm);
         return footprint;
-    }
-
-    static NapiPrototype* create(VM& vm, JSGlobalObject* globalObject)
-    {
-        Structure* structure = createStructure(vm, globalObject, globalObject->objectPrototype());
-        return create(vm, globalObject, structure);
     }
 
     static Structure* createStructure(VM& vm, JSGlobalObject* globalObject, JSValue prototype)
@@ -245,5 +244,7 @@ static inline NapiRef* toJS(napi_ref val)
 {
     return reinterpret_cast<NapiRef*>(val);
 }
+
+Structure* createNAPIFunctionStructure(VM& vm, JSC::JSGlobalObject* globalObject);
 
 }

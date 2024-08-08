@@ -21,9 +21,9 @@
 
 #pragma once
 #include "root.h"
+#include "ZigGlobalObject.h"
 
 #include "JSDOMGlobalObject.h"
-#include "ZigGlobalObject.h"
 #include "NodeConstants.h"
 #include <JavaScriptCore/JSDestructibleObject.h>
 #include <wtf/SignedPtr.h>

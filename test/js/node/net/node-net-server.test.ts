@@ -98,6 +98,35 @@ describe("net.createServer listen", () => {
     server.listen(0, "0.0.0.0");
   });
 
+  it("should provide listening property", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    expect(server.listening).toBeFalse();
+
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+
+    server.on("error", closeAndFail).on(
+      "listening",
+      mustCall(() => {
+        expect(server.listening).toBeTrue();
+        clearTimeout(timeout);
+        server.close();
+        expect(server.listening).toBeFalse();
+        done();
+      }),
+    );
+
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(0, "0.0.0.0");
+  });
+
   it("should listen on localhost", done => {
     const { mustCall, mustNotCall } = createCallCheckCtx(done);
 
@@ -205,6 +234,63 @@ describe("net.createServer listen", () => {
       }),
     );
   });
+
+  it("should bind IPv4 0.0.0.0 when listen on 0.0.0.0, issue#7355", done => {
+    const { mustCall, mustNotCall } = createCallCheckCtx(done);
+
+    const server: Server = createServer();
+    let timeout: Timer;
+    const closeAndFail = () => {
+      clearTimeout(timeout);
+      server.close();
+      mustNotCall()();
+    };
+    server.on("error", closeAndFail);
+    timeout = setTimeout(closeAndFail, 100);
+
+    server.listen(
+      0,
+      "0.0.0.0",
+      mustCall(async () => {
+        const address = server.address() as AddressInfo;
+        expect(address.address).toStrictEqual("0.0.0.0");
+        expect(address.family).toStrictEqual("IPv4");
+
+        let err: Error | null = null;
+        try {
+          await Bun.connect({
+            hostname: "0.0.0.0",
+            port: address.port,
+            socket: {
+              data(socket) {},
+            },
+          });
+        } catch (e) {
+          err = e as Error;
+        }
+        expect(err).toBeNull();
+
+        try {
+          await Bun.connect({
+            hostname: "::",
+            port: address.port,
+            socket: {
+              data(socket) {},
+            },
+          });
+        } catch (e) {
+          err = e as Error;
+        }
+
+        expect(err).not.toBeNull();
+        expect(err!.message).toBe("Failed to connect");
+        expect(err!.name).toBe("ECONNREFUSED");
+
+        server.close();
+        done();
+      }),
+    );
+  });
 });
 
 describe("net.createServer events", () => {
@@ -302,15 +388,12 @@ describe("net.createServer events", () => {
     );
   });
 
-  it("should call close", done => {
-    let closed = false;
+  it("should call close", async () => {
+    const { promise, reject, resolve } = Promise.withResolvers();
     const server: Server = createServer();
-    server.listen().on("close", () => {
-      closed = true;
-    });
+    server.listen().on("close", resolve).on("error", reject);
     server.close();
-    expect(closed).toBe(true);
-    done();
+    await promise;
   });
 
   it("should call connection and drop", done => {

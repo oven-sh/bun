@@ -18,7 +18,6 @@ if [ -z "$PKG" ]; then
   exit 1
 fi
 
-
 url="https://github.com/oven-sh/WebKit/releases/download/autobuild-$TAG/$PKG.tar.gz"
 
 old_tar_dir="$(dirname "$0")/../.webkit-cache"
@@ -37,21 +36,50 @@ mkdir -p "$tar_dir"
 
 if [ -f "$OUTDIR/.tag" ]; then
   read_tag="$(cat "$OUTDIR/.tag")"
-  if [ "$read_tag" == "$PKG" ]; then
+  if [ "$read_tag" == "$TAG-$PKG" ]; then
     exit 0
   fi
 fi
 
 rm -rf "$OUTDIR"
 
+download () {
+  local command="$1"
+  local retries="$2"
+  local options="$-"
+  if [[ $options == *e* ]]; then
+    set +e
+  fi
+  $command
+  local exit_code=$?
+  if [[ $options == *e* ]]; then
+    set -e
+  fi
+  if [[ $exit_code -ne 0 && $retries -gt 0 ]]; then
+    download "$command" $(($retries - 1)) 
+  else
+    return $exit_code
+  fi
+}
+
+# this is a big download so we will retry 5 times and ask curl to resume
+# download from where failure occurred if it fails and is rerun
 if [ ! -f "$tar" ]; then
   echo "-- Downloading WebKit"
-  if ! curl -o "$tar" -L "$url"; then
+  if ! download "curl -C - --http1.1 -o $tar.tmp -L $url" 5; then
     echo "Failed to download $url"
     exit 1
+  else
+    mv $tar.tmp $tar
   fi
 fi
 
 tar -xzf "$tar" -C "$(dirname "$OUTDIR")" || (rm "$tar" && exit 1)
 
-echo "$PKG" > "$OUTDIR/.tag"
+# We want to make sure we use the system-version of icucore on macOS
+if [ "$(uname)" == "Darwin" ]; then
+  # delete the unicode folder from include
+  rm -rf "$OUTDIR/include/unicode"
+fi
+
+echo "$TAG-$PKG" >"$OUTDIR/.tag"

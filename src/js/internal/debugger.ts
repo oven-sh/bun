@@ -20,12 +20,12 @@ export default function (
 
   const { protocol, href, host, pathname } = debug.url;
   if (!protocol.includes("unix")) {
-    console.log(dim("--------------------- Bun Inspector ---------------------"), reset());
-    console.log(`Listening:\n  ${dim(href)}`);
+    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
+    Bun.write(Bun.stderr, `Listening:\n  ${dim(href)}\n`);
     if (protocol.includes("ws")) {
-      console.log(`Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}`);
+      Bun.write(Bun.stderr, `Inspect in browser:\n  ${link(`https://debug.bun.sh/#${host}${pathname}`)}\n`);
     }
-    console.log(dim("--------------------- Bun Inspector ---------------------"), reset());
+    Bun.write(Bun.stderr, dim("--------------------- Bun Inspector ---------------------") + reset() + "\n");
   }
 
   const unix = process.env["BUN_INSPECT_NOTIFY"];
@@ -208,7 +208,6 @@ function versionInfo(): unknown {
   return {
     "Protocol-Version": "1.3",
     "Browser": "Bun",
-    // @ts-ignore: Missing types for `navigator`
     "User-Agent": navigator.userAgent,
     "WebKit-Version": process.versions.webkit,
     "Bun-Version": Bun.version,
@@ -264,27 +263,35 @@ function bufferedWriter(writer: Writer): Writer {
 const defaultHostname = "localhost";
 const defaultPort = 6499;
 
-function parseUrl(url: string): URL {
-  try {
-    if (!url) {
-      return new URL(randomId(), `ws://${defaultHostname}:${defaultPort}/`);
-    } else if (url.startsWith("/")) {
-      return new URL(url, `ws://${defaultHostname}:${defaultPort}/`);
-    } else if (/^[a-z+]+:\/\//i.test(url)) {
-      return new URL(url);
-    } else if (/^\d+$/.test(url)) {
-      return new URL(randomId(), `ws://${defaultHostname}:${url}/`);
-    } else if (!url.includes("/") && url.includes(":")) {
-      return new URL(randomId(), `ws://${url}/`);
-    } else if (!url.includes(":")) {
-      const [hostname, pathname] = url.split("/", 2);
-      return new URL(`ws://${hostname}:${defaultPort}/${pathname}`);
-    } else {
-      return new URL(randomId(), `ws://${url}`);
-    }
-  } catch {
-    throw new TypeError(`Invalid hostname or URL: '${url}'`);
+function parseUrl(input: string): URL {
+  if (input.startsWith("ws://") || input.startsWith("ws+unix://") || input.startsWith("unix://")) {
+    return new URL(input);
   }
+  const url = new URL(`ws://${defaultHostname}:${defaultPort}/${randomId()}`);
+  for (const part of input.split(/(\[[a-z0-9:]+\])|:/).filter(Boolean)) {
+    if (/^\d+$/.test(part)) {
+      url.port = part;
+      continue;
+    }
+    if (part.startsWith("[")) {
+      url.hostname = part;
+      continue;
+    }
+    if (part.startsWith("/")) {
+      url.pathname = part;
+      continue;
+    }
+    const [hostname, ...pathnames] = part.split("/");
+    if (/^\d+$/.test(hostname)) {
+      url.port = hostname;
+    } else {
+      url.hostname = hostname;
+    }
+    if (pathnames.length) {
+      url.pathname = `/${pathnames.join("/")}`;
+    }
+  }
+  return url;
 }
 
 function randomId() {

@@ -1,6 +1,6 @@
 All packages downloaded from the registry are stored in a global cache at `~/.bun/install/cache`. They are stored in subdirectories named like `${name}@${version}`, so multiple versions of a package can be cached.
 
-{% details summary="Configuring cache behavior" %}
+{% details summary="Configuring cache behavior (bunfig.toml)" %}
 
 ```toml
 [install.cache]
@@ -14,8 +14,6 @@ disable = false
 # when true, always resolve the latest versions from the registry
 disableManifest = false
 ```
-
-{% /details %}
 
 ## Minimizing re-downloads
 

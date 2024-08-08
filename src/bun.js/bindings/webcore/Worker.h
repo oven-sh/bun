@@ -55,7 +55,7 @@ class WorkerGlobalScopeProxy;
 struct StructuredSerializeOptions;
 struct WorkerOptions;
 
-class Worker final : public RefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
+class Worker final : public ThreadSafeRefCounted<Worker>, public EventTargetWithInlineData, private ContextDestructionObserver {
     WTF_MAKE_ISO_ALLOCATED_EXPORT(Worker, WEBCORE_EXPORT);
 
 public:
@@ -64,8 +64,8 @@ public:
 
     ExceptionOr<void> postMessage(JSC::JSGlobalObject&, JSC::JSValue message, StructuredSerializeOptions&&);
 
-    using RefCounted::deref;
-    using RefCounted::ref;
+    using ThreadSafeRefCounted::deref;
+    using ThreadSafeRefCounted::ref;
 
     void terminate();
     bool wasTerminated() const { return m_wasTerminated; }
@@ -139,5 +139,9 @@ private:
     const ScriptExecutionContextIdentifier m_clientIdentifier;
     void* impl_ { nullptr };
 };
+
+JSValue createNodeWorkerThreadsBinding(Zig::GlobalObject* globalObject);
+
+JSC_DECLARE_HOST_FUNCTION(jsFunctionPostMessage);
 
 } // namespace WebCore

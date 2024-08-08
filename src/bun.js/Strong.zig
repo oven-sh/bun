@@ -44,6 +44,14 @@ pub const Strong = struct {
         return .{};
     }
 
+    pub fn call(
+        this: *Strong,
+        args: []const JSC.JSValue,
+    ) JSC.JSValue {
+        const function = this.trySwap() orelse return .zero;
+        return function.call(this.globalThis.?, args);
+    }
+
     pub fn create(
         value: JSC.JSValue,
         globalThis: *JSC.JSGlobalObject,
@@ -55,7 +63,7 @@ pub const Strong = struct {
         return .{ .globalThis = globalThis };
     }
 
-    pub fn get(this: *Strong) ?JSC.JSValue {
+    pub fn get(this: *const Strong) ?JSC.JSValue {
         var ref = this.ref orelse return null;
         const result = ref.get();
         if (result == .zero) {

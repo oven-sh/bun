@@ -1,8 +1,8 @@
 #include "root.h"
 #include "headers-handwritten.h"
-
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "ModuleLoader.h"
-
+#include "JavaScriptCore/Identifier.h"
 #include "ZigGlobalObject.h"
 #include <JavaScriptCore/JSCInlines.h>
 #include <JavaScriptCore/JSNativeStdFunction.h>
@@ -35,13 +35,30 @@
 #include "NativeModuleImpl.h"
 
 #include "../modules/ObjectModule.h"
+#include "wtf/Assertions.h"
 
 namespace Bun {
 using namespace JSC;
 using namespace Zig;
 using namespace WebCore;
 
-static OnLoadResult handleOnLoadResultNotPromise(Zig::GlobalObject* globalObject, JSC::JSValue objectValue, bool wasModuleMock = false);
+class ResolvedSourceCodeHolder {
+public:
+    ResolvedSourceCodeHolder(ErrorableResolvedSource* res_)
+        : res(res_)
+    {
+    }
+
+    ~ResolvedSourceCodeHolder()
+    {
+        if (res->success && res->result.value.source_code.tag == BunStringTag::WTFStringImpl && res->result.value.needsDeref) {
+            res->result.value.needsDeref = false;
+            res->result.value.source_code.impl.wtf->deref();
+        }
+    }
+
+    ErrorableResolvedSource* res;
+};
 
 extern "C" BunLoaderType Bun__getDefaultLoader(JSC::JSGlobalObject*, BunString* specifier);
 
@@ -74,11 +91,10 @@ static JSC::SyntheticSourceProvider::SyntheticSourceGenerator generateInternalMo
         GlobalObject* globalObject = jsCast<GlobalObject*>(lexicalGlobalObject);
         auto throwScope = DECLARE_THROW_SCOPE(vm);
 
-        auto* object = jsCast<JSObject*>(globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId));
-        if (!object) {
-            return;
-        }
+        JSValue requireResult = globalObject->internalModuleRegistry()->requireId(globalObject, vm, moduleId);
         RETURN_IF_EXCEPTION(throwScope, void());
+        auto* object = requireResult.getObject();
+        ASSERT_WITH_MESSAGE(object, "Expected object from requireId %s", moduleKey.string().string().utf8().data());
 
         JSC::EnsureStillAliveScope stillAlive(object);
 
@@ -170,10 +186,11 @@ void PendingVirtualModuleResult::visitChildrenImpl(JSCell* cell, Visitor& visito
 
 DEFINE_VISIT_CHILDREN(PendingVirtualModuleResult);
 
-PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer)
+PendingVirtualModuleResult* PendingVirtualModuleResult::create(JSC::JSGlobalObject* globalObject, const WTF::String& specifier, const WTF::String& referrer, bool wasModuleLock)
 {
     auto* virtualModule = create(globalObject->vm(), reinterpret_cast<Zig::GlobalObject*>(globalObject)->pendingVirtualModuleResultStructure());
     virtualModule->finishCreation(globalObject->vm(), specifier, referrer);
+    virtualModule->wasModuleMock = wasModuleLock;
     return virtualModule;
 }
 
@@ -290,8 +307,9 @@ static JSValue handleVirtualModuleResult(
     auto onLoadResult = handleOnLoadResult(globalObject, virtualModuleResult, specifier, wasModuleMock);
     JSC::VM& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
-    auto reject = [&](JSC::JSValue exception) -> JSValue {
+    const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
             return rejectedInternalPromise(globalObject, exception);
         } else {
@@ -300,7 +318,7 @@ static JSValue handleVirtualModuleResult(
         }
     };
 
-    auto resolve = [&](JSValue code) -> JSValue {
+    const auto resolve = [&](JSValue code) -> JSValue {
         res->success = true;
         if constexpr (allowPromise) {
             scope.release();
@@ -310,7 +328,7 @@ static JSValue handleVirtualModuleResult(
         }
     };
 
-    auto rejectOrResolve = [&](JSValue code) -> JSValue {
+    const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (allowPromise) {
                 scope.clearException();
@@ -364,7 +382,7 @@ static JSValue handleVirtualModuleResult(
         ASSERT(callData.type != CallData::Type::None);
         auto specifierString = specifier->toWTFString(BunString::ZeroCopy);
         auto referrerString = referrer->toWTFString(BunString::ZeroCopy);
-        PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString);
+        PendingVirtualModuleResult* pendingModule = PendingVirtualModuleResult::create(globalObject, specifierString, referrerString, wasModuleMock);
         JSC::JSInternalPromise* internalPromise = pendingModule->internalPromise();
         MarkedArgumentBuffer arguments;
         arguments.append(promise);
@@ -383,38 +401,58 @@ static JSValue handleVirtualModuleResult(
 }
 
 extern "C" void Bun__onFulfillAsyncModule(
-    JSC::EncodedJSValue promiseValue,
+    Zig::GlobalObject* globalObject,
+    JSC::EncodedJSValue encodedPromiseValue,
     ErrorableResolvedSource* res,
     BunString* specifier,
     BunString* referrer)
 {
-    JSC::JSValue value = JSValue::decode(promiseValue);
-    JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(value);
-    auto* globalObject = promise->globalObject();
+    ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    JSC::JSInternalPromise* promise = jsCast<JSC::JSInternalPromise*>(JSC::JSValue::decode(encodedPromiseValue));
 
     if (!res->success) {
         throwException(scope, res->result.err, globalObject);
         auto* exception = scope.exception();
         scope.clearException();
-        return promise->reject(promise->globalObject(), exception);
+        return promise->reject(globalObject, exception);
     }
 
-    if (res->result.value.commonJSExportsLen) {
-        auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), res->result.value);
+    auto specifierValue = Bun::toJS(globalObject, *specifier);
 
-        if (created.has_value()) {
-            return promise->resolve(promise->globalObject(), JSSourceCode::create(vm, WTFMove(created.value())));
-        } else {
-            auto* exception = scope.exception();
-            scope.clearException();
-            return promise->reject(promise->globalObject(), exception);
+    if (auto entry = globalObject->esmRegistryMap()->get(globalObject, specifierValue)) {
+        if (entry.isObject()) {
+
+            auto* object = entry.getObject();
+            if (auto state = object->getIfPropertyExists(globalObject, Bun::builtinNames(vm).statePublicName())) {
+                if (state.toInt32(globalObject) > JSC::JSModuleLoader::Status::Fetch) {
+                    // it's a race! we lost.
+                    // https://github.com/oven-sh/bun/issues/6946
+                    // https://github.com/oven-sh/bun/issues/12910
+                    return;
+                }
+            }
         }
-    }
 
-    auto provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
-    promise->resolve(promise->globalObject(), JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+        if (res->result.value.isCommonJSModule) {
+            auto created = Bun::createCommonJSModule(jsCast<Zig::GlobalObject*>(globalObject), specifierValue, res->result.value);
+            if (created.has_value()) {
+                JSSourceCode* code = JSSourceCode::create(vm, WTFMove(created.value()));
+                promise->resolve(globalObject, code);
+            } else {
+                auto* exception = scope.exception();
+                scope.clearException();
+                promise->reject(globalObject, exception);
+            }
+        } else {
+            auto&& provider = Zig::SourceProvider::create(jsDynamicCast<Zig::GlobalObject*>(globalObject), res->result.value);
+            promise->resolve(globalObject, JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+        }
+    } else {
+        // the module has since been deleted from the registry.
+        // let's not keep it forever for no reason.
+    }
 }
 
 extern "C" bool isBunTest;
@@ -424,14 +462,17 @@ JSValue fetchCommonJSModule(
     JSCommonJSModule* target,
     JSValue specifierValue,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
     ErrorableResolvedSource resValue;
-    ErrorableResolvedSource* res = &resValue;
+    memset(&resValue, 0, sizeof(ErrorableResolvedSource));
 
+    ErrorableResolvedSource* res = &resValue;
+    ResolvedSourceCodeHolder sourceCodeHolder(res);
     auto& builtinNames = WebCore::clientData(vm)->builtinNames();
 
     bool wasModuleMock = false;
@@ -540,10 +581,9 @@ JSValue fetchCommonJSModule(
         }
     }
 
-    auto* loader = globalObject->moduleLoader();
-    JSMap* registry = jsCast<JSMap*>(loader->getDirect(vm, Identifier::fromString(vm, "registry"_s)));
+    JSMap* registry = globalObject->esmRegistryMap();
 
-    auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
+    const auto hasAlreadyLoadedESMVersionSoWeShouldntTranspileItTwice = [&]() -> bool {
         JSValue entry = registry->get(globalObject, specifierValue);
 
         if (!entry || !entry.isObject()) {
@@ -558,9 +598,8 @@ JSValue fetchCommonJSModule(
         RELEASE_AND_RETURN(scope, jsNumber(-1));
     }
 
-    Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
-
-    if (res->success && res->result.value.commonJSExportsLen) {
+    Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
+    if (res->success && res->result.value.isCommonJSModule) {
         target->evaluate(globalObject, specifier->toWTFString(BunString::ZeroCopy), res->result.value);
         RETURN_IF_EXCEPTION(scope, {});
         RELEASE_AND_RETURN(scope, target);
@@ -592,6 +631,19 @@ JSValue fetchCommonJSModule(
         target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
         target->hasEvaluated = true;
         RELEASE_AND_RETURN(scope, target);
+
+    }
+    // TOML and JSONC may go through here
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            JSC::throwException(globalObject, scope, JSC::createSyntaxError(globalObject, "Failed to parse Object"_s));
+            RELEASE_AND_RETURN(scope, {});
+        }
+
+        target->putDirect(vm, WebCore::clientData(vm)->builtinNames().exportsPublicName(), value, 0);
+        target->hasEvaluated = true;
+        RELEASE_AND_RETURN(scope, target);
     }
 
     auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
@@ -605,34 +657,27 @@ extern "C" bool isBunTest;
 template<bool allowPromise>
 static JSValue fetchESMSourceCode(
     Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
     ErrorableResolvedSource* res,
     BunString* specifier,
-    BunString* referrer)
+    BunString* referrer,
+    BunString* typeAttribute)
 {
     void* bunVM = globalObject->bunVM();
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+    ResolvedSourceCodeHolder sourceCodeHolder(res);
 
-    auto reject = [&](JSC::JSValue exception) -> JSValue {
+    const auto reject = [&](JSC::JSValue exception) -> JSValue {
         if constexpr (allowPromise) {
             return rejectedInternalPromise(globalObject, exception);
         } else {
             throwException(globalObject, scope, exception);
-            return JSC::jsUndefined();
+            return {};
         }
     };
 
-    auto resolve = [&](JSValue code) -> JSValue {
-        if constexpr (allowPromise) {
-            auto* ret = resolvedInternalPromise(globalObject, code);
-            scope.release();
-            return ret;
-        } else {
-            return code;
-        }
-    };
-
-    auto rejectOrResolve = [&](JSValue code) -> JSValue {
+    const auto rejectOrResolve = [&](JSValue code) -> JSValue {
         if (auto* exception = scope.exception()) {
             if constexpr (!allowPromise) {
                 scope.release();
@@ -691,7 +736,7 @@ static JSValue fetchESMSourceCode(
         default: {
             if (tag & SyntheticModuleType::InternalModuleRegistryFlag) {
                 constexpr auto mask = (SyntheticModuleType::InternalModuleRegistryFlag - 1);
-                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://", moduleKey))), moduleKey));
+                auto source = JSC::SourceCode(JSC::SyntheticSourceProvider::create(generateInternalModuleSourceCode(globalObject, static_cast<InternalModuleRegistry::Field>(tag & mask)), JSC::SourceOrigin(URL(makeString("builtins://"_s, moduleKey))), moduleKey));
                 return rejectOrResolve(JSSourceCode::create(vm, WTFMove(source)));
             } else {
                 auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value, JSC::SourceProviderSourceType::Module, true);
@@ -709,16 +754,16 @@ static JSValue fetchESMSourceCode(
     }
 
     if constexpr (allowPromise) {
-        void* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, true);
+        auto* pendingCtx = Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, true);
         if (pendingCtx) {
-            return reinterpret_cast<JSC::JSInternalPromise*>(pendingCtx);
+            return pendingCtx;
         }
     } else {
-        Bun__transpileFile(bunVM, globalObject, specifier, referrer, res, false);
+        Bun__transpileFile(bunVM, globalObject, specifier, referrer, typeAttribute, res, false);
     }
 
-    if (res->success && res->result.value.commonJSExportsLen) {
-        auto created = Bun::createCommonJSModule(globalObject, res->result.value);
+    if (res->success && res->result.value.isCommonJSModule) {
+        auto created = Bun::createCommonJSModule(globalObject, specifierJS, res->result.value);
 
         if (created.has_value()) {
             return rejectOrResolve(JSSourceCode::create(vm, WTFMove(created.value())));
@@ -729,7 +774,7 @@ static JSValue fetchESMSourceCode(
             scope.clearException();
             return rejectedInternalPromise(globalObject, exception);
         } else {
-            return JSC::jsUndefined();
+            return {};
         }
     }
 
@@ -767,12 +812,54 @@ static JSValue fetchESMSourceCode(
         JSC::ensureStillAliveHere(value);
         return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
     }
+    // TOML and JSONC may go through here
+    else if (res->result.value.tag == SyntheticModuleType::ExportsObject) {
+        JSC::JSValue value = JSC::JSValue::decode(res->result.value.jsvalue_for_export);
+        if (!value) {
+            return reject(JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse Object"_s)));
+        }
 
-    auto&& provider = Zig::SourceProvider::create(globalObject, res->result.value);
-    return rejectOrResolve(JSC::JSSourceCode::create(vm, JSC::SourceCode(provider)));
+        // JSON can become strings, null, numbers, booleans so we must handle "export default 123"
+        auto function = generateJSValueModuleSourceCode(
+            globalObject,
+            value);
+        auto source = JSC::SourceCode(
+            JSC::SyntheticSourceProvider::create(WTFMove(function),
+                JSC::SourceOrigin(), specifier->toWTFString(BunString::ZeroCopy)));
+        JSC::ensureStillAliveHere(value);
+        return rejectOrResolve(JSSourceCode::create(globalObject->vm(), WTFMove(source)));
+    }
+
+    return rejectOrResolve(JSC::JSSourceCode::create(vm,
+        JSC::SourceCode(Zig::SourceProvider::create(globalObject, res->result.value))));
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+JSValue fetchESMSourceCodeSync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<false>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+
+JSValue fetchESMSourceCodeAsync(
+    Zig::GlobalObject* globalObject,
+    JSC::JSValue specifierJS,
+    ErrorableResolvedSource* res,
+    BunString* specifier,
+    BunString* referrer,
+    BunString* typeAttribute)
+{
+    return fetchESMSourceCode<true>(globalObject, specifierJS, res, specifier, referrer, typeAttribute);
+}
+}
+
+using namespace Bun;
+
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultResolve, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
     ErrorableResolvedSource res = {};
@@ -810,41 +897,17 @@ extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultResolve(JSC::JSGlobal
     return JSValue::encode(jsUndefined());
 }
 
-extern "C" JSC::EncodedJSValue jsFunctionOnLoadObjectResultReject(JSC::JSGlobalObject* globalObject, JSC::CallFrame* callFrame)
+BUN_DEFINE_HOST_FUNCTION(jsFunctionOnLoadObjectResultReject, (JSC::JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
     JSC::VM& vm = globalObject->vm();
-    ErrorableResolvedSource res = {};
     JSC::JSValue reason = callFrame->argument(0);
     PendingVirtualModuleResult* pendingModule = JSC::jsCast<PendingVirtualModuleResult*>(callFrame->argument(1));
-    JSC::JSValue specifierString = pendingModule->internalField(0).get();
-    JSC::JSValue referrerString = pendingModule->internalField(1).get();
     pendingModule->internalField(0).set(vm, pendingModule, JSC::jsUndefined());
     pendingModule->internalField(1).set(vm, pendingModule, JSC::jsUndefined());
     JSC::JSInternalPromise* promise = pendingModule->internalPromise();
 
-    ZigString specifier = Zig::toZigString(specifierString, globalObject);
-    ZigString referrer = Zig::toZigString(referrerString, globalObject);
     pendingModule->internalField(2).set(vm, pendingModule, JSC::jsUndefined());
     promise->reject(globalObject, reason);
 
     return JSValue::encode(reason);
-}
-
-JSValue fetchESMSourceCodeSync(
-    Zig::GlobalObject* globalObject,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer)
-{
-    return fetchESMSourceCode<false>(globalObject, res, specifier, referrer);
-}
-
-JSValue fetchESMSourceCodeAsync(
-    Zig::GlobalObject* globalObject,
-    ErrorableResolvedSource* res,
-    BunString* specifier,
-    BunString* referrer)
-{
-    return fetchESMSourceCode<true>(globalObject, res, specifier, referrer);
-}
 }

@@ -57,6 +57,7 @@
 #include <wtf/Vector.h>
 #include <variant>
 #include "GCDefferalContext.h"
+#include "wtf/StdLibExtras.h"
 
 namespace WebCore {
 using namespace JSC;
@@ -212,7 +213,9 @@ void JSURLSearchParams::finishCreation(VM& vm)
 
 JSObject* JSURLSearchParams::createPrototype(VM& vm, JSDOMGlobalObject& globalObject)
 {
-    return JSURLSearchParamsPrototype::create(vm, &globalObject, JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype()));
+    auto* structure = JSURLSearchParamsPrototype::createStructure(vm, &globalObject, globalObject.objectPrototype());
+    structure->setMayBePrototype(true);
+    return JSURLSearchParamsPrototype::create(vm, &globalObject, structure);
 }
 
 JSObject* JSURLSearchParams::prototype(VM& vm, JSDOMGlobalObject& globalObject)
@@ -276,7 +279,15 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_deleteBody(
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name)); })));
+
+    String value;
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefined()) {
+        value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLUndefined>(*lexicalGlobalObject, throwScope, [&]() -> decltype(auto) { return impl.remove(WTFMove(name), WTFMove(value)); })));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_delete, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -336,7 +347,15 @@ static inline JSC::EncodedJSValue jsURLSearchParamsPrototypeFunction_hasBody(JSC
     EnsureStillAliveScope argument0 = callFrame->uncheckedArgument(0);
     auto name = convert<IDLUSVString>(*lexicalGlobalObject, argument0.value());
     RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
-    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name)))));
+
+    String value;
+    EnsureStillAliveScope argument1 = callFrame->argument(1);
+    if (!argument1.value().isUndefined()) {
+        value = convert<IDLUSVString>(*lexicalGlobalObject, argument1.value());
+        RETURN_IF_EXCEPTION(throwScope, encodedJSValue());
+    }
+
+    RELEASE_AND_RETURN(throwScope, JSValue::encode(toJS<IDLBoolean>(*lexicalGlobalObject, throwScope, impl.has(WTFMove(name), WTFMove(value)))));
 }
 
 JSC_DEFINE_HOST_FUNCTION(jsURLSearchParamsPrototypeFunction_has, (JSGlobalObject * lexicalGlobalObject, CallFrame* callFrame))
@@ -572,11 +591,11 @@ void JSURLSearchParams::analyzeHeap(JSCell* cell, HeapAnalyzer& analyzer)
     auto* thisObject = jsCast<JSURLSearchParams*>(cell);
     analyzer.setWrappedObjectForCell(cell, &thisObject->wrapped());
     // if (thisObject->scriptExecutionContext())
-    //     analyzer.setLabelForCell(cell, "url " + thisObject->scriptExecutionContext()->url().string());
+    //     analyzer.setLabelForCell(cell, makeString("url "_s, thisObject->scriptExecutionContext()->url().string()));
     Base::analyzeHeap(cell, analyzer);
 }
 
-bool JSURLSearchParamsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, const char** reason)
+bool JSURLSearchParamsOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown> handle, void*, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     UNUSED_PARAM(handle);
     UNUSED_PARAM(visitor);
@@ -609,18 +628,18 @@ JSC::JSValue toJSNewlyCreated(JSC::JSGlobalObject*, JSDOMGlobalObject* globalObj
 
     //     if constexpr (std::is_polymorphic_v<URLSearchParams>) {
     // #if ENABLE(BINDING_INTEGRITY)
-    //         const void* actualVTablePointer = getVTablePointer(impl.ptr());
+    //         // const void* actualVTablePointer = getVTablePointer(impl.ptr());
     // #if PLATFORM(WIN)
     //         void* expectedVTablePointer = __identifier("??_7URLSearchParams@WebCore@@6B@");
     // #else
-    //         void* expectedVTablePointer = &_ZTVN7WebCore15URLSearchParamsE[2];
+    //         // void* expectedVTablePointer = &_ZTVN7WebCore15URLSearchParamsE[2];
     // #endif
 
     //         // If you hit this assertion you either have a use after free bug, or
     //         // URLSearchParams has subclasses. If URLSearchParams has subclasses that get passed
     //         // to toJS() we currently require URLSearchParams you to opt out of binding hardening
     //         // by adding the SkipVTableValidation attribute to the interface IDL definition
-    //         RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
+    //         // RELEASE_ASSERT(actualVTablePointer == expectedVTablePointer);
     // #endif
     // }
     return createWrapper<URLSearchParams>(globalObject, WTFMove(impl));

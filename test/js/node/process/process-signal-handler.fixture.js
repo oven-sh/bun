@@ -1,6 +1,20 @@
 import os from "os";
 import { raise } from "./call-raise";
 
+function checkSignal(signalName, args) {
+  if (args.length !== 2) {
+    throw new Error("Expected 2 arguments, got " + args.length);
+  }
+  if (args[0] !== signalName) {
+    throw new Error("Expected signal name " + signalName + ", got " + args[0]);
+  }
+
+  const signalNumber = os.constants.signals[signalName];
+  if (args[1] !== signalNumber) {
+    throw new Error("Expected signal number " + signalNumber + ", got " + args[1]);
+  }
+}
+
 var counter = 0;
 function done() {
   counter++;
@@ -40,10 +54,12 @@ const SIGUSR2 = os.constants.signals.SIGUSR2;
 
 switch (process.argv.at(-1)) {
   case "SIGUSR1": {
-    process.on("SIGUSR1", () => {
+    process.on("SIGUSR1", function () {
+      checkSignal("SIGUSR1", arguments);
       done();
     });
-    process.on("SIGUSR1", () => {
+    process.on("SIGUSR1", function () {
+      checkSignal("SIGUSR1", arguments);
       done();
     });
     raise(SIGUSR1);

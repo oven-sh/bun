@@ -15,7 +15,7 @@ To _containerize_ our application, we define a `Dockerfile`. This file contains 
 ```docker#Dockerfile
 # use the official Bun image
 # see all versions at https://hub.docker.com/r/oven/bun/tags
-FROM oven/bun:1 as base
+FROM oven/bun:1 AS base
 WORKDIR /usr/src/app
 
 # install dependencies into temp directory
@@ -77,7 +77,7 @@ coverage*
 
 ---
 
-We'll now use `docker build` to convert this `Dockerfile` into a _Docker image_, is a self-contained template containing all the dependencies and configuration required to run the application.
+We'll now use `docker build` to convert this `Dockerfile` into a _Docker image_, a self-contained template containing all the dependencies and configuration required to run the application.
 
 The `-t` flag lets us specify a name for the image, and `--pull` tells Docker to automatically download the latest version of the base image (`oven/bun`). The initial build will take longer, as Docker will download all the base images and dependencies.
 

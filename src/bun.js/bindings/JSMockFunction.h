@@ -30,7 +30,14 @@ public:
 
     static JSMockModule create(JSC::JSGlobalObject*);
 
+    // These are used by "spyOn"
+    // This is useful for iterating through every non-GC'd spyOn
     JSC::Strong<JSC::Unknown> activeSpies;
+
+    // Every JSMockFunction::create appends to this list
+    // This is useful for iterating through every non-GC'd mock function
+    // This list includes activeSpies
+    JSC::Strong<JSC::Unknown> activeMocks;
 };
 
 class MockWithImplementationCleanupData : public JSC::JSInternalFieldObjectImpl<4> {

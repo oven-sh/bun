@@ -3,7 +3,7 @@ const JSParser = bun.js_parser;
 const JSPrinter = bun.js_printer;
 const JSAst = bun.JSAst;
 const Api = @import("./api/schema.zig").Api;
-const Logger = @import("root").bun.logger;
+const Logger = bun.logger;
 const global = @import("root").bun;
 const default_allocator = global.default_allocator;
 const std = @import("std");
@@ -453,7 +453,7 @@ export fn getTests(opts_array: u64) u64 {
     defer arena.deinit();
     var log_ = Logger.Log.init(allocator);
     var reader = ApiReader.init(Uint8Array.fromJS(opts_array), allocator);
-    var opts = Api.GetTestsRequest.decode(&reader) catch @panic("out of memory");
+    var opts = Api.GetTestsRequest.decode(&reader) catch bun.outOfMemory();
     var code = Logger.Source.initPathString(if (opts.path.len > 0) opts.path else "my-test-file.test.tsx", opts.contents);
     code.contents_is_recycled = true;
     defer {
@@ -464,7 +464,7 @@ export fn getTests(opts_array: u64) u64 {
     var parser = JSParser.Parser.init(.{
         .jsx = .{},
         .ts = true,
-    }, &log_, &code, define, allocator) catch @panic("out of memory");
+    }, &log_, &code, define, allocator) catch bun.outOfMemory();
 
     var anaylzer = TestAnalyzer{
         .items = std.ArrayList(
@@ -479,11 +479,10 @@ export fn getTests(opts_array: u64) u64 {
     parser.options.features.top_level_await = true;
 
     parser.analyze(&anaylzer, @ptrCast(&TestAnalyzer.visitParts)) catch |err| {
+        bun.handleErrorReturnTrace(err, @errorReturnTrace());
+
         Output.print("Error: {s}\n", .{@errorName(err)});
 
-        if (@errorReturnTrace()) |trace| {
-            Output.print("{}\n", .{trace});
-        }
         log_.printForLogLevel(Output.writer()) catch unreachable;
         return 0;
     };
@@ -502,7 +501,7 @@ export fn getTests(opts_array: u64) u64 {
 }
 
 export fn transform(opts_array: u64) u64 {
-    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
+    // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();
@@ -572,7 +571,7 @@ export fn transform(opts_array: u64) u64 {
 }
 
 export fn scan(opts_array: u64) u64 {
-    // var arena = @import("root").bun.ArenaAllocator.init(default_allocator);
+    // var arena = bun.ArenaAllocator.init(default_allocator);
     var arena = Arena.init() catch unreachable;
     var allocator = arena.allocator();
     defer arena.deinit();

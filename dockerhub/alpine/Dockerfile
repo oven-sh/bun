@@ -96,18 +96,20 @@ FROM alpine:3.18
 ARG BUN_RUNTIME_TRANSPILER_CACHE_PATH=0
 ENV BUN_RUNTIME_TRANSPILER_CACHE_PATH=${BUN_RUNTIME_TRANSPILER_CACHE_PATH}
 
-COPY --from=build /tmp/glibc.apk /tmp/
-COPY --from=build /tmp/glibc-bin.apk /tmp/
+# Ensure `bun install -g` works
+ARG BUN_INSTALL_BIN=/usr/local/bin
+ENV BUN_INSTALL_BIN=${BUN_INSTALL_BIN}
+
 COPY --from=build /usr/local/bin/bun /usr/local/bin/
 COPY docker-entrypoint.sh /usr/local/bin/
 
-RUN addgroup -g 1000 bun \
+# Temporarily use the `build`-stage /tmp folder to access the glibc APKs:
+RUN --mount=type=bind,from=build,source=/tmp,target=/tmp \
+    addgroup -g 1000 bun \
     && adduser -u 1000 -G bun -s /bin/sh -D bun \
     && apk --no-cache --force-overwrite --allow-untrusted add \
       /tmp/glibc.apk \
       /tmp/glibc-bin.apk \
-    && rm /tmp/glibc.apk \
-    && rm /tmp/glibc-bin.apk \
     && ln -s /usr/local/bin/bun /usr/local/bin/bunx \
     && which bun \
     && which bunx \

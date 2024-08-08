@@ -21,7 +21,7 @@ const std = @import("std");
 ///
 /// The solution is to have it explicitly initialized to zero bytes, like:
 /// ```zig
-/// const Demo = struct {
+/// const Demo = extern struct {
 ///     a: u8,
 ///     _padding: [7]u8 = .{0} ** 7,
 ///     b: u64, // same offset as before

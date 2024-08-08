@@ -14,7 +14,7 @@
  * See the License for the specific language governing permissions and
  * limitations under the License.
  */
-
+// clang-format off
 #ifndef UWS_HTTPRESPONSEDATA_H
 #define UWS_HTTPRESPONSEDATA_H
 
@@ -33,6 +33,10 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     template <bool> friend struct HttpResponse;
     template <bool> friend struct HttpContext;
     public:
+    using OnWritableCallback = bool (*)(uWS::HttpResponse<SSL>*, uint64_t, void*);
+    using OnAbortedCallback = void (*)(uWS::HttpResponse<SSL>*, void*);
+    using OnDataCallback = void (*)(uWS::HttpResponse<SSL>* response, const char* chunk, size_t chunk_length, bool, void*);
+
     /* When we are done with a response we mark it like so */
     void markDone() {
         onAborted = nullptr;
@@ -46,15 +50,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
     }
 
     /* Caller of onWritable. It is possible onWritable calls markDone so we need to borrow it. */
-    bool callOnWritable(uintmax_t offset) {
+    bool callOnWritable( uWS::HttpResponse<SSL>* response, uint64_t offset) {
         /* Borrow real onWritable */
-        MoveOnlyFunction<bool(uintmax_t)> borrowedOnWritable = std::move(onWritable);
+        auto* borrowedOnWritable = std::move(onWritable);
 
         /* Set onWritable to placeholder */
-        onWritable = [](uintmax_t) {return true;};
+        onWritable = [](uWS::HttpResponse<SSL>*, uint64_t, void*) {return true;};
 
         /* Run borrowed onWritable */
-        bool ret = borrowedOnWritable(offset);
+        bool ret = borrowedOnWritable(response, offset, userData);
 
         /* If we still have onWritable (the placeholder) then move back the real one */
         if (onWritable) {
@@ -74,12 +78,15 @@ struct HttpResponseData : AsyncSocketData<SSL>, HttpParser {
         HTTP_CONNECTION_CLOSE = 16 // used
     };
 
+    /* Shared context pointer */
+    void* userData = nullptr;
+
     /* Per socket event handlers */
-    MoveOnlyFunction<bool(uintmax_t)> onWritable;
-    MoveOnlyFunction<void()> onAborted;
-    MoveOnlyFunction<void(std::string_view, bool)> inStream; // onData
+    OnWritableCallback onWritable = nullptr;
+    OnAbortedCallback onAborted = nullptr;
+    OnDataCallback inStream = nullptr;
     /* Outgoing offset */
-    uintmax_t offset = 0;
+    uint64_t offset = 0;
 
     /* Let's track number of bytes since last timeout reset in data handler */
     unsigned int received_bytes_per_timeout = 0;

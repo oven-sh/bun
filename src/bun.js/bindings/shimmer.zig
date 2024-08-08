@@ -1,7 +1,8 @@
 const std = @import("std");
+const bun = @import("root").bun;
 const StaticExport = @import("./static_export.zig");
 const Sizes = @import("./sizes.zig");
-pub const is_bindgen: bool = std.meta.globalOption("bindgen", bool) orelse false;
+pub const is_bindgen: bool = false;
 const headers = @import("./headers.zig");
 
 fn isNullableType(comptime Type: type) bool {
@@ -14,6 +15,14 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
     return struct {
         pub const namespace = _namespace;
         pub const name = _name;
+
+        pub fn assertJSFunction(comptime funcs: anytype) void {
+            inline for (funcs) |func| {
+                if (@typeInfo(@TypeOf(func)) != .Fn) {
+                    @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(func) ++ " to be a function but received " ++ @tagName(@typeInfo(@TypeOf(func))));
+                }
+            }
+        }
 
         pub fn ref() void {
             if (comptime @hasDecl(Parent, "Export")) {
@@ -110,8 +119,10 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                     if (@typeInfo(Function) != .Fn) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                     }
-                    var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
-                    if (Fn.calling_convention != .C) {
+                    const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                    if (Function == bun.JSC.JSHostFunctionTypeWithCCallConvForAssertions and bun.JSC.conv != .C) {
+                        @compileError("Expected " ++ bun.meta.typeName(Function) ++ " to have a JSC.conv Calling Convention.");
+                    } else if (Function == bun.JSC.JSHostFunctionType) {} else if (Fn.calling_convention != .C) {
                         @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                     }
 
@@ -133,13 +144,13 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
             return comptime brk: {
                 var functions: [std.meta.fieldNames(FunctionsType).len * 2]StaticExport = undefined;
                 var j: usize = 0;
-                inline for (Functions) |thenable| {
-                    inline for ([_][]const u8{ "resolve", "reject" }) |fn_name| {
+                for (Functions) |thenable| {
+                    for ([_][]const u8{ "resolve", "reject" }) |fn_name| {
                         const Function = @TypeOf(@field(thenable, fn_name));
                         if (@typeInfo(Function) != .Fn) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to be a function but received " ++ @tagName(@typeInfo(Function)));
                         }
-                        var Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
+                        const Fn: std.builtin.Type.Fn = @typeInfo(Function).Fn;
                         if (Fn.calling_convention != .C) {
                             @compileError("Expected " ++ @typeName(Parent) ++ "." ++ @typeName(Function) ++ " to have a C Calling Convention.");
                         }
@@ -192,7 +203,7 @@ pub fn Shimmer(comptime _namespace: []const u8, comptime _name: []const u8, comp
                 return matchNullable(
                     comptime @typeInfo(@TypeOf(@field(Parent, typeName))).Fn.return_type.?,
                     comptime @typeInfo(@TypeOf(Fn)).Fn.return_type.?,
-                    @call(.auto, Fn, .{}),
+                    Fn(),
                 );
             }
         }

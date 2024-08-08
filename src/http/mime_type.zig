@@ -91,7 +91,7 @@ pub const Category = enum {
 
 pub const none = MimeType.initComptime("", .none);
 pub const other = MimeType.initComptime("application/octet-stream", .other);
-pub const css = MimeType.initComptime("text/css", .css);
+pub const css = MimeType.initComptime("text/css;charset=utf-8", .css);
 pub const javascript = MimeType.initComptime("text/javascript;charset=utf-8", .javascript);
 pub const ico = MimeType.initComptime("image/vnd.microsoft.icon", .image);
 pub const html = MimeType.initComptime("text/html;charset=utf-8", .html);
@@ -143,7 +143,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
                 if (allocated != null and allocator != null) allocated.?.* = true;
                 return MimeType{
-                    .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                    .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                     .category = .application,
                 };
             },
@@ -151,7 +151,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "font")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                         .category = .font,
                     };
                 }
@@ -175,7 +175,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                         .category = .text,
                     };
                 }
@@ -184,7 +184,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "image")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                         .category = .image,
                     };
                 }
@@ -192,7 +192,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "audio")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                         .category = .audio,
                     };
                 }
@@ -200,7 +200,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
                 if (strings.eqlComptimeIgnoreLen(category_, "video")) {
                     if (allocated != null and allocator != null) allocated.?.* = true;
                     return MimeType{
-                        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+                        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
                         .category = .video,
                     };
                 }
@@ -211,7 +211,7 @@ pub fn init(str_: string, allocator: ?std.mem.Allocator, allocated: ?*bool) Mime
 
     if (allocated != null and allocator != null) allocated.?.* = true;
     return MimeType{
-        .value = if (allocator) |a| a.dupe(u8, str_) catch unreachable else str_,
+        .value = if (allocator) |a| a.dupe(u8, str_) catch bun.outOfMemory() else str_,
         .category = .other,
     };
 }
@@ -2534,7 +2534,9 @@ pub const all = struct {
 pub fn byName(name: []const u8) MimeType {
     return MimeType.init(name, null, null);
 }
-
+pub fn deinit(mimeType: MimeType, allocator: std.mem.Allocator) void {
+    allocator.free(mimeType.value);
+}
 pub const extensions = ComptimeStringMap(MimeType, .{
     .{ "123", all.@"application/vnd.lotus-1-2-3" },
     .{ "1km", all.@"application/vnd.1000minds.decision-model+xml" },

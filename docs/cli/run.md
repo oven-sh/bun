@@ -75,14 +75,6 @@ $ bun run dev --watch # ❌ don't do this
 Flags that occur at the end of the command will be ignored and passed through to the `"dev"` script itself.
 {% /callout %}
 
-### `--smol`
-
-In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
-
-```bash
-$ bun --smol run index.tsx
-```
-
 ## Run a `package.json` script
 
 {% note %}
@@ -95,7 +87,7 @@ $ bun [bun flags] run <script> [script flags]
 
 Your `package.json` can define a number of named `"scripts"` that correspond to shell commands.
 
-```jsonc
+```json
 {
   // ... other fields
   "scripts": {
@@ -158,3 +150,45 @@ By default, Bun respects this shebang and executes the script with `node`. Howev
 ```bash
 $ bun run --bun vite
 ```
+
+### Filtering
+
+in monorepos containing multiple packages, you can use the `--filter` argument to execute scripts in many packages at once.
+
+Use `bun run --filter <name_pattern> <script>` to execute `<script>` in all packages whose name matches `<name_pattern>`.
+For example, if you have subdirectories containing packages named `foo`, `bar` and `baz`, running 
+```bash
+bun run --filter 'ba*' <script>
+```
+will execute `<script>` in both `bar` and `baz`, but not in `foo`.
+
+Find more details in the docs page for [filter](/docs/cli/filter).
+
+## `bun run -` to pipe code from stdin
+
+`bun run -` lets you read JavaScript, TypeScript, TSX, or JSX from stdin and execute it without writing to a temporary file first.
+
+```bash
+$ echo "console.log('Hello')" | bun run -
+Hello
+```
+
+You can also use `bun run -` to redirect files into Bun. For example, to run a `.js` file as if it were a `.ts` file:
+
+```bash
+$ echo "console.log!('This is TypeScript!' as any)" > secretly-typescript.js
+$ bun run - < secretly-typescript.js
+This is TypeScript!
+```
+
+For convenience, all code is treated as TypeScript with JSX support when using `bun run -`.
+
+## `bun run --smol`
+
+In memory-constrained environments, use the `--smol` flag to reduce memory usage at a cost to performance.
+
+```bash
+$ bun --smol run index.tsx
+```
+
+This causes the garbage collector to run more frequently, which can slow down execution. However, it can be useful in environments with limited memory. Bun automatically adjusts the garbage collector's heap size based on the available memory (accounting for cgroups and other memory limits) with and without the `--smol` flag, so this is mostly useful for cases where you want to make the heap size grow more slowly.

@@ -2,34 +2,34 @@ const std = @import("std");
 const bun = @import("root").bun;
 const string = bun.string;
 const Environment = bun.Environment;
-const JSC = @import("root").bun.JSC;
+const JSC = bun.JSC;
 
 const ConstantType = enum { ERRNO, ERRNO_WIN, SIG, DLOPEN, OTHER };
 
 fn getErrnoConstant(comptime name: []const u8) ?comptime_int {
-    return if (@hasField(std.os.E, name))
-        return @intFromEnum(@field(std.os.E, name))
+    return if (@hasField(std.posix.E, name))
+        return @intFromEnum(@field(std.posix.E, name))
     else
         return null;
 }
 
 fn getWindowsErrnoConstant(comptime name: []const u8) ?comptime_int {
-    return if (@hasField(std.os.E, name))
+    return if (@hasField(std.posix.E, name))
         return @intFromEnum(@field(std.os.windows.ws2_32.WinsockError, name))
     else
         return null;
 }
 
 fn getSignalsConstant(comptime name: []const u8) ?comptime_int {
-    return if (@hasDecl(std.os.SIG, name))
-        return @field(std.os.SIG, name)
+    return if (@hasDecl(std.posix.SIG, name))
+        return @field(std.posix.SIG, name)
     else
         return null;
 }
 
 fn getDlopenConstant(comptime name: []const u8) ?comptime_int {
-    return if (@hasDecl(std.os.system.RTLD, name))
-        return @field(std.os.system.RTLD, name)
+    return if (@hasDecl(std.posix.system.RTLD, name))
+        return @field(std.posix.system.RTLD, name)
     else
         return null;
 }

@@ -289,6 +289,10 @@ export default [
         fn: "toBe",
         length: 1,
       },
+      toBeCalled: {
+        fn: "toHaveBeenCalled",
+        length: 0,
+      },
       toHaveBeenCalled: {
         fn: "toHaveBeenCalled",
         length: 0,
@@ -297,17 +301,38 @@ export default [
         fn: "toHaveBeenCalledTimes",
         length: 1,
       },
+      toBeCalledTimes: {
+        fn: "toHaveBeenCalledTimes",
+        length: 1,
+      },
       toHaveBeenCalledWith: {
+        fn: "toHaveBeenCalledWith",
+      },
+      toBeCalledWith: {
         fn: "toHaveBeenCalledWith",
       },
       toHaveBeenLastCalledWith: {
         fn: "toHaveBeenLastCalledWith",
       },
+      lastCalledWith: {
+        fn: "toHaveBeenLastCalledWith",
+      },
       toHaveBeenNthCalledWith: {
+        fn: "toHaveBeenNthCalledWith",
+      },
+      nthCalledWith: {
         fn: "toHaveBeenNthCalledWith",
       },
       toHaveReturnedTimes: {
         fn: "toHaveReturnedTimes",
+        length: 1,
+      },
+      toReturn: {
+        fn: "toHaveReturned",
+        length: 1,
+      },
+      toHaveReturned: {
+        fn: "toHaveReturned",
         length: 1,
       },
       toHaveReturnedWith: {
@@ -318,7 +343,15 @@ export default [
         fn: "toHaveLastReturnedWith",
         length: 1,
       },
+      lastReturnedWith: {
+        fn: "toHaveLastReturnedWith",
+        length: 1,
+      },
       toHaveNthReturnedWith: {
+        fn: "toHaveNthReturnedWith",
+        length: 1,
+      },
+      nthReturnedWith: {
         fn: "toHaveNthReturnedWith",
         length: 1,
       },
@@ -382,6 +415,38 @@ export default [
         fn: "toContain",
         length: 1,
       },
+      toContainKey: {
+        fn: "toContainKey",
+        length: 1,
+      },
+      toContainAllKeys: {
+        fn: "toContainAllKeys",
+        length: 1,
+      },
+      toContainAnyKeys: {
+        fn: "toContainAnyKeys",
+        length: 1,
+      },
+      toContainValue: {
+        fn: "toContainValue",
+        length: 1,
+      },
+      toContainValues: {
+        fn: "toContainValues",
+        length: 1,
+      },
+      toContainAllValues: {
+        fn: "toContainAllValues",
+        length: 1,
+      },
+      toContainAnyValues: {
+        fn: "toContainAnyValues",
+        length: 1,
+      },
+      toContainKeys: {
+        fn: "toContainKeys",
+        length: 1,
+      },
       toContainEqual: {
         fn: "toContainEqual",
         length: 1,
@@ -414,12 +479,20 @@ export default [
         fn: "toThrow",
         length: 1,
       },
+      toThrowError: {
+        fn: "toThrow",
+        length: 1,
+      },
       toThrowErrorMatchingSnapshot: {
         fn: "toThrowErrorMatchingSnapshot",
         length: 1,
       },
       toThrowErrorMatchingInlineSnapshot: {
         fn: "toThrowErrorMatchingInlineSnapshot",
+        length: 1,
+      },
+      toBeOneOf: {
+        fn: "toBeOneOf",
         length: 1,
       },
       not: {
@@ -437,6 +510,10 @@ export default [
       // jest-extended
       toBeEmpty: {
         fn: "toBeEmpty",
+        length: 0,
+      },
+      toBeEmptyObject: {
+        fn: "toBeEmptyObject",
         length: 0,
       },
       toBeEven: {
@@ -483,6 +560,10 @@ export default [
         fn: "toBeInteger",
         length: 0,
       },
+      toBeObject: {
+        fn: "toBeObject",
+        length: 0,
+      },
       toBeFinite: {
         fn: "toBeFinite",
         length: 0,
@@ -513,6 +594,10 @@ export default [
       },
       toBeDate: {
         fn: "toBeDate",
+        length: 0,
+      },
+      toBeValidDate: {
+        fn: "toBeValidDate",
         length: 0,
       },
       toBeString: {

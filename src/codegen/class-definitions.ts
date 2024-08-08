@@ -10,7 +10,15 @@ interface PropertyAttribute {
 }
 
 export type Field =
-  | ({ getter: string; cache?: true | string; this?: boolean } & PropertyAttribute)
+  | ({
+      getter: string;
+      cache?: true | string;
+      /**
+       * Allow overriding the value of the property
+       */
+      writable?: boolean;
+      this?: boolean;
+    } & PropertyAttribute)
   | { value: string }
   | ({ setter: string; this?: boolean } & PropertyAttribute)
   | ({
@@ -43,6 +51,7 @@ export interface ClassDefinition {
   construct?: boolean;
   call?: boolean;
   finalize?: boolean;
+  overridesToJS?: boolean;
   klass: Record<string, Field>;
   proto: Record<string, Field>;
   values?: string[];
@@ -76,6 +85,7 @@ export function define(
     klass = {},
     proto = {},
     values = [],
+    overridesToJS = false,
     estimatedSize = false,
     call = false,
     construct = false,
@@ -86,6 +96,7 @@ export function define(
   return {
     ...rest,
     call,
+    overridesToJS,
     construct,
     estimatedSize,
     structuredClone,

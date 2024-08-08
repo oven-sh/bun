@@ -73,7 +73,7 @@ JSValue JSCallbackData::invokeCallback(VM& vm, JSObject* callback, JSValue thisV
 
         callData = getCallData(function);
         if (callData.type == CallData::Type::None) {
-            returnedException = JSC::Exception::create(vm, createTypeError(lexicalGlobalObject, makeString("'", String(functionName.uid()), "' property of callback interface should be callable")));
+            returnedException = JSC::Exception::create(vm, createTypeError(lexicalGlobalObject, makeString("'"_s, String(functionName.uid()), "' property of callback interface should be callable"_s)));
             return JSValue();
         }
 
@@ -107,10 +107,10 @@ void JSCallbackDataWeak::visitJSFunction(Visitor& visitor)
 template void JSCallbackDataWeak::visitJSFunction(JSC::AbstractSlotVisitor&);
 template void JSCallbackDataWeak::visitJSFunction(JSC::SlotVisitor&);
 
-bool JSCallbackDataWeak::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, const char** reason)
+bool JSCallbackDataWeak::WeakOwner::isReachableFromOpaqueRoots(JSC::Handle<JSC::Unknown>, void* context, AbstractSlotVisitor& visitor, ASCIILiteral* reason)
 {
     if (UNLIKELY(reason))
-        *reason = "Context is opaque root"; // FIXME: what is the context.
+        *reason = "Context is opaque root"_s; // FIXME: what is the context.
     return visitor.containsOpaqueRoot(context);
 }
 

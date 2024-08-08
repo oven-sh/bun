@@ -40,8 +40,11 @@ namespace WebCore {
 template<typename> class ExceptionOr;
 class HTMLElement;
 class HTMLFormElement;
+DECLARE_ALLOCATOR_WITH_HEAP_IDENTIFIER(DOMFormData);
 
 class DOMFormData : public RefCounted<DOMFormData>, public ContextDestructionObserver {
+    WTF_MAKE_FAST_ALLOCATED_WITH_HEAP_IDENTIFIER(DOMFormData);
+
 public:
     using FormDataEntryValue = std::variant<String, RefPtr<Blob>>;
 
@@ -52,7 +55,7 @@ public:
 
     // static Ref<DOMFormData> create(ScriptExecutionContext*, const PAL::TextEncoding&);
     static Ref<DOMFormData> create(ScriptExecutionContext*);
-    static Ref<DOMFormData> create(ScriptExecutionContext*, StringView urlEncodedString);
+    static Ref<DOMFormData> create(ScriptExecutionContext*, const StringView& urlEncodedString);
 
     const Vector<Item>& items() const { return m_items; }
     // const PAL::TextEncoding& encoding() const { return m_encoding; }

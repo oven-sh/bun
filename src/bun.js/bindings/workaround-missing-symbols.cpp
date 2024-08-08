@@ -1,6 +1,6 @@
 
-#if defined(WIN32)
 
+#if defined(WIN32)
 
 #include <cstdint>
 #include <algorithm>
@@ -14,7 +14,7 @@
 #undef _environ
 #undef environ
 
-// Some libraries need these symbols. Windows makes it 
+// Some libraries need these symbols. Windows makes it
 extern "C" char** environ = nullptr;
 extern "C" char** _environ = nullptr;
 
@@ -41,49 +41,6 @@ extern "C" int stat64(
 extern "C" int kill(int pid, int sig)
 {
     return uv_kill(pid, sig);
-}
-
-extern "C" int readlink(const char* path, char* buf, size_t bufsize)
-{
-    uv_fs_t req;
-    req.result = 0;
-
-    int len = uv_fs_readlink(uv_default_loop(), &req, path, nullptr);
-    if (req.result < 0) {
-        uv_fs_req_cleanup(&req);
-        return req.result;
-    }
-
-    if (bufsize > req.result)
-        bufsize = req.result;
-
-    size_t outlen = std::min(static_cast<size_t>(len), bufsize);
-    memcpy(buf, req.ptr, outlen);
-    uv_fs_req_cleanup(&req);
-
-    return outlen;
-}
-
-extern "C" int link(const char* oldpath, const char* newpath)
-{
-    uv_fs_t req;
-    int status_code = uv_fs_link(uv_default_loop(), &req, oldpath, newpath, nullptr);
-    uv_fs_req_cleanup(&req);
-    return status_code;
-}
-
-extern "C" char* mkdtemp(char* template_name)
-{
-    uv_fs_t req;
-    int status_code = uv_fs_mkdtemp(uv_default_loop(), &req, template_name, nullptr);
-    
-    if (status_code < 0)
-        return nullptr;
-    size_t outlen = std::min(strlen(req.path), strlen(template_name));
-    memcpy(template_name, req.path, outlen);
-    template_name[outlen] = '\0';
-    uv_fs_req_cleanup(&req);
-    return template_name;
 }
 
 #endif
@@ -133,6 +90,7 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
 typedef double (*MathFunction)(double);
+typedef double (*MathFunction2)(double, double);
 
 static inline double __real_exp(double x)
 {
@@ -166,6 +124,17 @@ static inline double __real_log2(double x)
     }
 
     return function(x);
+}
+static inline double __real_fmod(double x, double y)
+{
+    static MathFunction2 function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x, y);
 }
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
@@ -207,6 +176,26 @@ extern "C" double __wrap_log(double x)
 extern "C" double __wrap_log2(double x)
 {
     return __real_log2(x);
+}
+
+extern "C" double __wrap_fmod(double x, double y)
+{
+    return __real_fmod(x, y);
+}
+
+static inline float __real_expf(float arg)
+{
+    static void* ptr = nullptr;
+    if (UNLIKELY(ptr == nullptr)) {
+        ptr = dlsym(RTLD_DEFAULT, "expf");
+    }
+
+    return ((float (*)(float))ptr)(arg);
+}
+
+extern "C" float __wrap_expf(float arg)
+{
+    return __real_expf(arg);
 }
 
 #ifndef _MKNOD_VER
@@ -278,8 +267,23 @@ extern "C" int __wrap_mknodat(int dirfd, const char* path, __mode_t mode, __dev_
 // macOS
 #if defined(__APPLE__)
 
+#include <version>
 #include <dlfcn.h>
 #include <cstdint>
+#include <cstdarg>
+#include <cstdio>
+#include "headers.h"
+
+void std::__libcpp_verbose_abort(char const* format, ...)
+{
+    va_list list;
+    va_start(list, format);
+    char buffer[1024];
+    size_t len = vsnprintf(buffer, sizeof(buffer), format, list);
+    va_end(list);
+
+    Bun__panic(buffer, len);
+}
 
 extern "C" int pthread_self_is_exiting_np()
 {
@@ -369,3 +373,14 @@ extern "C" int __ulock_wait2(uint32_t operation, void* addr, uint64_t value,
 }
 
 #endif
+
+#ifndef U_SHOW_CPLUSPLUS_API
+#define U_SHOW_CPLUSPLUS_API 0
+#endif
+
+#include <unicode/uchar.h>
+
+extern "C" bool icu_hasBinaryProperty(UChar32 cp, unsigned int prop)
+{
+    return u_hasBinaryProperty(cp, static_cast<UProperty>(prop));
+}

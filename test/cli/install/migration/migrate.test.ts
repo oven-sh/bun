@@ -1,12 +1,14 @@
 import fs from "fs";
-import { test, expect } from "bun:test";
-import { bunEnv, bunExe } from "harness";
+import { test, expect, beforeAll, setDefaultTimeout } from "bun:test";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 import { join } from "path";
-import { mkdtempSync } from "js/node/fs/export-star-from";
-import { tmpdir } from "os";
+
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
+});
 
 function testMigration(lockfile: string) {
-  const testDir = mkdtempSync(join(tmpdir(), "migrate-" + crypto.randomUUID()));
+  const testDir = tmpdirSync();
 
   fs.writeFileSync(
     join(testDir, "package.json"),
@@ -17,7 +19,7 @@ function testMigration(lockfile: string) {
       },
     }),
   );
-  fs.cpSync(join(import.meta.dir, "add-while-migrate-fixture.json"), join(testDir, "package-lock.json"));
+  fs.cpSync(join(import.meta.dir, lockfile), join(testDir, "package-lock.json"));
 
   Bun.spawnSync([bunExe(), "add", "lodash@4.17.21"], {
     env: bunEnv,
@@ -43,7 +45,7 @@ test("migrate from npm lockfile v2 during `bun add`", () => {
 
 // Currently this upgrades svelte :(
 test.todo("migrate workspace from npm during `bun add`", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = tmpdirSync();
 
   fs.cpSync(join(import.meta.dir, "add-while-migrate-workspace"), testDir, { recursive: true });
 
@@ -62,7 +64,7 @@ test.todo("migrate workspace from npm during `bun add`", async () => {
 });
 
 test("migrate from npm lockfile that is missing `resolved` properties", async () => {
-  const testDir = join(tmpdir(), "migrate-" + Math.random().toString(36).slice(2));
+  const testDir = tmpdirSync();
 
   fs.cpSync(join(import.meta.dir, "missing-resolved-properties"), testDir, { recursive: true });
 
@@ -73,5 +75,25 @@ test("migrate from npm lockfile that is missing `resolved` properties", async ()
 
   expect(fs.existsSync(join(testDir, "node_modules/lodash"))).toBeTrue();
   expect(await Bun.file(join(testDir, "node_modules/lodash/package.json")).json()).toHaveProperty("version", "4.17.21");
+  expect(exitCode).toBe(0);
+});
+
+test("npm lockfile with relative workspaces", async () => {
+  const testDir = tmpdirSync();
+  fs.cpSync(join(import.meta.dir, "lockfile-with-workspaces"), testDir, { recursive: true });
+  const { exitCode, stderr } = Bun.spawnSync([bunExe(), "install"], {
+    env: bunEnv,
+    cwd: testDir,
+  });
+  const err = stderr.toString();
+  expect(err).toContain("migrated lockfile from package-lock.json");
+
+  expect(err).not.toContain("InvalidNPMLockfile");
+  for (let i = 0; i < 4; i++) {
+    expect(await Bun.file(join(testDir, "node_modules", "pkg" + i, "package.json")).json()).toEqual({
+      "name": "pkg" + i,
+    });
+  }
+
   expect(exitCode).toBe(0);
 });

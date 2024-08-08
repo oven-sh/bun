@@ -29,8 +29,7 @@ export function initializeReadableStream(
   underlyingSource: UnderlyingSource,
   strategy: QueuingStrategy,
 ) {
-  if (underlyingSource === undefined)
-    underlyingSource = { $bunNativeType: 0, $bunNativePtr: 0, $lazy: false } as UnderlyingSource;
+  if (underlyingSource === undefined) underlyingSource = { $bunNativePtr: undefined, $lazy: false } as UnderlyingSource;
   if (strategy === undefined) strategy = {};
 
   if (!$isObject(underlyingSource)) throw new TypeError("ReadableStream constructor takes an object as first argument");
@@ -44,12 +43,11 @@ export function initializeReadableStream(
 
   $putByIdDirectPrivate(this, "storedError", undefined);
 
-  $putByIdDirectPrivate(this, "disturbed", false);
+  this.$disturbed = false;
 
   // Initialized with null value to enable distinction with undefined case.
   $putByIdDirectPrivate(this, "readableStreamController", null);
-  $putByIdDirectPrivate(this, "bunNativeType", $getByIdDirectPrivate(underlyingSource, "bunNativeType") ?? 0);
-  $putByIdDirectPrivate(this, "bunNativePtr", $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? 0);
+  this.$bunNativePtr = $getByIdDirectPrivate(underlyingSource, "bunNativePtr") ?? undefined;
 
   $putByIdDirectPrivate(this, "asyncContext", $getInternalField($asyncContext, 0));
 
@@ -114,7 +112,6 @@ export function readableStreamToArray(stream: ReadableStream): Promise<unknown[]
   if (underlyingSource !== undefined) {
     return $readableStreamToArrayDirect(stream, underlyingSource);
   }
-
   return $readableStreamIntoArray(stream);
 }
 
@@ -125,7 +122,6 @@ export function readableStreamToText(stream: ReadableStream): Promise<string> {
   if (underlyingSource !== undefined) {
     return $readableStreamToTextDirect(stream, underlyingSource);
   }
-
   return $readableStreamIntoText(stream);
 }
 
@@ -135,17 +131,36 @@ export function readableStreamToArrayBuffer(stream: ReadableStream<ArrayBuffer>)
   var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
 
   if (underlyingSource !== undefined) {
-    return $readableStreamToArrayBufferDirect(stream, underlyingSource);
+    return $readableStreamToArrayBufferDirect(stream, underlyingSource, false);
   }
 
   var result = Bun.readableStreamToArray(stream);
   if ($isPromise(result)) {
-    // `result` is an InternalPromise, which doesn't have a `.$then` method
+    // `result` is an InternalPromise, which doesn't have a `.then` method
     // but `.then` isn't user-overridable, so we can use it safely.
-    return result.then(Bun.concatArrayBuffers);
+    return result.then(x => Bun.concatArrayBuffers(x));
   }
 
   return Bun.concatArrayBuffers(result);
+}
+
+$linkTimeConstant;
+export function readableStreamToBytes(stream: ReadableStream<ArrayBuffer>): Promise<Uint8Array> | Uint8Array {
+  // this is a direct stream
+  var underlyingSource = $getByIdDirectPrivate(stream, "underlyingSource");
+
+  if (underlyingSource !== undefined) {
+    return $readableStreamToArrayBufferDirect(stream, underlyingSource, true);
+  }
+
+  var result = Bun.readableStreamToArray(stream);
+  if ($isPromise(result)) {
+    // `result` is an InternalPromise, which doesn't have a `.then` method
+    // but `.then` isn't user-overridable, so we can use it safely.
+    return result.then(x => Bun.concatArrayBuffers(x, Infinity, true));
+  }
+
+  return Bun.concatArrayBuffers(result, Infinity, true);
 }
 
 $linkTimeConstant;
@@ -160,125 +175,12 @@ export function readableStreamToFormData(
 
 $linkTimeConstant;
 export function readableStreamToJSON(stream: ReadableStream): unknown {
-  return Bun.readableStreamToText(stream).$then(globalThis.JSON.parse);
+  return Promise.resolve(Bun.readableStreamToText(stream)).then(globalThis.JSON.parse);
 }
 
 $linkTimeConstant;
 export function readableStreamToBlob(stream: ReadableStream): Promise<Blob> {
-  return Promise.resolve(Bun.readableStreamToArray(stream)).$then(array => new Blob(array));
-}
-
-$linkTimeConstant;
-export function consumeReadableStream(nativePtr, nativeType, inputStream) {
-  const symbol = globalThis.Symbol.for("Bun.consumeReadableStreamPrototype");
-  var cached = globalThis[symbol];
-  if (!cached) {
-    cached = globalThis[symbol] = [];
-  }
-  var Prototype = cached[nativeType];
-  if (Prototype === undefined) {
-    var [doRead, doError, doReadMany, doClose, onClose, deinit] = $lazy(nativeType);
-
-    Prototype = class NativeReadableStreamSink {
-      handleError: any;
-      handleClosed: any;
-      processResult: any;
-
-      constructor(reader, ptr) {
-        this.#ptr = ptr;
-        this.#reader = reader;
-        this.#didClose = false;
-
-        this.handleError = this._handleError.bind(this);
-        this.handleClosed = this._handleClosed.bind(this);
-        this.processResult = this._processResult.bind(this);
-
-        reader.closed.then(this.handleClosed, this.handleError);
-      }
-
-      _handleClosed() {
-        if (this.#didClose) return;
-        this.#didClose = true;
-        var ptr = this.#ptr;
-        this.#ptr = 0;
-        doClose(ptr);
-        deinit(ptr);
-      }
-
-      _handleError(error) {
-        if (this.#didClose) return;
-        this.#didClose = true;
-        var ptr = this.#ptr;
-        this.#ptr = 0;
-        doError(ptr, error);
-        deinit(ptr);
-      }
-
-      #ptr;
-      #didClose = false;
-      #reader;
-
-      _handleReadMany({ value, done, size }) {
-        if (done) {
-          this.handleClosed();
-          return;
-        }
-
-        if (this.#didClose) return;
-
-        doReadMany(this.#ptr, value, done, size);
-      }
-
-      read() {
-        if (!this.#ptr) return $throwTypeError("ReadableStreamSink is already closed");
-
-        return this.processResult(this.#reader.read());
-      }
-
-      _processResult(result) {
-        if (result && $isPromise(result)) {
-          const flags = $getPromiseInternalField(result, $promiseFieldFlags);
-          if (flags & $promiseStateFulfilled) {
-            const fulfilledValue = $getPromiseInternalField(result, $promiseFieldReactionsOrResult);
-            if (fulfilledValue) {
-              result = fulfilledValue;
-            }
-          }
-        }
-
-        if (result && $isPromise(result)) {
-          result.then(this.processResult, this.handleError);
-          return null;
-        }
-
-        if (result.done) {
-          this.handleClosed();
-          return 0;
-        } else if (result.value) {
-          return result.value;
-        } else {
-          return -1;
-        }
-      }
-
-      readMany() {
-        if (!this.#ptr) return $throwTypeError("ReadableStreamSink is already closed");
-        return this.processResult(this.#reader.readMany());
-      }
-    };
-
-    const minlength = nativeType + 1;
-    if (cached.length < minlength) {
-      cached.length = minlength;
-    }
-    $putByValDirect(cached, nativeType, Prototype);
-  }
-
-  if ($isReadableStreamLocked(inputStream)) {
-    throw new TypeError("Cannot start reading from a locked stream");
-  }
-
-  return new Prototype(inputStream.getReader(), nativePtr);
+  return Promise.resolve(Bun.readableStreamToArray(stream)).then(array => new Blob(array));
 }
 
 $linkTimeConstant;
@@ -300,10 +202,10 @@ export function createUsedReadableStream() {
 }
 
 $linkTimeConstant;
-export function createNativeReadableStream(nativePtr, nativeType, autoAllocateChunkSize) {
+export function createNativeReadableStream(nativePtr, autoAllocateChunkSize) {
+  $assert(nativePtr, "nativePtr must be a valid pointer");
   return new ReadableStream({
     $lazy: true,
-    $bunNativeType: nativeType,
     $bunNativePtr: nativePtr,
     autoAllocateChunkSize: autoAllocateChunkSize,
   });

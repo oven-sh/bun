@@ -3,7 +3,7 @@
 const { isTypedArray } = require("node:util/types");
 
 // This is a stub! None of this is actually implemented yet.
-const { hideFromStack, throwNotImplemented } = require("$shared");
+const { hideFromStack, throwNotImplemented } = require("internal/shared");
 
 const tls = require("node:tls");
 const net = require("node:net");
@@ -14,7 +14,7 @@ const EventEmitter = require("node:events");
 const { Duplex } = require("node:stream");
 const primordials = require("internal/primordials");
 
-const { H2FrameParser, getPackedSettings, getUnpackedSettings } = $lazy("internal/http2");
+const [H2FrameParser, getPackedSettings, getUnpackedSettings] = $zig("h2_frame_parser.zig", "createNodeHttp2Binding");
 
 const sensitiveHeaders = Symbol.for("nodejs.http2.sensitiveHeaders");
 const bunHTTP2Native = Symbol.for("::bunhttp2native::");
@@ -27,6 +27,7 @@ const bunHTTP2Session = Symbol.for("::bunhttp2session::");
 
 const ReflectGetPrototypeOf = Reflect.getPrototypeOf;
 const FunctionPrototypeBind = primordials.FunctionPrototypeBind;
+const StringPrototypeSlice = String.prototype.slice;
 
 const proxySocketHandler = {
   get(session, prop) {
@@ -624,6 +625,7 @@ class ClientHttp2Stream extends Duplex {
     }
   }
 }
+
 function connectWithProtocol(protocol: string, options: Http2ConnectOptions | string | URL, listener?: Function) {
   if (protocol === "http:") {
     return net.connect(options, listener);
@@ -652,34 +654,35 @@ function emitStreamNT(self, streams, streamId) {
 
 function emitStreamErrorNT(self, streams, streamId, error, destroy) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(error);
+
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
     stream.rstCode = error;
+
+    const error_instance = streamErrorFromCode(error);
     stream.emit("error", error_instance);
-    if (destroy) stream.destroy(error_instance);
+    if (destroy) stream.destroy(error_instance, error);
   }
-  self.emit("streamError", error_instance);
 }
 
 function emitAbortedNT(self, streams, streamId, error) {
   const stream = streams.get(streamId);
-  const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
   if (stream) {
     if (!stream[bunHTTP2Closed]) {
       stream[bunHTTP2Closed] = true;
     }
 
     stream.rstCode = constants.NGHTTP2_CANCEL;
-    stream.emit("aborted", error);
-    stream.emit("error", error_instance);
+    stream.emit("aborted");
   }
-  self.emit("streamError", error_instance);
 }
 class ClientHttp2Session extends Http2Session {
+  /// close indicates that we called closed
   #closed: boolean = false;
+  /// connected indicates that the connection/socket is connected
+  #connected: boolean = false;
   #queue: Array<Buffer> = [];
   #connections: number = 0;
   [bunHTTP2Socket]: TLSSocket | Socket | null;
@@ -720,8 +723,8 @@ class ClientHttp2Session extends Http2Session {
           stream[bunHTTP2Closed] = true;
         }
         stream.rstCode = error;
+
         stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
       } else {
         process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, error);
       }
@@ -731,13 +734,13 @@ class ClientHttp2Session extends Http2Session {
       var stream = self.#streams.get(streamId);
       if (stream) {
         self.#connections--;
+        self.#streams.delete(streamId);
         stream[bunHTTP2Closed] = true;
         stream[bunHTTP2Session] = null;
         stream.rstCode = 0;
-        stream.destroy();
         stream.emit("end");
         stream.emit("close");
-        self.#streams.delete(streamId);
+        stream.destroy();
       }
       if (self.#connections === 0 && self.#closed) {
         self.destroy();
@@ -763,33 +766,33 @@ class ClientHttp2Session extends Http2Session {
     ) {
       if (!self) return;
       var stream = self.#streams.get(streamId);
-      if (stream) {
-        let status: string | number = headers[":status"] as string;
-        if (status) {
-          // client status is always number
-          status = parseInt(status as string, 10);
-          (headers as Record<string, string | number>)[":status"] = status;
-        }
+      if (!stream) return;
 
-        let set_cookies = headers["set-cookie"];
-        if (typeof set_cookies === "string") {
-          (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
-        }
+      let status: string | number = headers[":status"] as string;
+      if (status) {
+        // client status is always number
+        status = parseInt(status as string, 10);
+        (headers as Record<string, string | number>)[":status"] = status;
+      }
 
-        let cookie = headers["cookie"];
-        if ($isArray(cookie)) {
-          headers["cookie"] = (headers["cookie"] as string[]).join(";");
+      let set_cookies = headers["set-cookie"];
+      if (typeof set_cookies === "string") {
+        (headers as Record<string, string | string[]>)["set-cookie"] = [set_cookies];
+      }
+
+      let cookie = headers["cookie"];
+      if ($isArray(cookie)) {
+        headers["cookie"] = (headers["cookie"] as string[]).join(";");
+      }
+      if (stream[bunHTTP2StreamResponded]) {
+        try {
+          stream.emit("trailers", headers, flags);
+        } catch {
+          process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
         }
-        if (stream[bunHTTP2StreamResponded]) {
-          try {
-            stream.emit("trailers", headers, flags);
-          } catch {
-            process.nextTick(emitStreamErrorNT, self, self.#streams, streamId, constants.NGHTTP2_PROTOCOL_ERROR, true);
-          }
-        } else {
-          stream[bunHTTP2StreamResponded] = true;
-          stream.emit("response", headers, flags);
-        }
+      } else {
+        stream[bunHTTP2StreamResponded] = true;
+        stream.emit("response", headers, flags);
       }
     },
     localSettings(self: ClientHttp2Session, settings: Settings) {
@@ -829,15 +832,12 @@ class ClientHttp2Session extends Http2Session {
       if (!self) return;
       var stream = self.#streams.get(streamId);
       if (stream) {
-        const error_instance = streamErrorFromCode(constants.NGHTTP2_CANCEL);
         if (!stream[bunHTTP2Closed]) {
           stream[bunHTTP2Closed] = true;
         }
 
         stream.rstCode = constants.NGHTTP2_CANCEL;
-        stream.emit("aborted", error);
-        stream.emit("error", error_instance);
-        self.emit("streamError", error_instance);
+        stream.emit("aborted");
       } else {
         process.nextTick(emitAbortedNT, self, self.#streams, streamId, error);
       }
@@ -852,13 +852,13 @@ class ClientHttp2Session extends Http2Session {
         process.nextTick(emitWantTrailersNT, self.#streams, streamId);
       }
     },
-    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData: Buffer) {
+    goaway(self: ClientHttp2Session, errorCode: number, lastStreamId: number, opaqueData?: Buffer) {
       if (!self) return;
-      self.emit("goaway", errorCode, lastStreamId, opaqueData);
+      self.emit("goaway", errorCode, lastStreamId, opaqueData || Buffer.allocUnsafe(0));
       if (errorCode !== 0) {
         for (let [_, stream] of self.#streams) {
           stream.rstCode = errorCode;
-          stream.destroy(sessionErrorFromCode(errorCode));
+          stream.destroy(sessionErrorFromCode(errorCode), errorCode);
         }
       }
       self[bunHTTP2Socket]?.end();
@@ -874,12 +874,13 @@ class ClientHttp2Session extends Http2Session {
     write(self: ClientHttp2Session, buffer: Buffer) {
       if (!self) return;
       const socket = self[bunHTTP2Socket];
-      if (self.#closed) {
-        //queue
-        self.#queue.push(buffer);
-      } else {
+      if (!socket) return;
+      if (self.#connected) {
         // redirect writes to socket
         socket.write(buffer);
+      } else {
+        //queue
+        self.#queue.push(buffer);
       }
     },
   };
@@ -899,6 +900,7 @@ class ClientHttp2Session extends Http2Session {
   #onConnect() {
     const socket = this[bunHTTP2Socket];
     if (!socket) return;
+    this.#connected = true;
     // check if h2 is supported only for TLSSocket
     if (socket instanceof TLSSocket) {
       if (socket.alpnProtocol !== "h2") {
@@ -918,6 +920,7 @@ class ClientHttp2Session extends Http2Session {
 
     // TODO: make a native bindings on data and write and fallback to non-native
     socket.on("data", this.#onRead.bind(this));
+
     // redirect the queued buffers
     const queue = this.#queue;
     while (queue.length) {
@@ -1054,7 +1057,7 @@ class ClientHttp2Session extends Http2Session {
     }
   }
 
-  constructor(url: string | URL, options?: Http2ConnectOptions) {
+  constructor(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
     super();
 
     if (typeof url === "string") {
@@ -1063,11 +1066,20 @@ class ClientHttp2Session extends Http2Session {
     if (!(url instanceof URL)) {
       throw new Error("ERR_HTTP2: Invalid URL");
     }
+    if (typeof options === "function") {
+      listener = options;
+      options = undefined;
+    }
     this.#isServer = true;
     this.#url = url;
 
     const protocol = url.protocol || options?.protocol || "https:";
     const port = url.port ? parseInt(url.port, 10) : protocol === "http:" ? 80 : 443;
+
+    function onConnect() {
+      this.#onConnect(arguments);
+      listener?.$apply(this, arguments);
+    }
 
     // h2 with ALPNProtocols
     let socket;
@@ -1075,11 +1087,11 @@ class ClientHttp2Session extends Http2Session {
       socket = options.createConnection(url, options);
       this[bunHTTP2Socket] = socket;
       if (socket.secureConnecting === true) {
-        socket.on("secureConnect", this.#onConnect.bind(this));
+        socket.on("secureConnect", onConnect.bind(this));
       } else if (socket.connecting === true) {
-        socket.on("connect", this.#onConnect.bind(this));
+        socket.on("connect", onConnect.bind(this));
       } else {
-        process.nextTick(this.#onConnect.bind(this));
+        process.nextTick(onConnect.bind(this));
       }
     } else {
       socket = connectWithProtocol(
@@ -1096,7 +1108,7 @@ class ClientHttp2Session extends Http2Session {
               port,
               ALPNProtocols: ["h2", "http/1.1"],
             },
-        this.#onConnect.bind(this),
+        onConnect.bind(this),
       );
       this[bunHTTP2Socket] = socket;
     }
@@ -1129,6 +1141,7 @@ class ClientHttp2Session extends Http2Session {
   destroy(error?: Error, code?: number) {
     const socket = this[bunHTTP2Socket];
     this.#closed = true;
+    this.#connected = false;
     code = code || constants.NGHTTP2_NO_ERROR;
     if (socket) {
       this.goaway(code, 0, Buffer.alloc(0));
@@ -1235,11 +1248,8 @@ class ClientHttp2Session extends Http2Session {
     req.emit("ready");
     return req;
   }
-  static connect(url: string | URL, options?: Http2ConnectOptions) {
-    if (options) {
-      return new ClientHttp2Session(url, options);
-    }
-    return new ClientHttp2Session(url);
+  static connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+    return new ClientHttp2Session(url, options, listener);
   }
 
   get [bunHTTP2Native]() {
@@ -1247,29 +1257,26 @@ class ClientHttp2Session extends Http2Session {
   }
 }
 
-function connect(url: string | URL, options?: Http2ConnectOptions) {
-  if (options) {
-    return ClientHttp2Session.connect(url, options);
-  }
-  return ClientHttp2Session.connect(url);
+function connect(url: string | URL, options?: Http2ConnectOptions, listener?: Function) {
+  return ClientHttp2Session.connect(url, options, listener);
 }
 
 function createServer() {
-  throwNotImplemented("node:http2 createServer", 887);
+  throwNotImplemented("node:http2 createServer", 8823);
 }
 function createSecureServer() {
-  throwNotImplemented("node:http2 createSecureServer", 887);
+  throwNotImplemented("node:http2 createSecureServer", 8823);
 }
 function getDefaultSettings() {
   // return default settings
   return getUnpackedSettings();
 }
 function Http2ServerRequest() {
-  throwNotImplemented("node:http2 Http2ServerRequest", 887);
+  throwNotImplemented("node:http2 Http2ServerRequest", 8823);
 }
 Http2ServerRequest.prototype = {};
 function Http2ServerResponse() {
-  throwNotImplemented("node:http2 Http2ServerResponse", 887);
+  throwNotImplemented("node:http2 Http2ServerResponse", 8823);
 }
 Http2ServerResponse.prototype = {};
 

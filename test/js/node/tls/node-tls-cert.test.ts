@@ -4,8 +4,6 @@ import type { Server, TLSSocket } from "node:tls";
 import type { AddressInfo } from "node:net";
 import { join } from "path";
 import { readFileSync } from "fs";
-import { c, s } from "js/bun/http/js-sink-sourmap-fixture/index.mjs";
-import { serve } from "bun";
 
 const client = {
   key: readFileSync(join(import.meta.dir, "fixtures", "ec10-key.pem"), "utf8"),
@@ -79,7 +77,7 @@ function connect(options: any) {
         resolveOrReject();
       })
       .listen(0, function () {
-        const optClient = { ...options.client, port: server.server.address().port };
+        const optClient = { ...options.client, port: server.server.address().port, host: "127.0.0.1" };
         try {
           const conn = tls
             .connect(optClient, () => {

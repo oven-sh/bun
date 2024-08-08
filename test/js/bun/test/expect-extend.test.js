@@ -7,12 +7,26 @@
  *  `NODE_OPTIONS=--experimental-vm-modules npx jest test/js/bun/test/expect-extend.test.js`
  */
 
+import { withoutAggressiveGC } from "harness";
 import test_interop from "./test-interop.js";
 var { isBun, expect, describe, test, it } = await test_interop();
 
 //expect.addSnapshotSerializer(alignedAnsiStyleSerializer);
 
 expect.extend({
+  // @ts-expect-error
+  _toHaveMessageThatThrows(actual, expected) {
+    const message = () => ({
+      [Symbol.toPrimitive]: () => {
+        throw new Error("i have successfully propagated the error message!");
+      },
+    });
+
+    return { message, pass: 42 };
+  },
+  [""](actual, expected) {
+    return { pass: actual === expected };
+  },
   _toBeDivisibleBy(actual, expected) {
     const pass = typeof actual === "number" && actual % expected === 0;
     const message = pass
@@ -35,6 +49,9 @@ expect.extend({
       : () => `expected ${this.utils.printReceived(actual)} to be within range ${floor} - ${ceiling}`;
 
     return { message, pass };
+  },
+  _toCustomEqual(actual, expected) {
+    return { pass: this.equals(actual, expected) };
   },
 
   // this matcher has not been defined through declaration merging, but expect.extends should allow it anyways,
@@ -105,6 +122,10 @@ it("is ok if there is no message specified", () => {
   });
 
   expect(() => expect(true)._toFailWithoutMessage())._toThrowErrorMatchingSnapshot();
+});
+
+it("works with empty matcher name", () => {
+  expect(1)[""](1);
 });
 
 it("exposes an equality function to custom matchers", () => {
@@ -308,8 +329,28 @@ describe("async support", () => {
 });
 
 it("should not crash under intensive usage", () => {
-  for (let i = 0; i < 10000; ++i) {
-    expect(i)._toBeDivisibleBy(1);
-    expect(i).toEqual(expect._toBeDivisibleBy(1));
-  }
+  withoutAggressiveGC(() => {
+    for (let i = 0; i < 10000; ++i) {
+      expect(i)._toBeDivisibleBy(1);
+      expect(i).toEqual(expect._toBeDivisibleBy(1));
+    }
+  });
+  Bun.gc(true);
+});
+
+it("should propagate errors from calling .toString() on the message callback value", () => {
+  expect(() => expect("abc").not._toHaveMessageThatThrows("def")).toThrow(
+    "i have successfully propagated the error message!",
+  );
+});
+
+it("should support asymmetric matchers", () => {
+  expect(1)._toCustomEqual(expect.anything());
+  expect(1)._toCustomEqual(expect.any(Number));
+  expect({ a: "test" })._toCustomEqual({ a: expect.any(String) });
+  expect(() => expect(1)._toCustomEqual(expect.any(String))).toThrow();
+
+  expect(1).not._toCustomEqual(expect.any(String));
+  expect({ a: "test" }).not._toCustomEqual({ a: expect.any(Number) });
+  expect(() => expect(1).not._toCustomEqual(expect.any(Number))).toThrow();
 });

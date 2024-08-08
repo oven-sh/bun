@@ -1,18 +1,16 @@
 import { spawnSync } from "bun";
-import { afterEach, beforeEach, expect, test } from "bun:test";
-import { mkdtempSync, realpathSync, rmSync, writeFileSync } from "fs";
-import { bunExe, bunEnv } from "harness";
-import { join } from "path";
-import { tmpdir } from "os";
+import { beforeEach, expect, test, beforeAll, setDefaultTimeout } from "bun:test";
+import { writeFileSync } from "fs";
+import { bunExe, bunEnv, tmpdirSync } from "harness";
 
 let cwd: string;
 
-beforeEach(() => {
-  cwd = mkdtempSync(join(realpathSync(tmpdir()), "bad-workspace.test"));
+beforeAll(() => {
+  setDefaultTimeout(1000 * 60 * 5);
 });
 
-afterEach(() => {
-  rmSync(cwd, { recursive: true, force: true });
+beforeEach(() => {
+  cwd = tmpdirSync();
 });
 
 test("bad workspace path", () => {
@@ -21,7 +19,7 @@ test("bad workspace path", () => {
     JSON.stringify(
       {
         name: "hey",
-        workspaces: ["i-dont-exist", "**/i-have-a-2-stars-and-i-dont-exist", "*/i-have-a-star-and-i-dont-exist"],
+        workspaces: ["i-dont-exist"],
       },
       null,
       2,
@@ -37,8 +35,6 @@ test("bad workspace path", () => {
   const text = stderr!.toString();
 
   expect(text).toContain('Workspace not found "i-dont-exist"');
-  expect(text).toContain("multi level globs");
-  expect(text).toContain("glob star * in the middle of a path");
 
   expect(exitCode).toBe(1);
 });

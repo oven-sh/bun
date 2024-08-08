@@ -275,6 +275,7 @@ for (const timeout of [0, 1, 10, 20, 100, 300]) {
         tls: { ca: CERT_LOCALHOST_IP.cert },
         signal: AbortSignal.timeout(timeout),
       }).then(res => res.text());
+      expect.unreachable();
     } catch (err) {
       expect((err as Error).name).toBe("TimeoutError");
     } finally {

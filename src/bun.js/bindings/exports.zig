@@ -221,6 +221,7 @@ pub const ResolvedSource = extern struct {
 
 pub const SourceProvider = opaque {
     extern fn JSC__SourceProvider__deref(*SourceProvider) void;
+
     pub fn deref(provider: *SourceProvider) void {
         JSC__SourceProvider__deref(provider);
     }

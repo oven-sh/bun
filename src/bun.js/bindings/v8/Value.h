@@ -9,6 +9,7 @@ class Value : public Data {
 public:
     BUN_EXPORT bool IsBoolean() const;
 
+private:
     // non-inlined versions of these
     BUN_EXPORT bool FullIsTrue() const;
     BUN_EXPORT bool FullIsFalse() const;

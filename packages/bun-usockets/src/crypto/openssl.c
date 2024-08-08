@@ -15,7 +15,6 @@
  * limitations under the License.
  */
 // clang-format off
-#include <stdio.h>
 #if (defined(LIBUS_USE_OPENSSL) || defined(LIBUS_USE_WOLFSSL))
 
 

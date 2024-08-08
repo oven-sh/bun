@@ -1003,7 +1003,12 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
-                this.close();
+                if (this.source) |source| {
+                    switch (source) {
+                        .sync_file, .file => {},
+                        .pipe, .tty => this.close(),
+                    }
+                }
             }
         }
     };
@@ -1382,7 +1387,12 @@ pub fn WindowsStreamingWriter(
             this.closed_without_reporting = false;
             // if we are done we can call close if not we wait all the data to be flushed
             if (this.isDone()) {
-                this.close();
+                if (this.source) |source| {
+                    switch (source) {
+                        .sync_file, .file => {},
+                        .pipe, .tty => this.close(),
+                    }
+                }
             }
         }
     };

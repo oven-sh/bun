@@ -724,6 +724,20 @@ it("process.execArgv", async () => {
   }
 });
 
+// node does this in tests.
+it("process.default can be set", () => {
+  expect([
+    `
+      process.default = 58;
+      import("node:process").then(a => {
+        Bun.inspect(a);
+      });
+    `,
+    "",
+    0,
+  ]).toRunInlineFixture();
+});
+
 describe("process.exitCode", () => {
   it("normal", () => {
     expect([

@@ -1350,9 +1350,10 @@ it("#5859 json", async () => {
     port: 0,
     async fetch(req) {
       try {
-        await req.json();
+        const json = await req.json();
+        console.log({ json });
       } catch (e) {
-        return new Response("FAIL", { status: 500 });
+        return new Response(e?.message!, { status: 500 });
       }
 
       return new Response("SHOULD'VE FAILED", {});
@@ -1364,8 +1365,8 @@ it("#5859 json", async () => {
     body: new Uint8Array([0xfd]),
   });
 
+  expect(await response.text()).toBe("Failed to parse JSON");
   expect(response.ok).toBeFalse();
-  expect(await response.text()).toBe("FAIL");
 });
 
 it("#5859 arrayBuffer", async () => {

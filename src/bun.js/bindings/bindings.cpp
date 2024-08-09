@@ -2,7 +2,10 @@
 
 #include "root.h"
 
+#include "ErrorCode+List.h"
+#include "ErrorCode.h"
 #include "JavaScriptCore/ThrowScope.h"
+
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
@@ -1866,17 +1869,26 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     auto str = Zig::toString(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
 
+    if (str.isNull()) {
+        // isNull() will be true for empty strings and for strings which are too long.
+        // So we need to check the length is plausibly due to a long string.
+        if (strPtr->len > Bun__syntheticAllocationLimit) {
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+            return {};
+        }
+    }
+
+    auto catchScope = DECLARE_CATCH_SCOPE(globalObject->vm());
     // JSONParseWithException does not propagate exceptions as expected. See #5859
     JSValue result = JSONParse(globalObject, str);
 
-    if (!result && !scope.exception()) {
+    if (!result && !catchScope.exception())
         scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
-    }
 
-    if (scope.exception()) {
-        auto* exception = scope.exception();
-        scope.clearException();
-        return JSC::JSValue::encode(exception);
+    if (catchScope.exception()) {
+        auto* exception = catchScope.exception();
+        catchScope.clearExceptionExceptTermination();
+        return JSC::JSValue::encode(exception->value());
     }
 
     return JSValue::encode(result);
@@ -3095,6 +3107,81 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     return result;
 }
 #pragma mark - JSC::JSPromise
+
+void JSC__AnyPromise__wrap(JSC__JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue promiseValue = JSC::JSValue::decode(encodedPromise);
+    ASSERT(!promiseValue.isEmpty());
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+    if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+}
+
+JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, exception->value()));
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(result)) {
+        return JSValue::encode(promise);
+    }
+
+    if (JSC::ErrorInstance* err = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        return JSValue::encode(JSC::JSPromise::rejectedPromise(globalObject, err));
+    }
+
+    return JSValue::encode(JSC::JSPromise::resolvedPromise(globalObject, result));
+}
 
 void JSC__JSPromise__reject(JSC__JSPromise* arg0, JSC__JSGlobalObject* globalObject,
     JSC__JSValue JSValue2)

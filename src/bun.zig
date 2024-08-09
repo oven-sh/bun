@@ -3650,3 +3650,7 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
 }
+extern "C" fn Bun__ramSize() usize;
+pub fn getTotalMemorySize() usize {
+    return Bun__ramSize();
+}

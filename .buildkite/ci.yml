@@ -478,7 +478,7 @@ steps:
           - "./scripts/runner.node.mjs --step linux-x64-build-bun"
 
       - key: "linux-x64-test-ubuntu-2204-nodejs"
-        label: ":node: :ubuntu: 22.04 x64 - test-bun"
+        label: ":node: :ubuntu: 22.04 x64 - test-nodejs"
         if: "build.branch != 'main'"
         parallelism: 1
         soft_fail:

@@ -21,8 +21,7 @@ import {
 } from "node:fs";
 import { spawn, spawnSync } from "node:child_process";
 import { tmpdir, hostname, userInfo, homedir } from "node:os";
-import { join, basename, dirname, relative } from "node:path";
-import { normalize as normalizeWindows } from "node:path/win32";
+import { join, basename, dirname, relative, win32 } from "node:path";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
@@ -796,7 +795,7 @@ function getTmpdir() {
       if (/cygwin|cygdrive/i.test(tmpdir) || !/^[a-z]/i.test(tmpdir)) {
         continue;
       }
-      return normalizeWindows(tmpdir);
+      return win32.normalize(tmpdir);
     }
     const appData = process.env["LOCALAPPDATA"];
     if (appData) {

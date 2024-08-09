@@ -264,7 +264,7 @@ public:
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
-    Structure* globalObjectStructure() const { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
@@ -542,7 +542,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;

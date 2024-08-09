@@ -24,17 +24,7 @@ public:
     {
     }
 
-    static GlobalScope* create(JSC::VM& vm, JSC::Structure* structure)
-    {
-        GlobalScope* globalObject = new (NotNull, JSC::allocateCell<GlobalScope>(vm)) GlobalScope(vm, structure);
-        globalObject->finishCreation(vm);
-        return globalObject;
-    }
-
-    static const JSC::ClassInfo s_info;
-
-    static constexpr const JSC::ClassInfo* info() { return &s_info; }
-
+    DECLARE_INFO;
     DECLARE_VISIT_CHILDREN;
 
     JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }

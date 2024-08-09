@@ -12,6 +12,8 @@
 
 namespace WebCore {
 
+Structure* createNodeVMGlobalObjectStructure(JSC::VM&);
+
 class NodeVMScriptConstructor final : public JSC::InternalFunction {
 public:
     using Base = JSC::InternalFunction;
@@ -76,7 +78,7 @@ private:
     void finishCreation(JSC::VM&);
 };
 
-class NodeVMGlobalObject final : public Bun::GlobalScope {
+class NodeVMGlobalObject : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
 
 public:
@@ -85,9 +87,7 @@ public:
     {
     }
 
-    static const JSC::ClassInfo s_info;
-
-    static constexpr const JSC::ClassInfo* info() { return &s_info; }
+    DECLARE_INFO;
 };
 
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);

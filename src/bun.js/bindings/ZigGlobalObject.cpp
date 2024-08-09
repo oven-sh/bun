@@ -2832,10 +2832,9 @@ void GlobalObject::finishCreation(VM& vm)
                 Bun::NapiPrototype::createStructure(init.vm, init.owner, init.owner->objectPrototype()));
         });
 
-    m_cachedGlobalObjectStructure.initLater(
+    m_cachedNodeVMGlobalObjectStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
-            init.set(
-                JSC::JSGlobalObject::createStructure(init.vm, JSC::jsNull()));
+            init.set(WebCore::createNodeVMGlobalObjectStructure(init.vm));
         });
 
     m_cachedGlobalProxyStructure.initLater(
@@ -3512,7 +3511,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
-    thisObject->m_cachedGlobalObjectStructure.visit(visitor);
+    thisObject->m_cachedNodeVMGlobalObjectStructure.visit(visitor);
     thisObject->m_cachedGlobalProxyStructure.visit(visitor);
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);

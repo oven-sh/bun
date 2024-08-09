@@ -269,7 +269,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     auto* executable = JSC::DirectEvalExecutable::create(
         targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
@@ -391,7 +391,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
     // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -442,6 +442,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     return JSValue::encode(jsString(vm, url));
 }
 
+Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
+{
+    return NodeVMGlobalObject::createStructure(vm, jsNull());
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -459,7 +464,7 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     JSObject* context = asObject(contextArg);
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     auto* targetContext = NodeVMGlobalObject::create(
-        vm, zigGlobalObject->globalObjectStructure());
+        vm, zigGlobalObject->NodeVMGlobalObjectStructure());
 
     auto proxyStructure = zigGlobalObject->globalProxyStructure();
     auto proxy = JSGlobalProxy::create(vm, proxyStructure);

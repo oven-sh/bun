@@ -5,6 +5,8 @@
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     _ = callframe;
 
+    bun.Output.warn("Please be advised that kit is experimental. Its API will change frequently.", .{});
+
     const t = std.Thread.spawn(.{}, wipDevServer, .{}) catch @panic("Failed to start");
     t.detach();
 
@@ -21,8 +23,7 @@ pub fn wipDevServer() noreturn {
         DevServer.Route,
         &.{.{
             .pattern = "/",
-            .server_entry_point = "./server.tsx",
-            .client_entry_point = "./client.tsx",
+            .entry_point = "./single_file_react.tsx",
         }},
     ) catch bun.outOfMemory();
 

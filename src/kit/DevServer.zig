@@ -41,18 +41,17 @@ pub const client_prefix = internal_prefix ++ "/client";
 pub const Route = struct {
     // Config
     pattern: [:0]const u8,
-    server_entry_point: []const u8,
-    client_entry_point: []const u8,
+    entry_point: []const u8,
 
     server_bundle: BundlePromise(ServerBundle) = .unqueued,
     client_bundle: BundlePromise(ClientBundle) = .unqueued,
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
-    client_entry_url: []u8 = undefined,
+    client_bundled_url: []u8 = undefined,
 
     pub fn clientPublicPath(route: *const Route) []const u8 {
-        return route.client_entry_url[0 .. route.client_entry_url.len - "/client.js".len];
+        return route.client_bundled_url[0 .. route.client_bundled_url.len - "/client.js".len];
     }
 };
 
@@ -123,7 +122,7 @@ pub fn init(options: Options) *DevServer {
         app.any(route.pattern, *Route, route, onServerRequestInit);
 
         route.dev = dev;
-        route.client_entry_url = std.fmt.allocPrint(
+        route.client_bundled_url = std.fmt.allocPrint(
             default_allocator,
             client_prefix ++ "/{d}/client.js",
             .{i},
@@ -186,10 +185,6 @@ fn onAssetRequestInit(dev: *DevServer, req: *Request, resp: *Response) void {
 fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
     _ = req;
     route.dev.getOrEnqueueBundle(resp, route, .server, .{});
-    // const internal_promise = JSModuleLoader.loadAndEvaluateModule(dev.server_global, bun.String.init(route.server_entry_point)) orelse
-    //     @panic("TODO");
-    // dev.server_global.bunVM().waitForPromise(.{ .Internal = internal_promise });
-    // route.dev.server_global.loadAndEvaluateModule();
 }
 
 // uws with bundle handlers
@@ -211,7 +206,7 @@ fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.ser
     context.put(
         dev.server_global.js(),
         bun.String.static("clientEntryPoint"),
-        bun.String.init(route.client_entry_url).toJS(dev.server_global.js()),
+        bun.String.init(route.client_bundled_url).toJS(dev.server_global.js()),
     );
 
     const result = bundle.server_request_callback.call(
@@ -579,10 +574,7 @@ pub const BundleTask = struct {
         );
 
         bundler.options = .{
-            .entry_points = switch (task.kind) {
-                .client => &task.route.client_entry_point,
-                .server => &task.route.server_entry_point,
-            }[0..1],
+            .entry_points = (&task.route.entry_point)[0..1],
             .define = bundler.options.define,
             .loaders = task.route.dev.loaders,
             .log = &task.log,
@@ -606,6 +598,24 @@ pub const BundleTask = struct {
         bundler.configureLinker();
         try bundler.configureDefines();
 
+        // The following are from Vite: https://vitejs.dev/guide/env-and-mode
+        // TODO: MODE, BASE_URL
+        try bundler.options.define.insert(
+            allocator,
+            "import.meta.env.DEV",
+            Define.Data.initBoolean(true),
+        );
+        try bundler.options.define.insert(
+            allocator,
+            "import.meta.env.PROD",
+            Define.Data.initBoolean(false),
+        );
+        try bundler.options.define.insert(
+            allocator,
+            "import.meta.env.SSR",
+            Define.Data.initBoolean(task.kind == .server),
+        );
+
         switch (task.kind) {
             .client => {
                 // Always name it "client.{js/css}" so that the server can know
@@ -613,6 +623,7 @@ pub const BundleTask = struct {
                 bundler.options.entry_naming = "client.[ext]";
             },
             .server => {
+                bundler.options.entry_naming = "server.[ext]";
                 // bundler.options.target =.bun
             },
         }

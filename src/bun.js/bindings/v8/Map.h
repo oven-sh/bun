@@ -5,7 +5,10 @@
 namespace v8 {
 
 enum class InstanceType : uint16_t {
+    // v8-internal.h:787, kFirstNonstringType is 0x80
+    String = 0x7f,
     // "Oddball" in V8 means undefined or null
+    // v8-internal.h:788
     Oddball = 0x83,
 };
 
@@ -32,6 +35,8 @@ public:
     static const Map oddball_map;
     // the map used by booleans
     static const Map boolean_map;
+    // the map used by strings
+    static const Map string_map;
 
     Map(InstanceType instance_type_)
         : meta_map(const_cast<Map*>(&map_map))

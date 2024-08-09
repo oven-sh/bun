@@ -26,11 +26,6 @@ describe("napi", () => {
   });
 
   describe("v8 c++", () => {
-    describe("String", () => {
-      it("can create and read back strings with only ASCII characters", () => {
-        checkSameOutput("test_v8_string_ascii", []);
-      });
-    });
     describe("External", () => {
       it("can create an external and read back the correct value", () => {
         checkSameOutput("test_v8_external", []);

@@ -18,7 +18,9 @@ public:
     template<typename T> Local<T> createLocal(JSC::JSValue value)
     {
         // TODO(@190n) handle more types
-        if (value.isCell()) {
+        if (value.isString()) {
+            return Local<T>(buffer->createHandle(value.asCell(), &Map::string_map));
+        } else if (value.isCell()) {
             return Local<T>(buffer->createHandle(value.asCell(), &Map::object_map));
         } else if (value.isInt32()) {
             return Local<T>(buffer->createSmiHandle(value.asInt32()));

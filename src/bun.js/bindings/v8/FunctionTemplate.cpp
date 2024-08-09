@@ -124,8 +124,13 @@ JSC::EncodedJSValue FunctionTemplate::functionCall(JSC::JSGlobalObject* globalOb
 
     functionTemplate->__internals.callback(info);
 
-    Local<Data> local_ret(&implicit_args.return_value);
-    return JSValue::encode(local_ret->localToJSValue(isolate->globalInternals()));
+    if (implicit_args.return_value.type() != TaggedPointer::Type::Smi && implicit_args.return_value.getPtr() == nullptr) {
+        // callback forgot to set a return value, so return undefined
+        return JSValue::encode(JSC::jsUndefined());
+    } else {
+        Local<Data> local_ret(&implicit_args.return_value);
+        return JSValue::encode(local_ret->localToJSValue(isolate->globalInternals()));
+    }
 }
 
 }

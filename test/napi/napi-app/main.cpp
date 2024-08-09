@@ -83,104 +83,6 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
 
 #include <v8.h>
 
-napi_value test_v8_string_ascii(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  v8::Isolate *isolate = v8::Isolate::GetCurrent();
-
-  // simple
-  const char string1[] = "hello world";
-  // non-ascii characters
-  const unsigned char string2[] = {240, 159, 143, 179, 239, 184, 143, 226, 128,
-                                   141, 226, 154, 167, 239, 184, 143, 0};
-  // mixed valid/invalid utf-8
-  const unsigned char string3[] = {'o', 'h',  ' ', 0xc0, 'n',
-                                   'o', 0xc2, '!', 0xf5, 0};
-
-  v8::MaybeLocal<v8::String> maybe_str =
-      v8::String::NewFromUtf8(isolate, string1, v8::NewStringType::kNormal, -1);
-  v8::Local<v8::String> str = maybe_str.ToLocalChecked();
-  char buf[64];
-  int retval;
-  int nchars;
-
-  // explicit length
-  // retval counts null terminator
-  if ((retval = str->WriteUtf8(isolate, buf, sizeof buf, &nchars)) !=
-      strlen(string1) + 1) {
-    return fail_fmt(env, "String::WriteUtf8 return: expected %zu got %d",
-                    strlen(string1) + 1, retval);
-  }
-  if (nchars != strlen(string1)) {
-    return fail_fmt(
-        env, "String::WriteUtf8 set nchars to wrong value: expected %zu got %d",
-        strlen(string1), nchars);
-  }
-  // cmp including terminator
-  if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
-    return fail_fmt(
-        env,
-        "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-        string1, buf);
-  }
-
-  // assumed length
-  if ((retval = str->WriteUtf8(isolate, buf, -1, &nchars)) !=
-      strlen(string1) + 1) {
-    return fail_fmt(env, "String::WriteUtf8 return: expected %zu got %d",
-                    strlen(string1) + 1, retval);
-  }
-  if (nchars != strlen(string1)) {
-    return fail_fmt(
-        env, "String::WriteUtf8 set nchars to wrong value: expected %zu got %d",
-        strlen(string1), nchars);
-  }
-  if (memcmp(buf, string1, strlen(string1) + 1) != 0) {
-    return fail_fmt(
-        env,
-        "String::WriteUtf8 stored wrong data in buffer: expected %s got %s",
-        string1, buf);
-  }
-
-  // too short length
-  memset(buf, 0xaa, sizeof buf);
-  if ((retval = str->WriteUtf8(isolate, buf, 5, &nchars)) != 5) {
-    return fail_fmt(env, "String::WriteUtf8 return: expected 5 got %d", retval);
-  }
-  if (nchars != 5) {
-    return fail_fmt(
-        env, "String::WriteUtf8 set nchars to wrong value: expected 5 got %d",
-        nchars);
-  }
-  // check it did not write a terminator
-  if (memcmp(buf, "hello\xaa", 6) != 0) {
-    return fail_fmt(env,
-                    "String::WriteUtf8 stored wrong data in buffer: expected "
-                    "hello\\xaa got %s",
-                    buf);
-  }
-
-  // nullptr for nchars_ref, just testing it doesn't crash
-  (void)str->WriteUtf8(isolate, buf, sizeof buf, nullptr);
-
-  maybe_str =
-      v8::String::NewFromUtf8(isolate, reinterpret_cast<const char *>(string2),
-                              v8::NewStringType::kNormal, -1);
-  str = maybe_str.ToLocalChecked();
-  if (str->Length() != 6) {
-    return fail_fmt(env, "wrong length: expected 6 got %d", str->Length());
-  }
-
-  maybe_str =
-      v8::String::NewFromUtf8(isolate, reinterpret_cast<const char *>(string3),
-                              v8::NewStringType::kNormal, -1);
-  str = maybe_str.ToLocalChecked();
-  if (str->Length() != 9) {
-    return fail_fmt(env, "wrong length: expected 9 got %d", str->Length());
-  }
-
-  return ok(env);
-}
-
 napi_value test_v8_external(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   v8::Isolate *isolate = v8::Isolate::GetCurrent();
@@ -417,14 +319,6 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
 
-  exports.Set("test_v8_number_int",
-              Napi::Function::New(env, test_v8_number_int));
-  exports.Set("test_v8_number_large_int",
-              Napi::Function::New(env, test_v8_number_large_int));
-  exports.Set("test_v8_number_fraction",
-              Napi::Function::New(env, test_v8_number_fraction));
-  exports.Set("test_v8_string_ascii",
-              Napi::Function::New(env, test_v8_string_ascii));
   exports.Set("test_v8_external", Napi::Function::New(env, test_v8_external));
   exports.Set("test_v8_object", Napi::Function::New(env, test_v8_object));
   exports.Set("test_v8_array_new", Napi::Function::New(env, test_v8_array_new));

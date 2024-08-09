@@ -1957,6 +1957,7 @@ async function getDoomsdayDate() {
  * @param {string} signal
  */
 async function beforeExit(signal) {
+  if (!isCI) return onExit(signal);
   const endOfWorld = await getDoomsdayDate();
   if (endOfWorld) {
     const timeMin = 10 * 1000;

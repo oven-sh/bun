@@ -109,7 +109,7 @@ const Socket = (function (InternalSocket) {
         queue.push(buffer);
       },
       drain: Socket.#Drain,
-      end: Socket.#Close,
+      end: Socket.#End,
       error(socket, error) {
         const self = socket.data;
         if (!self) return;
@@ -187,6 +187,15 @@ const Socket = (function (InternalSocket) {
       binaryType: "buffer",
     };
 
+    static #End(socket) {
+      const self = socket.data;
+      if (!self) return;
+      Socket.#Close(socket);
+      //https://nodejs.org/api/net.html#event-end
+      if (!self.allowHalfOpen) {
+        socket.end();
+      }
+    }
     static #Close(socket) {
       const self = socket.data;
       if (!self || self.#closed) return;

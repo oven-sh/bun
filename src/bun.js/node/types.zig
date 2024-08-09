@@ -2108,17 +2108,18 @@ pub const Process = struct {
         }
     }
 
-    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8) callconv(.C) void {
+    pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8, explicit: bool) callconv(.C) void {
         var vm = globalObject.bunVM();
         if (vm.worker) |worker| {
-            vm.exit_handler.exit_code = code;
+            if (explicit) vm.exit_handler.exit_code = code;
             worker.requestTerminate();
             return;
         }
 
-        vm.exit_handler.exit_code = code;
+        if (explicit) vm.exit_handler.exit_code = code;
         vm.onExit();
         if (bun_js.anyUnhandled() and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+        if (explicit) vm.exit_handler.exit_code = code;
         vm.globalExit();
     }
 

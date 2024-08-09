@@ -434,6 +434,17 @@ describe("process.onExit", () => {
     expect(proc.stderr.toString("utf8")).toInclude("error: boom");
     expect(proc.stdout.toString("utf8")).toBeEmpty();
   });
+
+  it("process.exit() has higher precedence than throw in exit handler, even with zero", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")}); process.exit(0);`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
 });
 
 it("process.memoryUsage", () => {

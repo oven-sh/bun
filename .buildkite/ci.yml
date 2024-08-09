@@ -507,6 +507,8 @@ steps:
           distro: "ubuntu"
           release: "22.04"
         command:
+          - "git clone https://github.com/nodejs/node ~/node"
+          - "cd ~/node && git checkout v22.5.1"
           - "./scripts/runner.node.mjs --nodejs"
 
   # Linux x64-baseline

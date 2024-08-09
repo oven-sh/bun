@@ -111,6 +111,7 @@ function export_environment() {
     rm -rf "$ZIG_LOCAL_CACHE_DIR"
     rm -rf "$ZIG_GLOBAL_CACHE_DIR"
     rm -rf "$BUN_DEPS_CACHE_DIR"
+    mkdir -p "$BUN_DEPS_CACHE_DIR"
     export CCACHE_RECACHE="1"
   fi
 }

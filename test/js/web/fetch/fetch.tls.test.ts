@@ -1,7 +1,7 @@
 import { it, expect } from "bun:test";
-import tls from "tls";
+import tls from "node:tls";
 import { join } from "node:path";
-import { bunEnv, bunExe } from "harness";
+import { bunEnv, bunExe, tmpdirSync } from "harness";
 
 type TLSOptions = {
   cert: string;
@@ -250,11 +250,91 @@ it("fetch timeout works on tls", async () => {
       signal: AbortSignal.timeout(TIMEOUT),
       tls: { ca: cert1.cert },
     }).then(res => res.text());
+    expect.unreachable();
   } catch (e) {
     expect(e.name).toBe("TimeoutError");
   } finally {
     const total = performance.now() - start;
     expect(total).toBeGreaterThanOrEqual(TIMEOUT - THRESHOLD);
     expect(total).toBeLessThanOrEqual(TIMEOUT + THRESHOLD);
+  }
+});
+for (const timeout of [0, 1, 10, 20, 100, 300]) {
+  it(`fetch should abort as soon as possible under tls using AbortSignal.timeout(${timeout})`, async () => {
+    using server = Bun.serve({
+      port: 0,
+      tls: CERT_LOCALHOST_IP,
+      async fetch() {
+        await Bun.sleep(1000);
+        return new Response("Hello World");
+      },
+    });
+    const time = Date.now();
+    try {
+      await fetch(server.url, {
+        //@ts-ignore
+        tls: { ca: CERT_LOCALHOST_IP.cert },
+        signal: AbortSignal.timeout(timeout),
+      }).then(res => res.text());
+      expect.unreachable();
+    } catch (err) {
+      expect((err as Error).name).toBe("TimeoutError");
+    } finally {
+      const diff = Date.now() - time;
+      expect(diff).toBeLessThanOrEqual(timeout + 30);
+      expect(diff).toBeGreaterThanOrEqual(timeout - 30);
+    }
+  });
+}
+
+it("fetch should use NODE_EXTRA_CA_CERTS", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls: cert1,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  const cert_path = join(tmpdirSync(), "cert.pem");
+  await Bun.write(cert_path, cert1.cert);
+
+  const proc = Bun.spawn({
+    env: {
+      ...bunEnv,
+      SERVER: server.url,
+      NODE_EXTRA_CA_CERTS: cert_path,
+    },
+    stderr: "inherit",
+    stdout: "inherit",
+    stdin: "inherit",
+    cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+  });
+
+  expect(await proc.exited).toBe(0);
+});
+
+it("fetch should ignore invalid NODE_EXTRA_CA_CERTS", async () => {
+  using server = Bun.serve({
+    port: 0,
+    tls: cert1,
+    fetch() {
+      return new Response("OK");
+    },
+  });
+  for (const invalid of ["invalid.pem", "", " "]) {
+    const proc = Bun.spawn({
+      env: {
+        ...bunEnv,
+        SERVER: server.url,
+        NODE_EXTRA_CA_CERTS: invalid,
+      },
+      stderr: "pipe",
+      stdout: "inherit",
+      stdin: "inherit",
+      cmd: [bunExe(), join(import.meta.dir, "fetch.tls.extra-cert.fixture.js")],
+    });
+
+    expect(await proc.exited).toBe(1);
+    expect(await Bun.readableStreamToText(proc.stderr)).toContain("DEPTH_ZERO_SELF_SIGNED_CERT");
   }
 });

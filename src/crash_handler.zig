@@ -845,6 +845,8 @@ pub fn printMetadata(writer: anytype) !void {
             }
         } else if (bun.Environment.isMac) {
             try writer.print("macOS v{s}\n", .{platform.version});
+        } else if (bun.Environment.isWindows) {
+            try writer.print("Windows v{s}\n", .{std.zig.system.windows.detectRuntimeVersion()});
         }
 
         if (!cpu_features.isEmpty()) {
@@ -884,10 +886,12 @@ pub fn printMetadata(writer: anytype) !void {
             &peak_commit,
             &page_faults,
         );
-        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\nRSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
+        try writer.print("Elapsed: {d}ms | User: {d}ms | Sys: {d}ms\n", .{
             elapsed_msecs,
             user_msecs,
             system_msecs,
+        });
+        try writer.print("RSS: {:<3.2} | Peak: {:<3.2} | Commit: {:<3.2} | Faults: {d}\n", .{
             std.fmt.fmtIntSizeDec(current_rss),
             std.fmt.fmtIntSizeDec(peak_rss),
             std.fmt.fmtIntSizeDec(current_commit),

@@ -1,6 +1,6 @@
 import { memfd_create } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
-import { closeSync, readFileSync } from "fs";
+import { closeSync, readFileSync, writeSync } from "fs";
 import { isLinux, isPosix } from "harness";
 import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
 setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
@@ -24,9 +24,15 @@ if (isPosix) {
 // memfd is linux only.
 if (isLinux) {
   test("fs.readFileSync large file show OOM without crashing the process.", () => {
-    setSyntheticAllocationLimitForTesting(16 * 1024 * 1024);
-
     const memfd = memfd_create(1024 * 1024 * 256 + 1);
+    {
+      let buf = new Uint8Array(32 * 1024 * 1024);
+      for (let i = 0; i < 1024 * 1024 * 256 + 1; i += buf.byteLength) {
+        writeSync(memfd, buf, i, buf.byteLength);
+      }
+    }
+    setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
+
     try {
       expect(() => readFileSync(memfd)).toThrow("Out of memory");
       Bun.gc(true);

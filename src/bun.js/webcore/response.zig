@@ -521,6 +521,10 @@ pub const Response = struct {
                         break :brk Init.init(globalThis, arguments[1]) catch null;
                     }
 
+                    if (!globalThis.hasException()) {
+                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
+                    }
+
                     break :brk null;
                 },
             }

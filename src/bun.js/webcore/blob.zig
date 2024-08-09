@@ -3853,7 +3853,8 @@ pub const Blob = struct {
                         globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                         return null;
                     }
-                    globalThis.throw("out of memory", .{});
+                    if (!globalThis.hasException())
+                        globalThis.throwOutOfMemory();
                     return null;
                 };
 

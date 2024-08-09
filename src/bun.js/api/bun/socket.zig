@@ -70,7 +70,7 @@ noinline fn getSSLException(globalThis: *JSC.JSGlobalObject, defaultMessage: []c
 
     if (written > 0) {
         const message = output_buf[0..written];
-        zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch unreachable);
+        zig_str = ZigString.init(std.fmt.allocPrint(bun.default_allocator, "OpenSSL {s}", .{message}) catch bun.outOfMemory());
         var encoded_str = zig_str.withEncoding();
         encoded_str.mark();
 
@@ -493,13 +493,13 @@ pub const Listener = struct {
             switch (this) {
                 .unix => |u| {
                     return .{
-                        .unix = (bun.default_allocator.dupe(u8, u) catch unreachable),
+                        .unix = (bun.default_allocator.dupe(u8, u) catch bun.outOfMemory()),
                     };
                 },
                 .host => |h| {
                     return .{
                         .host = .{
-                            .host = (bun.default_allocator.dupe(u8, h.host) catch unreachable),
+                            .host = (bun.default_allocator.dupe(u8, h.host) catch bun.outOfMemory()),
                             .port = this.host.port,
                         },
                     };
@@ -657,15 +657,15 @@ pub const Listener = struct {
         }
 
         var connection: Listener.UnixOrHost = if (port) |port_| .{
-            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port_ },
+            .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port_ },
         } else .{
-            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(),
+            .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(),
         };
 
         const listen_socket: *uws.ListenSocket = brk: {
             switch (connection) {
                 .host => |c| {
-                    const host = bun.default_allocator.dupeZ(u8, c.host) catch unreachable;
+                    const host = bun.default_allocator.dupeZ(u8, c.host) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
 
                     const socket = uws.us_socket_context_listen(
@@ -683,7 +683,7 @@ pub const Listener = struct {
                     break :brk socket;
                 },
                 .unix => |u| {
-                    const host = bun.default_allocator.dupeZ(u8, u) catch unreachable;
+                    const host = bun.default_allocator.dupeZ(u8, u) catch bun.outOfMemory();
                     defer bun.default_allocator.free(host);
                     break :brk uws.us_socket_context_listen_unix(@intFromBool(ssl_enabled), socket_context, host, host.len, socket_flags, 8);
                 },
@@ -722,7 +722,7 @@ pub const Listener = struct {
             .ssl = ssl_enabled,
             .socket_context = socket_context,
             .listener = listen_socket,
-            .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
+            .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
         };
 
         socket.handlers.protect();
@@ -998,9 +998,9 @@ pub const Listener = struct {
                 }
             }
             if (port) |_| {
-                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice(), .port = port.? } };
+                break :blk .{ .host = .{ .host = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice(), .port = port.? } };
             }
-            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch unreachable).slice() };
+            break :blk .{ .unix = (hostname_or_unix.cloneIfNeeded(bun.default_allocator) catch bun.outOfMemory()).slice() };
         };
 
         if (ssl_enabled) {
@@ -1008,7 +1008,7 @@ pub const Listener = struct {
                 protos = p[0..ssl.?.protos_len];
             }
             if (ssl.?.server_name) |s| {
-                server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch unreachable;
+                server_name = bun.default_allocator.dupe(u8, s[0..bun.len(s)]) catch bun.outOfMemory();
             }
             uws.NewSocketHandler(true).configure(
                 socket_context,
@@ -1059,7 +1059,7 @@ pub const Listener = struct {
                 .this_value = .zero,
                 .socket = .{ .detached = {} },
                 .connection = connection,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
+                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
                 .server_name = server_name,
                 .socket_context = socket_context, // owns the socket context
             });
@@ -1383,31 +1383,31 @@ fn NewSocket(comptime ssl: bool) type {
 
             // Add SNI support for TLS (mongodb and others requires this)
             if (comptime ssl) {
-                var ssl_ptr = this.socket.ssl() orelse unreachable;
-
-                if (!ssl_ptr.isInitFinished()) {
-                    if (this.server_name) |server_name| {
-                        const host = normalizeHost(server_name);
-                        if (host.len > 0) {
-                            const host__ = default_allocator.dupeZ(u8, host) catch unreachable;
-                            defer default_allocator.free(host__);
-                            ssl_ptr.setHostname(host__);
-                        }
-                    } else if (this.connection) |connection| {
-                        if (connection == .host) {
-                            const host = normalizeHost(connection.host.host);
+                if (this.socket.ssl()) |ssl_ptr| {
+                    if (!ssl_ptr.isInitFinished()) {
+                        if (this.server_name) |server_name| {
+                            const host = normalizeHost(server_name);
                             if (host.len > 0) {
-                                const host__ = default_allocator.dupeZ(u8, host) catch unreachable;
+                                const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
                                 defer default_allocator.free(host__);
                                 ssl_ptr.setHostname(host__);
                             }
+                        } else if (this.connection) |connection| {
+                            if (connection == .host) {
+                                const host = normalizeHost(connection.host.host);
+                                if (host.len > 0) {
+                                    const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
+                                    defer default_allocator.free(host__);
+                                    ssl_ptr.setHostname(host__);
+                                }
+                            }
                         }
-                    }
-                    if (this.protos) |protos| {
-                        if (this.handlers.is_server) {
-                            BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
-                        } else {
-                            _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
+                        if (this.protos) |protos| {
+                            if (this.handlers.is_server) {
+                                BoringSSL.SSL_CTX_set_alpn_select_cb(BoringSSL.SSL_get_SSL_CTX(ssl_ptr), selectALPNCallback, bun.cast(*anyopaque, this));
+                            } else {
+                                _ = BoringSSL.SSL_set_alpn_protos(ssl_ptr, protos.ptr, @as(c_uint, @intCast(protos.len)));
+                            }
                         }
                     }
                 }
@@ -2651,7 +2651,7 @@ fn NewSocket(comptime ssl: bool) type {
                 if (hash_str != null) {
                     const hash_str_len = bun.len(hash_str);
                     const hash_slice = hash_str[0..hash_str_len];
-                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch unreachable;
+                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + hash_str_len + 1) catch bun.outOfMemory();
                     defer bun.default_allocator.free(buffer);
 
                     bun.copy(u8, buffer, sig_with_md);
@@ -2659,7 +2659,7 @@ fn NewSocket(comptime ssl: bool) type {
                     bun.copy(u8, buffer[sig_with_md.len + 1 ..], hash_slice);
                     array.putIndex(globalObject, @as(u32, @intCast(i)), JSC.ZigString.fromUTF8(buffer).toJS(globalObject));
                 } else {
-                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch unreachable;
+                    const buffer = bun.default_allocator.alloc(u8, sig_with_md.len + 6) catch bun.outOfMemory();
                     defer bun.default_allocator.free(buffer);
 
                     bun.copy(u8, buffer, sig_with_md);
@@ -2834,7 +2834,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.default_allocator) catch unreachable;
+            const slice = server_name.getZigString(globalObject).toOwnedSlice(bun.default_allocator) catch bun.outOfMemory();
             if (this.server_name) |old| {
                 this.server_name = slice;
                 default_allocator.free(old);
@@ -2851,7 +2851,7 @@ fn NewSocket(comptime ssl: bool) type {
                     globalObject.throw("Already started.", .{});
                     return .zero;
                 }
-                const host__ = default_allocator.dupeZ(u8, host) catch unreachable;
+                const host__ = default_allocator.dupeZ(u8, host) catch bun.outOfMemory();
                 defer default_allocator.free(host__);
                 ssl_ptr.setHostname(host__);
             }
@@ -2949,8 +2949,8 @@ fn NewSocket(comptime ssl: bool) type {
                 .socket = .{ .detached = {} },
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
-                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch unreachable) else null,
-                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch unreachable) else null,
+                .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
+                .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch bun.outOfMemory()) else null,
                 .socket_context = null, // only set after the wrapTLS
             });
 

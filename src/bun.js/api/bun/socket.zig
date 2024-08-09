@@ -1351,7 +1351,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn closeAndDetach(this: *This, code: Socket.CloseCode) void {
+        pub fn closeAndDetach(this: *This, code: uws.CloseCode) void {
             const socket = this.socket;
             this.socket.detach();
             socket.close(code);

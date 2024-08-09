@@ -1058,15 +1058,8 @@ long us_internal_verify_peer_certificate( // NOLINT(runtime/int)
   }
   return err;
 }
+struct us_bun_verify_error_t us_ssl_socket_verify_error_from_ssl(SSL *ssl) {
 
-struct us_bun_verify_error_t
-us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
-  if (us_internal_ssl_socket_is_closed(s) || us_internal_ssl_socket_is_shut_down(s)) {
-    return (struct us_bun_verify_error_t){
-        .error = 0, .code = NULL, .reason = NULL};
-  }
-
-  SSL *ssl = s->ssl;
   long x509_verify_error = // NOLINT(runtime/int)
       us_internal_verify_peer_certificate(ssl,
                                           X509_V_ERR_UNABLE_TO_GET_ISSUER_CERT);
@@ -1081,6 +1074,17 @@ us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
   return (struct us_bun_verify_error_t){
       .error = x509_verify_error, .code = code, .reason = reason};
 }
+
+struct us_bun_verify_error_t
+us_internal_verify_error(struct us_internal_ssl_socket_t *s) {
+  if (!s->ssl || us_socket_is_closed(0, &s->s) || us_internal_ssl_socket_is_shut_down(s)) {
+    return (struct us_bun_verify_error_t){
+        .error = 0, .code = NULL, .reason = NULL};
+  }
+
+  return us_ssl_socket_verify_error_from_ssl(s->ssl);
+}
+
 
 int us_verify_callback(int preverify_ok, X509_STORE_CTX *ctx) {
   // From https://www.openssl.org/docs/man1.1.1/man3/SSL_verify_cb:

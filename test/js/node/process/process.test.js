@@ -401,6 +401,39 @@ describe("process.onExit", () => {
     expect(proc.stderr.toString("utf8")).toInclude("error: boom");
     expect(proc.stdout.toString("utf8")).toBeEmpty();
   });
+
+  it("process.exit() doesn't clobber error thrown inside exit handler", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")}); process.exit();`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+
+  it("process.exit() has higher precedence than throw in exit handler", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")}); process.exit(5);`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(5);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+
+  it("process.exitCode has higher precedence than throw in exit handler", () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {process.exitCode=5; throw new Error("boom")}); process.exit();`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(5);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
 });
 
 it("process.memoryUsage", () => {

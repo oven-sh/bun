@@ -219,7 +219,6 @@ static JSValue constructProcessReleaseObject(VM& vm, JSObject* processObject)
 
 static void dispatchExitInternal(JSC::JSGlobalObject* globalObject, Process* process, int exitCode)
 {
-
     if (processIsExiting)
         return;
     processIsExiting = true;
@@ -506,7 +505,6 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionExit,
     auto process = jsCast<Process*>(zigGlobal->processObject());
     process->m_isExitCodeObservable = true;
 
-    Process__dispatchOnExit(zigGlobal, exitCode);
     Bun__Process__exit(zigGlobal, exitCode);
     return JSC::JSValue::encode(jsUndefined());
 }

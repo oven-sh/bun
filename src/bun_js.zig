@@ -469,6 +469,10 @@ pub const Run = struct {
     }
 };
 
+pub fn anyUnhandled() bool {
+    return run.any_unhandled;
+}
+
 pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();
     const result = arguments[0];

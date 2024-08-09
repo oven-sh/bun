@@ -23,6 +23,7 @@ const Shimmer = @import("../bindings/shimmer.zig").Shimmer;
 const Syscall = bun.sys;
 const URL = @import("../../url.zig").URL;
 const Value = std.json.Value;
+const bun_js = @import("../../bun_js.zig");
 
 pub const Path = @import("./path.zig");
 
@@ -2117,6 +2118,7 @@ pub const Process = struct {
 
         vm.exit_handler.exit_code = code;
         vm.onExit();
+        if (bun_js.anyUnhandled() and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
         vm.globalExit();
     }
 

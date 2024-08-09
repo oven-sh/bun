@@ -128,7 +128,7 @@ void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *c
         context->head_listen_sockets->s.prev = &ls->s;
     }
     context->head_listen_sockets = ls;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
 
 /* We always add in the top, so we don't modify any s.next */
@@ -140,7 +140,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
         context->head_sockets->prev = s;
     }
     context->head_sockets = s;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {
@@ -277,8 +277,8 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
 }
 
-
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
+
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us again with SSL=false */
@@ -299,9 +299,10 @@ void us_internal_socket_context_free(int ssl, struct us_socket_context_t *contex
 void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
     context->ref_count++;
 }
-
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
-    if (--context->ref_count == 0) {
+    uint32_t ref_count = context->ref_count;
+    context->ref_count--;    
+    if (ref_count == 1) {
         us_internal_socket_context_free(ssl, context);
     }
 }

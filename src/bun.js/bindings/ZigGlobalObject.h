@@ -21,7 +21,7 @@ class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
@@ -44,9 +44,10 @@ class InternalModuleRegistry;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include "BunGlobalScope.h"
 
 namespace WebCore {
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -68,8 +69,8 @@ using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 #define ZIG_GLOBAL_OBJECT_DEFINED
 
-class GlobalObject : public JSC::JSGlobalObject {
-    using Base = JSC::JSGlobalObject;
+class GlobalObject : public Bun::GlobalScope {
+    using Base = Bun::GlobalScope;
     // Move this to the front for better cache locality.
     void* m_bunVM;
 
@@ -298,7 +299,7 @@ public:
     template<typename Visitor>
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
-    ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
+    ALWAYS_INLINE void* bunVM() const { return WebCore::clientData(vm())->bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
     {
@@ -314,7 +315,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::GlobalScope& globalEventScope;
+    Bun::WorkerGlobalScope& globalEventScope;
 
     void resetOnEachMicrotaskTick();
 

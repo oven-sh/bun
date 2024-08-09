@@ -1,6 +1,6 @@
 import { ConsoleMessage, Page, launch } from "puppeteer";
 import assert from "assert";
-import { copyFileSync } from "fs";
+import { copyFileSync, readFileSync, writeFileSync } from "fs";
 import { join } from "path";
 
 const root = join(import.meta.dir, "../");
@@ -12,6 +12,8 @@ if (process.argv.length > 2) {
   url = process.argv[2];
 }
 
+const isWindows = process.platform === "win32";
+
 const b = await launch({
   // While puppeteer is migrating to their new headless: `true` mode,
   // this causes strange issues on macOS in the cloud (AWS and MacStadium).
@@ -22,19 +24,24 @@ const b = await launch({
   // Fixes: 'TargetCloseError: Protocol error (Target.setAutoAttach): Target closed'
   headless: "shell",
   dumpio: true,
-  pipe: true,
-  args: [
-    // Fixes: 'dock_plist is not an NSDictionary'
-    "--no-sandbox",
-    "--single-process",
-    "--disable-setuid-sandbox",
-    "--disable-dev-shm-usage",
-    // Fixes: 'Navigating frame was detached'
-    "--disable-features=site-per-process",
-    // Uncomment if you want debug logs from Chromium:
-    // "--enable-logging=stderr",
-    // "--v=1",
-  ],
+  pipe: !isWindows,
+  args: isWindows
+    ? [
+        // On windows, it seems passing these flags actually breaks stuff.
+        "--no-sandbox",
+      ]
+    : [
+        // Fixes: 'dock_plist is not an NSDictionary'
+        "--no-sandbox",
+        "--single-process",
+        "--disable-setuid-sandbox",
+        "--disable-dev-shm-usage",
+        // Fixes: 'Navigating frame was detached'
+        "--disable-features=site-per-process",
+        // Uncomment if you want debug logs from Chromium:
+        // "--enable-logging=stderr",
+        // "--v=1",
+      ],
 });
 
 async function main() {
@@ -54,7 +61,7 @@ async function main() {
     return promise;
   }
 
-  const console_promise = waitForConsoleMessage(p, /counter a/);
+  let console_promise = waitForConsoleMessage(p, /counter a/);
   p.goto(url);
   await console_promise;
 
@@ -67,6 +74,7 @@ async function main() {
     const [has_class, style_json_string] = await counter_root.evaluate(
       x => [(x as HTMLElement).classList.contains("rounded-bl-full"), JSON.stringify(getComputedStyle(x))] as const,
     );
+    console.error("looking at style");
     assert.strictEqual(has_class, true);
     const decoded_style = JSON.parse(style_json_string);
     assert.strictEqual(decoded_style.borderTopLeftRadius, "0px");
@@ -75,7 +83,11 @@ async function main() {
     assert.strictEqual(decoded_style.borderBottomLeftRadius, "9999px");
   }
 
-  const getCount = () => counter_root.$eval("p", x => x.innerText);
+  const getCount = async () => {
+    const count = await counter_root.$eval("p", x => x.innerText);
+    console.error("Counter is at " + count);
+    return count;
+  };
 
   assert.strictEqual(await getCount(), "Count A: 0");
   await counter_root.$eval(".inc", x => (x as HTMLElement).click());
@@ -85,8 +97,13 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
+  console.error("Waiting for A again");
+
+  console_promise = waitForConsoleMessage(p, /counter a/);
   p.reload({});
-  await waitForConsoleMessage(p, /counter a/);
+  await console_promise;
+
+  console.error("Continue");
 
   assert.strictEqual(await p.$eval("code.font-bold", x => x.innerText), Bun.version);
 
@@ -100,7 +117,9 @@ async function main() {
   await counter_root.$eval(".dec", x => (x as HTMLElement).click());
   assert.strictEqual(await getCount(), "Count A: 1");
 
-  copyFileSync(join(root, "src/Counter2.txt"), join(root, "src/Counter.tsx"));
+  writeFileSync(join(root, "src/Counter.tsx"), readFileSync(join(root, "src/Counter2.txt")));
+
+  console.log("Waiting for Next HMR");
   await waitForConsoleMessage(p, /counter b loaded/);
   assert.strictEqual(await getCount(), "Count B: 1");
   await counter_root.$eval(".inc", x => (x as HTMLElement).click());
@@ -114,6 +133,7 @@ async function main() {
     const [has_class, style_json_string] = await counter_root.evaluate(
       x => [(x as HTMLElement).classList.contains("rounded-br-full"), JSON.stringify(getComputedStyle(x))] as const,
     );
+    console.log("Look at styles");
     assert.strictEqual(has_class, true);
     const decoded_style = JSON.parse(style_json_string);
     assert.strictEqual(decoded_style.borderTopLeftRadius, "0px");
@@ -121,6 +141,8 @@ async function main() {
     assert.strictEqual(decoded_style.borderBottomRightRadius, "9999px");
     assert.strictEqual(decoded_style.borderBottomLeftRadius, "0px");
   }
+
+  console.log("Closing");
 
   await b.close();
   console.error("Finished dev-server-puppeteer.ts");

@@ -1221,7 +1221,7 @@ pub const Log = struct {
         };
     }
 
-    pub fn printForLogLevelWithEnableAnsiColors(self: *Log, to: anytype, comptime enable_ansi_colors: bool) !void {
+    pub fn printForLogLevelWithEnableAnsiColors(self: *const Log, to: anytype, comptime enable_ansi_colors: bool) !void {
         var needs_newline = false;
         if (self.warnings > 0 and self.errors > 0) {
             // Print warnings at the top

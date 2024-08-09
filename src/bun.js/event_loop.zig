@@ -478,6 +478,7 @@ pub const Task = TaggedPointerUnion(.{
     ShellAsyncSubprocessDone,
     TimerObject,
     bun.shell.Interpreter.Builtin.Yes.YesTask,
+    bun.kit.DevServer.BundleTask,
 
     ProcessWaiterThreadTask,
     RuntimeTranspilerStore,
@@ -1230,6 +1231,9 @@ pub const EventLoop = struct {
                 @field(Task.Tag, typeBaseName(@typeName(TimerObject))) => {
                     var any: *TimerObject = task.get(TimerObject).?;
                     any.runImmediateTask(this.virtual_machine);
+                },
+                @field(Task.Tag, typeBaseName(@typeName(bun.kit.DevServer.BundleTask))) => {
+                    task.get(bun.kit.DevServer.BundleTask).?.completeOnMainThread();
                 },
 
                 else => if (Environment.allow_assert) {

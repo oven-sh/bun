@@ -10,6 +10,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
         &.{.{
             .pattern = "/",
             .server_entry_point = "./server.ts",
+            .client_entry_point = "./client.ts",
         }},
     ) catch bun.outOfMemory();
 

@@ -1062,6 +1062,10 @@ pub fn CaseInsensitiveASCIIStringArrayHashMap(comptime Type: type) type {
     return std.ArrayHashMap([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
 }
 
+pub fn CaseInsensitiveASCIIStringArrayHashMapUnmanaged(comptime Type: type) type {
+    return std.ArrayHashMapUnmanaged([]const u8, Type, CaseInsensitiveASCIIStringContext, true);
+}
+
 pub fn StringArrayHashMapUnmanaged(comptime Type: type) type {
     return std.ArrayHashMapUnmanaged([]const u8, Type, StringArrayHashMapContext, true);
 }

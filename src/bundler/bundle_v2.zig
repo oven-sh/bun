@@ -331,7 +331,7 @@ pub const BundleV2 = struct {
     linker: LinkerContext = LinkerContext{ .loop = undefined },
     bun_watcher: ?*Watcher.Watcher = null,
     plugins: ?*JSC.API.JSBundler.Plugin = null,
-    completion: ?*JSBundleCompletionTask = null,
+    completion: ?CompletionPtr = null,
     source_code_length: usize = 0,
 
     // There is a race condition where an onResolve plugin may schedule a task on the bundle thread before it's parsing task completes
@@ -342,6 +342,17 @@ pub const BundleV2 = struct {
 
     unique_key: u64 = 0,
     dynamic_import_entry_points: std.AutoArrayHashMap(Index.Int, void) = undefined,
+
+    pub const CompletionPtr = union(enum) {
+        js: *JSBundleCompletionTask,
+        kit: *bun.kit.DevServer.BundleTask,
+
+        pub fn log(ptr: CompletionPtr) *bun.logger.Log {
+            return switch (ptr) {
+                inline else => |inner| &inner.log,
+            };
+        }
+    };
 
     const debug = Output.scoped(.Bundle, false);
 
@@ -483,7 +494,7 @@ pub const BundleV2 = struct {
         ) catch |err| {
             var handles_import_errors = false;
             var source: ?*const Logger.Source = null;
-            const log = &this.completion.?.log;
+            const log = this.completion.?.log();
 
             if (import_record.importer_source_index) |importer| {
                 var record: *ImportRecord = &this.graph.ast.items(.import_records)[importer].slice()[import_record.import_record_index];
@@ -1142,6 +1153,9 @@ pub const BundleV2 = struct {
         }
     }
 
+    const JSBundleThread = BundleThread(JSBundleCompletionTask);
+    var global_js_bundle_thread: ?*JSBundleThread = null;
+
     pub fn generateFromJavaScript(
         config: bun.JSC.API.JSBundler.Config,
         plugins: ?*bun.JSC.API.JSBundler.Plugin,
@@ -1169,63 +1183,17 @@ pub const BundleV2 = struct {
         // conditions from creating two
         _ = JSC.WorkPool.get();
 
-        if (BundleThread.instance) |existing| {
+        if (global_js_bundle_thread) |existing| {
             existing.queue.push(completion);
             existing.waker.?.wake();
         } else {
-            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
+            var instance = bun.default_allocator.create(JSBundleThread) catch unreachable;
             instance.queue = .{};
             instance.waker = null;
             instance.queue.push(completion);
-            BundleThread.instance = instance;
+            global_js_bundle_thread = instance;
 
-            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
-            thread.detach();
-        }
-
-        completion.poll_ref.ref(globalThis.bunVM());
-
-        return completion.promise.value();
-    }
-
-    pub fn generateFromKit(
-        config: bun.JSC.API.JSBundler.Config,
-        plugins: ?*bun.JSC.API.JSBundler.Plugin,
-        globalThis: *JSC.JSGlobalObject,
-        event_loop: *bun.JSC.EventLoop,
-        allocator: std.mem.Allocator,
-    ) !bun.JSC.JSValue {
-        var completion = try allocator.create(JSBundleCompletionTask);
-        completion.* = JSBundleCompletionTask{
-            .config = config,
-            .jsc_event_loop = event_loop,
-            .promise = JSC.JSPromise.Strong.init(globalThis),
-            .globalThis = globalThis,
-            .poll_ref = Async.KeepAlive.init(),
-            .env = globalThis.bunVM().bundler.env,
-            .plugins = plugins,
-            .log = Logger.Log.init(bun.default_allocator),
-            .task = JSBundleCompletionTask.TaskCompletion.init(completion),
-        };
-
-        if (plugins) |plugin|
-            plugin.setConfig(completion);
-
-        // Ensure this exists before we spawn the thread to prevent any race
-        // conditions from creating two
-        _ = JSC.WorkPool.get();
-
-        if (BundleThread.instance) |existing| {
-            existing.queue.push(completion);
-            existing.waker.?.wake();
-        } else {
-            var instance = bun.default_allocator.create(BundleThread) catch unreachable;
-            instance.queue = .{};
-            instance.waker = null;
-            instance.queue.push(completion);
-            BundleThread.instance = instance;
-
-            var thread = try std.Thread.spawn(.{}, generateInNewThreadWrap, .{instance});
+            const thread = try instance.spawn();
             thread.detach();
         }
 
@@ -1236,6 +1204,12 @@ pub const BundleV2 = struct {
 
     pub const BuildResult = struct {
         output_files: std.ArrayList(options.OutputFile),
+    };
+
+    pub const Result = union(enum) {
+        pending: void,
+        err: anyerror,
+        value: BuildResult,
     };
 
     pub const JSBundleCompletionTask = struct {
@@ -1255,11 +1229,67 @@ pub const BundleV2 = struct {
         plugins: ?*bun.JSC.API.JSBundler.Plugin = null,
         ref_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(1),
 
-        pub const Result = union(enum) {
-            pending: void,
-            err: anyerror,
-            value: BuildResult,
-        };
+        pub fn configureBundler(
+            completion: *JSBundleCompletionTask,
+            bundler: *Bundler,
+            allocator: std.mem.Allocator,
+        ) !void {
+            const config = &completion.config;
+
+            bundler.* = try bun.Bundler.init(
+                allocator,
+                &completion.log,
+                Api.TransformOptions{
+                    .define = if (config.define.count() > 0) config.define.toAPI() else null,
+                    .entry_points = config.entry_points.keys(),
+                    .target = config.target.toAPI(),
+                    .absolute_working_dir = if (config.dir.list.items.len > 0)
+                        config.dir.toOwnedSliceLeaky()
+                    else
+                        null,
+                    .inject = &.{},
+                    .external = config.external.keys(),
+                    .main_fields = &.{},
+                    .extension_order = &.{},
+                    .env_files = &.{},
+                    .conditions = config.conditions.map.keys(),
+                    .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
+                },
+                completion.env,
+            );
+
+            bundler.options.entry_points = config.entry_points.keys();
+            bundler.options.jsx = config.jsx;
+            bundler.options.no_macros = config.no_macros;
+            bundler.options.react_server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
+            bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
+            bundler.options.entry_naming = config.names.entry_point.data;
+            bundler.options.chunk_naming = config.names.chunk.data;
+            bundler.options.asset_naming = config.names.asset.data;
+
+            bundler.options.public_path = config.public_path.list.items;
+
+            bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
+            bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
+            bundler.options.minify_syntax = config.minify.syntax;
+            bundler.options.minify_whitespace = config.minify.whitespace;
+            bundler.options.minify_identifiers = config.minify.identifiers;
+            bundler.options.inlining = config.minify.syntax;
+            bundler.options.source_map = config.source_map;
+            bundler.options.packages = config.packages;
+            bundler.options.code_splitting = config.code_splitting;
+            bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
+            bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
+
+            bundler.configureLinker();
+            try bundler.configureDefines();
+
+            bundler.resolver.opts = bundler.options;
+        }
+
+        pub fn completeOnBundleThread(completion: *JSBundleCompletionTask) void {
+            completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
+        }
 
         pub const TaskCompletion = bun.JSC.AnyTask.New(JSBundleCompletionTask, onComplete);
 
@@ -1604,150 +1634,6 @@ pub const BundleV2 = struct {
         }
     }
 
-    pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
-
-    pub fn generateInNewThreadWrap(instance: *BundleThread) void {
-        Output.Source.configureNamedThread("Bundler");
-
-        instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
-
-        var timer: bun.windows.libuv.Timer = undefined;
-        if (bun.Environment.isWindows) {
-            timer.init(instance.waker.?.loop.uv_loop);
-            timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
-        }
-
-        var has_bundled = false;
-        while (true) {
-            while (instance.queue.pop()) |completion| {
-                generateInNewThread(completion, instance.generation) catch |err| {
-                    completion.result = .{ .err = err };
-                    completion.jsc_event_loop.enqueueTaskConcurrent(
-                        JSC.ConcurrentTask.create(completion.task.task()),
-                    );
-                };
-                has_bundled = true;
-            }
-            instance.generation +|= 1;
-
-            if (has_bundled) {
-                bun.Mimalloc.mi_collect(false);
-                has_bundled = false;
-            }
-
-            _ = instance.waker.?.wait();
-        }
-    }
-
-    pub const BundleThread = struct {
-        waker: ?bun.Async.Waker,
-        queue: bun.UnboundedQueue(JSBundleCompletionTask, .next) = .{},
-        generation: bun.Generation = 0,
-
-        pub var instance: ?*BundleThread = undefined;
-    };
-
-    /// This is called from `Bun.build` in JavaScript.
-    fn generateInNewThread(
-        completion: *JSBundleCompletionTask,
-        generation: bun.Generation,
-    ) !void {
-        var heap = try ThreadlocalArena.init();
-        defer heap.deinit();
-
-        const allocator = heap.allocator();
-        var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
-        ast_memory_allocator.* = .{
-            .allocator = allocator,
-        };
-        ast_memory_allocator.reset();
-        ast_memory_allocator.push();
-
-        const config = &completion.config;
-        var bundler = try allocator.create(bun.Bundler);
-
-        bundler.* = try bun.Bundler.init(
-            allocator,
-            &completion.log,
-            Api.TransformOptions{
-                .define = if (config.define.count() > 0) config.define.toAPI() else null,
-                .entry_points = config.entry_points.keys(),
-                .target = config.target.toAPI(),
-                .absolute_working_dir = if (config.dir.list.items.len > 0) config.dir.toOwnedSliceLeaky() else null,
-                .inject = &.{},
-                .external = config.external.keys(),
-                .main_fields = &.{},
-                .extension_order = &.{},
-                .env_files = &.{},
-                .conditions = config.conditions.map.keys(),
-                .ignore_dce_annotations = bundler.options.ignore_dce_annotations,
-            },
-            completion.env,
-        );
-        bundler.options.jsx = config.jsx;
-        bundler.options.no_macros = config.no_macros;
-        bundler.options.react_server_components = config.server_components.client.items.len > 0 or config.server_components.server.items.len > 0;
-        bundler.options.loaders = try options.loadersFromTransformOptions(allocator, config.loaders, config.target);
-        bundler.options.entry_naming = config.names.entry_point.data;
-        bundler.options.chunk_naming = config.names.chunk.data;
-        bundler.options.asset_naming = config.names.asset.data;
-
-        bundler.options.public_path = config.public_path.list.items;
-
-        bundler.options.output_dir = config.outdir.toOwnedSliceLeaky();
-        bundler.options.root_dir = config.rootdir.toOwnedSliceLeaky();
-        bundler.options.minify_syntax = config.minify.syntax;
-        bundler.options.minify_whitespace = config.minify.whitespace;
-        bundler.options.minify_identifiers = config.minify.identifiers;
-        bundler.options.inlining = config.minify.syntax;
-        bundler.options.source_map = config.source_map;
-        bundler.options.packages = config.packages;
-        bundler.resolver.generation = generation;
-        bundler.options.code_splitting = config.code_splitting;
-        bundler.options.emit_dce_annotations = config.emit_dce_annotations orelse !config.minify.whitespace;
-        bundler.options.ignore_dce_annotations = config.ignore_dce_annotations;
-
-        bundler.configureLinker();
-        try bundler.configureDefines();
-
-        bundler.resolver.opts = bundler.options;
-
-        const this = try BundleV2.init(bundler, allocator, JSC.AnyEventLoop.init(allocator), false, JSC.WorkPool.get(), heap);
-        this.plugins = completion.plugins;
-        this.completion = completion;
-        completion.bundler = this;
-
-        defer {
-            if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
-                this.graph.pool.pool.threadpool_context = null;
-            }
-
-            ast_memory_allocator.pop();
-            this.deinit();
-        }
-
-        errdefer {
-            // Wait for wait groups to finish. There still may be
-            this.linker.source_maps.line_offset_wait_group.wait();
-            this.linker.source_maps.quoted_contents_wait_group.wait();
-
-            var out_log = Logger.Log.init(bun.default_allocator);
-            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
-            completion.log = out_log;
-        }
-
-        completion.result = .{
-            .value = .{
-                .output_files = try this.runFromJSInNewThread(config),
-            },
-        };
-
-        var out_log = Logger.Log.init(bun.default_allocator);
-        this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
-        completion.log = out_log;
-        completion.jsc_event_loop.enqueueTaskConcurrent(JSC.ConcurrentTask.create(completion.task.task()));
-    }
-
     pub fn deinit(this: *BundleV2) void {
         defer this.graph.ast.deinit(bun.default_allocator);
         defer this.graph.input_files.deinit(bun.default_allocator);
@@ -1771,7 +1657,7 @@ pub const BundleV2 = struct {
         this.free_list.clearAndFree();
     }
 
-    pub fn runFromJSInNewThread(this: *BundleV2, config: *const bun.JSC.API.JSBundler.Config) !std.ArrayList(options.OutputFile) {
+    pub fn runFromJSInNewThread(this: *BundleV2, entry_points: []const []const u8) !std.ArrayList(options.OutputFile) {
         this.unique_key = std.crypto.random.int(u64);
 
         if (this.bundler.log.errors > 0) {
@@ -1783,7 +1669,7 @@ pub const BundleV2 = struct {
             bun.Mimalloc.mi_collect(true);
         }
 
-        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(config.entry_points.keys()));
+        this.graph.pool.pool.schedule(try this.enqueueEntryPoints(entry_points));
 
         // We must wait for all the parse tasks to complete, even if there are errors.
         this.waitForParse();
@@ -1851,7 +1737,7 @@ pub const BundleV2 = struct {
                             .original_target = original_target orelse this.bundler.options.target,
                         },
                     },
-                    this.completion.?,
+                    this.completion.?.js,
                 );
                 resolve.dispatch();
                 return true;
@@ -1871,7 +1757,7 @@ pub const BundleV2 = struct {
                 });
                 var load = bun.default_allocator.create(JSC.API.JSBundler.Load) catch unreachable;
                 load.* = JSC.API.JSBundler.Load.create(
-                    this.completion.?,
+                    this.completion.?.js,
                     parse.source_index,
                     parse.path.loader(&this.bundler.options.loaders) orelse options.Loader.js,
                     parse.path,
@@ -2348,6 +2234,126 @@ pub const BundleV2 = struct {
         }
     }
 };
+
+/// Used to keep the bundle thread from spinning on Windows
+pub fn timerCallback(_: *bun.windows.libuv.Timer) callconv(.C) void {}
+
+/// Used for Bun.build and Kit, as they asynchronously schedule multiple
+/// bundles. To account for their respective differences, the scheduling code
+/// is generalized over the Task structure.
+///
+/// - `configureBundler` is used to configure `Bundler`.
+/// - `completeOnBundleThread` is used to tell the task that it is done.
+///
+pub fn BundleThread(CompletionStruct: type) type {
+    return struct {
+        const Self = @This();
+
+        waker: ?bun.Async.Waker = null,
+        queue: bun.UnboundedQueue(CompletionStruct, .next) = .{},
+        generation: bun.Generation = 0,
+
+        pub fn spawn(instance: *Self) !std.Thread {
+            return std.Thread.spawn(.{}, threadMain, .{instance});
+        }
+
+        fn threadMain(instance: *Self) void {
+            Output.Source.configureNamedThread("BundleThread");
+
+            instance.waker = bun.Async.Waker.init() catch @panic("Failed to create waker");
+
+            var timer: bun.windows.libuv.Timer = undefined;
+            if (bun.Environment.isWindows) {
+                timer.init(instance.waker.?.loop.uv_loop);
+                timer.start(std.math.maxInt(u64), std.math.maxInt(u64), &timerCallback);
+            }
+
+            var has_bundled = false;
+            while (true) {
+                while (instance.queue.pop()) |completion| {
+                    generateInNewThread(completion, instance.generation) catch |err| {
+                        completion.result = .{ .err = err };
+                        completion.completeOnBundleThread();
+                    };
+                    has_bundled = true;
+                }
+                instance.generation +|= 1;
+
+                if (has_bundled) {
+                    bun.Mimalloc.mi_collect(false);
+                    has_bundled = false;
+                }
+
+                _ = instance.waker.?.wait();
+            }
+        }
+
+        /// This is called from `Bun.build` in JavaScript.
+        fn generateInNewThread(completion: *CompletionStruct, generation: bun.Generation) !void {
+            var heap = try ThreadlocalArena.init();
+            defer heap.deinit();
+
+            const allocator = heap.allocator();
+            var ast_memory_allocator = try allocator.create(js_ast.ASTMemoryAllocator);
+            ast_memory_allocator.* = .{ .allocator = allocator };
+            ast_memory_allocator.reset();
+            ast_memory_allocator.push();
+
+            const bundler = try allocator.create(bun.Bundler);
+
+            try completion.configureBundler(bundler, allocator);
+
+            bundler.resolver.generation = generation;
+
+            const this = try BundleV2.init(
+                bundler,
+                allocator,
+                JSC.AnyEventLoop.init(allocator),
+                false,
+                JSC.WorkPool.get(),
+                heap,
+            );
+
+            this.plugins = completion.plugins;
+            this.completion = switch (CompletionStruct) {
+                BundleV2.JSBundleCompletionTask => .{ .js = completion },
+                bun.kit.DevServer.BundleTask => .{ .kit = completion },
+                else => @compileError("Unknown completion struct: " ++ CompletionStruct),
+            };
+            completion.bundler = this;
+
+            defer {
+                if (this.graph.pool.pool.threadpool_context == @as(?*anyopaque, @ptrCast(this.graph.pool))) {
+                    this.graph.pool.pool.threadpool_context = null;
+                }
+
+                ast_memory_allocator.pop();
+                this.deinit();
+            }
+
+            errdefer {
+                // Wait for wait groups to finish. There still may be
+                this.linker.source_maps.line_offset_wait_group.wait();
+                this.linker.source_maps.quoted_contents_wait_group.wait();
+
+                var out_log = Logger.Log.init(bun.default_allocator);
+                this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+                completion.log = out_log;
+            }
+
+            completion.result = .{
+                .value = .{
+                    .output_files = try this.runFromJSInNewThread(bundler.options.entry_points),
+                },
+            };
+
+            var out_log = Logger.Log.init(bun.default_allocator);
+            this.bundler.log.appendToWithRecycled(&out_log, true) catch bun.outOfMemory();
+            completion.log = out_log;
+            completion.completeOnBundleThread();
+        }
+    };
+}
 
 const UseDirective = js_ast.UseDirective;
 

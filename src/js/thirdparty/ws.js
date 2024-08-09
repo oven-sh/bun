@@ -748,7 +748,7 @@ class BunWebSocketMocked extends EventEmitter {
       const compress = opts?.compress;
       data = normalizeData(data, opts);
       // send returns:
-      // 1+ - The number of bytes sent is always the length of the data never less
+      // 1+ - The number of bytes sent is always the byte length of the data never less
       // 0 - dropped due to backpressure (not sent)
       // -1 - enqueue the data internaly
       // we dont need to do anything with the return value here

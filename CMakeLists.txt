@@ -1268,6 +1268,9 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
+        -ffile-prefix-map="${CMAKE_CURRENT_SOURCE_DIR}"=.
+        -ffile-prefix-map="${BUN_DEPS_DIR}"=src/deps
+        -ffile-prefix-map="${BUN_DEPS_OUT_DIR}"=src/deps
     )
 endif()
 

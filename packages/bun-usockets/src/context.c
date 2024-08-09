@@ -481,7 +481,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->context = context;
-    us_socket_context_ref(ssl, context);    
+    us_socket_context_ref(ssl, context);     
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
@@ -747,7 +747,6 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         if (c) {
             c->connecting_head = new_s;
             c->context = context;
-            us_socket_context_ref(ssl, context);
         }
     }
     new_s->timeout = 255;

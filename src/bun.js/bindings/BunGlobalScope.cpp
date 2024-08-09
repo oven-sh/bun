@@ -1,6 +1,8 @@
 
 #include "root.h"
 #include "BunGlobalScope.h"
+#include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
 

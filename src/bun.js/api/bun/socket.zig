@@ -2089,7 +2089,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn finalize(this: *This) void {
-            log("finalize() {d}", .{@intFromPtr(this)});
+            log("finalize() {d} {}", .{ @intFromPtr(this), this.socket_context != null });
             this.flags.finalizing = true;
             if (!this.socket.isClosed()) {
                 this.socket.close(.failure);
@@ -2976,7 +2976,7 @@ fn NewSocket(comptime ssl: bool) type {
             };
 
             tls.socket = .{ .socket = new_socket };
-            tls.socket_context = new_socket.context(); // owns the new tls context
+            tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one
             tls.ref();
 
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
@@ -3005,7 +3005,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
-                .socket_context = this.socket_context, // owns the old context
+                .socket_context = null, // raw socket will dont own the context
             });
             raw.ref();
 
@@ -3031,7 +3031,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.socket = .{ .detached = {} };
-            this.socket_context = null;
             this.deref();
             if (this.flags.is_active) {
                 const vm = this.handlers.vm;

@@ -31,7 +31,7 @@ server_global: *DevGlobalObject,
 vm: *VirtualMachine,
 
 // Bundling
-define: *Define,
+// TODO: move more configuration here (define, etc)
 loaders: bun.StringArrayHashMap(bun.options.Loader),
 bundle_thread: BundleThread,
 
@@ -84,8 +84,6 @@ pub fn init(options: Options) *DevServer {
 
     const app = App.create(.{});
 
-    const define = Define.init(default_allocator, null, null) catch
-        bun.outOfMemory();
     const loaders = bun.options.loadersFromTransformOptions(default_allocator, null, .bun) catch
         bun.outOfMemory();
 
@@ -97,7 +95,6 @@ pub fn init(options: Options) *DevServer {
             .port = @intCast(options.listen_config.port),
             .hostname = options.listen_config.host orelse "localhost",
         },
-        .define = define,
         .loaders = loaders,
         .bundle_thread = .{},
         .server_global = undefined,
@@ -199,11 +196,6 @@ fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
 
 fn onAssetRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.client.Context(), bundle: *ClientBundle) void {
     _ = route;
-    std.debug.print("hello {s}\n", .{ctx.file_name});
-
-    for (bundle.files_index.keys()) |k| {
-        std.debug.print("w {s}\n", .{k});
-    }
 
     const file = bundle.getFile(ctx.file_name) orelse
         return sendBuiltInNotFound(resp);
@@ -213,10 +205,48 @@ fn onAssetRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.clie
 
 fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.server.Context(), bundle: *ServerBundle) void {
     _ = ctx; // autofix
-    _ = route; // autofix
-    _ = resp; // autofix
-    _ = bundle; // autofix
-    std.debug.print("TODO", .{});
+    const dev = route.dev;
+
+    const context = JSValue.createEmptyObject(dev.server_global.js(), 1);
+    context.put(
+        dev.server_global.js(),
+        bun.String.static("clientEntryPoint"),
+        bun.String.init(route.client_entry_url).toJS(dev.server_global.js()),
+    );
+
+    const result = bundle.server_request_callback.call(
+        dev.server_global.js(),
+        .undefined,
+        &.{context},
+    );
+    if (dev.server_global.js().hasException()) {
+        @panic("WTF??");
+    }
+
+    // TODO: This interface and implementation is very poor. but fine until API
+    // considerations become important (as of writing, there are 3 dozen todo
+    // items before it)
+    //
+    // It probably should use code from `server.zig`, but most importantly it should
+    // not have a tie to DevServer, but instead be generic with a context structure
+    // containing just a *uws.App, *JSC.EventLoop, and JSValue response object.
+    //
+    // This would allow us to support all of the nice things `new Response` allows
+
+    if (result == .zero) {
+        @panic("TODO: handle thrown exceptions");
+    }
+
+    const bun_string = result.toBunString(dev.server_global.js());
+    if (bun_string.tag == .Dead) @panic("TODO NOT STRING");
+    defer bun_string.deref();
+
+    const utf8 = bun_string.toUTF8(default_allocator);
+    defer utf8.deinit();
+
+    resp.writeStatus("200 OK");
+    resp.writeHeader("Content-Type", MimeType.html.value);
+    resp.end(utf8.slice(), true); // TODO: You should never call res.end(huge buffer)
 }
 
 fn onFallbackRoute(_: void, _: *Request, resp: *Response) void {
@@ -488,16 +518,20 @@ pub const BundleTask = struct {
                 const entry_point = files[0];
                 const code = entry_point.value.buffer.bytes;
 
-                const promise = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
-                route.dev.server_global.js().bunVM().waitForPromise(.{ .Internal = promise });
+                const server_code = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
+                route.dev.server_global.js().bunVM().waitForPromise(.{ .Internal = server_code.promise });
 
-                switch (promise.unwrap(dev.vm.jsc)) {
+                switch (server_code.promise.unwrap(dev.vm.jsc)) {
                     .pending => unreachable, // promise is settled
                     .rejected => @panic("TODO: top level module load error"),
                     .fulfilled => |v| bun.assert(v == .undefined),
                 }
 
-                const handler = c.KitGetRequestHandlerFromModule(dev.server_global, key);
+                const handler = c.KitGetRequestHandlerFromModule(dev.server_global, server_code.key);
+
+                if (!handler.isCallable(dev.vm.jsc)) {
+                    @panic("TODO: handle not callable");
+                }
 
                 bundle.* = .{ .value = .{
                     .files = files,
@@ -549,7 +583,7 @@ pub const BundleTask = struct {
                 .client => &task.route.client_entry_point,
                 .server => &task.route.server_entry_point,
             }[0..1],
-            .define = task.route.dev.define,
+            .define = bundler.options.define,
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
@@ -570,6 +604,7 @@ pub const BundleTask = struct {
         };
 
         bundler.configureLinker();
+        try bundler.configureDefines();
 
         switch (task.kind) {
             .client => {
@@ -653,8 +688,9 @@ pub const c = struct {
     extern fn KitCreateDevGlobal(owner: *DevServer) *DevGlobalObject;
 
     // KitSourceProvider.cpp
-    extern fn KitLoadServerCode(global: *DevGlobalObject, code: bun.String) *JSInternalPromise;
-    extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: JSValue) JSValue;
+    const LoadServerCodeResult = extern struct { promise: *JSInternalPromise, key: *JSC.JSString };
+    extern fn KitLoadServerCode(global: *DevGlobalObject, code: bun.String) LoadServerCodeResult;
+    extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: *JSC.JSString) JSValue;
 };
 
 const std = @import("std");

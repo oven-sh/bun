@@ -6,6 +6,11 @@
 
 namespace Kit {
 
+struct LoadServerCodeResult {
+  JSC::JSInternalPromise* promise;
+  JSC::JSString* key;
+};
+
 class KitSourceProvider final : public JSC::StringSourceProvider {
 public:
     static Ref<KitSourceProvider> create(
@@ -35,7 +40,7 @@ private:
   ) {}
 };
 
-extern "C" JSC::JSInternalPromise* KitLoadServerCode(DevGlobalObject* global, BunString source);
-extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(DevGlobalObject* global, JSC::EncodedJSValue encodedModule);
+extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunString source);
+extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
 
 } // namespace Kit

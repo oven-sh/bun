@@ -3839,22 +3839,7 @@ pub const JSValue = enum(JSValueReprInt) {
     }
 
     pub fn callWithGlobalThis(this: JSValue, globalThis: *JSGlobalObject, args: []const JSC.JSValue) JSC.JSValue {
-        JSC.markBinding(@src());
-        if (comptime bun.Environment.isDebug) {
-            const loop = JSC.VirtualMachine.get().eventLoop();
-            loop.debug.js_call_count_outside_tick_queue += @as(usize, @intFromBool(!loop.debug.is_inside_tick_queue));
-            if (loop.debug.track_last_fn_name and !loop.debug.is_inside_tick_queue) {
-                loop.debug.last_fn_name.deref();
-                loop.debug.last_fn_name = this.getName(globalThis);
-            }
-        }
-        return JSC.C.JSObjectCallAsFunctionReturnValue(
-            globalThis,
-            this,
-            globalThis.toJSValue(),
-            args.len,
-            @as(?[*]const JSC.C.JSValueRef, @ptrCast(args.ptr)),
-        );
+        return this.call(globalThis, globalThis.toJSValue(), args);
     }
 
     pub fn call(this: JSValue, globalThis: *JSGlobalObject, thisValue: JSC.JSValue, args: []const JSC.JSValue) JSC.JSValue {

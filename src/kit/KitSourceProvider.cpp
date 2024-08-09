@@ -1,18 +1,20 @@
+// clang-format off
 #include "KitSourceProvider.h"
 #include "JavaScriptCore/Completion.h"
 #include "JavaScriptCore/Identifier.h"
 #include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSLock.h"
+#include "JavaScriptCore/JSMap.h"
 #include "JavaScriptCore/JSModuleLoader.h"
-#include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "JavaScriptCore/JSString.h"
+#include "JavaScriptCore/JSModuleNamespaceObject.h"
 #include "KitDevGlobalObject.h"
 
 namespace Kit {
 
-extern "C" JSC::JSInternalPromise* KitLoadServerCode(DevGlobalObject* global, BunString source) {
-  JSC::JSLockHolder locker(global);
-  
+
+extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunString source) {
   String string = "kit://server/0/index.js"_s;
   JSC::SourceOrigin origin = JSC::SourceOrigin(WTF::URL(string));
   JSC::SourceCode sourceCode = JSC::SourceCode(KitSourceProvider::create(
@@ -22,16 +24,32 @@ extern "C" JSC::JSInternalPromise* KitLoadServerCode(DevGlobalObject* global, Bu
     WTF::TextPosition(),
     JSC::SourceProviderSourceType::Module
   ));
-  JSC::JSValue key = JSC::jsString(global->vm(), string);
+
+  JSC::JSString* key = JSC::jsString(global->vm(), string);
   global->moduleLoader()->provideFetch(global, key, sourceCode);
-  return global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined());
+  
+  return {
+     global->moduleLoader()->loadAndEvaluateModule(global, key, JSC::jsUndefined(), JSC::jsUndefined()),
+     key
+  };
 }
 
 extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(
   DevGlobalObject* global,
-  JSC::EncodedJSValue encodedKey
+  JSC::JSString* key
 ) {
-
+  JSC::VM&vm = global->vm();
+  JSC::JSMap* map = JSC::jsCast<JSC::JSMap*>(
+    global->moduleLoader()->getDirect(
+      vm, JSC::Identifier::fromString(global->vm(), "registry"_s)
+    ));
+  JSC::JSValue entry = map->get(global, key);
+  ASSERT(entry.isObject()); // should have called KitLoadServerCode and wait for that promise
+  JSC::JSValue module = entry.getObject()->get(global, JSC::Identifier::fromString(global->vm(), "module"_s));
+  ASSERT(module.isCell());
+  JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
+  ASSERT(namespaceObject);
+  return JSC::JSValue::encode(namespaceObject->get(global, JSC::Identifier::fromString(global->vm(), "default"_s)));
 }
 
 } // namespace Kit

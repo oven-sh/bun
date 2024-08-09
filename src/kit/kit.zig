@@ -21,8 +21,8 @@ pub fn wipDevServer() noreturn {
         DevServer.Route,
         &.{.{
             .pattern = "/",
-            .server_entry_point = "./server.ts",
-            .client_entry_point = "./client.ts",
+            .server_entry_point = "./server.tsx",
+            .client_entry_point = "./client.tsx",
         }},
     ) catch bun.outOfMemory();
 

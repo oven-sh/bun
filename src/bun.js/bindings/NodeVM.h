@@ -76,6 +76,16 @@ private:
     void finishCreation(JSC::VM&);
 };
 
+class NodeVMGlobalObject final : public Bun::GlobalScope {
+    using Base = Bun::GlobalScope;
+
+public:
+    NodeVMGlobalObject(JSC::VM& vm, JSC::Structure* structure)
+        : Base(vm, structure)
+    {
+    }
+};
+
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);
 JSC_DECLARE_HOST_FUNCTION(vmModule_isContext);
 JSC_DECLARE_HOST_FUNCTION(vmModuleRunInNewContext);

@@ -58,7 +58,6 @@
 #include "AddEventListenerOptions.h"
 #include "AsyncContextFrame.h"
 #include "BunClientData.h"
-#include "BunClientData.h"
 #include "BunObject.h"
 #include "BunPlugin.h"
 #include "BunProcess.h"
@@ -2935,20 +2934,6 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(registry);
         });
 
-    m_encodeIntoObjectStructure.initLater(
-        [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::Structure>::Initializer& init) {
-            auto& vm = init.vm;
-            auto& globalObject = *init.owner;
-            Structure* structure = globalObject.structureCache().emptyObjectStructureForPrototype(&globalObject, globalObject.objectPrototype(), 2);
-            PropertyOffset offset;
-            auto clientData = WebCore::clientData(vm);
-            structure = Structure::addPropertyTransition(vm, structure, clientData->builtinNames().readPublicName(), 0, offset);
-            RELEASE_ASSERT(offset == 0);
-            structure = Structure::addPropertyTransition(vm, structure, clientData->builtinNames().writtenPublicName(), 0, offset);
-            RELEASE_ASSERT(offset == 1);
-            init.set(structure);
-        });
-
     m_requireFunctionUnbound.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, JSC::JSObject>::Initializer& init) {
             init.set(
@@ -3532,7 +3517,6 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_callSiteStructure.visit(visitor);
     thisObject->m_commonJSModuleObjectStructure.visit(visitor);
     thisObject->m_cryptoObject.visit(visitor);
-    thisObject->m_encodeIntoObjectStructure.visit(visitor);
     thisObject->m_errorConstructorPrepareStackTraceInternalValue.visit(visitor);
     thisObject->m_esmRegistryMap.visit(visitor);
     thisObject->m_importMetaObjectStructure.visit(visitor);

@@ -26,10 +26,6 @@
 #include "JSBuffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 
@@ -394,7 +390,7 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
+    auto* targetContext = NodeVMGlobalObject::create(
         vm, zigGlobal->globalObjectStructure());
 
     // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());

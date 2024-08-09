@@ -35,7 +35,6 @@ const isWindows = process.platform === "win32";
 
 const isGitHubAction = !!process.env["GITHUB_ACTIONS"];
 const isBuildKite = !!process.env["BUILDKITE"];
-const isBuildKiteTestSuite = !!process.env["BUILDKITE_ANALYTICS_TOKEN"];
 const isCI = !!process.env["CI"] || isGitHubAction || isBuildKite;
 
 const isAWS =

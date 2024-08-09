@@ -12,11 +12,11 @@ it("endianness", () => {
 });
 
 it("freemem", () => {
-  expect(os.freemem() > 0).toBe(true);
+  expect(os.freemem()).toBeGreaterThan(1024 * 1024);
 });
 
 it("totalmem", () => {
-  expect(os.totalmem() > 0).toBe(true);
+  expect(os.totalmem()).toBeGreaterThan(1024 * 1024);
 });
 
 it("getPriority", () => {

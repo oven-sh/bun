@@ -93,21 +93,6 @@ pub const JSObject = extern struct {
         });
     }
 
-    extern fn Bun__ERR_INVALID_ARG_TYPE(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
-    pub fn ERR_INVALID_ARG_TYPE(this: *JSGlobalObject, arg_name: JSValue, etype: JSValue, atype: JSValue) JSValue {
-        return Bun__ERR_INVALID_ARG_TYPE(this, arg_name, etype, atype);
-    }
-
-    extern fn Bun__ERR_MISSING_ARGS(*JSGlobalObject, JSValue, JSValue, JSValue) JSValue;
-    pub fn ERR_MISSING_ARGS(this: *JSGlobalObject, arg1: JSValue, arg2: JSValue, arg3: JSValue) JSValue {
-        return Bun__ERR_MISSING_ARGS(this, arg1, arg2, arg3);
-    }
-
-    extern fn Bun__ERR_IPC_CHANNEL_CLOSED(*JSGlobalObject) JSValue;
-    pub fn ERR_IPC_CHANNEL_CLOSED(this: *JSGlobalObject) JSValue {
-        return Bun__ERR_IPC_CHANNEL_CLOSED(this);
-    }
-
     pub const Extern = [_][]const u8{
         "putRecord",
         "getArrayLength",
@@ -3225,6 +3210,12 @@ pub const JSGlobalObject = opaque {
         if (bun.Environment.allow_assert) this.bunVM().assertOnJSThread();
     }
 
+    extern fn Bun__ERR_INVALID_ARG_TYPE_static(*JSGlobalObject, *const ZigString, *const ZigString, JSValue) JSValue;
+    /// Caller asserts 'arg_name' and 'etype' are utf-8 literals.
+    pub fn ERR_INVALID_ARG_TYPE_static(this: *JSGlobalObject, arg_name: *const ZigString, etype: *const ZigString, atype: JSValue) JSValue {
+        return Bun__ERR_INVALID_ARG_TYPE_static(this, arg_name, etype, atype);
+    }
+
     pub usingnamespace @import("ErrorCode").JSGlobalObjectExtensions;
 };
 
@@ -4882,7 +4873,7 @@ pub const JSValue = enum(JSValueReprInt) {
         }
 
         const value = getIfPropertyExistsImpl(this, global, property.ptr, @as(u32, @intCast(property.len)));
-        return if (@intFromEnum(value) != 0) value else return null;
+        return if (value.isEmpty()) null else value;
     }
 
     extern fn JSC__JSValue__getIfPropertyExistsImplString(value: JSValue, globalObject: *JSGlobalObject, propertyName: [*c]const bun.String) JSValue;

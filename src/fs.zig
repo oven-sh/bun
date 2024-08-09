@@ -1616,7 +1616,7 @@ pub const PathName = struct {
             dir = _path[0 .. dir.len + 2];
         }
 
-        return PathName{
+        return .{
             .dir = dir,
             .base = base,
             .ext = ext,

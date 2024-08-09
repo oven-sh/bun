@@ -5,6 +5,18 @@
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     _ = callframe;
 
+    const t = std.Thread.spawn(.{}, wipDevServer, .{}) catch @panic("Failed to start");
+    t.detach();
+
+    var keep_alive = bun.Async.KeepAlive.init();
+    keep_alive.ref(global.bunVM());
+
+    return .undefined;
+}
+
+pub fn wipDevServer() noreturn {
+    bun.Output.Source.configureNamedThread("Dev Server");
+
     const routes = bun.default_allocator.dupe(
         DevServer.Route,
         &.{.{
@@ -14,17 +26,11 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
         }},
     ) catch bun.outOfMemory();
 
-    _ = DevServer.init(.{
+    const dev = DevServer.init(.{
         .cwd = bun.getcwdAlloc(bun.default_allocator) catch bun.outOfMemory(),
-        .server_global = global, // TODO: isolation?
-        .event_loop = .{ .js = global.bunVM().event_loop },
         .routes = routes,
     });
-
-    var keep_alive = bun.Async.KeepAlive.init();
-    keep_alive.ref(global.bunVM());
-
-    return .undefined;
+    dev.runLoopForever();
 }
 
 pub const DevServer = @import("./DevServer.zig");

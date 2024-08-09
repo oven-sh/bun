@@ -3334,7 +3334,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3383,7 +3383,7 @@ pub inline fn assert_neql(a: anytype, b: anytype) void {
     return assert(a != b);
 }
 
-pub inline fn unsafeAssert(condition: bool) void {
+pub fn unsafeAssert(condition: bool) callconv(callconv_inline) void {
     if (!condition) {
         unreachable;
     }

@@ -4886,6 +4886,17 @@ void JSC__VM__holdAPILock(JSC__VM* arg0, void* ctx, void (*callback)(void* arg0)
     callback(ctx);
 }
 
+extern "C" void JSC__VM__getAPILock(JSC::VM* vm)
+{
+    vm->apiLock().lock();
+}
+
+extern "C"  void JSC__VM__releaseAPILock(JSC::VM* vm)
+{
+    RefPtr<JSLock> apiLock(&vm->apiLock());
+    apiLock->unlock();
+}
+
 void JSC__JSString__iterator(JSC__JSString* arg0, JSC__JSGlobalObject* arg1, void* arg2)
 {
     jsstring_iterator* iter = (jsstring_iterator*)arg2;

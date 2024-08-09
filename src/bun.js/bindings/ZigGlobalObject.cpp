@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "helpers.h"
@@ -693,7 +691,7 @@ static String computeErrorInfo(JSC::VM& vm, Vector<StackFrame>& stackTrace, Ordi
     return computeErrorInfoWithoutPrepareStackTrace(vm, globalObject, lexicalGlobalObject, stackTrace, line, column, sourceURL, errorInstance);
 }
 
-// TODO: @paperdave: remove this wrapper and make the WTF::Function from JavaScriptCore expeect OrdinalNumber instead of unsigned.
+// TODO: @paperdave: remove this wrapper and make the WTF::Function from JavaScriptCore expect OrdinalNumber instead of unsigned.
 static String computeErrorInfoWrapper(JSC::VM& vm, Vector<StackFrame>& stackTrace, unsigned int& line_in, unsigned int& column_in, String& sourceURL, JSObject* errorInstance)
 {
     OrdinalNumber line = OrdinalNumber::fromOneBasedInt(line_in);

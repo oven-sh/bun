@@ -2417,6 +2417,20 @@ pub const JSPromise = extern struct {
         "status",
         // "rejectException",
     };
+
+    pub const Unwrapped = union(enum) {
+        pending,
+        fulfilled: JSValue,
+        rejected: JSValue,
+    };
+
+    pub fn unwrap(promise: *JSPromise, vm: *VM) Unwrapped {
+        return switch (promise.status(vm)) {
+            .Pending => .pending,
+            .Fulfilled => .{ .fulfilled = promise.result(vm) },
+            .Rejected => .{ .rejected = promise.result(vm) },
+        };
+    }
 };
 
 pub const JSInternalPromise = extern struct {
@@ -2438,6 +2452,14 @@ pub const JSInternalPromise = extern struct {
     }
     pub fn setHandled(this: *JSInternalPromise, vm: *VM) void {
         cppFn("setHandled", .{ this, vm });
+    }
+
+    pub fn unwrap(promise: *JSInternalPromise, vm: *VM) JSPromise.Unwrapped {
+        return switch (promise.status(vm)) {
+            .Pending => .pending,
+            .Fulfilled => .{ .fulfilled = promise.result(vm) },
+            .Rejected => .{ .rejected = promise.result(vm) },
+        };
     }
 
     pub fn resolvedPromise(globalThis: *JSGlobalObject, value: JSValue) *JSInternalPromise {
@@ -5699,9 +5721,26 @@ pub const VM = extern struct {
         return cppFn("isJITEnabled", .{});
     }
 
+    /// deprecated in favor of getAPILock to avoid an annoying callback wrapper
     pub fn holdAPILock(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("holdAPILock", .{ this, ctx, callback });
     }
+
+    extern fn JSC__VM__getAPILock(vm: *VM) void;
+    extern fn JSC__VM__releaseAPILock(vm: *VM) void;
+
+    /// See `JSLock.h` in WebKit for more detail on how the API lock prevents races.
+    pub fn getAPILock(vm: *VM) Lock {
+        JSC__VM__getAPILock(vm);
+        return .{ .vm = vm };
+    }
+
+    pub const Lock = struct {
+        vm: *VM,
+        pub fn release(lock: Lock) void {
+            JSC__VM__releaseAPILock(lock.vm);
+        }
+    };
 
     pub fn deferGC(this: *VM, ctx: ?*anyopaque, callback: *const fn (ctx: ?*anyopaque) callconv(.C) void) void {
         cppFn("deferGC", .{ this, ctx, callback });

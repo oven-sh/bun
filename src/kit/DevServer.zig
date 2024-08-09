@@ -1,5 +1,5 @@
-//! Instance of the development server. Hosts a web server, controlling a bundler
-//! thread and JavaScript VM. All bundles are held in memory.
+//! Instance of the development server. Controls an event loop, web server,
+//! bundling threads, and JavaScript VM instance. All data is held in memory.
 //!
 //! Currently does not have a `deinit()`, as it is assumed to be alive for the
 //! remainder of this process' lifespan.
@@ -8,8 +8,6 @@ pub const DevServer = @This();
 const Options = struct {
     cwd: []u8,
     routes: []Route,
-    event_loop: EventLoopHandle,
-    server_global: *JSC.JSGlobalObject,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
 };
 
@@ -18,7 +16,6 @@ const Options = struct {
 const default_allocator = bun.default_allocator;
 
 cwd: []const u8,
-event_loop: EventLoopHandle,
 
 // UWS App
 app: *App,
@@ -30,7 +27,8 @@ address: struct {
 listener: ?*App.ListenSocket = null,
 
 // Server Runtime
-server_global: *JSC.JSGlobalObject,
+server_global: *DevGlobalObject,
+vm: *VirtualMachine,
 
 // Bundling
 define: *Define,
@@ -61,8 +59,7 @@ pub const Route = struct {
 /// Prepared server-side bundle and loaded JavaScript module
 const ServerBundle = struct {
     files: []OutputFile,
-    // server_module: JSC.Strong,
-    // server_request_callback: JSC.JSValue,
+    server_request_callback: JSC.JSValue,
 };
 
 /// Preparred client-side bundle.
@@ -82,6 +79,9 @@ const ClientBundle = struct {
 };
 
 pub fn init(options: Options) *DevServer {
+    if (JSC.VirtualMachine.VMHolder.vm != null)
+        @panic("Assertion failed: cannot initialize kit.DevServer on a thread with an active JSC.VirtualMachine");
+
     const app = App.create(.{});
 
     const define = Define.init(default_allocator, null, null) catch
@@ -92,7 +92,6 @@ pub fn init(options: Options) *DevServer {
     const dev = bun.new(DevServer, .{
         .cwd = options.cwd,
         .app = app,
-        .event_loop = options.event_loop,
         .routes = options.routes,
         .address = .{
             .port = @intCast(options.listen_config.port),
@@ -100,9 +99,21 @@ pub fn init(options: Options) *DevServer {
         },
         .define = define,
         .loaders = loaders,
-        .server_global = options.server_global,
         .bundle_thread = .{},
+        .server_global = undefined,
+        .vm = undefined,
     });
+
+    dev.vm = VirtualMachine.initKit(.{
+        .allocator = default_allocator,
+        .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
+    }) catch |err|
+        Output.panic("Failed to create Global object: {}", .{err});
+    dev.server_global = c.KitCreateDevGlobal(dev);
+    dev.vm.global = dev.server_global.js();
+    dev.vm.regular_event_loop.global = dev.vm.global;
+    dev.vm.jsc = dev.vm.global.vm();
+    dev.vm.event_loop.ensureWaker();
 
     _ = JSC.WorkPool.get();
     const thread = dev.bundle_thread.spawn() catch |err|
@@ -133,6 +144,16 @@ pub fn init(options: Options) *DevServer {
     app.listenWithConfig(*DevServer, dev, onListen, options.listen_config);
 
     return dev;
+}
+
+pub fn runLoopForever(dev: *DevServer) noreturn {
+    const lock = dev.vm.jsc.getAPILock();
+    defer lock.release();
+
+    while (true) {
+        dev.vm.tick();
+        dev.vm.eventLoop().autoTickActive();
+    }
 }
 
 // uws handlers
@@ -166,8 +187,12 @@ fn onAssetRequestInit(dev: *DevServer, req: *Request, resp: *Response) void {
 }
 
 fn onServerRequestInit(route: *Route, req: *Request, resp: *Response) void {
-    _ = req; // autofix
+    _ = req;
     route.dev.getOrEnqueueBundle(resp, route, .server, .{});
+    // const internal_promise = JSModuleLoader.loadAndEvaluateModule(dev.server_global, bun.String.init(route.server_entry_point)) orelse
+    //     @panic("TODO");
+    // dev.server_global.bunVM().waitForPromise(.{ .Internal = internal_promise });
+    // route.dev.server_global.loadAndEvaluateModule();
 }
 
 // uws with bundle handlers
@@ -409,8 +434,6 @@ pub const BundleTask = struct {
         };
 
         assert(bundle.* == .pending);
-        defer assert(bundle.* != .pending and bundle.* != .unqueued);
-        defer assert(task.handlers.first == null);
 
         if (task.result == .err) {
             // Only log to console once
@@ -460,8 +483,26 @@ pub const BundleTask = struct {
                 } };
             },
             .server => {
+                const dev = route.dev;
+
                 const entry_point = files[0];
-                assert(bun.strings.eql(entry_point.dest_path, "./server.js"));
+                const code = entry_point.value.buffer.bytes;
+
+                const promise = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
+                route.dev.server_global.js().bunVM().waitForPromise(.{ .Internal = promise });
+
+                switch (promise.unwrap(dev.vm.jsc)) {
+                    .pending => unreachable, // promise is settled
+                    .rejected => @panic("TODO: top level module load error"),
+                    .fulfilled => |v| bun.assert(v == .undefined),
+                }
+
+                const handler = c.KitGetRequestHandlerFromModule(dev.server_global, key);
+
+                bundle.* = .{ .value = .{
+                    .files = files,
+                    .server_request_callback = handler,
+                } };
             },
         }
 
@@ -550,15 +591,16 @@ pub const BundleTask = struct {
 
     pub fn completeOnBundleThread(task: *BundleTask) void {
         const dev = task.route.dev;
-        task.concurrent_task = switch (dev.event_loop) {
-            .js => .{ .js = undefined },
-            .mini => .{ .mini = undefined },
-        };
-        if (dev.event_loop == .js) {
-            dev.event_loop.js.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
-        } else {
-            dev.event_loop.mini.enqueueTaskConcurrent(task.concurrent_task.mini.from(task, "completeMini"));
-        }
+        // task.concurrent_task = switch (dev.event_loop) {
+        //     .js => .{ .js = undefined },
+        //     .mini => .{ .mini = undefined },
+        // };
+        // if (dev.event_loop == .js) {
+        //     dev.event_loop.js.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
+        // } else {
+        //     dev.event_loop.mini.enqueueTaskConcurrent(task.concurrent_task.mini.from(task, "completeMini"));
+        // }
+        dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
     }
 };
 
@@ -592,6 +634,29 @@ const Failure = struct {
     }
 };
 
+/// Kit uses a special global object extending Zig::GlobalObject
+pub const DevGlobalObject = opaque {
+    /// Safe down-cast to use other Bun APIs
+    pub fn js(ptr: *DevGlobalObject) *JSC.JSGlobalObject {
+        return @ptrCast(ptr);
+    }
+
+    pub fn vm(ptr: *DevGlobalObject) *JSC.VM {
+        return ptr.js().vm();
+    }
+};
+
+pub const KitSourceProvider = opaque {};
+
+pub const c = struct {
+    // KitDevGlobalObject.cpp
+    extern fn KitCreateDevGlobal(owner: *DevServer) *DevGlobalObject;
+
+    // KitSourceProvider.cpp
+    extern fn KitLoadServerCode(global: *DevGlobalObject, code: bun.String) *JSInternalPromise;
+    extern fn KitGetRequestHandlerFromModule(global: *DevGlobalObject, module: JSValue) JSValue;
+};
+
 const std = @import("std");
 const Allocator = std.mem.Allocator;
 
@@ -617,4 +682,7 @@ const MimeType = bun.http.MimeType;
 
 const JSC = bun.JSC;
 const JSValue = JSC.JSValue;
-const EventLoopHandle = bun.JSC.EventLoopHandle;
+const VirtualMachine = JSC.VirtualMachine;
+const JSModuleLoader = JSC.JSModuleLoader;
+const EventLoopHandle = JSC.EventLoopHandle;
+const JSInternalPromise = JSC.JSInternalPromise;

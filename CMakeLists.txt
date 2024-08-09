@@ -664,6 +664,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
+    "${BUN_SRC}/kit/*.cpp"
     "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})

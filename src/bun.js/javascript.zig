@@ -742,7 +742,7 @@ pub const VirtualMachine = struct {
     ///          ["baz", "--bar"]
     ///     "bun foo
     ///          []
-    argv: []const []const u8 = &[_][]const u8{"bun"},
+    argv: []const []const u8 = &[_][]const u8{},
 
     origin_timer: std.time.Timer = undefined,
     origin_timestamp: u64 = 0,
@@ -846,7 +846,7 @@ pub const VirtualMachine = struct {
         };
     }
 
-    const VMHolder = struct {
+    pub const VMHolder = struct {
         pub threadlocal var vm: ?*VirtualMachine = null;
         pub threadlocal var cached_global_object: ?*JSGlobalObject = null;
         pub export fn Bun__setDefaultGlobalObject(global: *JSGlobalObject) void {
@@ -1828,6 +1828,93 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
+        vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
+
+        return vm;
+    }
+
+    pub fn initKit(opts: Options) anyerror!*VirtualMachine {
+        JSC.markBinding(@src());
+        const allocator = opts.allocator;
+        var log: *logger.Log = undefined;
+        if (opts.log) |__log| {
+            log = __log;
+        } else {
+            log = try allocator.create(logger.Log);
+            log.* = logger.Log.init(allocator);
+        }
+
+        VMHolder.vm = try allocator.create(VirtualMachine);
+        const console = try allocator.create(ConsoleObject);
+        console.* = ConsoleObject.init(Output.errorWriter(), Output.writer());
+        const bundler = try Bundler.init(
+            allocator,
+            log,
+            try Config.configureTransformOptionsForBunVM(allocator, opts.args),
+            opts.env_loader,
+        );
+        var vm = VMHolder.vm.?;
+
+        vm.* = VirtualMachine{
+            .global = undefined,
+            .transpiler_store = RuntimeTranspilerStore.init(),
+            .allocator = allocator,
+            .entry_point = ServerEntryPoint{},
+            .bundler = bundler,
+            .console = console,
+            .log = log,
+            .flush_list = std.ArrayList(string).init(allocator),
+            .origin = bundler.options.origin,
+            .saved_source_map_table = SavedSourceMap.HashTable.init(bun.default_allocator),
+            .source_mappings = undefined,
+            .macros = MacroMap.init(allocator),
+            .macro_entry_points = @TypeOf(vm.macro_entry_points).init(allocator),
+            .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
+            .origin_timestamp = getOriginTimestamp(),
+            .ref_strings = JSC.RefString.Map.init(allocator),
+            .ref_strings_mutex = .{},
+            .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
+        };
+        vm.source_mappings.init(&vm.saved_source_map_table);
+        vm.regular_event_loop.tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.next_immediate_tasks = EventLoop.Queue.init(
+            default_allocator,
+        );
+        vm.regular_event_loop.tasks.ensureUnusedCapacity(64) catch unreachable;
+        vm.regular_event_loop.concurrent_tasks = .{};
+        vm.event_loop = &vm.regular_event_loop;
+
+        vm.bundler.macro_context = null;
+        vm.bundler.resolver.store_fd = opts.store_fd;
+        vm.bundler.resolver.prefer_module_field = false;
+
+        vm.bundler.resolver.onWakePackageManager = .{
+            .context = &vm.modules,
+            .handler = ModuleLoader.AsyncModule.Queue.onWakeHandler,
+            .onDependencyError = JSC.ModuleLoader.AsyncModule.Queue.onDependencyError,
+        };
+
+        vm.bundler.configureLinker();
+        try vm.bundler.configureFramework(false);
+
+        vm.bundler.macro_context = js_ast.Macro.MacroContext.init(&vm.bundler);
+
+        if (opts.args.serve orelse false) {
+            vm.bundler.linker.onImportCSS = Bun.onImportCSS;
+        }
+
+        vm.regular_event_loop.virtual_machine = vm;
+        vm.smol = opts.smol;
+
+        if (opts.smol)
+            is_smol_mode = opts.smol;
+
+        vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;

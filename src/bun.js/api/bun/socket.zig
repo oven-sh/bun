@@ -1375,6 +1375,8 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onOpen(this: *This, socket: Socket) void {
             log("onOpen {} {}", .{ this.socket == .detached, this.ref_count });
+            // update the internal socket instance to the one that was just connected
+            // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
             this.socket = .{ .socket = socket };
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});

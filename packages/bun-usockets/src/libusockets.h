@@ -314,7 +314,7 @@ struct us_socket_t *us_socket_context_connect_unix(int ssl, us_socket_context_r 
  * Can also be used to determine if a socket is a listen_socket or not, but you probably know that already. */
 int us_socket_is_established(int ssl, us_socket_r s) nonnull_fn_decl;
 
-void us_connecting_socket_free(struct us_connecting_socket_t *c) nonnull_fn_decl;
+void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) nonnull_fn_decl;
 
 /* Cancel a connecting socket. Can be used together with us_socket_timeout to limit connection times.
  * Entirely destroys the socket - this function works like us_socket_close but does not trigger on_close event since

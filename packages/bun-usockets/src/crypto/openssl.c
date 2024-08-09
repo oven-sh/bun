@@ -1820,6 +1820,7 @@ ssl_wrapped_context_on_close(struct us_internal_ssl_socket_t *s, int code,
     wrapped_context->old_events.on_close((struct us_socket_t *)s, code, reason);
   }
 
+  us_socket_context_unref(0, wrapped_context->tcp_context);
   return s;
 }
 
@@ -1976,6 +1977,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   }
 
   struct us_socket_context_t *old_context = us_socket_context(0, s);
+  us_socket_context_ref(0,old_context);
 
   struct us_socket_context_t *context = us_create_bun_socket_context(
       1, old_context->loop, sizeof(struct us_wrapped_socket_context_t),
@@ -1998,6 +2000,7 @@ struct us_internal_ssl_socket_t *us_internal_ssl_socket_wrap_with_tls(
   };
   wrapped_context->old_events = old_events;
   wrapped_context->events = events;
+  wrapped_context->tcp_context = old_context;
 
   // no need to wrap open because socket is already open (only new context will
   // be called so we can configure hostname and ssl stuff normally here before

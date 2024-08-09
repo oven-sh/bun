@@ -48,6 +48,12 @@ for (let key in bunEnv) {
 
 delete bunEnv.NODE_ENV;
 
+if (isDebug) {
+  // This makes debug build memory leak tests more reliable.
+  // The code for dumping out the debug build transpiled source code has leaks.
+  bunEnv.BUN_DEBUG_NO_DUMP = "1";
+}
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
@@ -1166,4 +1172,38 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
     return false;
   }
   return parseFloat(macOSVersion) >= minVersion;
+}
+
+let hasGuardMalloc = -1;
+export function forceGuardMalloc(env) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  if (hasGuardMalloc === -1) {
+    hasGuardMalloc = Number(fs.existsSync("/usr/lib/libgmalloc.dylib"));
+  }
+
+  if (hasGuardMalloc === 1) {
+    env.DYLD_INSERT_LIBRARIES = "/usr/lib/libgmalloc.dylib";
+    env.MALLOC_PROTECT_BEFORE = "1";
+    env.MallocScribble = "1";
+    env.MallocGuardEdges = "1";
+    env.MALLOC_FILL_SPACE = "1";
+    env.MALLOC_STRICT_SIZE = "1";
+  } else {
+    console.warn("Guard malloc is not available on this platform for some reason.");
+  }
+}
+
+export function fileDescriptorLeakChecker() {
+  const initial = getMaxFD();
+  return {
+    [Symbol.dispose]() {
+      const current = getMaxFD();
+      if (current > initial) {
+        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
+      }
+    },
+  };
 }

@@ -60,7 +60,7 @@ export CXXFLAGS='-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-
 
 # Add flags for LTO
 # We cannot enable LTO on macOS for dependencies because it requires -fuse-ld=lld and lld causes many segfaults on macOS (likely related to stack size)
-if [ "$BUN_ENABLE_LTO" == "1" ]; then
+if [ "$USE_LTO" == "1" ] || [ "$USE_LTO" == "ON" ]; then
   export CFLAGS="$CFLAGS -flto=full "
   export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
   export LDFLAGS="$LDFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "

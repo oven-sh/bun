@@ -757,7 +757,7 @@ pub const AsyncReaddirRecursiveTask = struct {
     root_path: PathString = PathString.empty,
 
     pending_err: ?Syscall.Error = null,
-    pending_err_mutex: bun.Lock = bun.Lock.init(),
+    pending_err_mutex: bun.Lock = .{},
 
     pub usingnamespace bun.New(@This());
 
@@ -1444,6 +1444,14 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
+                if (!uid_value.isNumber()) {
+                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
+                        JSC.ZigString.static("uid"),
+                        JSC.ZigString.static("number"),
+                        uid_value,
+                    ));
+                    return null;
+                }
                 break :brk @as(uid_t, @intCast(uid_value.toInt32()));
             };
 
@@ -1461,6 +1469,14 @@ pub const Arguments = struct {
                 };
 
                 arguments.eat();
+                if (!gid_value.isNumber()) {
+                    ctx.throwValue(ctx.ERR_INVALID_ARG_TYPE_static(
+                        JSC.ZigString.static("gid"),
+                        JSC.ZigString.static("number"),
+                        gid_value,
+                    ));
+                    return null;
+                }
                 break :brk @as(gid_t, @intCast(gid_value.toInt32()));
             };
 

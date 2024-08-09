@@ -453,7 +453,7 @@ var resolver_Mutex_loaded: bool = false;
 
 const BinFolderArray = std.BoundedArray(string, 128);
 var bin_folders: BinFolderArray = undefined;
-var bin_folders_lock: Mutex = Mutex.init();
+var bin_folders_lock: Mutex = .{};
 var bin_folders_loaded: bool = false;
 
 const Timer = @import("../system_timer.zig").Timer;
@@ -606,7 +606,7 @@ pub const Resolver = struct {
         opts: options.BundleOptions,
     ) ThisResolver {
         if (!resolver_Mutex_loaded) {
-            resolver_Mutex = Mutex.init();
+            resolver_Mutex = .{};
             resolver_Mutex_loaded = true;
         }
 

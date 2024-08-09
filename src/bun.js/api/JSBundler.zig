@@ -61,7 +61,8 @@ pub const JSBundler = struct {
         minify: Minify = .{},
         server_components: ServerComponents = ServerComponents{},
         no_macros: bool = false,
-
+        ignore_dce_annotations: bool = false,
+        emit_dce_annotations: ?bool = null,
         names: Names = .{},
         external: bun.StringSet = bun.StringSet.init(bun.default_allocator),
         source_map: options.SourceMapOption = .none,
@@ -281,6 +282,18 @@ pub const JSBundler = struct {
             } else {
                 globalThis.throwInvalidArguments("Expected entrypoints to be an array of strings", .{});
                 return error.JSException;
+            }
+
+            if (config.getTruthy(globalThis, "emitDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.emit_dce_annotations = true;
+                }
+            }
+
+            if (config.getTruthy(globalThis, "ignoreDCEAnnotations")) |flag| {
+                if (flag.coerce(bool, globalThis)) {
+                    this.ignore_dce_annotations = true;
+                }
             }
 
             if (config.getTruthy(globalThis, "conditions")) |conditions_value| {

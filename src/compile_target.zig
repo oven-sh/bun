@@ -168,7 +168,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 HTTP.FetchRedirect.follow,
             );
             async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env.getTLSRejectUnauthorized();
+            async_http.client.flags.reject_unauthorized = env.getTLSRejectUnauthorized();
 
             const response = try async_http.sendSync(true);
 

@@ -7,11 +7,14 @@
 
 /// <reference path="./private.d.ts" />
 
-export const quickAndDirtyJavaScriptSyntaxHighlighter = $newZigFunction(
+const fmtBinding = $newZigFunction(
   "fmt.zig",
-  "QuickAndDirtyJavaScriptSyntaxHighlighter.jsFunctionSyntaxHighlight",
+  "fmt_js_test_bindings.jsFunctionStringFormatter",
   2,
-) as (code: string) => string;
+) as (code: string, id: number) => string;
+
+export const quickAndDirtyJavaScriptSyntaxHighlighter = (code: string) => fmtBinding(code, 0);
+export const escapePowershell = (code: string) => fmtBinding(code, 1);
 
 export const TLSBinding = $cpp("NodeTLS.cpp", "createNodeTLSBinding");
 
@@ -23,9 +26,12 @@ export const patchInternals = {
   makeDiff: $newZigFunction("patch.zig", "TestingAPIs.makeDiff", 2),
 };
 
+const shellLex = $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2);
+const shellParse = $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2);
+
 export const shellInternals = {
-  lex: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellLex", 2)(a.raw, b),
-  parse: (a, ...b) => $newZigFunction("shell.zig", "TestingAPIs.shellParse", 2)(a.raw, b),
+  lex: (a, ...b) => shellLex(a.raw, b) ,
+  parse: (a, ...b) => shellParse(a.raw, b),
   /**
    * Checks if the given builtin is disabled on the current platform
    *

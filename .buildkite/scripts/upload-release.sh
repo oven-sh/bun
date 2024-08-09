@@ -3,6 +3,10 @@
 set -eo pipefail
 
 function assert_main() {
+  if [ "$RELEASE" == "1" ]; then
+    echo "info: Skipping canary release because this is a release build"
+    exit 0
+  fi
   if [ -z "$BUILDKITE_REPO" ]; then
     echo "error: Cannot find repository for this build"
     exit 1
@@ -26,7 +30,7 @@ function assert_main() {
 }
 
 function assert_buildkite_agent() {
-  if ! command -v buildkite-agent &> /dev/null; then
+  if ! command -v "buildkite-agent" &> /dev/null; then
     echo "error: Cannot find buildkite-agent, please install it:"
     echo "https://buildkite.com/docs/agent/v3/install"
     exit 1
@@ -42,14 +46,15 @@ function assert_github() {
 
 function assert_aws() {
   assert_command "aws" "awscli" "https://docs.aws.amazon.com/cli/latest/userguide/getting-started-install.html"
-  for secret in AWS_ACCESS_KEY_ID AWS_SECRET_ACCESS_KEY AWS_ENDPOINT AWS_BUCKET; do
+  for secret in "AWS_ACCESS_KEY_ID" "AWS_SECRET_ACCESS_KEY" "AWS_ENDPOINT"; do
     assert_buildkite_secret "$secret"
   done
+  assert_buildkite_secret "AWS_BUCKET" --skip-redaction
 }
 
 function assert_sentry() {
   assert_command "sentry-cli" "getsentry/tools/sentry-cli" "https://docs.sentry.io/cli/installation/"
-  for secret in SENTRY_AUTH_TOKEN SENTRY_ORG SENTRY_PROJECT; do
+  for secret in "SENTRY_AUTH_TOKEN" "SENTRY_ORG" "SENTRY_PROJECT"; do
     assert_buildkite_secret "$secret"
   done
 }
@@ -81,7 +86,7 @@ function assert_command() {
 
 function assert_buildkite_secret() {
   local key="$1"
-  local value=$(buildkite-agent secret get "$key")
+  local value=$(buildkite-agent secret get "$key" ${@:2})
   if [ -z "$value" ]; then
     echo "error: Cannot find $key secret"
     echo ""
@@ -132,12 +137,20 @@ function upload_github_asset() {
   local tag="$(release_tag "$version")"
   local file="$2"
   run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
+
+  # Sometimes the upload fails, maybe this is a race condition in the gh CLI?
+  while [ "$(gh release view "$tag" --repo "$BUILDKITE_REPO" | grep -c "$file")" -eq 0 ]; do
+    echo "warn: Uploading $file to $tag failed, retrying..."
+    sleep "$((RANDOM % 5 + 1))"
+    run_command gh release upload "$tag" "$file" --clobber --repo "$BUILDKITE_REPO"
+  done
 }
 
 function update_github_release() {
   local version="$1"
   local tag="$(release_tag "$version")"
   if [ "$tag" == "canary" ]; then
+    sleep 5 # There is possibly a race condition where this overwrites artifacts?
     run_command gh release edit "$tag" --repo "$BUILDKITE_REPO" \
       --notes "This release of Bun corresponds to the commit: $BUILDKITE_COMMIT"
   fi
@@ -177,15 +190,19 @@ function create_release() {
   function upload_artifact() {
     local artifact="$1"
     download_buildkite_artifact "$artifact"
-    upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    if [ "$tag" == "canary" ]; then
+      upload_s3_file "releases/$BUILDKITE_COMMIT-canary" "$artifact" &
+    else
+      upload_s3_file "releases/$BUILDKITE_COMMIT" "$artifact" &
+    fi
     upload_s3_file "releases/$tag" "$artifact" &
     upload_github_asset "$tag" "$artifact" &
+    wait
   }
 
   for artifact in "${artifacts[@]}"; do
-    upload_artifact "$artifact" &
+    upload_artifact "$artifact"
   done
-  wait
 
   update_github_release "$tag"
   create_sentry_release "$tag"

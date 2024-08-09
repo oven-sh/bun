@@ -377,6 +377,30 @@ describe("process.onBeforeExit", () => {
     expect(exitCode).toBe(0);
     expect(stdout.toString().trim()).toBe("beforeExit: 0\nbeforeExit: 1\nexit: 2");
   });
+
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("beforeExit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+});
+
+describe("process.onExit", () => {
+  it("throwing inside preserves exit code", async () => {
+    const proc = Bun.spawnSync({
+      cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")});`],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(1);
+    expect(proc.stderr.toString("utf8")).toInclude("error: boom");
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
 });
 
 it("process.memoryUsage", () => {

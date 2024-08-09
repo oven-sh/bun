@@ -7,7 +7,7 @@ const Queue = std.fifo.LinearFifo(JSC.Node.BlobOrStringOrBuffer, .Dynamic);
 
 // We cannot free outside the JavaScript thread.
 const FreeList = struct {
-    write_lock: bun.Lock = bun.Lock.init(),
+    write_lock: bun.Lock = .{},
     list: std.ArrayListUnmanaged(JSC.Node.BlobOrStringOrBuffer) = .{},
 
     pub fn append(this: *FreeList, slice: []const JSC.Node.BlobOrStringOrBuffer) void {
@@ -43,13 +43,13 @@ pub const BrotliEncoder = struct {
     globalThis: *JSC.JSGlobalObject,
 
     input: Queue = Queue.init(bun.default_allocator),
-    input_lock: bun.Lock = bun.Lock.init(),
+    input_lock: bun.Lock = .{},
 
     has_called_end: bool = false,
     callback_value: JSC.Strong = .{},
 
     output: std.ArrayListUnmanaged(u8) = .{},
-    output_lock: bun.Lock = bun.Lock.init(),
+    output_lock: bun.Lock = .{},
 
     has_pending_activity: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
     pending_encode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
@@ -91,7 +91,7 @@ pub const BrotliEncoder = struct {
                 if (!idx.isNumber()) break;
                 const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
                 if (!was_set) {
-                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    globalThis.ERR_ZLIB_INITIALIZATION_FAILED("Initialization failed", .{}).throw();
                     this.deinit();
                     return .zero;
                 }
@@ -358,10 +358,10 @@ pub const BrotliDecoder = struct {
     pending_decode_job_count: std.atomic.Value(u32) = std.atomic.Value(u32).init(0),
 
     input: Queue = Queue.init(bun.default_allocator),
-    input_lock: bun.Lock = bun.Lock.init(),
+    input_lock: bun.Lock = .{},
 
     output: std.ArrayListUnmanaged(u8) = .{},
-    output_lock: bun.Lock = bun.Lock.init(),
+    output_lock: bun.Lock = .{},
 
     freelist: FreeList = .{},
 
@@ -409,7 +409,7 @@ pub const BrotliDecoder = struct {
                 if (!idx.isNumber()) break;
                 const was_set = this.stream.brotli.setParameter(@enumFromInt(f.value), idx.toU32());
                 if (!was_set) {
-                    globalThis.throwValue(globalThis.createErrorInstanceWithCode(.ERR_ZLIB_INITIALIZATION_FAILED, "Initialization failed", .{}));
+                    globalThis.ERR_ZLIB_INITIALIZATION_FAILED("Initialization failed", .{}).throw();
                     this.deinit();
                     return .zero;
                 }

@@ -114,7 +114,7 @@ pub const bun_file_import_path = "/node_modules.server.bun";
 export var has_bun_garbage_collector_flag_enabled = false;
 
 const SourceMap = @import("../sourcemap/sourcemap.zig");
-const ParsedSourceMap = SourceMap.Mapping.ParsedSourceMap;
+const ParsedSourceMap = SourceMap.ParsedSourceMap;
 const MappingList = SourceMap.Mapping.List;
 const SourceProviderMap = SourceMap.SourceProviderMap;
 
@@ -123,14 +123,14 @@ const uv = bun.windows.libuv;
 pub const SavedSourceMap = struct {
     /// This is a pointer to the map located on the VirtualMachine struct
     map: *HashTable,
-    mutex: bun.Lock = bun.Lock.init(),
+    mutex: bun.Lock = .{},
 
     pub const vlq_offset = 24;
 
     pub fn init(this: *SavedSourceMap, map: *HashTable) void {
         this.* = .{
             .map = map,
-            .mutex = bun.Lock.init(),
+            .mutex = .{},
         };
 
         this.map.lockPointers();
@@ -340,7 +340,7 @@ pub const SavedSourceMap = struct {
                 return .{ .map = result };
             },
             Value.Tag.SourceProviderMap => {
-                var ptr = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
+                const ptr: *SourceProviderMap = Value.from(mapping.value_ptr.*).as(SourceProviderMap);
                 this.unlock();
 
                 // Do not lock the mutex while we're parsing JSON!
@@ -369,6 +369,7 @@ pub const SavedSourceMap = struct {
                 if (Environment.allow_assert) {
                     @panic("Corrupt pointer tag");
                 }
+                this.unlock();
                 return .{};
             },
         }
@@ -978,8 +979,20 @@ pub const VirtualMachine = struct {
         };
     }
 
-    pub fn loadExtraEnv(this: *VirtualMachine) void {
+    fn ensureSourceCodePrinter(this: *VirtualMachine) void {
+        if (source_code_printer == null) {
+            const allocator = if (bun.heap_breakdown.enabled) bun.heap_breakdown.namedAllocator("SourceCode") else this.allocator;
+            const writer = try js_printer.BufferWriter.init(allocator);
+            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
+            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
+            source_code_printer.?.ctx.append_null_byte = false;
+        }
+    }
+
+    pub fn loadExtraEnvAndSourceCodePrinter(this: *VirtualMachine) void {
         var map = this.bundler.env.map;
+
+        ensureSourceCodePrinter(this);
 
         if (map.get("BUN_SHOW_BUN_STACKFRAMES") != null) {
             this.hide_bun_stackframes = false;
@@ -1439,6 +1452,7 @@ pub const VirtualMachine = struct {
             this.macro_event_loop.global = this.global;
             this.macro_event_loop.virtual_machine = this;
             this.macro_event_loop.concurrent_tasks = .{};
+            ensureSourceCodePrinter(this);
         }
 
         this.bundler.options.target = .bun_macro;
@@ -1516,7 +1530,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Timers are not supported on this system."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = opts.graph.?,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
@@ -1562,13 +1576,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.global = vm.global;
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
-
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -1632,7 +1639,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
         };
         vm.source_mappings.init(&vm.saved_source_map_table);
@@ -1682,13 +1689,6 @@ pub const VirtualMachine = struct {
 
         if (opts.smol)
             is_smol_mode = opts.smol;
-
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
 
         vm.configureDebugger(opts.debugger);
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
@@ -1780,7 +1780,7 @@ pub const VirtualMachine = struct {
             .origin_timer = std.time.Timer.start() catch @panic("Please don't mess with timers."),
             .origin_timestamp = getOriginTimestamp(),
             .ref_strings = JSC.RefString.Map.init(allocator),
-            .ref_strings_mutex = Lock.init(),
+            .ref_strings_mutex = .{},
             .standalone_module_graph = worker.parent.standalone_module_graph,
             .worker = worker,
             .debug_thread_id = if (Environment.allow_assert) std.Thread.getCurrentId() else {},
@@ -1828,12 +1828,6 @@ pub const VirtualMachine = struct {
         vm.regular_event_loop.virtual_machine = vm;
         vm.jsc = vm.global.vm();
         vm.bundler.setAllocator(allocator);
-        if (source_code_printer == null) {
-            const writer = try js_printer.BufferWriter.init(allocator);
-            source_code_printer = allocator.create(js_printer.BufferPrinter) catch unreachable;
-            source_code_printer.?.* = js_printer.BufferPrinter.init(writer);
-            source_code_printer.?.ctx.append_null_byte = false;
-        }
         vm.body_value_hive_allocator = BodyValueHiveAllocator.init(bun.typedAllocator(JSC.WebCore.Body.Value));
 
         return vm;
@@ -2433,6 +2427,10 @@ pub const VirtualMachine = struct {
 
     // TODO:
     pub fn deinit(this: *VirtualMachine) void {
+        if (source_code_printer) |print| {
+            print.getMutableBuffer().deinit();
+            print.ctx.written = &.{};
+        }
         this.source_mappings.deinit();
         if (this.rare_data) |rare_data| {
             rare_data.deinit();
@@ -2847,13 +2845,13 @@ pub const VirtualMachine = struct {
                 writer: Writer,
                 current_exception_list: ?*ExceptionList = null,
 
-                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, true);
                 }
-                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn iteratorWithOutColor(_vm: [*c]VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     iterator(_vm, globalObject, nextValue, ctx.?, false);
                 }
-                inline fn iterator(_: [*c]VM, _: [*c]JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
+                inline fn iterator(_: [*c]VM, _: *JSGlobalObject, nextValue: JSValue, ctx: ?*anyopaque, comptime color: bool) void {
                     const this_ = @as(*@This(), @ptrFromInt(@intFromPtr(ctx)));
                     VirtualMachine.get().printErrorlikeObject(nextValue, null, this_.current_exception_list, Writer, this_.writer, color, allow_side_effects);
                 }
@@ -3045,7 +3043,7 @@ pub const VirtualMachine = struct {
             var sourceURL = frame.source_url.toUTF8(bun.default_allocator);
             defer sourceURL.deinit();
 
-            if (this.source_mappings.resolveMapping(
+            if (this.resolveSourceMapping(
                 sourceURL.slice(),
                 @max(frame.position.line.zeroBased(), 0),
                 @max(frame.position.column.zeroBased(), 0),
@@ -3168,7 +3166,7 @@ pub const VirtualMachine = struct {
                 .prefetched_source_code = null,
             }
         else
-            this.source_mappings.resolveMapping(
+            this.resolveSourceMapping(
                 top_source_url.slice(),
                 @max(top.position.line.zeroBased(), 0),
                 @max(top.position.column.zeroBased(), 0),
@@ -3240,7 +3238,7 @@ pub const VirtualMachine = struct {
                 if (frame == top or frame.position.isInvalid()) continue;
                 const source_url = frame.source_url.toUTF8(bun.default_allocator);
                 defer source_url.deinit();
-                if (this.source_mappings.resolveMapping(
+                if (this.resolveSourceMapping(
                     source_url.slice(),
                     @max(frame.position.line.zeroBased(), 0),
                     @max(frame.position.column.zeroBased(), 0),
@@ -3688,6 +3686,37 @@ pub const VirtualMachine = struct {
         }
 
         writer.print("\n", .{}) catch {};
+    }
+
+    pub fn resolveSourceMapping(
+        this: *VirtualMachine,
+        path: []const u8,
+        line: i32,
+        column: i32,
+        source_handling: SourceMap.SourceContentHandling,
+    ) ?SourceMap.Mapping.Lookup {
+        return this.source_mappings.resolveMapping(path, line, column, source_handling) orelse {
+            if (this.standalone_module_graph) |graph| {
+                const file = graph.find(path) orelse return null;
+                const map = file.sourcemap.load() orelse return null;
+
+                map.ref();
+
+                this.source_mappings.putValue(path, SavedSourceMap.Value.init(map)) catch
+                    bun.outOfMemory();
+
+                const mapping = SourceMap.Mapping.find(map.mappings, line, column) orelse
+                    return null;
+
+                return .{
+                    .mapping = mapping,
+                    .source_map = map,
+                    .prefetched_source_code = null,
+                };
+            }
+
+            return null;
+        };
     }
 
     extern fn Process__emitMessageEvent(global: *JSGlobalObject, value: JSValue) void;

@@ -129,7 +129,7 @@ pub const Expect = struct {
         }
     };
 
-    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) string {
+    pub fn getSignature(comptime matcher_name: string, comptime args: string, comptime not: bool) [:0]const u8 {
         const received = "<d>expect(<r><red>received<r><d>).<r>";
         comptime if (not) {
             return received ++ "not<d>.<r>" ++ matcher_name ++ "<d>(<r>" ++ args ++ "<d>)<r>";
@@ -394,11 +394,11 @@ pub const Expect = struct {
         return expect_js_value;
     }
 
-    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: string, comptime fmt: string, args: anytype) void {
+    pub fn throw(this: *Expect, globalThis: *JSGlobalObject, comptime signature: [:0]const u8, comptime fmt: [:0]const u8, args: anytype) void {
         if (this.custom_label.isEmpty()) {
-            globalThis.throwPretty(comptime signature ++ fmt, args);
+            globalThis.throwPretty(signature ++ fmt, args);
         } else {
-            globalThis.throwPretty(comptime "{}" ++ fmt, .{this.custom_label} ++ args);
+            globalThis.throwPretty("{}" ++ fmt, .{this.custom_label} ++ args);
         }
     }
 
@@ -851,8 +851,7 @@ pub const Expect = struct {
 
         const not = this.flags.not;
         if (!value.isObject()) {
-            const err = globalThis.createTypeErrorInstance("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
-            globalThis.throwValue(err);
+            globalThis.throwInvalidArguments("Expected value must be an object\nReceived: {}", .{value.toFmt(&formatter)});
             return .zero;
         }
 

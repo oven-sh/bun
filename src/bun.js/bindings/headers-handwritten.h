@@ -94,8 +94,7 @@ typedef struct ResolvedSource {
     BunString specifier;
     BunString source_code;
     BunString source_url;
-    ZigString* commonJSExports;
-    uint32_t commonJSExportsLen;
+    bool isCommonJSModule;
     uint32_t hash;
     void* allocator;
     JSC::EncodedJSValue jsvalue_for_export;

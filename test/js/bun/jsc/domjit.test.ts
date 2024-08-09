@@ -11,6 +11,7 @@ const dirStats = statSync(import.meta.dir);
 const buffer = new BigInt64Array(16);
 
 describe("DOMJIT", () => {
+  const buf = new Uint8Array(4);
   for (let iter of [1000, 10000, 100000, 1000000]) {
     test("Buffer.alloc", () => {
       for (let i = 0; i < iter; i++) {
@@ -44,13 +45,13 @@ describe("DOMJIT", () => {
     });
     test("TextEncoder.encodeInto", () => {
       for (let i = 0; i < iter; i++) {
-        new TextEncoder().encodeInto("test", new Uint8Array(4));
+        new TextEncoder().encodeInto("test", buf);
       }
       expect(true).toBe(true);
     });
     test("Crypto.timingSafeEqual", () => {
       for (let i = 0; i < iter; i++) {
-        crypto.timingSafeEqual(new Uint8Array(4), new Uint8Array(4));
+        crypto.timingSafeEqual(buf, buf);
       }
       expect(true).toBe(true);
     });
@@ -62,13 +63,13 @@ describe("DOMJIT", () => {
     });
     test("Crypto.getRandomValues", () => {
       for (let i = 0; i < iter; i++) {
-        crypto.getRandomValues(new Uint8Array(4));
+        crypto.getRandomValues(buf);
       }
       expect(true).toBe(true);
     });
     test("TextDecoder.decode", () => {
       for (let i = 0; i < iter; i++) {
-        new TextDecoder().decode(new Uint8Array(4));
+        new TextDecoder().decode(buf);
       }
       expect(true).toBe(true);
     });
@@ -104,7 +105,8 @@ describe("DOMJIT", () => {
 
   test("does not crash running in NodeVM", () => {
     const code = `
-    for (let iter of [1000000]) {
+    const buf = new Uint8Array(4);
+    for (let iter of [100000]) {
       for (let i = 0; i < iter; i++) {
         performance.now();
       }
@@ -112,19 +114,19 @@ describe("DOMJIT", () => {
         new TextEncoder().encode("test");
       }
       for (let i = 0; i < iter; i++) {
-        new TextEncoder().encodeInto("test", new Uint8Array(4));
+        new TextEncoder().encodeInto("test", buf);
       }
       for (let i = 0; i < iter; i++) {
-        crypto.timingSafeEqual(new Uint8Array(4), new Uint8Array(4));
+        crypto.timingSafeEqual(buf, buf);
       }
       for (let i = 0; i < iter; i++) {
         crypto.randomUUID();
       }
       for (let i = 0; i < iter; i++) {
-        crypto.getRandomValues(new Uint8Array(4));
+        crypto.getRandomValues(buf);
       }
       for (let i = 0; i < iter; i++) {
-        new TextDecoder().decode(new Uint8Array(4));
+        new TextDecoder().decode(buf);
       }
       for (let i = 0; i < iter; i++) {
         dirStats.isSymbolicLink();

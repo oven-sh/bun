@@ -3036,13 +3036,13 @@ pub const FileSink = struct {
         // if we are not done yet and has pending data we just wait so we do not runPending twice
         if (status == .pending and has_pending_data) {
             if (this.pending.state == .pending) {
-                this.pending.consumed += @truncate(amount);
+                this.pending.consumed = @truncate(amount);
             }
             return;
         }
 
         if (this.pending.state == .pending) {
-            this.pending.consumed += @truncate(amount);
+            this.pending.consumed = @truncate(amount);
 
             // when "done" is true, we will never receive more data.
             if (this.done or status == .end_of_file) {
@@ -3087,6 +3087,7 @@ pub const FileSink = struct {
 
         this.signal.ready(null, null);
     }
+
     pub fn onClose(this: *FileSink) void {
         log("onClose()", .{});
         this.signal.close(null);

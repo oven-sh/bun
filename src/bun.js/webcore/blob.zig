@@ -3432,6 +3432,7 @@ pub const Blob = struct {
                     },
                     else => {},
                 }
+                sink.writer.is_fd = pathlike == .fd;
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
@@ -3442,6 +3443,7 @@ pub const Blob = struct {
                     },
                     else => {},
                 }
+                sink.writer.is_fd = pathlike == .fd;
             }
 
             return sink.toJS(globalThis);

@@ -1871,6 +1871,16 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     return JSValue::encode(result);
 }
 
+// We used to just throw "Out of memory" as a regular Error with that string.
+//
+// But JSC has some different handling for out of memory errors. So we should
+// make it look like what JSC does.
+void JSGlobalObject__throwOutOfMemoryError(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    throwOutOfMemoryError(globalObject, scope);
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {

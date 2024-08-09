@@ -193,4 +193,6 @@
     __ZN2v820EscapableHandleScopeD2Ev;
     __ZNK2v85Value8IsObjectEv;
     __ZNK2v85Value8IsNumberEv;
+    __ZNK2v85Value8IsUint32Ev;
+    __ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE;
 };

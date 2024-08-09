@@ -606,3 +606,5 @@ EXPORTS
   ??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z
   ?IsObject@Value@v8@@QEBA_NXZ
   ?IsNumber@Value@v8@@QEBA_NXZ
+  ?IsUint32@Value@v8@@QEBA_NXZ
+  ?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z

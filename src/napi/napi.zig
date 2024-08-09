@@ -1734,6 +1734,8 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn _ZN2v820EscapableHandleScopeD2Ev() *anyopaque;
     pub extern fn _ZNK2v85Value8IsObjectEv() *anyopaque;
     pub extern fn _ZNK2v85Value8IsNumberEv() *anyopaque;
+    pub extern fn _ZNK2v85Value8IsUint32Ev() *anyopaque;
+    pub extern fn _ZNK2v85Value11Uint32ValueENS_5LocalINS_7ContextEEE() *anyopaque;
 } else struct {
     // MSVC name mangling is different than it is on unix.
     // To make this easier to deal with, I have provided a script to generate the list of functions.
@@ -1780,6 +1782,8 @@ const V8API = if (!bun.Environment.isWindows) struct {
     pub extern fn @"??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z"() *anyopaque;
     pub extern fn @"?IsObject@Value@v8@@QEBA_NXZ"() *anyopaque;
     pub extern fn @"?IsNumber@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?IsUint32@Value@v8@@QEBA_NXZ"() *anyopaque;
+    pub extern fn @"?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z"() *anyopaque;
 };
 
 pub fn fixDeadCodeElimination() void {

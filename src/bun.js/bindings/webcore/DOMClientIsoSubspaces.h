@@ -476,11 +476,11 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStaticRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForText;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamDecoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransitionEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTreeWalker;

@@ -4,12 +4,15 @@
 #include <JavaScriptCore/ObjectConstructor.h>
 #include <JavaScriptCore/NumberPrototype.h>
 #include "CommonJSModuleRecord.h"
+#include "JavaScriptCore/CallData.h"
 #include "JavaScriptCore/CatchScope.h"
+#include "JavaScriptCore/ExceptionScope.h"
 #include "JavaScriptCore/JSCJSValue.h"
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSString.h"
 #include "JavaScriptCore/Protect.h"
 #include "JavaScriptCore/PutPropertySlot.h"
+#include "ModuleLoader.h"
 #include "ScriptExecutionContext.h"
 #include "headers-handwritten.h"
 #include "node_api.h"
@@ -21,6 +24,7 @@
 #include "ConsoleObject.h"
 #include <JavaScriptCore/GetterSetter.h>
 #include <JavaScriptCore/JSSet.h>
+#include <JavaScriptCore/JSString.h>
 #include <JavaScriptCore/LazyProperty.h>
 #include <JavaScriptCore/LazyPropertyInlines.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
@@ -29,6 +33,10 @@
 #include "ProcessBindingTTYWrap.h"
 #include "wtf/text/ASCIILiteral.h"
 #include "wtf/text/OrdinalNumber.h"
+
+#include "CommonJSModuleRecord.h"
+#include "isBuiltinModule.h"
+#include "JavaScriptCore/JSString.h"
 
 #ifndef WIN32
 #include <errno.h>
@@ -50,6 +58,7 @@ typedef int mode_t;
 #include "JSNextTickQueue.h"
 #include "ProcessBindingUV.h"
 #include "ProcessBindingNatives.h"
+
 
 #if OS(LINUX)
 #include <gnu/libc-version.h>
@@ -104,6 +113,7 @@ JSC_DECLARE_CUSTOM_GETTER(Process_getTitle);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPID);
 JSC_DECLARE_CUSTOM_GETTER(Process_getPPID);
 JSC_DECLARE_HOST_FUNCTION(Process_functionCwd);
+JSC_DECLARE_HOST_FUNCTION(Process_functionLoadBuiltinModule);
 static bool processIsExiting = false;
 
 extern "C" uint8_t Bun__getExitCode(void*);
@@ -2812,6 +2822,70 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionKill,
     return JSValue::encode(jsBoolean(true));
 }
 
+JSC_DEFINE_HOST_FUNCTION(Process_functionLoadBuiltinModule, (JSGlobalObject* globalObject, CallFrame* callFrame))
+{
+    auto* zigGlobalObject = jsCast<Zig::GlobalObject*>(globalObject);
+    VM& vm = zigGlobalObject->vm();
+    auto scope = DECLARE_THROW_SCOPE(vm);
+
+
+
+    JSValue moduleName = callFrame->argument(0);
+    if (!moduleName.isString()) {
+        throwTypeError(zigGlobalObject, scope, "The argument must be a string"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    String moduleNameString = moduleName.toWTFString(zigGlobalObject);
+
+
+    RETURN_IF_EXCEPTION(scope, { });
+
+    if (!Bun::isBuiltinModule(moduleNameString)) {
+        throwTypeError(zigGlobalObject, scope, "The module must be a built-in module name"_s);
+        return JSValue::encode(jsUndefined());
+    }
+
+    JSString* requireMapKey = JSC::jsString(vm, moduleNameString);
+
+    JSString* dirname = jsEmptyString(vm);
+    JSString* filename = requireMapKey;
+
+    JSCommonJSModule* moduleObject = JSCommonJSModule::create(
+        vm,
+        zigGlobalObject->CommonJSModuleObjectStructure(),
+        requireMapKey,
+        filename,
+        dirname,
+        SourceCode()
+    );
+
+    moduleObject->putDirect(vm,
+        WebCore::clientData(vm)->builtinNames().exportsPublicName(),
+        JSC::constructEmptyObject(globalObject, globalObject->objectPrototype()),
+        0
+    );
+
+    BunString moduleNameStr = Bun::toString(moduleNameString);
+
+    RETURN_IF_EXCEPTION(scope, { });
+
+    JSValue fetchResult = Bun::fetchCommonJSModule(
+        zigGlobalObject,
+        moduleObject,
+        moduleName,
+        &moduleNameStr,
+        nullptr,
+        nullptr
+    );
+
+    JSObject* fetchResultObject = fetchResult.getObject();
+    JSValue exports = fetchResultObject->get(zigGlobalObject, JSC::Identifier::fromString(vm, "exports"_s));
+
+
+    RELEASE_AND_RETURN(scope, JSValue::encode(exports));
+}
+
 extern "C" void Process__emitMessageEvent(Zig::GlobalObject* global, EncodedJSValue value)
 {
     auto* process = static_cast<Process*>(global->processObject());
@@ -2863,6 +2937,7 @@ extern "C" void Process__emitDisconnectEvent(Zig::GlobalObject* global)
   exitCode                         processExitCode                                     CustomAccessor
   features                         constructFeatures                                   PropertyCallback
   getActiveResourcesInfo           Process_stubFunctionReturningArray                  Function 0
+  getBuiltinModule                 Process_functionLoadBuiltinModule                   Function 1
   hasUncaughtExceptionCaptureCallback Process_hasUncaughtExceptionCaptureCallback      Function 0
   hrtime                           constructProcessHrtimeObject                        PropertyCallback
   isBun                            constructIsBun                                      PropertyCallback

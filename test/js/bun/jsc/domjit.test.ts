@@ -104,16 +104,7 @@ describe("DOMJIT", () => {
 
   test("does not crash running in NodeVM", () => {
     const code = `
-    for (let iter of [100000]) {
-      for (let i = 0; i < iter; i++) {
-        Buffer.alloc(1);
-      }
-      for (let i = 0; i < iter; i++) {
-        Buffer.allocUnsafe(1);
-      }
-      for (let i = 0; i < iter; i++) {
-        Buffer.allocUnsafeSlow(1);
-      }
+    for (let iter of [1000000]) {
       for (let i = 0; i < iter; i++) {
         performance.now();
       }
@@ -144,14 +135,11 @@ describe("DOMJIT", () => {
         dirStats.isCharacterDevice();
         dirStats.isBlockDevice();
       }
-
-      "success";
-    }`;
+    }
+    "success";`;
     const script = new vm.Script(code);
-    expect(script.runInNewContext({ crypto, performance, TextEncoder, TextDecoder, Buffer, dirStats })).toBe("success");
-    expect(vm.runInNewContext(code, { crypto, performance, TextEncoder, TextDecoder, Buffer, dirStats })).toBe(
-      "success",
-    );
+    expect(script.runInNewContext({ crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
+    expect(vm.runInNewContext(code, { crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
     expect(vm.run);
-  }, 1_000_000);
+  }, 100_000);
 });

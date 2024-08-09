@@ -1868,7 +1868,6 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     ASSERT_NO_PENDING_EXCEPTION(globalObject);
     auto str = Zig::toString(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
-    auto str = Zig::toString(*strPtr);
 
     if (str.isNull()) {
         // isNull() will be true for empty strings and for strings which are too long.

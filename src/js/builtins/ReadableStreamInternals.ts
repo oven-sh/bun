@@ -1821,6 +1821,8 @@ export function lazyLoadStream(stream, autoAllocateChunkSize) {
 }
 
 export function readableStreamIntoArray(stream) {
+  $assert($isReadableStream(stream));
+
   var reader = stream.getReader();
   var manyResult = reader.readMany();
 
@@ -1858,6 +1860,8 @@ export function withoutUTF8BOM(result) {
 }
 
 export function readableStreamIntoText(stream) {
+  $assert($isReadableStream(stream));
+
   const [textStream, closer] = $createTextStream($getByIdDirectPrivate(stream, "highWaterMark"));
   const prom = $readStreamIntoSink(stream, textStream, false);
 
@@ -1869,6 +1873,9 @@ export function readableStreamIntoText(stream) {
 }
 
 export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUint8Array) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   var sink = new Bun.ArrayBufferSink();
   $putByIdDirectPrivate(stream, "underlyingSource", undefined);
   var highWaterMark = $getByIdDirectPrivate(stream, "highWaterMark");
@@ -1936,6 +1943,9 @@ export function readableStreamToArrayBufferDirect(stream, underlyingSource, asUi
 }
 
 export async function readableStreamToTextDirect(stream, underlyingSource) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   const capability = $initializeTextStream.$call(stream, underlyingSource, undefined);
   var reader = stream.getReader();
 
@@ -1956,6 +1966,9 @@ export async function readableStreamToTextDirect(stream, underlyingSource) {
 }
 
 export async function readableStreamToArrayDirect(stream, underlyingSource) {
+  $assert($isReadableStream(stream));
+  $assert(underlyingSource !== undefined);
+
   const capability = $initializeArrayStream.$call(stream, underlyingSource, undefined);
   underlyingSource = undefined;
   var reader = stream.getReader();

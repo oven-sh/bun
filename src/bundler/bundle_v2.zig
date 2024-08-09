@@ -581,7 +581,7 @@ pub const BundleV2 = struct {
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
         }
         path.assertPrettyIsValid();
 
@@ -591,13 +591,13 @@ pub const BundleV2 = struct {
                 secondary != path and
                 !strings.eqlLong(secondary.text, path.text, true))
             {
-                secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+                secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch bun.outOfMemory();
             }
         }
 
-        const entry = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch @panic("Ran out of memory");
+        const entry = this.graph.path_to_source_index_map.getOrPut(this.graph.allocator, path.hashKey()) catch bun.outOfMemory();
         if (!entry.found_existing) {
-            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch bun.outOfMemory();
 
             // We need to parse this
             const source_index = Index.init(@as(u32, @intCast(this.graph.ast.len)));
@@ -627,8 +627,8 @@ pub const BundleV2 = struct {
                     .text, .json, .toml, .file => _resolver.SideEffects.no_side_effects__pure_data,
                     else => _resolver.SideEffects.has_side_effects,
                 },
-            }) catch @panic("Ran out of memory");
-            var task = this.graph.allocator.create(ParseTask) catch @panic("Ran out of memory");
+            }) catch bun.outOfMemory();
+            var task = this.graph.allocator.create(ParseTask) catch bun.outOfMemory();
             task.* = ParseTask.init(&resolve_result, source_index, this);
             task.loader = loader;
             task.jsx = this.bundler.options.jsx;
@@ -682,7 +682,7 @@ pub const BundleV2 = struct {
         if (path.pretty.ptr == path.text.ptr) {
             // TODO: outbase
             const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
-            path.pretty = this.graph.allocator.dupe(u8, rel) catch @panic("Ran out of memory");
+            path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
         }
         path.* = try path.dupeAllocFixPretty(this.graph.allocator);
         path.assertPrettyIsValid();
@@ -1949,7 +1949,7 @@ pub const BundleV2 = struct {
                 continue;
             }
 
-            const resolve_entry = resolve_queue.getOrPut(hash_key) catch @panic("Ran out of memory");
+            const resolve_entry = resolve_queue.getOrPut(hash_key) catch bun.outOfMemory();
             if (resolve_entry.found_existing) {
                 import_record.path = resolve_entry.value_ptr.*.path;
 
@@ -1961,7 +1961,7 @@ pub const BundleV2 = struct {
                 const rel = bun.path.relativePlatform(this.bundler.fs.top_level_dir, path.text, .loose, false);
                 path.pretty = this.graph.allocator.dupe(u8, rel) catch bun.outOfMemory();
             }
-            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch @panic("Ran out of memory");
+            path.* = path.dupeAllocFixPretty(this.graph.allocator) catch bun.outOfMemory();
 
             var secondary_path_to_copy: ?Fs.Path = null;
             if (resolve_result.path_pair.secondary) |*secondary| {
@@ -1969,14 +1969,14 @@ pub const BundleV2 = struct {
                     secondary != path and
                     !strings.eqlLong(secondary.text, path.text, true))
                 {
-                    secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch @panic("Ran out of memory");
+                    secondary_path_to_copy = secondary.dupeAlloc(this.graph.allocator) catch bun.outOfMemory();
                 }
             }
 
             import_record.path = path.*;
             debug("created ParseTask: {s}", .{path.text});
 
-            var resolve_task = bun.default_allocator.create(ParseTask) catch @panic("Ran out of memory");
+            var resolve_task = bun.default_allocator.create(ParseTask) catch bun.outOfMemory();
             resolve_task.* = ParseTask.init(&resolve_result, null, this);
 
             resolve_task.secondary_path_for_commonjs_interop = secondary_path_to_copy;

@@ -13,21 +13,6 @@ namespace Bun {
 
 using namespace JSC;
 
-void* vm(Zig::GlobalObject* globalObject)
-{
-    return globalObject->bunVM();
-}
-
-void* vm(JSC::VM& vm)
-{
-    return WebCore::clientData(vm)->bunVM;
-}
-
-void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
-{
-    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
-}
-
 void GlobalScope::finishCreation(JSC::VM& vm)
 {
     Base::finishCreation(vm);

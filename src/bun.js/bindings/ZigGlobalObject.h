@@ -592,6 +592,21 @@ namespace Bun {
 
 String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
+ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
+
+ALWAYS_INLINE void* vm(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
+
+ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
+
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

@@ -706,6 +706,8 @@ pub const Body = struct {
                     locked.promise = null;
 
                     switch (locked.action) {
+                        // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
+                        // These exceptions can happen if the String is too long, ArrayBuffer is too large, JSON parse error, etc.
                         .getText => {
                             switch (new.*) {
                                 .WTFStringImpl,
@@ -713,37 +715,32 @@ pub const Body = struct {
                                 // .InlineBlob,
                                 => {
                                     var blob = new.useAsAnyBlobAllowNonUTF8String();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
                                 },
                                 else => {
                                     var blob = new.use();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
                                 },
                             }
                         },
                         .getJSON => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            const json_value = blob.toJSON(global, .share);
+                            promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
                             blob.detach();
-
-                            if (json_value.isAnyError()) {
-                                promise.reject(global, json_value);
-                            } else {
-                                promise.resolve(global, json_value);
-                            }
                         },
                         .getArrayBuffer => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toArrayBuffer(global, .transfer));
+                            promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
                         },
                         .getBytes => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toUint8Array(global, .transfer));
+                            promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
                         },
+
                         .getFormData => inner: {
                             var blob = new.useAsAnyBlob();
                             defer blob.detach();
-                            var async_form_data = locked.action.getFormData orelse {
+                            var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
                                 promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                                 break :inner;
                             };

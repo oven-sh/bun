@@ -2722,6 +2722,27 @@ pub const AnyPromise = union(enum) {
             .Internal => |promise| promise.asValue(),
         };
     }
+    extern fn JSC__AnyPromise__wrap(*JSC.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) void;
+
+    pub fn wrap(
+        this: AnyPromise,
+        globalObject: *JSGlobalObject,
+        comptime Function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(Function)),
+    ) void {
+        const Args = std.meta.ArgsTuple(@TypeOf(Function));
+        const Fn = Function;
+        const Wrapper = struct {
+            args: Args,
+
+            pub fn call(wrap_: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
+                return @call(.auto, Fn, wrap_.args);
+            }
+        };
+
+        var ctx = Wrapper{ .args = args };
+        JSC__AnyPromise__wrap(globalObject, this.asValue(globalObject), &ctx, @ptrCast(&Wrapper.call));
+    }
 };
 
 // SourceProvider.h

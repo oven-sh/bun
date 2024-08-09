@@ -338,11 +338,14 @@ extern "C" JSC::EncodedJSValue BunString__toJSON(
     JSC::JSGlobalObject* globalObject,
     BunString* bunString)
 {
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     JSC::JSValue result = JSC::JSONParse(globalObject, bunString->toWTFString());
 
-    if (!result) {
-        result = JSC::JSValue(JSC::createSyntaxError(globalObject, "Failed to parse JSON"_s));
+    if (!result && !scope.exception()) {
+        scope.throwException(globalObject, createSyntaxError(globalObject, "Failed to parse JSON"_s));
     }
+
+    RETURN_IF_EXCEPTION(scope, {});
 
     return JSC::JSValue::encode(result);
 }

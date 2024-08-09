@@ -1856,9 +1856,14 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
 {
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto str = Zig::toString(*strPtr);
-    if (str.isNull() && strPtr->len > 0) {
-        scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
-        return {};
+
+    if (str.isNull()) {
+        // isNull() will be true for empty strings and for strings which are too long.
+        // So we need to check the length is plausibly due to a long string.
+        if (strPtr->len > 1024 * 1024 * 1024) {
+            scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
+            return {};
+        }
     }
 
     auto catchScope = DECLARE_CATCH_SCOPE(globalObject->vm());
@@ -3077,6 +3082,58 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
     return result;
 }
 #pragma mark - JSC::JSPromise
+
+void JSC__AnyPromise__wrap(JSC__JSGlobalObject* globalObject, EncodedJSValue encodedPromise, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
+{
+    auto& vm = globalObject->vm();
+    auto scope = DECLARE_CATCH_SCOPE(vm);
+
+    JSValue promiseValue = JSC::JSValue::decode(encodedPromise);
+    ASSERT(!promiseValue.isEmpty());
+
+    JSValue result = JSC::JSValue::decode(func(ctx, globalObject));
+    if (scope.exception()) {
+        auto* exception = scope.exception();
+        scope.clearException();
+
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, exception->value());
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* errorInstance = jsDynamicCast<JSC::ErrorInstance*>(result)) {
+        if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+            promise->reject(globalObject, errorInstance);
+            return;
+        }
+
+        ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+    }
+
+    if (auto* promise = jsDynamicCast<JSC::JSPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+    if (auto* promise = jsDynamicCast<JSC::JSInternalPromise*>(promiseValue)) {
+        promise->resolve(globalObject, result);
+        return;
+    }
+
+    ASSERT_NOT_REACHED_WITH_MESSAGE("Non-promise value passed to AnyPromise.wrap");
+}
 
 JSC__JSValue JSC__JSPromise__wrap(JSC__JSGlobalObject* globalObject, void* ctx, JSC__JSValue (*func)(void*, JSC__JSGlobalObject*))
 {

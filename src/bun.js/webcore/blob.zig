@@ -4198,6 +4198,10 @@ pub const Blob = struct {
         }
     }
 
+    pub fn toStringTransfer(this: *Blob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toStringWithBytes, global);
@@ -4756,6 +4760,22 @@ pub const AnyBlob = union(enum) {
                 return str.toJSByParseJSON(global);
             },
         }
+    }
+
+    pub fn toJSONShare(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toJSON(global, .share);
+    }
+
+    pub fn toStringTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
+    pub fn toUint8ArrayTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toUint8Array(global, .transfer);
+    }
+
+    pub fn toArrayBufferTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toArrayBuffer(global, .transfer);
     }
 
     pub fn toString(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {

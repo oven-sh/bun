@@ -41,4 +41,6 @@ void GlobalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_encodeIntoObjectStructure.visit(visitor);
 }
 
+const JSC::ClassInfo GlobalScope::s_info = { "GlobalScope"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(GlobalScope) };
+
 }

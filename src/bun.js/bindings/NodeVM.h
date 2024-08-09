@@ -84,6 +84,10 @@ public:
         : Base(vm, structure)
     {
     }
+
+    static const JSC::ClassInfo s_info;
+
+    static constexpr const JSC::ClassInfo* info() { return &s_info; }
 };
 
 JSC_DECLARE_HOST_FUNCTION(vmModule_createContext);

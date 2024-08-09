@@ -282,7 +282,7 @@ pub fn createMemfdForTesting(globalObject: *JSC.JSGlobalObject, callFrame: *JSC.
     }
 
     const size = arguments.ptr[0].toInt64();
-    switch (bun.sys.memfd_create("my_memfd", bun.O.RDWR | bun.O.CLOEXEC)) {
+    switch (bun.sys.memfd_create("my_memfd", std.os.linux.MFD.CLOEXEC)) {
         .result => |fd| {
             _ = bun.sys.ftruncate(fd, size);
             return JSC.JSValue.jsNumber(fd.cast());

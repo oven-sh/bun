@@ -1195,3 +1195,15 @@ export function forceGuardMalloc(env) {
     console.warn("Guard malloc is not available on this platform for some reason.");
   }
 }
+
+export function fileDescriptorLeakChecker() {
+  const initial = getMaxFD();
+  return {
+    [Symbol.dispose]() {
+      const current = getMaxFD();
+      if (current > initial) {
+        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
+      }
+    },
+  };
+}

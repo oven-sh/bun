@@ -2960,6 +2960,7 @@ pub const Arguments = struct {
 
         offset: JSC.WebCore.Blob.SizeType = 0,
         max_size: ?JSC.WebCore.Blob.SizeType = null,
+        limit_size_for_javascript: bool = false,
 
         flag: FileSystemFlags = FileSystemFlags.r,
 
@@ -3045,6 +3046,7 @@ pub const Arguments = struct {
                 .path = path,
                 .encoding = encoding,
                 .flag = flag,
+                .limit_size_for_javascript = true,
             };
         }
     };
@@ -5416,6 +5418,29 @@ pub const NodeFS = struct {
         return Maybe(void).success;
     }
 
+    fn shouldThrowOutOfMemoryEarlyForJavaScript(encoding: Encoding, size: usize, syscall: Syscall.Tag) ?Syscall.Error {
+        // Strings & typed arrays max out at 4.7 GB.
+        // But, it's **string length**
+        // So you can load an 8 GB hex string, for example, it should be fine.
+        const adjusted_size = switch (encoding) {
+            .utf16le, .ucs2, .utf8 => size / 4 -| 1,
+            .hex => size / 2 -| 1,
+            .base64, .base64url => size / 3 -| 1,
+            .ascii, .latin1, .buffer => size,
+        };
+
+        if (
+        // Typed arrays in JavaScript are limited to 4.7 GB.
+        adjusted_size > JSC.synthetic_allocation_limit or
+            // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
+            (Environment.isLinux and size >= bun.getTotalMemorySize()))
+        {
+            return Syscall.Error.fromCode(.NOMEM, syscall);
+        }
+
+        return null;
+    }
+
     fn _readdir(
         buf: *bun.PathBuffer,
         args: Arguments.Readdir,
@@ -5505,7 +5530,15 @@ pub const NodeFS = struct {
                         .buffer = ret.result.buffer,
                     },
                 },
-                .string => .{ .result = .{ .string = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding) } },
+                .string => brk: {
+                    const str = bun.SliceWithUnderlyingString.transcodeFromOwnedSlice(@constCast(ret.result.string), args.encoding);
+
+                    if (str.underlying.tag == .Dead and str.utf8.len == 0) {
+                        return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
+                    }
+
+                    break :brk .{ .result = .{ .string = str } };
+                },
                 else => unreachable,
             },
         };
@@ -5600,8 +5633,21 @@ pub const NodeFS = struct {
             ),
         ) + @intFromBool(comptime string_type == .null_terminated);
 
+        if (args.limit_size_for_javascript and
+            // assume that anything more than 40 bits is not trustworthy.
+            (size < std.math.maxInt(u40)))
+        {
+            if (shouldThrowOutOfMemoryEarlyForJavaScript(args.encoding, size, .read)) |err| {
+                return .{ .err = err.withPathLike(args.path) };
+            }
+        }
+
+        var did_succeed = false;
         var buf = std.ArrayList(u8).init(bun.default_allocator);
-        buf.ensureTotalCapacityPrecise(size + 16) catch unreachable;
+        defer if (!did_succeed) buf.clearAndFree();
+        buf.ensureTotalCapacityPrecise(size + 16) catch return .{
+            .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+        };
         buf.expandToCapacity();
         var total: usize = 0;
 
@@ -5612,14 +5658,26 @@ pub const NodeFS = struct {
                 },
                 .result => |amt| {
                     total += amt;
+
+                    if (args.limit_size_for_javascript) {
+                        if (shouldThrowOutOfMemoryEarlyForJavaScript(args.encoding, total, .read)) |err| {
+                            return .{
+                                .err = err.withPathLike(args.path),
+                            };
+                        }
+                    }
+
                     // There are cases where stat()'s size is wrong or out of date
                     if (total > size and amt != 0) {
-                        buf.ensureUnusedCapacity(8192) catch unreachable;
-                        buf.expandToCapacity();
+                        buf.items.len = total;
+                        buf.ensureUnusedCapacity(8192) catch {
+                            return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
+                        };
                         continue;
                     }
 
                     if (amt == 0) {
+                        did_succeed = true;
                         break;
                     }
                 },
@@ -5632,14 +5690,23 @@ pub const NodeFS = struct {
                     },
                     .result => |amt| {
                         total += amt;
-                        // There are cases where stat()'s size is wrong or out of date
+
+                        if (args.limit_size_for_javascript) {
+                            if (shouldThrowOutOfMemoryEarlyForJavaScript(args.encoding, total, .read)) |err| {
+                                return .{ .err = err.withPathLike(args.path) };
+                            }
+                        }
+
                         if (total > size and amt != 0) {
-                            buf.ensureUnusedCapacity(8192) catch unreachable;
-                            buf.expandToCapacity();
+                            buf.items.len = total;
+                            buf.ensureUnusedCapacity(8192) catch {
+                                return .{ .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path) };
+                            };
                             continue;
                         }
 
                         if (amt == 0) {
+                            did_succeed = true;
                             break;
                         }
                     },
@@ -5649,7 +5716,7 @@ pub const NodeFS = struct {
 
         buf.items.len = if (comptime string_type == .null_terminated) total + 1 else total;
         if (total == 0) {
-            buf.deinit();
+            buf.clearAndFree();
             return switch (args.encoding) {
                 .buffer => .{
                     .result = .{
@@ -5690,7 +5757,10 @@ pub const NodeFS = struct {
                 } else {
                     break :brk .{
                         .result = .{
-                            .null_terminated = buf.toOwnedSliceSentinel(0) catch unreachable,
+                            .null_terminated = buf.toOwnedSliceSentinel(0) catch return .{
+                                // Since we are expecting a null-terminated string, we can't just ignore the resize failure.
+                                .err = Syscall.Error.fromCode(.NOMEM, .read).withPathLike(args.path),
+                            },
                         },
                     };
                 }

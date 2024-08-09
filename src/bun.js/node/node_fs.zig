@@ -5429,7 +5429,12 @@ pub const NodeFS = struct {
             .ascii, .latin1, .buffer => size,
         };
 
-        if (adjusted_size > std.math.maxInt(u32)) {
+        if (
+        // Typed arrays in JavaScript are limited to 4.7 GB.
+        adjusted_size > std.math.maxInt(u32) or
+            // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
+            (Environment.isLinux and size >= bun.getTotalMemorySize()))
+        {
             return Syscall.Error.fromCode(.NOMEM, syscall);
         }
 
@@ -5630,7 +5635,7 @@ pub const NodeFS = struct {
 
         if (args.limit_size_for_javascript and
             // assume that anything more than 40 bits is not trustworthy.
-            size < std.math.maxInt(u40))
+            (size < std.math.maxInt(u40)))
         {
             if (shouldThrowOutOfMemoryEarlyForJavaScript(args.encoding, size, .read)) |err| {
                 return .{ .err = err.withPathLike(args.path) };

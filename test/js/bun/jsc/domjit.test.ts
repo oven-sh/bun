@@ -103,7 +103,7 @@ describe("DOMJIT", () => {
     });
   }
 
-  test("does not crash running in NodeVM", () => {
+  describe("in NodeVM", () => {
     const code = `
     const buf = new Uint8Array(4);
     for (let iter of [100000]) {
@@ -139,9 +139,12 @@ describe("DOMJIT", () => {
       }
     }
     "success";`;
-    const script = new vm.Script(code);
-    expect(script.runInNewContext({ crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
-    expect(vm.runInNewContext(code, { crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
-    expect(vm.run);
-  }, 100_000);
+    test("Script.runInNewContext", () => {
+      const script = new vm.Script(code);
+      expect(script.runInNewContext({ crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
+    }, 20_000);
+    test("vm.runInNewContext", () => {
+      expect(vm.runInNewContext(code, { crypto, performance, TextEncoder, TextDecoder, dirStats })).toBe("success");
+    }, 20_000);
+  });
 });

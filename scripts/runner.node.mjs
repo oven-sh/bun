@@ -1418,10 +1418,9 @@ function formatTestToMarkdown(result, concise) {
       markdown += "<details><summary>";
     }
 
+    markdown += `<code>${testTitle}</code>`;
     if (testUrl) {
-      markdown += `<a href="${testUrl}"><code>${testTitle}</code></a>`;
-    } else {
-      markdown += `<a><code>${testTitle}</code></a>`;
+      markdown += ` <a href="${testUrl}">[link]</a>`;
     }
     if (error) {
       markdown += ` - ${error}`;

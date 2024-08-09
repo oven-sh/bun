@@ -1,4 +1,6 @@
 import { afterAll, afterEach, beforeAll, describe, expect, it, test } from "bun:test";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 afterEach(() => {
   Bun.gc(true);
 });
@@ -6,7 +8,7 @@ afterEach(() => {
 describe("Blob", () => {
   let buf: ArrayBuffer;
   beforeAll(() => {
-    buf = new ArrayBuffer(Math.floor(512 * 1024 * 1024));
+    buf = new ArrayBuffer(Math.floor(64 * 1024 * 1024));
   });
 
   test(".json() should throw an OOM without crashing the process.", () => {
@@ -30,7 +32,7 @@ describe("Blob", () => {
 describe("Response", () => {
   let blob: Blob;
   beforeAll(() => {
-    const buf = new ArrayBuffer(Math.floor(512 * 1024 * 1024));
+    const buf = new ArrayBuffer(Math.floor(64 * 1024 * 1024));
     blob = new Blob([buf, buf, buf, buf, buf, buf, buf, buf, buf]);
   });
   afterAll(() => {
@@ -55,7 +57,7 @@ describe("Response", () => {
 describe("Request", () => {
   let blob: Blob;
   beforeAll(() => {
-    const buf = new ArrayBuffer(Math.floor(512 * 1024 * 1024));
+    const buf = new ArrayBuffer(Math.floor(64 * 1024 * 1024));
     blob = new Blob([buf, buf, buf, buf, buf, buf, buf, buf, buf]);
   });
   afterAll(() => {

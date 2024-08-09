@@ -5431,7 +5431,7 @@ pub const NodeFS = struct {
 
         if (
         // Typed arrays in JavaScript are limited to 4.7 GB.
-        adjusted_size > std.math.maxInt(u32) or
+        adjusted_size > JSC.synthetic_allocation_limit or
             // If they do not have enough memory to open the file and they're on Linux, let's throw an error instead of dealing with the OOM killer.
             (Environment.isLinux and size >= bun.getTotalMemorySize()))
         {

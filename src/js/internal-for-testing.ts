@@ -91,3 +91,9 @@ export const memfd_create: (size: number) => number = $newZigFunction(
   "createMemfdForTesting",
   1,
 );
+
+export const setSyntheticAllocationLimitForTesting: (limit: number) => number = $newZigFunction(
+  "javascript.zig",
+  "Bun__setSyntheticAllocationLimitForTesting",
+  1,
+);

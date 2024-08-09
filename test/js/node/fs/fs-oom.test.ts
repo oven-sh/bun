@@ -2,6 +2,8 @@ import { memfd_create } from "bun:internal-for-testing";
 import { expect, test } from "bun:test";
 import { closeSync, readFileSync } from "fs";
 import { isLinux, isPosix } from "harness";
+import { setSyntheticAllocationLimitForTesting } from "bun:internal-for-testing";
+setSyntheticAllocationLimitForTesting(128 * 1024 * 1024);
 
 // /dev/zero reports a size of 0. So we need a separate test for reDgular files that are huge.
 if (isPosix) {
@@ -22,7 +24,7 @@ if (isPosix) {
 // memfd is linux only.
 if (isLinux) {
   test("fs.readFileSync large file show OOM without crashing the process.", () => {
-    const memfd = memfd_create(1024 * 1024 * 1024 * 5);
+    const memfd = memfd_create(1024 * 1024 * 128 + 1);
     try {
       expect(() => readFileSync(memfd)).toThrow("Out of memory");
       Bun.gc(true);

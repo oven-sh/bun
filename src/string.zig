@@ -613,7 +613,7 @@ pub const String = extern struct {
     pub fn createExternal(bytes: []const u8, isLatin1: bool, ctx: *anyopaque, callback: ?*const ExternalStringImplFreeFunction) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
-        if (bytes.len > max_length) {
+        if (bytes.len > max_length()) {
             if (callback) |cb| {
                 cb(ctx, @ptrCast(@constCast(bytes.ptr)), @truncate(bytes.len));
             }
@@ -644,14 +644,16 @@ pub const String = extern struct {
 
     /// Max WTFStringImpl length.
     /// **Not** in bytes. In characters.
-    pub const max_length = std.math.maxInt(u32);
+    pub inline fn max_length() usize {
+        return JSC.synthetic_allocation_limit;
+    }
 
     /// If the allocation fails, this will free the bytes and return a dead string.
     pub fn createExternalGloballyAllocated(comptime kind: WTFStringEncoding, bytes: []kind.Byte()) String {
         JSC.markBinding(@src());
         bun.assert(bytes.len > 0);
 
-        if (bytes.len > max_length) {
+        if (bytes.len > max_length()) {
             bun.default_allocator.free(bytes);
             return dead;
         }

@@ -1860,7 +1860,7 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     if (str.isNull()) {
         // isNull() will be true for empty strings and for strings which are too long.
         // So we need to check the length is plausibly due to a long string.
-        if (strPtr->len > 1024 * 1024 * 1024) {
+        if (strPtr->len > Bun__syntheticAllocationLimit) {
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
             return {};
         }

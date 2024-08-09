@@ -32,7 +32,11 @@ export default function (
   if (unix) {
     const { protocol, pathname } = parseUrl(unix);
     if (protocol === "unix:") {
-      notify(pathname);
+      if ((require("node:os")?.type() ?? "") === "Windows_NT") { 
+        notify(pathname.substring(1));
+      } else {
+        notify(pathname);
+      }
     }
   }
 }

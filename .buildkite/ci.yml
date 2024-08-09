@@ -18,6 +18,7 @@ steps:
   # macOS aarch64
   - key: "darwin-aarch64"
     group: ":darwin: aarch64"
+    skip: true
     steps:
       - key: "darwin-aarch64-build-deps"
         label: ":darwin: aarch64 - build-deps"
@@ -118,6 +119,7 @@ steps:
   # macOS x64
   - key: "darwin-x64"
     group: ":darwin: x64"
+    skip: true
     steps:
       - key: "darwin-x64-build-deps"
         label: ":darwin: x64 - build-deps"
@@ -218,6 +220,7 @@ steps:
   # Linux aarch64
   - key: "linux-aarch64"
     group: ":linux: aarch64"
+    skip: true
     steps:
       - key: "linux-aarch64-build-deps"
         label: ":linux: aarch64 - build-deps"
@@ -509,6 +512,7 @@ steps:
   # Linux x64-baseline
   - key: "linux-x64-baseline"
     group: ":linux: x64-baseline"
+    skip: true
     steps:
       - key: "linux-x64-baseline-build-deps"
         label: ":linux: x64-baseline - build-deps"
@@ -640,6 +644,7 @@ steps:
   # Windows x64
   - key: "windows-x64"
     group: ":windows: x64"
+    skip: true
     steps:
       - key: "windows-x64-build-deps"
         label: ":windows: x64 - build-deps"
@@ -725,6 +730,7 @@ steps:
   # Windows x64-baseline
   - key: "windows-x64-baseline"
     group: ":windows: x64-baseline"
+    skip: true
     steps:
       - key: "windows-x64-baseline-build-deps"
         label: ":windows: x64-baseline - build-deps"

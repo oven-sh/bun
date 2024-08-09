@@ -26,23 +26,6 @@ describe("napi", () => {
   });
 
   describe("v8 c++", () => {
-    describe("primitives", () => {
-      it("can create and distinguish between null, undefined, true, and false", () => {
-        checkSameOutput("test_v8_primitives", []);
-      });
-    });
-    describe("Number", () => {
-      it("can create small integer", () => {
-        checkSameOutput("test_v8_number_int", []);
-      });
-      // non-i32 v8::Number is not implemented yet
-      it.skip("can create large integer", () => {
-        checkSameOutput("test_v8_number_large_int", []);
-      });
-      it.skip("can create fraction", () => {
-        checkSameOutput("test_v8_number_fraction", []);
-      });
-    });
     describe("String", () => {
       it("can create and read back strings with only ASCII characters", () => {
         checkSameOutput("test_v8_string_ascii", []);

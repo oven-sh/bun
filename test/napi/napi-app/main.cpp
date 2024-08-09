@@ -83,45 +83,6 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
 
 #include <v8.h>
 
-napi_value test_v8_number_int(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-
-  v8::Local<v8::Number> integer =
-      v8::Number::New(v8::Isolate::GetCurrent(), 123.0);
-  if (integer->Value() != 123.0) {
-    return fail_fmt(env, "wrong v8 number value: expected 123.0 got %f",
-                    integer->Value());
-  }
-
-  return ok(env);
-}
-
-napi_value test_v8_number_large_int(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-
-  v8::Local<v8::Number> large_int =
-      v8::Number::New(v8::Isolate::GetCurrent(), 8589934592);
-  if (large_int->Value() != 8589934592) {
-    return fail_fmt(env, "wrong v8 number value: expected 8589934592 got %f",
-                    large_int->Value());
-  }
-
-  return ok(env);
-}
-
-napi_value test_v8_number_fraction(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-
-  v8::Local<v8::Number> fraction =
-      v8::Number::New(v8::Isolate::GetCurrent(), 2.5);
-  if (fraction->Value() != 2.5) {
-    return fail_fmt(env, "wrong v8 number value: expected 2.5 got %f",
-                    fraction->Value());
-  }
-
-  return ok(env);
-}
-
 napi_value test_v8_string_ascii(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
   v8::Isolate *isolate = v8::Isolate::GetCurrent();

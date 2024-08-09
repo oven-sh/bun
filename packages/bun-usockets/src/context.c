@@ -278,7 +278,6 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
 }
 
 
-
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
 #ifndef LIBUS_NO_SSL
     if (ssl) {
@@ -639,7 +638,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     c->error = ECONNREFUSED;
                     c->context->on_connect_error(c, error);
                     Bun__addrinfo_freeRequest(c->addrinfo_req, ECONNREFUSED);
-                    us_connecting_socket_close(0, c);
+                    us_connecting_socket_close(c->ssl, c);
                 }
             }
         } else {

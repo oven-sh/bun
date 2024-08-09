@@ -1375,11 +1375,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn onOpen(this: *This, socket: Socket) void {
             log("onOpen {} {}", .{ this.socket == .detached, this.ref_count });
-            // update the internal socket instance to the one that was just connected
-            if (this.socket == .detached) {
-                this.socket = .{ .socket = socket };
-                this.ref();
-            }
+            this.socket = .{ .socket = socket };
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});
 
@@ -1580,7 +1576,6 @@ fn NewSocket(comptime ssl: bool) type {
             JSC.markBinding(@src());
             log("onClose", .{});
             defer this.deref();
-            this.socket = .{ .detached = {} };
             defer this.markInactive();
 
             if (this.flags.finalizing) {
@@ -2085,6 +2080,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
             if (this.socket_context) |socket_context| {
                 this.socket_context = null;
+                log("deinit socket_context", .{});
                 socket_context.deinit(ssl);
             }
             this.destroy();

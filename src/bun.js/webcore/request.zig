@@ -549,6 +549,8 @@ pub const Request = struct {
                             req._headers = headers;
                             fields.insert(.headers);
                         }
+
+                        if (globalThis.hasException()) return null;
                     }
 
                     if (!fields.contains(.body)) {
@@ -556,6 +558,7 @@ pub const Request = struct {
                             .Null, .Empty, .Used => {},
                             else => {
                                 req.body.value = request.body.value.clone(globalThis);
+                                if (globalThis.hasException()) return null;
                                 fields.insert(.body);
                             },
                         }
@@ -591,6 +594,8 @@ pub const Request = struct {
                             },
                         }
                     }
+
+                    if (globalThis.hasException()) return null;
                 }
             }
 
@@ -601,6 +606,8 @@ pub const Request = struct {
                         return null;
                     };
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.url)) {
@@ -618,6 +625,8 @@ pub const Request = struct {
                     if (!req.url.isEmpty())
                         fields.insert(.url);
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.signal)) {
@@ -628,14 +637,18 @@ pub const Request = struct {
                         signal_.ensureStillAlive();
                         req.signal = signal.ref();
                     } else {
-                        globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                        if (!globalThis.hasException()) {
+                            globalThis.throw("Failed to construct 'Request': signal is not of type AbortSignal.", .{});
+                        }
                         return null;
                     }
                 }
+
+                if (globalThis.hasException()) return null;
             }
 
             if (!fields.contains(.method) or !fields.contains(.headers)) {
-                if (Response.Init.init(globalThis.allocator(), globalThis, value) catch null) |response_init| {
+                if (Response.Init.init(globalThis, value) catch null) |response_init| {
                     if (!explicit_check or (explicit_check and value.fastGet(globalThis, .method) != null)) {
                         if (!fields.contains(.method)) {
                             req.method = response_init.method;
@@ -653,20 +666,26 @@ pub const Request = struct {
                         }
                     }
                 }
+
+                if (globalThis.hasException()) return null;
             }
         }
         if (req.url.isEmpty()) {
-            globalThis.throw("Failed to construct 'Request': url is required.", .{});
+            if (!globalThis.hasException()) {
+                globalThis.throw("Failed to construct 'Request': url is required.", .{});
+            }
             return null;
         }
 
         const href = JSC.URL.hrefFromString(req.url);
         if (href.isEmpty()) {
-            // globalThis.throw can cause GC, which could cause the above string to be freed.
-            // so we must increment the reference count before calling it.
-            globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
-                req.url,
-            });
+            if (!globalThis.hasException()) {
+                // globalThis.throw can cause GC, which could cause the above string to be freed.
+                // so we must increment the reference count before calling it.
+                globalThis.throw("Failed to construct 'Request': Invalid URL \"{}\"", .{
+                    req.url,
+                });
+            }
             return null;
         }
 
@@ -717,6 +736,12 @@ pub const Request = struct {
         _: *JSC.CallFrame,
     ) JSC.JSValue {
         var cloned = this.clone(getAllocator(globalThis), globalThis);
+
+        if (globalThis.hasException()) {
+            cloned.finalize();
+            return .zero;
+        }
+
         return cloned.toJS(globalThis);
     }
 
@@ -812,7 +837,9 @@ pub const Request = struct {
         this.ensureURL() catch {};
         const vm = globalThis.bunVM();
         const body = vm.initRequestBodyValue(this.body.value.clone(globalThis)) catch {
-            globalThis.throw("Failed to clone request", .{});
+            if (!globalThis.hasException()) {
+                globalThis.throw("Failed to clone request", .{});
+            }
             return;
         };
         const original_url = req.url;

@@ -1056,7 +1056,7 @@ pub fn transform(
         if (code == .buffer) {
             code_arg.unprotect();
         }
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .zero;
     };
     task.schedule();

@@ -2836,8 +2836,9 @@ pub const JSGlobalObject = opaque {
         return this.bunVM().allocator;
     }
 
+    extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) void {
-        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+        JSGlobalObject__throwOutOfMemoryError(this);
     }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {

@@ -1,8 +1,11 @@
 
+
 #include "root.h"
 
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
+#include "JavaScriptCore/ThrowScope.h"
+
 #include "JavaScriptCore/JSCast.h"
 #include "JavaScriptCore/JSType.h"
 #include "JavaScriptCore/NumberObject.h"
@@ -228,6 +231,12 @@ enum class AsymmetricMatcherConstructorType : uint8_t {
     Promise = 8,
     InstanceOf = 9,
 };
+
+#if ASSERT_ENABLED
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) DECLARE_THROW_SCOPE(globalObject->vm()).assertNoExceptionExceptTermination()
+#else
+#define ASSERT_NO_PENDING_EXCEPTION(globalObject) void()
+#endif
 
 extern "C" bool Expect_readFlagsAndProcessPromise(JSC__JSValue instanceValue, JSC__JSGlobalObject* globalObject, ExpectFlags* flags, JSC__JSValue* value, AsymmetricMatcherConstructorType* constructorType);
 
@@ -1570,6 +1579,8 @@ WebCore__FetchHeaders* WebCore__FetchHeaders__createFromJS(JSC__JSGlobalObject* 
 JSC__JSValue WebCore__FetchHeaders__toJS(WebCore__FetchHeaders* headers, JSC__JSGlobalObject* lexicalGlobalObject)
 {
     Zig::GlobalObject* globalObject = reinterpret_cast<Zig::GlobalObject*>(lexicalGlobalObject);
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+
     bool needsMemoryCost = headers->hasOneRef();
 
     JSValue value = WebCore::toJS(lexicalGlobalObject, globalObject, headers);
@@ -1854,6 +1865,8 @@ BunString WebCore__DOMURL__fileSystemPath(WebCore__DOMURL* arg0)
 
 extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JSGlobalObject* globalObject)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+    auto str = Zig::toString(*strPtr);
     auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     auto str = Zig::toString(*strPtr);
 
@@ -1882,10 +1895,20 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     return JSValue::encode(result);
 }
 
+// We used to just throw "Out of memory" as a regular Error with that string.
+//
+// But JSC has some different handling for out of memory errors. So we should
+// make it look like what JSC does.
+void JSGlobalObject__throwOutOfMemoryError(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
+    throwOutOfMemoryError(globalObject, scope);
+}
+
 JSC__JSValue SystemError__toErrorInstance(const SystemError* arg0,
     JSC__JSGlobalObject* globalObject)
 {
-
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     SystemError err = *arg0;
 
     JSC::VM& vm = globalObject->vm();
@@ -2186,6 +2209,7 @@ bool JSC__JSFunction__getSourceCode(JSC__JSValue JSValue0, ZigString* outSourceC
 void JSC__JSValue__jsonStringify(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1, uint32_t arg2,
     BunString* arg3)
 {
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String str = JSC::JSONStringify(arg1, value, (unsigned)arg2);
     *arg3 = Bun::toStringRef(str);
@@ -2328,6 +2352,7 @@ bool JSC__JSValue__isSameValue(JSC__JSValue JSValue0, JSC__JSValue JSValue1,
 
 bool JSC__JSValue__deepEquals(JSC__JSValue JSValue0, JSC__JSValue JSValue1, JSC__JSGlobalObject* globalObject)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue v1 = JSValue::decode(JSValue0);
     JSValue v2 = JSValue::decode(JSValue1);
 
@@ -2514,6 +2539,7 @@ size_t JSC__JSObject__getArrayLength(JSC__JSObject* arg0) { return arg0->getArra
 JSC__JSValue JSC__JSObject__getIndex(JSC__JSValue jsValue, JSC__JSGlobalObject* arg1,
     uint32_t arg3)
 {
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
     return JSC::JSValue::encode(JSC::JSValue::decode(jsValue).toObject(arg1)->getIndex(arg1, arg3));
 }
 
@@ -2726,7 +2752,7 @@ JSC__JSValue JSC__JSValue__values(JSC__JSGlobalObject* globalObject, JSC__JSValu
 bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1,
     Bun__ArrayBuffer* arg2)
 {
-
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     if (UNLIKELY(!value) || !value.isCell()) {
         return false;
@@ -3799,7 +3825,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
     JSC__JSGlobalObject* globalObject,
     const unsigned char* arg1, uint32_t arg2)
 {
-
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue value = JSC::JSValue::decode(JSValue0);
     ASSERT_WITH_MESSAGE(!value.isEmpty(), "get() must not be called on empty value");
 
@@ -3818,6 +3844,7 @@ JSC__JSValue JSC__JSValue__getIfPropertyExistsImpl(JSC__JSValue JSValue0,
 
 extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSValue value = JSC::JSValue::decode(JSValue0);
     if (UNLIKELY(!value.isObject()))
         return JSValue::encode({});
@@ -3833,6 +3860,8 @@ extern "C" JSC__JSValue JSC__JSValue__getIfPropertyExistsImplString(JSC__JSValue
 
 extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, BunString* propertyName)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
+
     VM& vm = globalObject->vm();
     JSValue value = JSC::JSValue::decode(JSValue0);
     WTF::String propertyNameString = propertyName->tag == BunStringTag::Empty ? WTF::String(""_s) : propertyName->toWTFString(BunString::ZeroCopy);
@@ -3847,6 +3876,7 @@ extern "C" JSC__JSValue JSC__JSValue__getOwn(JSC__JSValue JSValue0, JSC__JSGloba
 
 JSC__JSValue JSC__JSValue__getIfPropertyExistsFromPath(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, JSC__JSValue arg1)
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     VM& vm = globalObject->vm();
     ThrowScope scope = DECLARE_THROW_SCOPE(vm);
     JSValue value = JSValue::decode(JSValue0);
@@ -4016,6 +4046,7 @@ int32_t JSC__JSValue__toInt32(JSC__JSValue JSValue0)
 
 CPP_DECL double JSC__JSValue__coerceToDouble(JSC__JSValue JSValue0, JSC__JSGlobalObject* arg1)
 {
+    ASSERT_NO_PENDING_EXCEPTION(arg1);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     auto catchScope = DECLARE_CATCH_SCOPE(arg1->vm());
     double result = value.toNumber(arg1);
@@ -4083,6 +4114,7 @@ JSC__JSString* JSC__JSValue__toStringOrNull(JSC__JSValue JSValue0, JSC__JSGlobal
 
 bool JSC__JSValue__toMatch(JSC__JSValue regexValue, JSC__JSGlobalObject* global, JSC__JSValue value)
 {
+    ASSERT_NO_PENDING_EXCEPTION(global);
     JSC::JSValue regex = JSC::JSValue::decode(regexValue);
     JSC::JSValue str = JSC::JSValue::decode(value);
     if (regex.asCell()->type() != RegExpObjectType || !str.isString()) {
@@ -5176,6 +5208,7 @@ bool JSC__JSValue__toBooleanSlow(JSC__JSValue JSValue0, JSC__JSGlobalObject* glo
 template<bool nonIndexedOnly>
 static void JSC__JSValue__forEachPropertyImpl(JSC__JSValue JSValue0, JSC__JSGlobalObject* globalObject, void* arg2, void (*iter)(JSC__JSGlobalObject* arg0, void* ctx, ZigString* arg2, JSC__JSValue JSValue3, bool isSymbol, bool isPrivateSymbol))
 {
+    ASSERT_NO_PENDING_EXCEPTION(globalObject);
     JSC::JSValue value = JSC::JSValue::decode(JSValue0);
     JSC::JSObject* object = value.getObject();
     if (!object)

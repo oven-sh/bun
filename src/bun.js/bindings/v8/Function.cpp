@@ -51,7 +51,7 @@ Function* Function::create(VM& vm, Structure* structure, FunctionTemplate* funct
 
 void Function::finishCreation(VM& vm, FunctionTemplate* functionTemplate)
 {
-    Base::finishCreation(vm, 0, "Function"_s, JSC::InternalFunction::PropertyAdditionMode::WithoutStructureTransition);
+    Base::finishCreation(vm, 0, "Function"_s);
     __internals.functionTemplate.set(vm, this, functionTemplate);
 }
 

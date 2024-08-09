@@ -83,47 +83,6 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
 
 #include <v8.h>
 
-napi_value test_v8_primitives(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  v8::Isolate *isolate = v8::Isolate::GetCurrent();
-
-  v8::Local<v8::Primitive> v8_undefined = v8::Undefined(isolate);
-  if (!v8_undefined->IsUndefined() || !v8_undefined->IsNullOrUndefined()) {
-    return fail(env, "undefined is not undefined");
-  }
-  if (v8_undefined->IsNull()) {
-    return fail(env, "undefined is null");
-  }
-
-  v8::Local<v8::Primitive> v8_null = v8::Null(isolate);
-  if (!v8_null->IsNull() || !v8_null->IsNullOrUndefined()) {
-    return fail(env, "null is not null");
-  }
-  if (v8_null->IsUndefined()) {
-    return fail(env, "null is undefined");
-  }
-
-  v8::Local<v8::Boolean> v8_true = v8::Boolean::New(isolate, true);
-  if (!v8_true->IsBoolean() || v8_true->Value() != true || v8_true->IsFalse() ||
-      !v8_true->IsTrue() || v8_true->IsUndefined() || v8_true->IsNull()) {
-    return fail(env, "true is not true");
-  }
-
-  v8::Local<v8::Boolean> v8_false = v8::Boolean::New(isolate, false);
-  if (!v8_false->IsBoolean() || v8_false->Value() != false ||
-      v8_false->IsTrue() || !v8_false->IsFalse() || v8_false->IsUndefined() ||
-      v8_false->IsNull()) {
-    return fail(env, "false is not false");
-  }
-
-  // check that we are not coercing
-  if (v8_undefined->IsFalse() || v8_null->IsFalse()) {
-    return fail(env, "non-bools are booleans");
-  }
-
-  return ok(env);
-}
-
 napi_value test_v8_number_int(const Napi::CallbackInfo &info) {
   Napi::Env env = info.Env();
 
@@ -394,6 +353,22 @@ napi_value test_v8_object_template(const Napi::CallbackInfo &info) {
   return ok(env);
 }
 
+void Method(const v8::FunctionCallbackInfo<v8::Value> &info) {}
+
+napi_value test_v8_function_template(const Napi::CallbackInfo &info) {
+  Napi::Env env = info.Env();
+  v8::Isolate *isolate = v8::Isolate::GetCurrent();
+  v8::EscapableHandleScope handle_scope(isolate);
+  v8::Local<v8::Context> context = isolate->GetCurrentContext();
+  v8::Local<v8::FunctionTemplate> t =
+      v8::FunctionTemplate::New(isolate, Method);
+  v8::Local<v8::Function> f = t->GetFunction(context).ToLocalChecked();
+  f->SetName(v8::String::NewFromUtf8(isolate, "hello",
+                                     v8::NewStringType::kInternalized)
+                 .ToLocalChecked());
+  return ok(env);
+}
+
 static void callback_1(napi_env env, napi_value js_callback, void *context,
                        void *data) {}
 
@@ -481,8 +456,6 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
 
-  exports.Set("test_v8_primitives",
-              Napi::Function::New(env, test_v8_primitives));
   exports.Set("test_v8_number_int",
               Napi::Function::New(env, test_v8_number_int));
   exports.Set("test_v8_number_large_int",
@@ -496,6 +469,8 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
   exports.Set("test_v8_array_new", Napi::Function::New(env, test_v8_array_new));
   exports.Set("test_v8_object_template",
               Napi::Function::New(env, test_v8_object_template));
+  exports.Set("test_v8_function_template",
+              Napi::Function::New(env, test_v8_function_template));
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));

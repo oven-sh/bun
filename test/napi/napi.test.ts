@@ -69,6 +69,11 @@ describe("napi", () => {
         checkSameOutput("test_v8_object_template", []);
       });
     });
+    describe("FunctionTemplate", () => {
+      it("doesn't crash", () => {
+        checkSameOutput("test_v8_function_template", []);
+      });
+    });
   });
 
   describe("issue_11949", () => {

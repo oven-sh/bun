@@ -542,13 +542,16 @@ comptime {
 
 pub const ExitHandler = struct {
     exit_code: u8 = 0,
+    explicit: bool = false,
 
     pub export fn Bun__getExitCode(vm: *VirtualMachine) u8 {
         return vm.exit_handler.exit_code;
     }
 
-    pub export fn Bun__setExitCode(vm: *VirtualMachine, code: u8) void {
+    pub export fn Bun__setExitCode(vm: *VirtualMachine, code: u8, explicit: bool) void {
+        if (vm.exit_handler.explicit and !explicit) return;
         vm.exit_handler.exit_code = code;
+        vm.exit_handler.explicit = explicit;
     }
 
     extern fn Process__dispatchOnBeforeExit(*JSC.JSGlobalObject, code: u8) void;

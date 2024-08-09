@@ -285,6 +285,7 @@ pub const Run = struct {
     }
 
     extern fn Bun__ExposeNodeModuleGlobals(*JSC.JSGlobalObject) void;
+    extern fn Bun__setExitCode(vm: *JSC.VirtualMachine, code: u8, explicit: bool) void;
 
     pub fn start(this: *Run) void {
         var vm = this.vm;
@@ -313,7 +314,7 @@ pub const Run = struct {
                     vm.eventLoop().tick();
                     vm.eventLoop().tickPossiblyForever();
                 } else {
-                    vm.exit_handler.exit_code = 1;
+                    Bun__setExitCode(vm, 1, true);
                     vm.onExit();
 
                     if (run.any_unhandled) {
@@ -347,7 +348,7 @@ pub const Run = struct {
                 vm.eventLoop().tick();
                 vm.eventLoop().tickPossiblyForever();
             } else {
-                vm.exit_handler.exit_code = 1;
+                Bun__setExitCode(vm, 1, true);
                 vm.onExit();
                 if (run.any_unhandled) {
                     bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
@@ -454,7 +455,7 @@ pub const Run = struct {
         vm.onExit();
 
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
-            this.vm.exit_handler.exit_code = 1;
+            Bun__setExitCode(vm, 1, true);
 
             bun.JSC.SavedSourceMap.MissingSourceMapNoteInfo.print();
 
@@ -468,10 +469,6 @@ pub const Run = struct {
         vm.globalExit();
     }
 };
-
-pub fn anyUnhandled() bool {
-    return run.any_unhandled;
-}
 
 pub export fn Bun__onResolveEntryPointResult(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) noreturn {
     const arguments = callframe.arguments(1).slice();

@@ -2108,20 +2108,18 @@ pub const Process = struct {
         }
     }
 
+    extern fn Bun__setExitCode(vm: *JSC.VirtualMachine, code: u8, explicit: bool) void;
     pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8, explicit: bool) callconv(.C) void {
         var vm = globalObject.bunVM();
-        const cmd = bun.CLI.Cli.cmd.?;
-        const is_run = cmd == .RunCommand or cmd == .RunAsNodeCommand or cmd == .AutoCommand;
+        Bun__setExitCode(vm, code, explicit);
+
         if (vm.worker) |worker| {
-            if (explicit) vm.exit_handler.exit_code = code;
             worker.requestTerminate();
             return;
         }
 
-        if (explicit) vm.exit_handler.exit_code = code;
         vm.onExit();
-        if (is_run and bun_js.anyUnhandled() and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
-        if (explicit) vm.exit_handler.exit_code = code;
+        if (vm.unhandled_error_counter > 0 and vm.exit_handler.exit_code == 0) Bun__setExitCode(vm, 1, false);
         vm.globalExit();
     }
 

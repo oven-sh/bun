@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { fileDescriptorLeakChecker, getMaxFD, isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -171,6 +171,7 @@ import util from "node:util";
 import path from "node:path";
 
 it("end doesn't close when backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const chunk = Buffer.from("1 Hello, world!");
@@ -182,7 +183,18 @@ it("end doesn't close when backed by a file descriptor", async () => {
   await util.promisify(fs.close)(fd);
 });
 
+it("end does close when not backed by a file descriptor", async () => {
+  using _ = fileDescriptorLeakChecker();
+  const x = tmpdirSync();
+  const file = Bun.file(path.join(x, "test.txt"));
+  const writer = file.writer();
+  await writer.write(Buffer.from("1 Hello, world!"));
+  await writer.end();
+  await Bun.sleep(10); // For the file descriptor leak checker.
+});
+
 it("write result is not cummulative", async () => {
+  using _ = fileDescriptorLeakChecker();
   const x = tmpdirSync();
   const fd = await util.promisify(fs.open)(path.join(x, "test.txt"), "w");
   const file = Bun.file(fd);

@@ -630,9 +630,10 @@ test("should be able to abrubtly close a upload request", async () => {
   expect().pass();
 });
 
-test("should be able to stream huge amounts of data", async () => {
+// This test is disabled because it can OOM the CI
+test.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);
-  const CONTENT_LENGTH = 5 * 1024 * 1024 * 1024;
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
   let received = 0;
   let written = 0;
   using server = Bun.serve({

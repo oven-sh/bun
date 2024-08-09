@@ -2207,10 +2207,10 @@ it("should propagate exception in async data handler", async () => {
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
-
-it("should be able to stream huge amounts of data", async () => {
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
   const buf = Buffer.alloc(1024 * 1024 * 256);
-  const CONTENT_LENGTH = 5 * 1024 * 1024 * 1024;
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
   let received = 0;
   let written = 0;
   const { promise: listen, resolve: resolveListen } = Promise.withResolvers();

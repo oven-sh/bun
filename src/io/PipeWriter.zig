@@ -891,6 +891,7 @@ pub fn WindowsBufferedWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        is_fd: ?bool = null,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1004,12 +1005,8 @@ pub fn WindowsBufferedWriter(
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
                 // if the source of this writer is a file descriptor, ensure end() does not close it since we do not own it.
-                if (this.source) |source| {
-                    switch (source) {
-                        .sync_file, .file => {},
-                        .pipe, .tty => this.close(),
-                    }
-                }
+                if (this.is_fd) |x| if (x) return;
+                this.close();
             }
         }
     };
@@ -1137,6 +1134,7 @@ pub fn WindowsStreamingWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        is_fd: ?bool = null,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1389,12 +1387,8 @@ pub fn WindowsStreamingWriter(
             // if we are done we can call close if not we wait all the data to be flushed
             if (this.isDone()) {
                 // if the source of this writer is a file descriptor, ensure end() does not close it since we do not own it.
-                if (this.source) |source| {
-                    switch (source) {
-                        .sync_file, .file => {},
-                        .pipe, .tty => this.close(),
-                    }
-                }
+                if (this.is_fd) |x| if (x) return;
+                this.close();
             }
         }
     };

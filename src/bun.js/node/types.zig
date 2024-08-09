@@ -2110,6 +2110,8 @@ pub const Process = struct {
 
     pub fn exit(globalObject: *JSC.JSGlobalObject, code: u8, explicit: bool) callconv(.C) void {
         var vm = globalObject.bunVM();
+        const cmd = bun.CLI.Cli.cmd.?;
+        const is_run = cmd == .RunCommand or cmd == .RunAsNodeCommand or cmd == .AutoCommand;
         if (vm.worker) |worker| {
             if (explicit) vm.exit_handler.exit_code = code;
             worker.requestTerminate();
@@ -2118,7 +2120,7 @@ pub const Process = struct {
 
         if (explicit) vm.exit_handler.exit_code = code;
         vm.onExit();
-        if (bun_js.anyUnhandled() and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
+        if (is_run and bun_js.anyUnhandled() and vm.exit_handler.exit_code == 0) vm.exit_handler.exit_code = 1;
         if (explicit) vm.exit_handler.exit_code = code;
         vm.globalExit();
     }

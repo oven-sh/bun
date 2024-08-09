@@ -1410,7 +1410,6 @@ function formatTestToMarkdown(result, concise) {
     }
 
     const testTitle = testPath.replace(/\\/g, "/");
-    const testUrl = getFileUrl(testPath, errorLine);
 
     if (concise) {
       markdown += "<li>";
@@ -1419,9 +1418,9 @@ function formatTestToMarkdown(result, concise) {
     }
 
     markdown += `<code>${testTitle}</code>`;
-    if (testUrl) {
-      markdown += ` <a href="${testUrl}">[link]</a>`;
-    }
+    markdown += ` <a href="${process.env["BUILDKITE_BUILD_URL"]}#annotation-${testTitle}">[logs]</a>`;
+    markdown += ` <a href="${getFileUrl(testPath, errorLine)}">[source]</a>`;
+
     if (error) {
       markdown += ` - ${error}`;
     }

@@ -55,6 +55,7 @@ const gitRef = getGitRef();
 const cwd = dirname(import.meta.dirname);
 const testsPath = join(cwd, "test");
 const tmpPath = getTmpdir();
+const nodeTestsPath = join(homedir(), "node", "test", "parallel");
 
 const { values: options, positionals: filters } = parseArgs({
   allowPositionals: true,
@@ -92,6 +93,10 @@ const { values: options, positionals: filters } = parseArgs({
     ["smoke"]: {
       type: "string",
       default: undefined,
+    },
+    ["nodejs"]: {
+      type: "boolean",
+      default: false,
     },
   },
 });
@@ -221,6 +226,11 @@ async function runTests() {
 
   if (results.every(({ ok }) => ok)) {
     for (const testPath of tests) {
+      if (options["nodejs"]) {
+        const testPathFull = join(nodeTestsPath, testPath);
+        await runTest(`node/test/parallel/${testPath}`, async () => spawnBunTest(execPath, testPathFull));
+        continue;
+      }
       const title = relative(cwd, join(testsPath, testPath)).replace(/\\/g, "/");
       await runTest(title, async () => spawnBunTest(execPath, join("test", testPath)));
     }
@@ -233,6 +243,8 @@ async function runTests() {
     reportOutputToGitHubAction("failing_tests", markdown);
   }
 
+  if (!isCI) console.log("-------");
+  if (!isCI) console.log("passing", results.length - failedTests.length, "/", results.length);
   return results;
 }
 
@@ -387,6 +399,8 @@ async function spawnSafe(options) {
       error = "timeout";
     } else {
       error = signalCode;
+      if (!isCI) console.log();
+      if (!isCI) onExit(signalCode);
     }
   } else if (exitCode === 1) {
     const match = buffer.match(/\x1b\[31m\s(\d+) fail/);
@@ -527,12 +541,14 @@ async function spawnBun(execPath, { args, cwd, timeout, env, stdout, stderr }) {
  * @returns {Promise<TestResult>}
  */
 async function spawnBunTest(execPath, testPath) {
+  if (options["nodejs"] && !isCI) console.log(testPath);
   const timeout = getTestTimeout(testPath);
   const perTestTimeout = Math.ceil(timeout / 2);
+  const isReallyTest = isTestStrict(testPath);
   const { ok, error, stdout } = await spawnBun(execPath, {
-    args: ["test", `--timeout=${perTestTimeout}`, testPath],
+    args: isReallyTest ? ["test", `--timeout=${perTestTimeout}`, testPath] : [testPath],
     cwd: cwd,
-    timeout,
+    timeout: isReallyTest ? timeout : 1_000,
     env: {
       GITHUB_ACTIONS: "true", // always true so annotations are parsed
     },
@@ -811,6 +827,15 @@ function isJavaScript(path) {
  * @returns {boolean}
  */
 function isTest(path) {
+  if (options["nodejs"]) return true;
+  return isTestStrict(path);
+}
+
+/**
+ * @param {string} path
+ * @returns {boolean}
+ */
+function isTestStrict(path) {
   return isJavaScript(path) && /\.test|spec\./.test(basename(path));
 }
 
@@ -828,6 +853,222 @@ function isHidden(path) {
  */
 function getTests(cwd) {
   function* getFiles(cwd, path) {
+    if (options["nodejs"]) {
+      const dirname = join(cwd, path);
+      console.log(dirname);
+      for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
+        const { name } = entry;
+        const filename = join(path, name);
+        if (filename.startsWith("test-abortcontroller")) continue;
+        if (filename.startsWith("test-aborted")) continue;
+        if (filename.startsWith("test-abortsignal")) continue;
+        if (filename.startsWith("test-accessor")) continue;
+        if (filename.startsWith("test-arm")) continue;
+        if (filename.startsWith("test-assert")) continue;
+        if (filename.startsWith("test-async")) continue;
+        if (filename.startsWith("test-atomics")) continue;
+        if (filename.startsWith("test-bad")) continue;
+        if (filename.startsWith("test-bash")) continue;
+        if (filename.startsWith("test-beforeexit")) continue;
+        if (filename.startsWith("test-benchmark")) continue;
+        if (filename.startsWith("test-binding")) continue;
+        if (filename.startsWith("test-blob")) continue;
+        if (filename.startsWith("test-blocklist")) continue;
+        if (filename.startsWith("test-bootstrap")) continue;
+        if (filename.startsWith("test-broadcastchannel")) continue;
+        if (filename.startsWith("test-btoa")) continue;
+        if (filename.startsWith("test-buffer")) continue;
+        if (filename.startsWith("test-c-")) continue;
+        if (filename.startsWith("test-child")) continue;
+        if (filename.startsWith("test-cli-")) continue;
+        if (filename.startsWith("test-client")) continue;
+        if (filename.startsWith("test-cluster")) continue;
+        if (filename.startsWith("test-code")) continue;
+        if (filename.startsWith("test-common")) continue;
+        if (filename.startsWith("test-compile")) continue;
+        if (filename.startsWith("test-compression")) continue;
+        if (filename.startsWith("test-console")) continue;
+        if (filename.startsWith("test-constants")) continue;
+        if (filename.startsWith("test-corepack")) continue;
+        if (filename.startsWith("test-coverage")) continue;
+        if (filename.startsWith("test-crypto")) continue;
+        if (filename.startsWith("test-cwd")) continue;
+        if (filename.startsWith("test-datetime")) continue;
+        if (filename.startsWith("test-debugger")) continue;
+        if (filename.startsWith("test-delayed")) continue;
+        if (filename.startsWith("test-destroy")) continue;
+        if (filename.startsWith("test-dgram")) continue;
+        if (filename.startsWith("test-diagnostics")) continue;
+        if (filename.startsWith("test-directory")) continue;
+        if (filename.startsWith("test-disable")) continue;
+        if (filename.startsWith("test-dns")) continue;
+        if (filename.startsWith("test-domain")) continue;
+        if (filename.startsWith("test-domexception")) continue;
+        if (filename.startsWith("test-dotenv")) continue;
+        if (filename.startsWith("test-double")) continue;
+        if (filename.startsWith("test-dsa")) continue;
+        if (filename.startsWith("test-dummy")) continue;
+        if (filename.startsWith("test-emit")) continue;
+        if (filename.startsWith("test-env")) continue;
+        if (filename.startsWith("test-err-")) continue;
+        if (filename.startsWith("test-error-")) continue;
+        if (filename.startsWith("test-errors-")) continue;
+        if (filename.startsWith("test-eslint")) continue;
+        if (filename.startsWith("test-eval")) continue;
+        if (filename.startsWith("test-event-")) continue;
+        if (filename.startsWith("test-eventemitter")) continue;
+        if (filename.startsWith("test-events-")) continue;
+        if (filename.startsWith("test-eventsource")) continue;
+        if (filename.startsWith("test-eventtarget")) continue;
+        if (filename.startsWith("test-exception")) continue;
+        if (filename.startsWith("test-experimental")) continue;
+        if (filename.startsWith("test-fetch")) continue;
+        if (filename.startsWith("test-file-")) continue;
+        if (filename.startsWith("test-file.")) continue;
+        if (filename.startsWith("test-filehandle")) continue;
+        if (filename.startsWith("test-finalization")) continue;
+        if (filename.startsWith("test-fixed")) continue;
+        if (filename.startsWith("test-force")) continue;
+        if (filename.startsWith("test-freelist")) continue;
+        if (filename.startsWith("test-freeze")) continue;
+        if (filename.startsWith("test-fs")) continue;
+        if (filename.startsWith("test-gc")) continue;
+        if (filename.startsWith("test-global")) continue;
+        if (filename.startsWith("test-h2")) continue;
+        if (filename.startsWith("test-handle")) continue;
+        if (filename.startsWith("test-heap-")) continue;
+        if (filename.startsWith("test-heapdump")) continue;
+        if (filename.startsWith("test-heapsnapshot")) continue;
+        if (filename.startsWith("test-http-")) continue;
+        if (filename.startsWith("test-http.")) continue;
+        if (filename.startsWith("test-http2")) continue;
+        if (filename.startsWith("test-https")) continue;
+        if (filename.startsWith("test-icu")) continue;
+        if (filename.startsWith("test-inspect-")) continue;
+        if (filename.startsWith("test-inspector")) continue;
+        if (filename.startsWith("test-instanceof")) continue;
+        if (filename.startsWith("test-internal")) continue;
+        if (filename.startsWith("test-intl")) continue;
+        if (filename.startsWith("test-js")) continue;
+        if (filename.startsWith("test-kill")) continue;
+        if (filename.startsWith("test-listen")) continue;
+        if (filename.startsWith("test-macos")) continue;
+        if (filename.startsWith("test-math")) continue;
+        if (filename.startsWith("test-memory")) continue;
+        if (filename.startsWith("test-messagechannel")) continue;
+        if (filename.startsWith("test-messageevent")) continue;
+        if (filename.startsWith("test-messageport")) continue;
+        if (filename.startsWith("test-messaging")) continue;
+        if (filename.startsWith("test-microtask")) continue;
+        if (filename.startsWith("test-mime")) continue;
+        if (filename.startsWith("test-module")) continue;
+        if (filename.startsWith("test-navigator")) continue;
+        if (filename.startsWith("test-net")) continue;
+        if (filename.startsWith("test-next")) continue;
+        if (filename.startsWith("test-no")) continue;
+        if (filename.startsWith("test-npm")) continue;
+        if (filename.startsWith("test-openssl")) continue;
+        if (filename.startsWith("test-options")) continue;
+        if (filename.startsWith("test-os")) continue;
+        if (filename.startsWith("test-outgoing")) continue;
+        if (filename.startsWith("test-parse")) continue;
+        if (filename.startsWith("test-path")) continue;
+        if (filename.startsWith("test-pending")) continue;
+        if (filename.startsWith("test-perf-")) continue;
+        if (filename.startsWith("test-performance-")) continue;
+        if (filename.startsWith("test-performanceobserver-")) continue;
+        if (filename.startsWith("test-performanceobserver.")) continue;
+        if (filename.startsWith("test-permission")) continue;
+        if (filename.startsWith("test-pipe")) continue;
+        if (filename.startsWith("test-preload")) continue;
+        if (filename.startsWith("test-primitive")) continue;
+        if (filename.startsWith("test-primordials")) continue;
+        if (filename.startsWith("test-priority")) continue;
+        if (filename.startsWith("test-process")) continue;
+        if (filename.startsWith("test-promise")) continue;
+        if (filename.startsWith("test-punycode")) continue;
+        if (filename.startsWith("test-querystring")) continue;
+        if (filename.startsWith("test-queue")) continue;
+        if (filename.startsWith("test-quic")) continue;
+        if (filename.startsWith("test-readable")) continue;
+        if (filename.startsWith("test-readline")) continue;
+        if (filename.startsWith("test-ref")) continue;
+        if (filename.startsWith("test-regression")) continue;
+        if (filename.startsWith("test-release")) continue;
+        if (filename.startsWith("test-repl")) continue;
+        if (filename.startsWith("test-require")) continue;
+        if (filename.startsWith("test-resource")) continue;
+        if (filename.startsWith("test-runner")) continue;
+        if (filename.startsWith("test-safe")) continue;
+        if (filename.startsWith("test-security")) continue;
+        if (filename.startsWith("test-set")) continue;
+        if (filename.startsWith("test-shadow")) continue;
+        if (filename.startsWith("test-sigint")) continue;
+        if (filename.startsWith("test-signal")) continue;
+        if (filename.startsWith("test-single")) continue;
+        if (filename.startsWith("test-snapshot")) continue;
+        if (filename.startsWith("test-socket-")) continue;
+        if (filename.startsWith("test-socketaddress")) continue;
+        if (filename.startsWith("test-source")) continue;
+        if (filename.startsWith("test-spawn")) continue;
+        if (filename.startsWith("test-sqlite")) continue;
+        if (filename.startsWith("test-stack")) continue;
+        if (filename.startsWith("test-startup")) continue;
+        if (filename.startsWith("test-stdin")) continue;
+        if (filename.startsWith("test-stdio")) continue;
+        if (filename.startsWith("test-stdout")) continue;
+        if (filename.startsWith("test-strace")) continue;
+        if (filename.startsWith("test-stream-")) continue;
+        if (filename.startsWith("test-stream2-")) continue;
+        if (filename.startsWith("test-stream3-")) continue;
+        if (filename.startsWith("test-streams")) continue;
+        if (filename.startsWith("test-string-")) continue;
+        if (filename.startsWith("test-stringbytes")) continue;
+        if (filename.startsWith("test-structuredClone")) continue;
+        if (filename.startsWith("test-sync")) continue;
+        if (filename.startsWith("test-sys")) continue;
+        if (filename.startsWith("test-tcp")) continue;
+        if (filename.startsWith("test-throw")) continue;
+        if (filename.startsWith("test-tick")) continue;
+        if (filename.startsWith("test-timers")) continue;
+        if (filename.startsWith("test-tls")) continue;
+        if (filename.startsWith("test-tojson")) continue;
+        if (filename.startsWith("test-trace")) continue;
+        if (filename.startsWith("test-tracing")) continue;
+        if (filename.startsWith("test-tty-")) continue;
+        if (filename.startsWith("test-ttywrap")) continue;
+        if (filename.startsWith("test-tz")) continue;
+        if (filename.startsWith("test-unhandled")) continue;
+        if (filename.startsWith("test-unicode")) continue;
+        if (filename.startsWith("test-url")) continue;
+        if (filename.startsWith("test-utf8")) continue;
+        if (filename.startsWith("test-util")) continue;
+        if (filename.startsWith("test-uv")) continue;
+        if (filename.startsWith("test-v8")) continue;
+        if (filename.startsWith("test-validators")) continue;
+        if (filename.startsWith("test-vfs")) continue;
+        if (filename.startsWith("test-vm")) continue;
+        if (filename.startsWith("test-warn")) continue;
+        if (filename.startsWith("test-watch")) continue;
+        if (filename.startsWith("test-weakref")) continue;
+        if (filename.startsWith("test-webcrypto")) continue;
+        if (filename.startsWith("test-websocket")) continue;
+        if (filename.startsWith("test-webstorage")) continue;
+        if (filename.startsWith("test-webstream")) continue;
+        if (filename.startsWith("test-whatwg")) continue;
+        if (filename.startsWith("test-windows")) continue;
+        if (filename.startsWith("test-worker")) continue;
+        if (filename.startsWith("test-wrap")) continue;
+        if (filename.startsWith("test-x509")) continue;
+        if (filename.startsWith("test-zlib")) continue;
+
+        if (filename.startsWith("test-")) {
+          yield filename;
+        }
+      }
+      return;
+    }
+
     const dirname = join(cwd, path);
     for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
       const { name } = entry;
@@ -841,6 +1082,9 @@ function getTests(cwd) {
         yield* getFiles(cwd, filename);
       }
     }
+  }
+  if (options["nodejs"]) {
+    return [...getFiles(nodeTestsPath, "")].sort();
   }
   return [...getFiles(cwd, "")].sort();
 }

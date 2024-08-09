@@ -73,6 +73,13 @@ function assert_canary() {
   fi
 }
 
+function assert_nodejs_clone() {
+  git clone https://github.com/nodejs/node ~/node
+  cd ~/node
+  git checkout v22.5.1
+  cd -
+}
+
 function upload_buildkite_pipeline() {
   local path="$1"
   if [ ! -f "$path" ]; then
@@ -94,4 +101,5 @@ assert_jq
 assert_curl
 assert_release
 assert_canary
+assert_nodejs_clone
 upload_buildkite_pipeline ".buildkite/ci.yml"

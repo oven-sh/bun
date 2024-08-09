@@ -24,7 +24,9 @@ if (isPosix) {
 // memfd is linux only.
 if (isLinux) {
   test("fs.readFileSync large file show OOM without crashing the process.", () => {
-    const memfd = memfd_create(1024 * 1024 * 128 + 1);
+    setSyntheticAllocationLimitForTesting(16 * 1024 * 1024);
+
+    const memfd = memfd_create(1024 * 1024 * 256 + 1);
     try {
       expect(() => readFileSync(memfd)).toThrow("Out of memory");
       Bun.gc(true);

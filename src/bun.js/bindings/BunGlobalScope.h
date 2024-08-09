@@ -7,6 +7,10 @@ namespace Bun {
 
 using namespace JSC;
 
+void* vm(Zig::GlobalObject* globalObject);
+void* vm(JSC::VM& vm);
+void* vm(JSC::JSGlobalObject* lexicalGlobalObject);
+
 class GlobalScope : public JSC::JSGlobalObject {
     using Base = JSC::JSGlobalObject;
 

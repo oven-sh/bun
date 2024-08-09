@@ -592,10 +592,6 @@ namespace Bun {
 
 String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
 
-void* vm(Zig::GlobalObject* globalObject);
-void* vm(JSC::VM& vm);
-void* vm(JSC::JSGlobalObject* lexicalGlobalObject);
-
 }
 
 #ifndef RENAMED_JSDOM_GLOBAL_OBJECT

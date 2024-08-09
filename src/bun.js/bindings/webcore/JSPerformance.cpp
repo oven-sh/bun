@@ -125,7 +125,7 @@ static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return functionPerformanceNowBody(globalObject);
+    return functionPerformanceNowBody(globalObject->vm());
 }
 
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
@@ -135,7 +135,7 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { functionPerformanceNowBody(lexicalGlobalObject) };
+    return { functionPerformanceNowBody(vm) };
 }
 
 // -- end copied --

@@ -1,7 +1,10 @@
 
 #include "root.h"
+#include "ZigGlobalObject.h"
 #include "BunGlobalScope.h"
 #include "JavaScriptCore/VM.h"
+#include "JavaScriptCore/VMTraps.h"
+#include "JavaScriptCore/VMTrapsInlines.h"
 #include "JavaScriptCore/LazyClassStructure.h"
 #include "JavaScriptCore/LazyClassStructureInlines.h"
 #include "BunClientData.h"
@@ -9,6 +12,21 @@
 namespace Bun {
 
 using namespace JSC;
+
+void* vm(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
+
+void* vm(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
+
+void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
 
 void GlobalScope::finishCreation(JSC::VM& vm)
 {

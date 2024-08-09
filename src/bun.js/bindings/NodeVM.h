@@ -78,7 +78,7 @@ private:
     void finishCreation(JSC::VM&);
 };
 
-class NodeVMGlobalObject : public Bun::GlobalScope {
+class NodeVMGlobalObject final : public Bun::GlobalScope {
     using Base = Bun::GlobalScope;
 
 public:

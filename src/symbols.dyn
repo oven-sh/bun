@@ -191,4 +191,6 @@
     __ZN2v820EscapableHandleScopeC2EPNS_7IsolateE;
     __ZN2v820EscapableHandleScopeD1Ev;
     __ZN2v820EscapableHandleScopeD2Ev;
+    __ZNK2v85Value8IsObjectEv;
+    __ZNK2v85Value8IsNumberEv;
 };

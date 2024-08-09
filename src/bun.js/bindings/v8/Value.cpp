@@ -8,6 +8,16 @@ bool Value::IsBoolean() const
     return localToJSValue(Isolate::GetCurrent()->globalInternals()).isBoolean();
 }
 
+bool Value::IsObject() const
+{
+    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isObject();
+}
+
+bool Value::IsNumber() const
+{
+    return localToJSValue(Isolate::GetCurrent()->globalInternals()).isNumber();
+}
+
 bool Value::FullIsTrue() const
 {
     return localToJSValue(Isolate::GetCurrent()->globalInternals()).isTrue();

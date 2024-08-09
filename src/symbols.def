@@ -604,3 +604,5 @@ EXPORTS
   ?FullIsFalse@Value@v8@@AEBA_NXZ
   ??1EscapableHandleScope@v8@@QEAA@XZ
   ??0EscapableHandleScope@v8@@QEAA@PEAVIsolate@1@@Z
+  ?IsObject@Value@v8@@QEBA_NXZ
+  ?IsNumber@Value@v8@@QEBA_NXZ

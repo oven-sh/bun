@@ -1351,14 +1351,19 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
+        pub fn closeAndDetach(this: *This, code: Socket.CloseCode) void {
+            const socket = this.socket;
+            this.socket.detach();
+            socket.close(code);
+        }
+
         pub fn markInactive(this: *This) void {
             if (this.flags.is_active) {
                 // we have to close the socket before the socket context is closed
                 // otherwise we will get a segfault
                 // uSockets will defer freeing the TCP socket until the next tick
                 if (!this.socket.isClosed()) {
-                    this.socket.close(.normal);
-                    this.socket.detach();
+                    this.closeAndDetach(.normal);
                     // onClose will call markInactive again
                     return;
                 }
@@ -1998,8 +2003,7 @@ fn NewSocket(comptime ssl: bool) type {
             _: *JSC.CallFrame,
         ) JSValue {
             JSC.markBinding(@src());
-            this.socket.close(.failure);
-            this.socket.detach();
+            this.closeAndDetach(.failure);
             return JSValue.jsUndefined();
         }
 
@@ -2092,8 +2096,7 @@ fn NewSocket(comptime ssl: bool) type {
             log("finalize() {d} {}", .{ @intFromPtr(this), this.socket_context != null });
             this.flags.finalizing = true;
             if (!this.socket.isClosed()) {
-                this.socket.close(.failure);
-                this.socket.detach();
+                this.closeAndDetach(.failure);
             }
 
             this.deref();

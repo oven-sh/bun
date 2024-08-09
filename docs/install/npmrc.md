@@ -72,4 +72,8 @@ The equivalent `bunfig.toml` option is to add a key in [`install.scopes`](/docs/
 ```toml
 [install.scopes]
 myorg = { url = "http://localhost:4873/", username = "myusername", password = "$NPM_PASSWORD" }
+
+# use auth token instead
+[install.scopes]
+myorg = { url = "http://localhost:4873/", token = "$authToken" }
 ```

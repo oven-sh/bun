@@ -5,6 +5,7 @@ import { describe, test, expect } from "bun:test";
 import crypto from "crypto";
 import { statSync } from "fs";
 import { read, ptr } from "bun:ffi";
+import vm from "node:vm";
 
 const dirStats = statSync(import.meta.dir);
 const buffer = new BigInt64Array(16);
@@ -100,4 +101,57 @@ describe("DOMJIT", () => {
       expect(true).toBe(true);
     });
   }
+
+  test("does not crash running in NodeVM", () => {
+    const code = `
+    for (let iter of [100000]) {
+      for (let i = 0; i < iter; i++) {
+        Buffer.alloc(1);
+      }
+      for (let i = 0; i < iter; i++) {
+        Buffer.allocUnsafe(1);
+      }
+      for (let i = 0; i < iter; i++) {
+        Buffer.allocUnsafeSlow(1);
+      }
+      for (let i = 0; i < iter; i++) {
+        performance.now();
+      }
+      for (let i = 0; i < iter; i++) {
+        new TextEncoder().encode("test");
+      }
+      for (let i = 0; i < iter; i++) {
+        new TextEncoder().encodeInto("test", new Uint8Array(4));
+      }
+      for (let i = 0; i < iter; i++) {
+        crypto.timingSafeEqual(new Uint8Array(4), new Uint8Array(4));
+      }
+      for (let i = 0; i < iter; i++) {
+        crypto.randomUUID();
+      }
+      for (let i = 0; i < iter; i++) {
+        crypto.getRandomValues(new Uint8Array(4));
+      }
+      for (let i = 0; i < iter; i++) {
+        new TextDecoder().decode(new Uint8Array(4));
+      }
+      for (let i = 0; i < iter; i++) {
+        dirStats.isSymbolicLink();
+        dirStats.isSocket();
+        dirStats.isFile();
+        dirStats.isFIFO();
+        dirStats.isDirectory();
+        dirStats.isCharacterDevice();
+        dirStats.isBlockDevice();
+      }
+
+      "success";
+    }`;
+    const script = new vm.Script(code);
+    expect(script.runInNewContext({ crypto, performance, TextEncoder, TextDecoder, Buffer, dirStats })).toBe("success");
+    expect(vm.runInNewContext(code, { crypto, performance, TextEncoder, TextDecoder, Buffer, dirStats })).toBe(
+      "success",
+    );
+    expect(vm.run);
+  }, 1_000_000);
 });

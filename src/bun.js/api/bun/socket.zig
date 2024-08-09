@@ -1577,6 +1577,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
+            this.socket = .{ .detached = {} };
             defer this.deref();
             defer this.markInactive();
 
@@ -2082,7 +2083,6 @@ fn NewSocket(comptime ssl: bool) type {
             }
             if (this.socket_context) |socket_context| {
                 this.socket_context = null;
-                log("deinit socket_context", .{});
                 socket_context.deinit(ssl);
             }
             this.destroy();

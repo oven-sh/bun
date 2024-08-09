@@ -777,7 +777,7 @@ pub const Listener = struct {
         var this_socket = Socket.new(.{
             .handlers = &listener.handlers,
             .this_value = .zero,
-            .socket = .{ .socket = socket },
+            .socket = socket,
             .protos = listener.protos,
             .flags = .{ .owned_protos = false },
             .socket_context = null, // dont own the socket context
@@ -787,7 +787,9 @@ pub const Listener = struct {
             const globalObject = listener.handlers.globalObject;
             Socket.dataSetCached(this_socket.getThisValue(globalObject), globalObject, default_data);
         }
-        socket.ext(**anyopaque).* = bun.cast(**anyopaque, this_socket);
+        if (socket.ext(**anyopaque)) |ctx| {
+            ctx.* = bun.cast(**anyopaque, this_socket);
+        }
         socket.setTimeout(120000);
     }
 
@@ -1057,7 +1059,7 @@ pub const Listener = struct {
             var tls = TLSSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = .{ .detached = {} },
+                .socket = TLSSocket.Socket.detached,
                 .connection = connection,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch bun.outOfMemory()) else null,
                 .server_name = server_name,
@@ -1078,7 +1080,7 @@ pub const Listener = struct {
             var tcp = TCPSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = .{ .detached = {} },
+                .socket = TCPSocket.Socket.detached,
                 .connection = null,
                 .protos = null,
                 .server_name = null,
@@ -1137,8 +1139,7 @@ fn selectALPNCallback(
 fn NewSocket(comptime ssl: bool) type {
     return struct {
         pub const Socket = uws.NewSocketHandler(ssl);
-        pub const SocketType = uws.NewWrappedSocketHandler(ssl);
-        socket: SocketType,
+        socket: Socket,
         // if the socket owns a context it will be here
         socket_context: ?*uws.SocketContext,
 
@@ -1192,24 +1193,20 @@ fn NewSocket(comptime ssl: bool) type {
             switch (connection) {
                 .host => |c| {
                     this.ref();
-                    this.socket = .{
-                        .socket = try This.Socket.connectAnon(
-                            normalizeHost(c.host),
-                            c.port,
-                            this.socket_context.?,
-                            this,
-                        ),
-                    };
+                    this.socket = try This.Socket.connectAnon(
+                        normalizeHost(c.host),
+                        c.port,
+                        this.socket_context.?,
+                        this,
+                    );
                 },
                 .unix => |u| {
                     this.ref();
-                    this.socket = .{
-                        .socket = try This.Socket.connectUnixAnon(
-                            u,
-                            this.socket_context.?,
-                            this,
-                        ),
-                    };
+                    this.socket = try This.Socket.connectUnixAnon(
+                        u,
+                        this.socket_context.?,
+                        this,
+                    );
                 },
                 .fd => |f| {
                     const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
@@ -1229,7 +1226,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) void {
             JSC.markBinding(@src());
             log("onWritable", .{});
-            if (this.socket == .detached) return;
+            if (this.socket.isDetached()) return;
             const handlers = this.handlers;
             const callback = handlers.onWritable;
             if (callback == .zero) return;
@@ -1257,7 +1254,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
-            if (this.socket == .detached) return;
+            if (this.socket.isDetached()) return;
 
             const handlers = this.handlers;
             const callback = handlers.onTimeout;
@@ -1283,8 +1280,8 @@ fn NewSocket(comptime ssl: bool) type {
         }
         fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d}, {})", .{ errno, this.ref_count });
-            const needs_deref = this.socket != .detached;
-            this.socket = .{ .detached = {} };
+            const needs_deref = !this.socket.isDetached();
+            this.socket = Socket.detached;
             defer if (needs_deref) this.deref();
             defer this.markInactive();
 
@@ -1361,6 +1358,7 @@ fn NewSocket(comptime ssl: bool) type {
                 // uSockets will defer freeing the TCP socket until the next tick
                 if (!this.socket.isClosed()) {
                     this.socket.close(.normal);
+                    this.socket.detach();
                     // onClose will call markInactive again
                     return;
                 }
@@ -1374,10 +1372,10 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn onOpen(this: *This, socket: Socket) void {
-            log("onOpen {} {}", .{ this.socket == .detached, this.ref_count });
+            log("onOpen {} {}", .{ this.socket.isDetached(), this.ref_count });
             // update the internal socket instance to the one that was just connected
             // This socket must be replaced because the previous one is a connecting socket not a uSockets socket
-            this.socket = .{ .socket = socket };
+            this.socket = socket;
             JSC.markBinding(@src());
             log("onOpen ssl: {}", .{comptime ssl});
 
@@ -1414,7 +1412,9 @@ fn NewSocket(comptime ssl: bool) type {
             }
 
             if (this.wrapped == .none) {
-                socket.ext(**anyopaque).* = bun.cast(**anyopaque, this);
+                if (socket.ext(**anyopaque)) |ctx| {
+                    ctx.* = bun.cast(**anyopaque, this);
+                }
             }
 
             const handlers = this.handlers;
@@ -1469,7 +1469,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onEnd(this: *This, _: Socket) void {
             JSC.markBinding(@src());
             log("onEnd", .{});
-            if (this.socket == .detached) return;
+            if (this.socket.isDetached()) return;
 
             const handlers = this.handlers;
 
@@ -1501,7 +1501,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
-            if (this.socket == .detached) return;
+            if (this.socket.isDetached()) return;
             const authorized = if (success == 1) true else false;
 
             this.flags.authorized = authorized;
@@ -1577,7 +1577,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
-            this.socket = .{ .detached = {} };
+            this.socket.detach();
             defer this.deref();
             defer this.markInactive();
 
@@ -1618,7 +1618,7 @@ fn NewSocket(comptime ssl: bool) type {
         pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
             log("onData({d})", .{data.len});
-            if (this.socket == .detached) return;
+            if (this.socket.isDetached()) return;
 
             const handlers = this.handlers;
             const callback = handlers.onData;
@@ -1669,7 +1669,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            if (!this.handlers.is_server or this.socket == .detached) {
+            if (!this.handlers.is_server or this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -1683,7 +1683,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             log("getReadyState()", .{});
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             } else if (this.socket.isClosed()) {
                 return JSValue.jsNumber(@as(i32, 0));
@@ -1710,7 +1710,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
             const args = callframe.arguments(1);
-            if (this.socket == .detached) return JSValue.jsUndefined();
+            if (this.socket.isDetached()) return JSValue.jsUndefined();
             if (args.len == 0) {
                 globalObject.throw("Expected 1 argument, got 0", .{});
                 return .zero;
@@ -1733,7 +1733,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsNull();
             }
 
@@ -1763,7 +1763,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
 
@@ -1784,7 +1784,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             _: *JSC.JSGlobalObject,
         ) JSValue {
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -1795,7 +1795,7 @@ fn NewSocket(comptime ssl: bool) type {
             this: *This,
             globalThis: *JSC.JSGlobalObject,
         ) JSValue {
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -1999,7 +1999,7 @@ fn NewSocket(comptime ssl: bool) type {
         ) JSValue {
             JSC.markBinding(@src());
             this.socket.close(.failure);
-
+            this.socket.detach();
             return JSValue.jsUndefined();
         }
 
@@ -2030,7 +2030,7 @@ fn NewSocket(comptime ssl: bool) type {
 
             log("end({d} args)", .{args.len});
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsNumber(@as(i32, -1));
             }
 
@@ -2049,7 +2049,7 @@ fn NewSocket(comptime ssl: bool) type {
 
         pub fn jsRef(this: *This, globalObject: *JSC.JSGlobalObject, _: *JSC.CallFrame) JSValue {
             JSC.markBinding(@src());
-            if (this.socket == .detached) return JSValue.jsUndefined();
+            if (this.socket.isDetached()) return JSValue.jsUndefined();
             this.poll_ref.ref(globalObject.bunVM());
             return JSValue.jsUndefined();
         }
@@ -2093,6 +2093,7 @@ fn NewSocket(comptime ssl: bool) type {
             this.flags.finalizing = true;
             if (!this.socket.isClosed()) {
                 this.socket.close(.failure);
+                this.socket.detach();
             }
 
             this.deref();
@@ -2106,7 +2107,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return .zero;
             }
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -2157,7 +2158,7 @@ fn NewSocket(comptime ssl: bool) type {
             if (comptime ssl == false) {
                 return JSValue.jsUndefined();
             }
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -2239,7 +2240,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -2337,7 +2338,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -2872,7 +2873,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             }
 
-            if (this.socket == .detached) {
+            if (this.socket.isDetached()) {
                 return JSValue.jsUndefined();
             }
 
@@ -2946,7 +2947,7 @@ fn NewSocket(comptime ssl: bool) type {
             var tls = TLSSocket.new(.{
                 .handlers = handlers_ptr,
                 .this_value = .zero,
-                .socket = .{ .detached = {} },
+                .socket = TLSSocket.Socket.detached,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tls,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch bun.outOfMemory()) else null,
@@ -2975,7 +2976,7 @@ fn NewSocket(comptime ssl: bool) type {
                 return JSValue.jsUndefined();
             };
 
-            tls.socket = .{ .socket = new_socket };
+            tls.socket = new_socket;
             tls.socket_context = new_socket.context(); // owns the new tls context that have a ref from the old one
             tls.ref();
 
@@ -3001,7 +3002,7 @@ fn NewSocket(comptime ssl: bool) type {
             var raw = TLSSocket.new(.{
                 .handlers = raw_handlers_ptr,
                 .this_value = .zero,
-                .socket = .{ .socket = new_socket },
+                .socket = new_socket,
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
@@ -3024,13 +3025,15 @@ fn NewSocket(comptime ssl: bool) type {
             tls.poll_ref.ref(this.handlers.vm);
 
             // mark both instances on socket data
-            new_socket.ext(WrappedSocket).* = .{ .tcp = raw, .tls = tls };
+            if (new_socket.ext(WrappedSocket)) |ctx| {
+                ctx.* = .{ .tcp = raw, .tls = tls };
+            }
 
             // start TLS handshake after we set ext
             new_socket.startTLS(!this.handlers.is_server);
 
             //detach and invalidate the old instance
-            this.socket = .{ .detached = {} };
+            this.socket.detach();
             this.deref();
             if (this.flags.is_active) {
                 const vm = this.handlers.vm;

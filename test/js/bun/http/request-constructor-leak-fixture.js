@@ -22,6 +22,6 @@ for (var i = 0; i < 1000; i++) {
 }
 Bun.gc(true);
 console.log("RSS:", (process.memoryUsage().rss / 1024 / 1024) | 0, "MB");
-if (process.memoryUsage.rss() > 1024 * 1024 * 1) {
+if (process.memoryUsage.rss() > 1024 * 1024 * 1024) {
   process.exit(1);
 }

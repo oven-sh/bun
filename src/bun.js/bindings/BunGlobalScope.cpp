@@ -29,7 +29,6 @@ void GlobalScope::finishCreation(JSC::VM& vm)
 }
 
 DEFINE_VISIT_CHILDREN(GlobalScope);
-// DEFINE_VISIT_ADDITIONAL_CHILDREN(GlobalScope);
 
 template<typename Visitor>
 void GlobalScope::visitChildrenImpl(JSCell* cell, Visitor& visitor)

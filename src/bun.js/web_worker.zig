@@ -8,6 +8,7 @@ const Async = bun.Async;
 const WTFStringImpl = @import("../string.zig").WTFStringImpl;
 
 const Bool = std.atomic.Value(bool);
+extern fn Bun__setExitCode(vm: *JSC.VirtualMachine, code: u8, explicit: bool) void;
 
 /// Shared implementation of Web and Node `Worker`
 pub const WebWorker = struct {
@@ -316,7 +317,7 @@ pub const WebWorker = struct {
             const handled = vm.uncaughtException(vm.global, promise.result(vm.global.vm()), true);
 
             if (!handled) {
-                vm.exit_handler.exit_code = 1;
+                Bun__setExitCode(vm, 1, false);
                 this.exitAndDeinit();
                 return;
             }

@@ -737,7 +737,7 @@ ZIG_DECL void Bun__WebSocketClientTLS__writeString(WebSocketClientTLS* arg0, con
 
 #ifdef __cplusplus
 
-ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, unsigned char arg1);
+ZIG_DECL void Bun__Process__exit(JSC__JSGlobalObject* arg0, uint8_t arg1, bool arg2);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getArgv0(JSC__JSGlobalObject* arg0);
 ZIG_DECL JSC__JSValue Bun__Process__getCwd(JSC__JSGlobalObject* arg0);

@@ -15,6 +15,7 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     ) catch bun.outOfMemory();
 
     _ = DevServer.init(.{
+        .cwd = bun.getcwdAlloc(bun.default_allocator) catch bun.outOfMemory(),
         .server_global = global, // TODO: isolation?
         .event_loop = .{ .js = global.bunVM().event_loop },
         .routes = routes,

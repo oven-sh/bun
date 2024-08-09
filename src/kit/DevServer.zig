@@ -6,9 +6,9 @@
 pub const DevServer = @This();
 
 const Options = struct {
-    event_loop: EventLoopHandle,
-    // TODO: change this so that DevServer can patch the route list after being started
+    cwd: []u8,
     routes: []Route,
+    event_loop: EventLoopHandle,
     server_global: *JSC.JSGlobalObject,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },
 };
@@ -16,6 +16,9 @@ const Options = struct {
 /// Accepting a custom allocator for all of DevServer would be misleading
 /// as there are many functions which will use default_allocator.
 const default_allocator = bun.default_allocator;
+
+cwd: []const u8,
+event_loop: EventLoopHandle,
 
 // UWS App
 app: *App,
@@ -30,10 +33,12 @@ listener: ?*App.ListenSocket = null,
 server_global: *JSC.JSGlobalObject,
 
 // Bundling
-event_loop: EventLoopHandle,
 define: *Define,
 loaders: bun.StringArrayHashMap(bun.options.Loader),
 bundle_thread: BundleThread,
+
+pub const internal_prefix = "/_bun";
+pub const client_prefix = internal_prefix ++ "/client";
 
 pub const Route = struct {
     // Config
@@ -46,6 +51,11 @@ pub const Route = struct {
 
     /// Assigned in DevServer.init
     dev: *DevServer = undefined,
+    client_entry_url: []u8 = undefined,
+
+    pub fn clientPublicPath(route: *const Route) []const u8 {
+        return route.client_entry_url[0 .. route.client_entry_url.len - "/client.js".len];
+    }
 };
 
 /// Prepared server-side bundle and loaded JavaScript module
@@ -80,6 +90,7 @@ pub fn init(options: Options) *DevServer {
         bun.outOfMemory();
 
     const dev = bun.new(DevServer, .{
+        .cwd = options.cwd,
         .app = app,
         .event_loop = options.event_loop,
         .routes = options.routes,
@@ -100,15 +111,21 @@ pub fn init(options: Options) *DevServer {
 
     var has_fallback = false;
 
-    for (options.routes) |*route| {
-        route.dev = dev;
+    for (options.routes, 0..) |*route, i| {
         app.any(route.pattern, *Route, route, onServerRequestInit);
+
+        route.dev = dev;
+        route.client_entry_url = std.fmt.allocPrint(
+            default_allocator,
+            client_prefix ++ "/{d}/client.js",
+            .{i},
+        ) catch bun.outOfMemory();
 
         if (bun.strings.eqlComptime(route.pattern, "/*"))
             has_fallback = true;
     }
 
-    app.get("/_bun/client/:route/:asset", *DevServer, dev, onAssetRequestInit);
+    app.get(client_prefix ++ "/:route/:asset", *DevServer, dev, onAssetRequestInit);
 
     if (!has_fallback)
         app.any("/*", void, {}, onFallbackRoute);
@@ -128,7 +145,7 @@ fn onListen(ctx: *DevServer, maybe_listen: ?*App.ListenSocket) void {
     ctx.listener = listen;
     ctx.address.port = @intCast(listen.getLocalPort());
 
-    Output.prettyErrorln("--\\> <cyan>http://{s}:{d}<r>\n", .{
+    Output.prettyErrorln("--\\> <magenta>http://{s}:{d}<r>\n", .{
         bun.span(ctx.address.hostname),
         ctx.address.port,
     });
@@ -420,6 +437,7 @@ pub const BundleTask = struct {
         }
 
         const files = task.result.value.output_files.items;
+        bun.assert(files.len > 0);
 
         switch (kind) {
             .client => {
@@ -442,7 +460,8 @@ pub const BundleTask = struct {
                 } };
             },
             .server => {
-                @panic("TODO");
+                const entry_point = files[0];
+                assert(bun.strings.eql(entry_point.dest_path, "./server.js"));
             },
         }
 
@@ -485,12 +504,22 @@ pub const BundleTask = struct {
         );
 
         bundler.options = .{
-            .entry_points = undefined,
+            .entry_points = switch (task.kind) {
+                .client => &task.route.client_entry_point,
+                .server => &task.route.server_entry_point,
+            }[0..1],
             .define = task.route.dev.define,
             .loaders = task.route.dev.loaders,
             .log = &task.log,
             .output_dir = "", // this disables filesystem output
-            .public_path = "/_kit/",
+            .public_path = switch (task.kind) {
+                .client => task.route.clientPublicPath(),
+                .server => task.route.dev.cwd,
+            },
+            .target = switch (task.kind) {
+                .client => .browser,
+                .server => .bun,
+            },
             .out_extensions = bun.StringHashMap([]const u8).init(bundler.allocator),
 
             // unused by all code
@@ -501,11 +530,16 @@ pub const BundleTask = struct {
 
         bundler.configureLinker();
 
-        // don't use &.{ ... }
-        bundler.options.entry_points = switch (task.kind) {
-            .client => (&task.route.client_entry_point)[0..1],
-            .server => (&task.route.server_entry_point)[0..1],
-        };
+        switch (task.kind) {
+            .client => {
+                // Always name it "client.{js/css}" so that the server can know
+                // the entry-point script without waiting on a client bundle.
+                bundler.options.entry_naming = "client.[ext]";
+            },
+            .server => {
+                // bundler.options.target =.bun
+            },
+        }
 
         bundler.resolver.opts = bundler.options;
     }

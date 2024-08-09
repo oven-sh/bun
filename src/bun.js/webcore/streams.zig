@@ -3364,7 +3364,7 @@ pub const FileSink = struct {
                 return .{ .result = {} };
             },
             .err => |e| {
-                this.writer.end();
+                this.writer.close();
                 return .{ .err = e };
             },
             .pending => |written| {
@@ -3412,7 +3412,7 @@ pub const FileSink = struct {
                 return .{ .result = JSValue.jsNumber(written) };
             },
             .err => |err| {
-                this.writer.end();
+                this.writer.close();
                 return .{ .err = err };
             },
             .pending => |pending_written| {

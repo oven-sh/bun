@@ -47,6 +47,8 @@ struct IDLUint32Array : IDLTypedArray<JSC::Uint32Array> {
 };
 struct IDLUint8ClampedArray : IDLTypedArray<JSC::Uint8ClampedArray> {
 };
+struct IDLFloat16Array : IDLTypedArray<JSC::Float16Array> {
+};
 struct IDLFloat32Array : IDLTypedArray<JSC::Float32Array> {
 };
 struct IDLFloat64Array : IDLTypedArray<JSC::Float64Array> {
@@ -63,6 +65,7 @@ inline RefPtr<JSC::Uint8Array> toPossiblySharedUint8Array(JSC::VM& vm, JSC::JSVa
 inline RefPtr<JSC::Uint8ClampedArray> toPossiblySharedUint8ClampedArray(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint8ClampedAdaptor>(vm, value); }
 inline RefPtr<JSC::Uint16Array> toPossiblySharedUint16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint16Adaptor>(vm, value); }
 inline RefPtr<JSC::Uint32Array> toPossiblySharedUint32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Uint32Adaptor>(vm, value); }
+inline RefPtr<JSC::Float16Array> toPossiblySharedFloat16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float16Adaptor>(vm, value); }
 inline RefPtr<JSC::Float32Array> toPossiblySharedFloat32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float32Adaptor>(vm, value); }
 inline RefPtr<JSC::Float64Array> toPossiblySharedFloat64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::Float64Adaptor>(vm, value); }
 inline RefPtr<JSC::BigInt64Array> toPossiblySharedBigInt64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toPossiblySharedNativeTypedView<JSC::BigInt64Adaptor>(vm, value); }
@@ -75,6 +78,7 @@ inline RefPtr<JSC::Uint8Array> toUnsharedUint8Array(JSC::VM& vm, JSC::JSValue va
 inline RefPtr<JSC::Uint8ClampedArray> toUnsharedUint8ClampedArray(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint8ClampedAdaptor>(vm, value); }
 inline RefPtr<JSC::Uint16Array> toUnsharedUint16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint16Adaptor>(vm, value); }
 inline RefPtr<JSC::Uint32Array> toUnsharedUint32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Uint32Adaptor>(vm, value); }
+inline RefPtr<JSC::Float16Array> toUnsharedFloat16Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float16Adaptor>(vm, value); }
 inline RefPtr<JSC::Float32Array> toUnsharedFloat32Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float32Adaptor>(vm, value); }
 inline RefPtr<JSC::Float64Array> toUnsharedFloat64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::Float64Adaptor>(vm, value); }
 inline RefPtr<JSC::BigInt64Array> toUnsharedBigInt64Array(JSC::VM& vm, JSC::JSValue value) { return JSC::toUnsharedNativeTypedView<JSC::BigInt64Adaptor>(vm, value); }
@@ -345,6 +349,28 @@ template<> struct Converter<IDLUint8ClampedArray> : DefaultConverter<IDLUint8Cla
 };
 
 template<> struct JSConverter<IDLUint8ClampedArray> {
+    static constexpr bool needsState = true;
+    static constexpr bool needsGlobalObject = true;
+
+    template<typename U>
+    static JSC::JSValue convert(JSC::JSGlobalObject& lexicalGlobalObject, JSDOMGlobalObject& globalObject, const U& value)
+    {
+        return toJS(&lexicalGlobalObject, &globalObject, Detail::getPtrOrRef(value));
+    }
+};
+
+template<> struct Converter<IDLFloat16Array> : DefaultConverter<IDLFloat16Array> {
+    using WrapperType = JSC::JSFloat16Array;
+    using ReturnType = RefPtr<JSC::Float16Array>;
+
+    template<typename ExceptionThrower = DefaultExceptionThrower>
+    static ReturnType convert(JSC::JSGlobalObject& lexicalGlobalObject, JSC::JSValue value, ExceptionThrower&& exceptionThrower = ExceptionThrower())
+    {
+        return Detail::BufferSourceConverter<IDLFloat16Array, Detail::BufferSourceConverterAllowSharedMode::Disallow>::convert(lexicalGlobalObject, value, std::forward<ExceptionThrower>(exceptionThrower));
+    }
+};
+
+template<> struct JSConverter<IDLFloat16Array> {
     static constexpr bool needsState = true;
     static constexpr bool needsGlobalObject = true;
 

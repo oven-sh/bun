@@ -2299,6 +2299,7 @@ JSC_DEFINE_HOST_FUNCTION(constructJSBuffer, (JSC::JSGlobalObject * lexicalGlobal
         case Int8ArrayType:
         case Int16ArrayType:
         case Int32ArrayType:
+        case Float16ArrayType:
         case Float32ArrayType:
         case Float64ArrayType:
         case BigInt64ArrayType:

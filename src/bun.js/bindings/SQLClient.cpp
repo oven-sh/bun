@@ -182,6 +182,17 @@ static JSC::JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, DataCel
             }
             return array;
         }
+        case JSC::JSType::Float16ArrayType: {
+            JSC::JSFloat16Array* array = JSC::JSFloat16Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat16, false), length);
+            if (UNLIKELY(array == nullptr)) {
+                return {};
+            }
+
+            if (length > 0) {
+                memcpy(array->vector(), reinterpret_cast<void*>(cell.value.typed_array.data), length * 2); // sizeof(float16_t)
+            }
+            return array;
+        }
         case JSC::JSType::Float32ArrayType: {
             JSC::JSFloat32Array* array = JSC::JSFloat32Array::createUninitialized(globalObject, globalObject->typedArrayStructure(TypedArrayType::TypeFloat32, false), length);
             if (UNLIKELY(array == nullptr)) {

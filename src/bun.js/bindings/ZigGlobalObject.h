@@ -298,7 +298,7 @@ public:
     template<typename Visitor>
     void visitGeneratedLazyClasses(GlobalObject*, Visitor&);
 
-    ALWAYS_INLINE void* bunVM() const { return WebCore::clientData(vm())->bunVM; }
+    ALWAYS_INLINE void* bunVM() const { return m_bunVM; }
 #if OS(WINDOWS)
     uv_loop_t* uvLoop() const
     {
@@ -591,6 +591,10 @@ public:
 namespace Bun {
 
 String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+
+void* vm(Zig::GlobalObject* globalObject);
+void* vm(JSC::VM& vm);
+void* vm(JSC::JSGlobalObject* lexicalGlobalObject);
 
 }
 

@@ -113,11 +113,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
 }
 
-static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
+static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
 {
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
-    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
+    double time = static_cast<double>(Bun__readOriginTimer(Bun::vm(vm)));
     double result = time / 1000000.0;
 
     // https://github.com/oven-sh/bun/issues/5604

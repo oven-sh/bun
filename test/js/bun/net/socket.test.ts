@@ -354,7 +354,7 @@ it("it should not crash when returning a Error on client socket open", async () 
 });
 
 it("it should only call open once", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "localhost",
     socket: {
@@ -381,7 +381,6 @@ it("it should only call open once", async () => {
         expect().fail("connectError should not be called");
       },
       close(socket) {
-        server.stop();
         resolve();
       },
       data(socket, data) {},
@@ -397,7 +396,7 @@ it.skipIf(isWindows)("should not leak file descriptors when connecting", async (
 });
 
 it("should not call open if the connection had an error", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "0.0.0.0",
     socket: {
@@ -435,12 +434,11 @@ it("should not call open if the connection had an error", async () => {
 
   await Bun.sleep(50);
   await promise;
-  server.stop();
   expect(hadError).toBe(true);
 });
 
 it("should connect directly when using an ip address", async () => {
-  const server = Bun.listen({
+  using server = Bun.listen({
     port: 0,
     hostname: "127.0.0.1",
     socket: {
@@ -467,7 +465,6 @@ it("should connect directly when using an ip address", async () => {
         expect().fail("connectError should not be called");
       },
       close(socket) {
-        server.stop();
         resolve();
       },
       data(socket, data) {},
@@ -497,4 +494,11 @@ it("should not call drain before handshake", async () => {
   });
   await promise;
   expect(socket.authorized).toBe(true);
+});
+
+it("should not leak memory", async () => {
+  // assert we don't leak the sockets
+  // we expect 1 or 2 because that's the prototype / structure
+  await expectMaxObjectTypeCount(expect, "Listener", 2);
+  await expectMaxObjectTypeCount(expect, "TCPSocket", 2);
 });

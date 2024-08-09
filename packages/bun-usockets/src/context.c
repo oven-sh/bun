@@ -481,6 +481,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->context = context;
+    us_socket_context_ref(ssl, context);    
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
@@ -548,7 +549,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        us_connecting_socket_free(c);
+        us_connecting_socket_free(c->ssl, c);
         return;
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
@@ -556,7 +557,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         c->error = result->error;
         c->context->on_connect_error(c, result->error);
         Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 
@@ -567,7 +568,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         c->error = ECONNREFUSED;
         c->context->on_connect_error(c, ECONNREFUSED);
         Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 }
@@ -667,7 +668,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-            us_connecting_socket_free(c);
+            us_connecting_socket_free(c->ssl, c);
             s->connect_state = NULL;
         }
 
@@ -746,6 +747,7 @@ struct us_socket_t *us_socket_context_adopt_socket(int ssl, struct us_socket_con
         if (c) {
             c->connecting_head = new_s;
             c->context = context;
+            us_socket_context_ref(ssl, context);
         }
     }
     new_s->timeout = 255;

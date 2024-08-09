@@ -129,11 +129,12 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-void us_connecting_socket_free(struct us_connecting_socket_t *c) {
+void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
     c->next = c->context->loop->data.closed_connecting_head;
     c->context->loop->data.closed_connecting_head = c;
+    us_socket_context_unref(ssl, c->context);
 }
 
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
@@ -156,7 +157,7 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     // we can only schedule the socket to be freed if there is no pending callback
     // otherwise, the callback will see that the socket is closed and will free it
     if (!c->pending_resolve_callback) {
-        us_connecting_socket_free(c);
+        us_connecting_socket_free(ssl, c);
     }
 } 
 

@@ -136,21 +136,19 @@ const Handlers = struct {
 
     pub const Scope = struct {
         handlers: *Handlers,
-        socket_context: ?*uws.SocketContext,
 
-        pub fn exit(this: *Scope, ssl: bool, wrapped: WrappedType) void {
+        pub fn exit(this: *Scope) void {
             var vm = this.handlers.vm;
             defer vm.eventLoop().exit();
-            this.handlers.markInactive(ssl, this.socket_context, wrapped);
+            this.handlers.markInactive();
         }
     };
 
-    pub fn enter(this: *Handlers, context: ?*uws.SocketContext) Scope {
+    pub fn enter(this: *Handlers) Scope {
         this.markActive();
         this.vm.eventLoop().enter();
         return .{
             .handlers = this,
-            .socket_context = context,
         };
     }
 
@@ -179,7 +177,7 @@ const Handlers = struct {
         return true;
     }
 
-    pub fn markInactive(this: *Handlers, ssl: bool, ctx: ?*uws.SocketContext, wrapped: WrappedType) void {
+    pub fn markInactive(this: *Handlers) void {
         Listener.log("markInactive", .{});
         this.active_connections -= 1;
         if (this.active_connections == 0) {
@@ -191,12 +189,6 @@ const Handlers = struct {
                 }
             } else {
                 this.unprotect();
-                // will deinit when is not wrapped or when is the TCP wrapped connection
-                if (wrapped != .tls) {
-                    if (ctx) |ctx_| {
-                        ctx_.deinit(ssl);
-                    }
-                }
                 bun.default_allocator.destroy(this);
             }
         }
@@ -788,6 +780,7 @@ pub const Listener = struct {
             .socket = .{ .socket = socket },
             .protos = listener.protos,
             .flags = .{ .owned_protos = false },
+            .socket_context = null, // dont own the socket context
         });
         this_socket.ref();
         if (listener.strong_data.get()) |default_data| {
@@ -1068,12 +1061,13 @@ pub const Listener = struct {
                 .connection = connection,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p) catch unreachable) else null,
                 .server_name = server_name,
+                .socket_context = socket_context, // owns the socket context
             });
 
             TLSSocket.dataSetCached(tls.getThisValue(globalObject), globalObject, default_data);
 
-            tls.doConnect(connection, socket_context) catch {
-                tls.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+            tls.doConnect(connection) catch {
+                tls.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
 
@@ -1088,11 +1082,12 @@ pub const Listener = struct {
                 .connection = null,
                 .protos = null,
                 .server_name = null,
+                .socket_context = socket_context, // owns the socket context
             });
 
             TCPSocket.dataSetCached(tcp.getThisValue(globalObject), globalObject, default_data);
-            tcp.doConnect(connection, socket_context) catch {
-                tcp.handleConnectError(socket_context, @intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
+            tcp.doConnect(connection) catch {
+                tcp.handleConnectError(@intFromEnum(if (port == null) bun.C.SystemErrno.ENOENT else bun.C.SystemErrno.ECONNREFUSED));
                 return promise_value;
             };
             tcp.poll_ref.ref(handlers.vm);
@@ -1144,6 +1139,8 @@ fn NewSocket(comptime ssl: bool) type {
         pub const Socket = uws.NewSocketHandler(ssl);
         pub const SocketType = uws.NewWrappedSocketHandler(ssl);
         socket: SocketType,
+        // if the socket owns a context it will be here
+        socket_context: ?*uws.SocketContext,
 
         flags: Flags = .{},
         ref_count: u32 = 1,
@@ -1190,7 +1187,8 @@ fn NewSocket(comptime ssl: bool) type {
             return this.has_pending_activity.load(.acquire);
         }
 
-        pub fn doConnect(this: *This, connection: Listener.UnixOrHost, socket_ctx: *uws.SocketContext) !void {
+        pub fn doConnect(this: *This, connection: Listener.UnixOrHost) !void {
+            bun.assert(this.socket_context != null);
             switch (connection) {
                 .host => |c| {
                     this.ref();
@@ -1198,7 +1196,7 @@ fn NewSocket(comptime ssl: bool) type {
                         .socket = try This.Socket.connectAnon(
                             normalizeHost(c.host),
                             c.port,
-                            socket_ctx,
+                            this.socket_context.?,
                             this,
                         ),
                     };
@@ -1208,13 +1206,13 @@ fn NewSocket(comptime ssl: bool) type {
                     this.socket = .{
                         .socket = try This.Socket.connectUnixAnon(
                             u,
-                            socket_ctx,
+                            this.socket_context.?,
                             this,
                         ),
                     };
                 },
                 .fd => |f| {
-                    const socket = This.Socket.fromFd(socket_ctx, f, This, this, null) orelse return error.ConnectionFailed;
+                    const socket = This.Socket.fromFd(this.socket_context.?, f, This, this, null) orelse return error.ConnectionFailed;
                     this.onOpen(socket);
                 },
             }
@@ -1255,7 +1253,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
         pub fn onTimeout(
             this: *This,
-            socket: Socket,
+            _: Socket,
         ) void {
             JSC.markBinding(@src());
             log("onTimeout", .{});
@@ -1270,8 +1268,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
-            var scope = handlers.enter(socket.context());
-            defer scope.exit(ssl, this.wrapped);
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1283,12 +1281,12 @@ fn NewSocket(comptime ssl: bool) type {
                 _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
             }
         }
-        fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
+        fn handleConnectError(this: *This, errno: c_int) void {
             log("onConnectError({d}, {})", .{ errno, this.ref_count });
             const needs_deref = this.socket != .detached;
             this.socket = .{ .detached = {} };
             defer if (needs_deref) this.deref();
-            defer this.markInactive(socket_ctx);
+            defer this.markInactive();
 
             const handlers = this.handlers;
             const vm = handlers.vm;
@@ -1343,9 +1341,9 @@ fn NewSocket(comptime ssl: bool) type {
                 this.has_pending_activity.store(false, .release);
             }
         }
-        pub fn onConnectError(this: *This, socket: Socket, errno: c_int) void {
+        pub fn onConnectError(this: *This, _: Socket, errno: c_int) void {
             JSC.markBinding(@src());
-            this.handleConnectError(socket.context(), errno);
+            this.handleConnectError(errno);
         }
 
         pub fn markActive(this: *This) void {
@@ -1356,7 +1354,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn markInactive(this: *This, socket_ctx: ?*uws.SocketContext) void {
+        pub fn markInactive(this: *This) void {
             if (this.flags.is_active) {
                 // we have to close the socket before the socket context is closed
                 // otherwise we will get a segfault
@@ -1369,7 +1367,7 @@ fn NewSocket(comptime ssl: bool) type {
 
                 this.flags.is_active = false;
                 const vm = this.handlers.vm;
-                this.handlers.markInactive(ssl, socket_ctx, this.wrapped);
+                this.handlers.markInactive();
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .release);
             }
@@ -1447,7 +1445,7 @@ fn NewSocket(comptime ssl: bool) type {
             });
 
             if (result.toError()) |err| {
-                defer this.markInactive(socket.context());
+                defer this.markInactive();
                 if (!this.socket.isClosed()) {
                     log("Closing due to error", .{});
                 } else {
@@ -1470,7 +1468,7 @@ fn NewSocket(comptime ssl: bool) type {
             return this.this_value;
         }
 
-        pub fn onEnd(this: *This, socket: Socket) void {
+        pub fn onEnd(this: *This, _: Socket) void {
             JSC.markBinding(@src());
             log("onEnd", .{});
             if (this.socket == .detached) return;
@@ -1482,14 +1480,14 @@ fn NewSocket(comptime ssl: bool) type {
                 this.poll_ref.unref(handlers.vm);
 
                 // If you don't handle TCP fin, we assume you're done.
-                this.markInactive(this.socket.context());
+                this.markInactive();
                 return;
             }
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
-            var scope = handlers.enter(socket.context());
-            defer scope.exit(ssl, this.wrapped);
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1502,7 +1500,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onHandshake(this: *This, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
+        pub fn onHandshake(this: *This, _: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
             log("onHandshake({d})", .{success});
             JSC.markBinding(@src());
             if (this.socket == .detached) return;
@@ -1529,8 +1527,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
-            var scope = handlers.enter(socket.context());
-            defer scope.exit(ssl, this.wrapped);
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1578,12 +1576,12 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onClose(this: *This, socket: Socket, err: c_int, _: ?*anyopaque) void {
+        pub fn onClose(this: *This, _: Socket, err: c_int, _: ?*anyopaque) void {
             JSC.markBinding(@src());
             log("onClose", .{});
             defer this.deref();
             this.socket = .{ .detached = {} };
-            defer this.markInactive(socket.context());
+            defer this.markInactive();
 
             if (this.flags.finalizing) {
                 return;
@@ -1604,8 +1602,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
-            var scope = handlers.enter(socket.context());
-            defer scope.exit(ssl, this.wrapped);
+            var scope = handlers.enter();
+            defer scope.exit();
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
@@ -1619,7 +1617,7 @@ fn NewSocket(comptime ssl: bool) type {
             }
         }
 
-        pub fn onData(this: *This, socket: Socket, data: []const u8) void {
+        pub fn onData(this: *This, _: Socket, data: []const u8) void {
             JSC.markBinding(@src());
             log("onData({d})", .{data.len});
             if (this.socket == .detached) return;
@@ -1637,8 +1635,8 @@ fn NewSocket(comptime ssl: bool) type {
 
             // the handlers must be kept alive for the duration of the function call
             // that way if we need to call the error handler, we can
-            var scope = handlers.enter(socket.context());
-            defer scope.exit(ssl, this.wrapped);
+            var scope = handlers.enter();
+            defer scope.exit();
 
             // const encoding = handlers.encoding;
             const result = callback.call(globalObject, this_value, &[_]JSValue{
@@ -2044,7 +2042,7 @@ fn NewSocket(comptime ssl: bool) type {
                     if (result.wrote == result.total) {
                         this.socket.flush();
                         // markInactive does .detached = true
-                        this.markInactive(this.socket.context());
+                        this.markInactive();
                     }
                     break :brk JSValue.jsNumber(result.wrote);
                 },
@@ -2065,7 +2063,7 @@ fn NewSocket(comptime ssl: bool) type {
         }
 
         pub fn deinit(this: *This) void {
-            this.markInactive(null);
+            this.markInactive();
 
             this.poll_ref.unref(JSC.VirtualMachine.get());
             // need to deinit event without being attached
@@ -2084,6 +2082,10 @@ fn NewSocket(comptime ssl: bool) type {
             if (this.connection) |connection| {
                 this.connection = null;
                 connection.deinit();
+            }
+            if (this.socket_context) |socket_context| {
+                this.socket_context = null;
+                socket_context.deinit(ssl);
             }
             this.destroy();
         }
@@ -2951,6 +2953,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .wrapped = .tls,
                 .protos = if (protos) |p| (bun.default_allocator.dupe(u8, p[0..protos_len]) catch unreachable) else null,
                 .server_name = if (socket_config.server_name) |server_name| (bun.default_allocator.dupe(u8, server_name[0..bun.len(server_name)]) catch unreachable) else null,
+                .socket_context = null, // only set after the wrapTLS
             });
 
             const tls_js_value = tls.getThisValue(globalObject);
@@ -2960,7 +2963,6 @@ fn NewSocket(comptime ssl: bool) type {
 
             // reconfigure context to use the new wrapper handlers
             Socket.unsafeConfigure(this.socket.context().?, true, true, WrappedSocket, TCPHandler);
-            const old_context = this.socket.context();
             const TLSHandler = NewWrappedHandler(true);
             const new_socket = this.socket.wrapTLS(
                 options,
@@ -2976,6 +2978,7 @@ fn NewSocket(comptime ssl: bool) type {
             };
 
             tls.socket = .{ .socket = new_socket };
+            tls.socket_context = new_socket.context(); // owns the new tls context
             tls.ref();
 
             var raw_handlers_ptr = handlers.vm.allocator.create(Handlers) catch bun.outOfMemory();
@@ -3004,6 +3007,7 @@ fn NewSocket(comptime ssl: bool) type {
                 .connection = if (this.connection) |c| c.clone() else null,
                 .wrapped = .tcp,
                 .protos = null,
+                .socket_context = this.socket_context, // owns the old context
             });
             raw.ref();
 
@@ -3029,13 +3033,14 @@ fn NewSocket(comptime ssl: bool) type {
 
             //detach and invalidate the old instance
             this.socket = .{ .detached = {} };
+            this.socket_context = null;
             this.deref();
             if (this.flags.is_active) {
                 const vm = this.handlers.vm;
                 this.flags.is_active = false;
-                // will free handlers and the old_context when hits 0 active connections
+                // will free handlers when hits 0 active connections
                 // the connection can be upgraded inside a handler call so we need to garantee that it will be still alive
-                this.handlers.markInactive(ssl, old_context, this.wrapped);
+                this.handlers.markInactive();
                 this.poll_ref.unref(vm);
                 this.has_pending_activity.store(false, .release);
             }

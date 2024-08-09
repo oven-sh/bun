@@ -859,6 +859,10 @@ function getTests(cwd) {
       for (const entry of readdirSync(dirname, { encoding: "utf-8", withFileTypes: true })) {
         const { name } = entry;
         const filename = join(path, name);
+        if (!isCI) {
+          // skip these in debug mode so its easier to comment out individual ones to test
+          // guards in this list should only be moved here once theyre 100% passing
+        }
         if (filename.startsWith("test-abortcontroller")) continue;
         if (filename.startsWith("test-aborted")) continue;
         if (filename.startsWith("test-abortsignal")) continue;

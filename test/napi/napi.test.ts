@@ -24,6 +24,58 @@ describe("napi", () => {
       checkSameOutput("test_issue_7685", args);
     });
   });
+
+  describe("v8 c++", () => {
+    describe("primitives", () => {
+      it("can create and distinguish between null, undefined, true, and false", () => {
+        checkSameOutput("test_v8_primitives", []);
+      });
+    });
+    describe("Number", () => {
+      it("can create small integer", () => {
+        checkSameOutput("test_v8_number_int", []);
+      });
+      // non-i32 v8::Number is not implemented yet
+      it.skip("can create large integer", () => {
+        checkSameOutput("test_v8_number_large_int", []);
+      });
+      it.skip("can create fraction", () => {
+        checkSameOutput("test_v8_number_fraction", []);
+      });
+    });
+    describe("String", () => {
+      it("can create and read back strings with only ASCII characters", () => {
+        checkSameOutput("test_v8_string_ascii", []);
+      });
+    });
+    describe("External", () => {
+      it("can create an external and read back the correct value", () => {
+        checkSameOutput("test_v8_external", []);
+      });
+    });
+    describe("Object", () => {
+      it("can create an object and set properties", () => {
+        checkSameOutput("test_v8_object", []);
+      });
+    });
+    describe("Array", () => {
+      // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
+      it.skip("can create an array from a C array of Locals", () => {
+        checkSameOutput("test_v8_array_new", []);
+      });
+    });
+    describe("ObjectTemplate", () => {
+      it("creates objects with internal fields", () => {
+        checkSameOutput("test_v8_object_template", []);
+      });
+    });
+    describe("FunctionTemplate", () => {
+      it("doesn't crash", () => {
+        checkSameOutput("test_v8_function_template", []);
+      });
+    });
+  });
+
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);

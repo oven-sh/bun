@@ -1,0 +1,5 @@
+{
+  "devDependencies": {
+    "node-gyp": "^10.2.0"
+  }
+}

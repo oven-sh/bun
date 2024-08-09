@@ -31,6 +31,10 @@ namespace Bun {
 class InternalModuleRegistry;
 } // namespace Bun
 
+namespace v8 {
+class GlobalInternals;
+} // namespace v8
+
 #include "root.h"
 #include "headers-handwritten.h"
 #include <JavaScriptCore/CatchScope.h>
@@ -282,6 +286,8 @@ public:
 
     Structure* JSSQLStatementStructure() const { return m_JSSQLStatementStructure.getInitializedOnMainThread(this); }
 
+    v8::GlobalInternals* V8GlobalInternals() const { return m_V8GlobalInternals.getInitializedOnMainThread(this); }
+
     bool hasProcessObject() const { return m_processObject.isInitialized(); }
 
     RefPtr<WebCore::Performance> performance();
@@ -396,6 +402,9 @@ public:
     // Error.prepareStackTrace
     mutable WriteBarrier<JSC::Unknown> m_errorConstructorPrepareStackTraceValue;
 
+    // When a napi module initializes on dlopen, we need to know what the value is
+    mutable JSC::WriteBarrier<Unknown> m_pendingNapiModuleAndExports[2];
+
     // The original, unmodified Error.prepareStackTrace.
     //
     // We set a default value for this to mimick Node.js behavior It is a
@@ -447,9 +456,6 @@ public:
 
     JSC::Structure* pendingVirtualModuleResultStructure() { return m_pendingVirtualModuleResultStructure.get(this); }
 
-    // When a napi module initializes on dlopen, we need to know what the value is
-    // This value is not observed by GC. It should be extremely ephemeral.
-    JSValue pendingNapiModule = JSValue {};
     // We need to know if the napi module registered itself or we registered it.
     // To do that, we count the number of times we register a module.
     int napiModuleRegisterCallCount = 0;
@@ -559,6 +565,7 @@ public:
     LazyProperty<JSGlobalObject, Structure> m_NapiPrototypeStructure;
     LazyProperty<JSGlobalObject, Structure> m_NAPIFunctionStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSQLStatementStructure;
+    LazyProperty<JSGlobalObject, v8::GlobalInternals> m_V8GlobalInternals;
 
     LazyProperty<JSGlobalObject, JSObject> m_bunObject;
     LazyProperty<JSGlobalObject, JSObject> m_cryptoObject;

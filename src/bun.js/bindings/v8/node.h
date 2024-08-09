@@ -1,10 +1,10 @@
 #pragma once
 
 #include "v8.h"
-#include "v8/Local.h"
-#include "v8/Isolate.h"
-#include "v8/Object.h"
-#include "v8/Value.h"
+#include "V8Local.h"
+#include "V8Isolate.h"
+#include "V8Object.h"
+#include "V8Value.h"
 
 namespace node {
 

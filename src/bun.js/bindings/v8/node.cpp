@@ -1,5 +1,5 @@
 #include "node.h"
-#include "v8/HandleScope.h"
+#include "V8HandleScope.h"
 
 #include "JavaScriptCore/ObjectConstructor.h"
 #include "CommonJSModuleRecord.h"

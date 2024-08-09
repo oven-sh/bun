@@ -146,7 +146,7 @@
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "ErrorCode.h"
-#include "v8/GlobalInternals.h"
+#include "v8/V8GlobalInternals.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"

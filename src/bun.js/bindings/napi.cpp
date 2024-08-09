@@ -7,7 +7,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
-#include "v8/HandleScope.h"
+#include "v8/V8HandleScope.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>

@@ -1,3 +1,5 @@
+#include "JavaScriptCore/JSCJSValue.h"
+#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
@@ -303,6 +305,12 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
     bunShell->putDirectNativeFunction(vm, globalObject, Identifier::fromString(vm, "escape"_s), 1, BunObject_callback_shellEscape, ImplementationVisibility::Public, NoIntrinsic, JSC::PropertyAttribute::DontDelete | JSC::PropertyAttribute::ReadOnly | 0);
 
     return bunShell;
+}
+
+// This value currently depends on a zig feature flag
+extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(VM* vm, JSC::JSGlobalObject* bunObject);
+static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
+    return JSC::JSValue::decode(Bun__getTemporaryDevServer(&vm, bunObject->globalObject()));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)
@@ -617,7 +625,7 @@ JSC_DEFINE_HOST_FUNCTION(functionFileURLToPath, (JSC::JSGlobalObject * globalObj
     version                                        constructBunVersion                                                 ReadOnly|DontDelete|PropertyCallback
     which                                          BunObject_callback_which                                            DontDelete|Function 1
     write                                          BunObject_callback_write                                            DontDelete|Function 1
-    wipDevServerDoNotUseYet                        BunObject_callback_wipDevServerDoNotUseYet                          DontDelete|Function 1
+    wipDevServerDoNotUseYet                        constructBunKit                                                     ReadOnly|DontDelete|PropertyCallback
 @end
 */
 

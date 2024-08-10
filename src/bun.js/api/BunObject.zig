@@ -42,7 +42,6 @@ pub const BunObject = struct {
     pub const shellEscape = toJSCallback(Bun.shellEscape);
     pub const createParsedShellScript = toJSCallback(bun.shell.ParsedShellScript.createParsedShellScript);
     pub const createShellInterpreter = toJSCallback(bun.shell.Interpreter.createShellInterpreter);
-    pub const wipDevServerDoNotUseYet = toJSCallback(bun.kit.jsWipDevServer);
     // --- Callbacks ---
 
     // --- Getters ---
@@ -168,7 +167,6 @@ pub const BunObject = struct {
         @export(BunObject.write, .{ .name = callbackName("write") });
         @export(BunObject.stringWidth, .{ .name = callbackName("stringWidth") });
         @export(BunObject.shellEscape, .{ .name = callbackName("shellEscape") });
-        @export(BunObject.wipDevServerDoNotUseYet, .{ .name = callbackName("wipDevServerDoNotUseYet") });
         // -- Callbacks --
     }
 };

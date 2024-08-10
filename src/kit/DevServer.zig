@@ -5,7 +5,7 @@
 //! remainder of this process' lifespan.
 pub const DevServer = @This();
 
-const Options = struct {
+pub const Options = struct {
     cwd: []u8,
     routes: []Route,
     listen_config: uws.AppListenConfig = .{ .port = 3000 },

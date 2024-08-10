@@ -80,25 +80,3 @@ extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner) {
 }
 
 }; // namespace Kit
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-

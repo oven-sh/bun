@@ -40,6 +40,7 @@ private:
   ) {}
 };
 
+// Zig API
 extern "C" LoadServerCodeResult KitLoadServerCode(DevGlobalObject* global, BunString source);
 extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(DevGlobalObject* global, JSC::JSString* encodedModule);
 

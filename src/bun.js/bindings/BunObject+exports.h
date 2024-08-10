@@ -67,7 +67,6 @@
     macro(shellEscape) \
     macro(createShellInterpreter) \
     macro(createParsedShellScript) \
-    macro(wipDevServerDoNotUseYet) \
 
 #define DECLARE_ZIG_BUN_OBJECT_CALLBACK(name) BUN_DECLARE_HOST_FUNCTION(BunObject_callback_##name);
 FOR_EACH_CALLBACK(DECLARE_ZIG_BUN_OBJECT_CALLBACK);

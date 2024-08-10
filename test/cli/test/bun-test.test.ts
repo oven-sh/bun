@@ -161,6 +161,12 @@ describe("bun test", () => {
     });
     expect(stderr).toContain("test #1");
   });
+  test("works if you call process.exit()", () => {
+    runTest({
+      args: [],
+      input: [`process.exit();`],
+    });
+  });
   test.todo("can provide a mix of files and directories");
   describe("--rerun-each", () => {
     test.todo("can rerun with a default value");

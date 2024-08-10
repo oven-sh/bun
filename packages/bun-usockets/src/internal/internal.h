@@ -189,6 +189,7 @@ struct us_connecting_socket_t {
 };
 
 struct us_wrapped_socket_context_t {
+  struct us_socket_context_t* tcp_context;
   struct us_socket_events_t events;
   struct us_socket_events_t old_events;
 };

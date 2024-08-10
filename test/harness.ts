@@ -100,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -1172,6 +1172,17 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
     return false;
   }
   return parseFloat(macOSVersion) >= minVersion;
+}
+
+export function readableStreamFromArray(array) {
+  return new ReadableStream({
+    pull(controller) {
+      for (let entry of array) {
+        controller.enqueue(entry);
+      }
+      controller.close();
+    },
+  });
 }
 
 let hasGuardMalloc = -1;

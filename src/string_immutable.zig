@@ -1614,7 +1614,11 @@ pub fn toUTF16AllocNoTrim(allocator: std.mem.Allocator, bytes: []const u8, compt
 }
 
 pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement {
-    const c0 = @as(u21, input[0]);
+    return utf16CodepointWithFFFDAndFirstInputChar(Type, input[0], input);
+}
+
+fn utf16CodepointWithFFFDAndFirstInputChar(comptime Type: type, char: std.meta.Child(Type), input: Type) UTF16Replacement {
+    const c0 = @as(u21, char);
 
     if (c0 & ~@as(u21, 0x03ff) == 0xd800) {
         // surrogate pair
@@ -1958,9 +1962,10 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const to_copy = utf16_remaining[0..i];
+        utf16_remaining = utf16_remaining[i..];
         const token = utf16_remaining[i];
 
-        const replacement = utf16CodepointWithFFFD(Type, utf16_remaining);
+        const replacement = utf16CodepointWithFFFDAndFirstInputChar(Type, token, utf16_remaining);
         utf16_remaining = utf16_remaining[replacement.len..];
 
         const count: usize = replacement.utf8Width();

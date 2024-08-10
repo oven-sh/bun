@@ -1,5 +1,3 @@
-#include "JavaScriptCore/JSCJSValue.h"
-#include "JavaScriptCore/JSGlobalObject.h"
 #include "root.h"
 #include "ZigGlobalObject.h"
 #include "JavaScriptCore/ArgList.h"
@@ -308,9 +306,9 @@ static JSValue constructBunShell(VM& vm, JSObject* bunObject)
 }
 
 // This value currently depends on a zig feature flag
-extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(VM* vm, JSC::JSGlobalObject* bunObject);
+extern "C" JSC::EncodedJSValue Bun__getTemporaryDevServer(JSC::JSGlobalObject* bunObject);
 static JSValue constructBunKit(VM& vm, JSObject* bunObject) {
-    return JSC::JSValue::decode(Bun__getTemporaryDevServer(&vm, bunObject->globalObject()));
+    return JSC::JSValue::decode(Bun__getTemporaryDevServer(bunObject->globalObject()));
 }
 
 static JSValue constructDNSObject(VM& vm, JSObject* bunObject)

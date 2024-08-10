@@ -1617,7 +1617,7 @@ pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement
     return utf16CodepointWithFFFDAndFirstInputChar(Type, input[0], input);
 }
 
-fn utf16CodepointWithFFFDAndFirstInputChar(comptime Type: type, char: std.meta.Child(Type), input: Type) UTF16Replacement {
+fn utf16CodepointWithFFFDAndFirstInputChar(comptime Type: type, char: std.meta.Elem(Type), input: Type) UTF16Replacement {
     const c0 = @as(u21, char);
 
     if (c0 & ~@as(u21, 0x03ff) == 0xd800) {

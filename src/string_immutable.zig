@@ -2141,7 +2141,7 @@ pub const UTF16Replacement = struct {
 
     can_buffer: bool = true,
 
-    pub inline fn utf8Width(replacement: UTF16Replacement) usize {
+    pub inline fn utf8Width(replacement: UTF16Replacement) u3 {
         return switch (replacement.code_point) {
             0...0x7F => 1,
             (0x7F + 1)...0x7FF => 2,
@@ -3413,6 +3413,35 @@ pub fn encodeWTF8RuneT(p: *[4]u8, comptime R: type, r: R) u3 {
             return 4;
         },
     }
+}
+
+pub fn wtf8Sequence(code_point: u32) [4]u8 {
+    return switch (code_point) {
+        0...0x7f => .{
+            @intCast(code_point),
+            0,
+            0,
+            0,
+        },
+        (0x7f + 1)...0x7ff => .{
+            @truncate(0xc0 | (code_point >> 6)),
+            @truncate(0x80 | (code_point & 0x3f)),
+            0,
+            0,
+        },
+        (0x7ff + 1)...0xffff => .{
+            @truncate(0xe0 | (code_point >> 12)),
+            @truncate(0x80 | ((code_point >> 6) & 0x3f)),
+            @truncate(0x80 | (code_point & 0x3f)),
+            0,
+        },
+        else => .{
+            @truncate(0xf0 | (code_point >> 18)),
+            @truncate(0x80 | ((code_point >> 12) & 0x3f)),
+            @truncate(0x80 | ((code_point >> 6) & 0x3f)),
+            @truncate(0x80 | (code_point & 0x3f)),
+        },
+    };
 }
 
 pub inline fn wtf8ByteSequenceLength(first_byte: u8) u3 {

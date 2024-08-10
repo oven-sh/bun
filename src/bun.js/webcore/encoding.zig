@@ -37,8 +37,6 @@ const Task = @import("../javascript.zig").Task;
 const picohttp = bun.picohttp;
 
 pub const TextEncoder = struct {
-    filler: u32 = 0,
-
     pub export fn TextEncoder__encode8(
         globalThis: *JSGlobalObject,
         ptr: [*]const u8,
@@ -407,6 +405,252 @@ pub const EncodingLabel = enum {
     }
 };
 
+pub const TextEncoderStreamEncoder = struct {
+    pending_lead_surrogate: ?u16 = null,
+
+    const log = Output.scoped(.TextEncoderStreamEncoder, false);
+
+    pub usingnamespace JSC.Codegen.JSTextEncoderStreamEncoder;
+    pub usingnamespace bun.New(TextEncoderStreamEncoder);
+
+    pub fn finalize(this: *TextEncoderStreamEncoder) void {
+        this.destroy();
+    }
+
+    pub fn constructor(_: *JSGlobalObject, _: *JSC.CallFrame) ?*TextEncoderStreamEncoder {
+        return TextEncoderStreamEncoder.new(.{});
+    }
+
+    pub fn encode(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, callFrame: *JSC.CallFrame) JSValue {
+        const arguments = callFrame.arguments(1).slice();
+        if (arguments.len == 0) {
+            globalObject.throwNotEnoughArguments("TextEncoderStreamEncoder.encode", 1, arguments.len);
+            return .zero;
+        }
+
+        if (!arguments[0].isString()) {
+            globalObject.throwInvalidArguments("TextEncoderStreamEncoder.encode expects a string argument", .{});
+            return .zero;
+        }
+
+        const str_value = arguments[0];
+
+        const str: ZigString = (str_value.toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);
+
+        if (str.is16Bit()) {
+            return this.encodeUTF16(globalObject, str.utf16SliceAligned());
+        }
+
+        return this.encodeLatin1(globalObject, str.slice());
+    }
+
+    pub fn encodeWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *JSC.JSGlobalObject, input: *JSC.JSString) JSValue {
+        const str = input.getZigString(globalObject);
+
+        if (str.is16Bit()) {
+            return this.encodeUTF16(globalObject, str.utf16SliceAligned());
+        }
+
+        return this.encodeLatin1(globalObject, str.slice());
+    }
+
+    fn encodeLatin1(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u8) JSValue {
+        log("encodeLatin1: \"{s}\"", .{input});
+
+        if (input.len == 0) return .undefined;
+
+        const prepend_replacement = prepend_replacement: {
+            if (this.pending_lead_surrogate != null) {
+                this.pending_lead_surrogate = null;
+                // no latin1 surrogate pairs
+                break :prepend_replacement true;
+            }
+
+            break :prepend_replacement false;
+        };
+
+        const length: usize = bun.simdutf.length.utf8.from.latin1(input) + @as(usize, if (prepend_replacement) 3 else 0);
+
+        const array_value, const bytes = ArrayBuffer.allocBuffer(globalObject, length);
+
+        var remain = bytes;
+
+        if (prepend_replacement) {
+            @memcpy(remain[0..3], &[3]u8{ 0xef, 0xbf, 0xbd });
+            remain = remain[3..];
+        }
+
+        const count = bun.simdutf.convert.latin1.to.utf8(input, remain);
+
+        bun.debugAssert(count == remain.len);
+
+        return array_value;
+    }
+
+    fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
+        log("encodeUTF16: \"{}\"", .{bun.fmt.utf16(input)});
+
+        if (input.len == 0) return .undefined;
+
+        const Prepend = struct {
+            bytes: [4]u8,
+            len: u3,
+
+            pub const replacement: @This() = .{ .bytes = .{ 0xef, 0xbf, 0xbd, 0 }, .len = 3 };
+
+            pub fn fromSequence(seq: [4]u8, length: u3) @This() {
+                return .{ .bytes = seq, .len = length };
+            }
+        };
+
+        var remain = input;
+
+        const prepend: ?Prepend = prepend: {
+            if (this.pending_lead_surrogate) |lead| {
+                this.pending_lead_surrogate = null;
+                const maybe_trail = remain[0];
+                if (strings.u16IsTrail(maybe_trail)) {
+                    const converted = strings.utf16CodepointWithFFFD([]const u16, &.{ lead, maybe_trail });
+                    // shouldn't fail because `u16IsTrail` is true and `pending_lead_surrogate` is always
+                    // a valid lead.
+                    bun.debugAssert(!converted.fail);
+
+                    const sequence = strings.wtf8Sequence(converted.code_point);
+
+                    remain = remain[1..];
+                    if (remain.len == 0) {
+                        return ArrayBuffer.createBuffer(
+                            globalObject,
+                            sequence[0..converted.utf8Width()],
+                        );
+                    }
+
+                    break :prepend Prepend.fromSequence(sequence, converted.utf8Width());
+                }
+
+                break :prepend Prepend.replacement;
+            }
+            break :prepend null;
+        };
+
+        const validate_result = bun.simdutf.validate.with_errors.utf16le(remain);
+        if (validate_result.status == .success) {
+            const len = bun.simdutf.length.utf8.from.utf16.le(remain);
+            if (len == 0) return .undefined;
+
+            const array_value, var bytes = ArrayBuffer.allocBuffer(globalObject, len + if (prepend) |pre| pre.len else 0);
+            if (array_value.isEmpty()) {
+                return .zero;
+            }
+
+            if (prepend) |pre| {
+                @memcpy(bytes[0..pre.len], pre.bytes[0..pre.len]);
+                bytes = bytes[pre.len..];
+            }
+
+            const convert_result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remain, bytes);
+            bun.debugAssert(convert_result.status == .success);
+
+            return array_value;
+        }
+
+        var buf = std.ArrayList(u8).initCapacity(
+            bun.default_allocator,
+            validate_result.count + if (prepend) |pre| pre.len else 0,
+        ) catch bun.outOfMemory();
+        defer buf.deinit();
+
+        if (prepend) |pre| {
+            buf.appendSliceAssumeCapacity(pre.bytes[0..pre.len]);
+        }
+
+        var lead_surrogate: ?u16 = null;
+
+        while (strings.firstNonASCII16([]const u16, remain)) |non_ascii| {
+            const token = remain[non_ascii];
+            const ascii_slice = remain[0..non_ascii];
+            remain = remain[non_ascii + 1 ..];
+
+            if (lead_surrogate) |lead| {
+                lead_surrogate = null;
+
+                if (ascii_slice.len != 0) {
+                    // - +3 for replacement character
+                    // - it's ascii, length will be the same, just need to convert u16 -> u8
+                    buf.ensureUnusedCapacity(ascii_slice.len + 3) catch bun.outOfMemory();
+                    buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
+                    strings.convertUTF16ToUTF8Append(&buf, ascii_slice) catch bun.outOfMemory();
+
+                    continue;
+                }
+
+                if (strings.u16IsTrail(token)) {
+                    const converted = strings.utf16CodepointWithFFFD([]const u16, &.{ lead, token });
+                    bun.debugAssert(!converted.fail);
+
+                    const sequence = strings.wtf8Sequence(converted.code_point);
+
+                    buf.appendSlice(sequence[0..converted.utf8Width()]) catch bun.outOfMemory();
+                    continue;
+                }
+
+                buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
+            }
+
+            if (strings.u16IsLead(token)) {
+                if (remain.len == 0) {
+                    this.pending_lead_surrogate = token;
+                    if (buf.items.len == 0) return .undefined;
+                    return ArrayBuffer.createBuffer(globalObject, buf.items);
+                }
+
+                lead_surrogate = token;
+                continue;
+            }
+
+            bun.debugAssert(strings.u16IsTrail(token));
+
+            buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
+        }
+
+        if (lead_surrogate != null and remain.len == 0) {
+            this.pending_lead_surrogate = lead_surrogate;
+            if (buf.items.len == 0) return .undefined;
+            return ArrayBuffer.createBuffer(globalObject, buf.items);
+        }
+
+        const array_value, var bytes = ArrayBuffer.allocBuffer(globalObject, buf.items.len + remain.len + @as(usize, if (lead_surrogate != null) 3 else 0));
+        if (array_value.isEmpty()) return .zero;
+
+        @memcpy(bytes[0..buf.items.len], buf.items);
+        bytes = bytes[buf.items.len..];
+
+        if (lead_surrogate != null) {
+            @memcpy(bytes[0..3], &[3]u8{ 0xef, 0xbf, 0xbd });
+            bytes = bytes[3..];
+        }
+
+        _ = strings.convertUTF16toUTF8InBuffer(bytes, remain) catch unreachable;
+
+        return array_value;
+    }
+
+    pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {
+        return flushBody(this, globalObject);
+    }
+
+    pub fn flushWithoutTypeChecks(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSValue {
+        return flushBody(this, globalObject);
+    }
+
+    fn flushBody(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject) JSValue {
+        return if (this.pending_lead_surrogate == null)
+            .undefined
+        else
+            JSC.ArrayBuffer.createBuffer(globalObject, &.{ 0xef, 0xbf, 0xbd });
+    }
+};
+
 pub const TextDecoder = struct {
 
     // used for utf8 decoding
@@ -427,8 +671,10 @@ pub const TextDecoder = struct {
     fatal: bool = false,
     encoding: EncodingLabel = EncodingLabel.@"UTF-8",
 
+    pub usingnamespace bun.New(TextDecoder);
+
     pub fn finalize(this: *TextDecoder) void {
-        bun.default_allocator.destroy(this);
+        this.destroy();
     }
 
     pub usingnamespace JSC.Codegen.JSTextDecoder;
@@ -777,9 +1023,7 @@ pub const TextDecoder = struct {
             }
         }
 
-        const result = getAllocator(globalThis).create(TextDecoder) catch unreachable;
-        result.* = decoder;
-        return result;
+        return TextDecoder.new(decoder);
     }
 };
 

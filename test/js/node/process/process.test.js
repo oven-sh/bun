@@ -413,6 +413,21 @@ describe("process.onExit", () => {
     expect(proc.stdout.toString("utf8")).toBeEmpty();
   });
 
+  it("process.exit() doesn't clobber error thrown inside exit handler (with uncaughtException handler)", () => {
+    const proc = Bun.spawnSync({
+      cmd: [
+        bunExe(),
+        "-e",
+        `process.on("uncaughtException", () => {}); process.on("exit", () => {throw new Error("boom")}); process.exit();`,
+      ],
+      env: bunEnv,
+      stdio: ["inherit", "pipe", "pipe"],
+    });
+    expect(proc.exitCode).toBe(0);
+    expect(proc.stderr.toString("utf8")).toBeEmpty();
+    expect(proc.stdout.toString("utf8")).toBeEmpty();
+  });
+
   it("process.exit() has higher precedence than throw in exit handler", () => {
     const proc = Bun.spawnSync({
       cmd: [bunExe(), "-e", `process.on("exit", () => {throw new Error("boom")}); process.exit(5);`],

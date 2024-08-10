@@ -253,10 +253,14 @@ public:
 
         /* We are limited if we have a per-socket buffer */
         if (asyncSocketData->buffer.length()) {
+            size_t buffer_len = asyncSocketData->buffer.length();
+            // we cannot not flush more than INT_MAX bytes at a time
+            int max_flush_len = std::min(buffer_len, (size_t)INT_MAX);
+
             /* Write off as much as we can */
-            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), (int) asyncSocketData->buffer.length(), /*nextLength != 0 | */length);
+            int written = us_socket_write(SSL, (us_socket_t *) this, asyncSocketData->buffer.data(), max_flush_len, /*nextLength != 0 | */length);
             /* On failure return, otherwise continue down the function */
-            if ((unsigned int) written < asyncSocketData->buffer.length()) {
+            if ((unsigned int) written < buffer_len) {
                 /* Update buffering (todo: we can do better here if we keep track of what happens to this guy later on) */
                 asyncSocketData->buffer.erase((unsigned int) written);
 

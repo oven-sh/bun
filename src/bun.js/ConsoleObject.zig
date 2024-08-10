@@ -1077,6 +1077,7 @@ pub const Formatter = struct {
                         };
                     }
                 }
+                if (globalThis.hasException()) return .{ .tag = .RevokedProxy };
             }
 
             if (js_type == .DOMWrapper) {
@@ -2138,6 +2139,7 @@ pub const Formatter = struct {
                     return;
                 }
 
+                //
                 var was_good_time = this.always_newline_scope or
                     // heuristic: more than 10, probably should have a newline before it
                     len > 10;
@@ -2186,6 +2188,7 @@ pub const Formatter = struct {
                     }
 
                     var i: u32 = 1;
+                    var j: u32 = 1;
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
@@ -2195,6 +2198,13 @@ pub const Formatter = struct {
                             }
                             continue;
                         }
+                        if (j >= 100) {
+                            writer.writeAll(",\n");
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.pretty("<r><d>{d} more items<r>", enable_ansi_colors, .{len - i});
+                            break;
+                        }
+                        j += 1;
 
                         if (empty_start) |empty| {
                             if (empty > 0) {

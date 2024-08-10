@@ -1869,6 +1869,16 @@ pub const JestPrettyFormat = struct {
                                     writer.print("{d},", .{el});
                                 }
                             },
+                            .Float16Array => {
+                                const slice_with_type: []align(std.meta.alignment([]f16)) f32 = @alignCast(std.mem.bytesAsSlice(f16, slice));
+                                this.indent += 1;
+                                defer this.indent -|= 1;
+                                for (slice_with_type) |el| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    writer.print("{d},", .{el});
+                                }
+                            },
                             .Float32Array => {
                                 const slice_with_type: []align(std.meta.alignment([]f32)) f32 = @alignCast(std.mem.bytesAsSlice(f32, slice));
                                 this.indent += 1;

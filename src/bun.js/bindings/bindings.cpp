@@ -2768,6 +2768,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:

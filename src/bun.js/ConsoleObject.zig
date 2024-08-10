@@ -2121,7 +2121,7 @@ pub const Formatter = struct {
                 }
             },
             .Array => {
-                const len = @as(u32, @truncate(value.getLength(this.globalThis)));
+                const len = value.getLength(this.globalThis);
 
                 // TODO: DerivedArray does not get passed along in JSType, and it's not clear why.
                 // if (jsType == .DerivedArray) {
@@ -3074,6 +3074,13 @@ pub const Formatter = struct {
                             &writer,
                             u32,
                             @as([]align(std.meta.alignment([]u32)) u32, @alignCast(std.mem.bytesAsSlice(u32, slice))),
+                            enable_ansi_colors,
+                        ),
+                        .Float16Array => this.writeTypedArray(
+                            *@TypeOf(writer),
+                            &writer,
+                            f16,
+                            @as([]align(std.meta.alignment([]f16)) f16, @alignCast(std.mem.bytesAsSlice(f16, slice))),
                             enable_ansi_colors,
                         ),
                         .Float32Array => this.writeTypedArray(

@@ -4272,8 +4272,7 @@ export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_
 pub export var isBunTest: bool = false;
 
 // TODO: evaluate if this has any measurable performance impact.
-/// Defaults to u39, which is
-pub var synthetic_allocation_limit: usize = std.math.maxInt(u39);
+pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
 pub var string_allocation_limit: usize = std.math.maxInt(u32);
 
 comptime {

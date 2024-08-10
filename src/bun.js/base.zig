@@ -405,6 +405,11 @@ pub const ArrayBuffer = extern struct {
         return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
     }
 
+    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
+        JSC.markBinding(@src());
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+    }
+
     extern "C" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSValue;
     pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSValue, []u8 } {
         var ptr: [*]u8 = undefined;

@@ -1621,6 +1621,7 @@ pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement
         if (input.len == 1)
             return .{
                 .len = 1,
+                .is_lead = true,
             };
         //error.DanglingSurrogateHalf;
         const c1 = @as(u21, input[1]);
@@ -1634,6 +1635,7 @@ pub fn utf16CodepointWithFFFD(comptime Type: type, input: Type) UTF16Replacement
                     .fail = true,
                     .len = 1,
                     .code_point = unicode_replacement,
+                    .is_lead = true,
                 };
             };
         // return error.ExpectedSecondSurrogateHalf;
@@ -1862,7 +1864,7 @@ pub fn convertUTF16ToUTF8(list_: std.ArrayList(u8), comptime Type: type, utf16: 
     );
     if (result.status == .surrogate) {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        return toUTF8ListWithTypeBun(&list, Type, utf16);
+        return toUTF8ListWithTypeBun(&list, Type, utf16, false);
     }
 
     list.items.len = result.count;
@@ -1877,7 +1879,7 @@ pub fn convertUTF16ToUTF8Append(list: *std.ArrayList(u8), utf16: []const u16) !v
 
     if (result.status == .surrogate) {
         // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
-        _ = try toUTF8ListWithTypeBun(list, []const u16, utf16);
+        _ = try toUTF8ListWithTypeBun(list, []const u16, utf16, false);
         return;
     }
 
@@ -1951,12 +1953,12 @@ pub fn toUTF8FromLatin1Z(allocator: std.mem.Allocator, latin1: []const u8) !?std
     return list1;
 }
 
-pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type) !std.ArrayList(u8) {
+pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf16: Type, comptime skip_trailing_replacement: bool) !(if (skip_trailing_replacement) ?u16 else std.ArrayList(u8)) {
     var utf16_remaining = utf16;
 
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const to_copy = utf16_remaining[0..i];
-        utf16_remaining = utf16_remaining[i..];
+        const token = utf16_remaining[i];
 
         const replacement = utf16CodepointWithFFFD(Type, utf16_remaining);
         utf16_remaining = utf16_remaining[replacement.len..];
@@ -1975,8 +1977,13 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
             to_copy,
         );
 
-        list.items.len += count;
+        if (comptime skip_trailing_replacement) {
+            if (replacement.is_lead and utf16_remaining.len == 0) {
+                return token;
+            }
+        }
 
+        list.items.len += count;
         _ = encodeWTF8RuneT(
             list.items.ptr[list.items.len - count .. list.items.len - count + 4][0..4],
             u32,
@@ -1993,6 +2000,9 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
 
     log("UTF16 {d} -> {d} UTF8", .{ utf16.len, list.items.len });
 
+    if (comptime skip_trailing_replacement) {
+        return null;
+    }
     return list.*;
 }
 
@@ -2140,6 +2150,7 @@ pub const UTF16Replacement = struct {
     fail: bool = false,
 
     can_buffer: bool = true,
+    is_lead: bool = false,
 
     pub inline fn utf8Width(replacement: UTF16Replacement) u3 {
         return switch (replacement.code_point) {

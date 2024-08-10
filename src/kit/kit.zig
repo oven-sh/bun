@@ -21,7 +21,8 @@ pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JS
     bun.Output.warn("Please be advised that kit is experimental. Its API will change frequently.", .{});
 
     const options = devServerOptionsFromJs(global, callframe.argument(0)) catch {
-        global.throwInvalidArguments("invalid arguments", .{});
+        if (!global.hasException())
+            global.throwInvalidArguments("invalid arguments", .{});
         return .zero;
     };
 

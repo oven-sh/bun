@@ -46,7 +46,7 @@ void DevGlobalObject::finishCreation(JSC::VM &vm) {
 extern "C" BunVirtualMachine* Bun__getVM();
 
 // A lot of this function is taken from 'Zig__GlobalObject__create'
-extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner) {
+extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner, void* console) {
     JSC::VM& vm = JSC::VM::create(JSC::HeapType::Large).leakRef();
     vm.heap.acquireAccess();
     JSC::JSLockHolder locker(vm);
@@ -63,7 +63,7 @@ extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner) {
 
     JSC::gcProtect(global);
 
-    global->setConsole(nullptr);
+    global->setConsole(console);
     global->setStackTraceLimit(10); // Node.js defaults to 10
 
     // vm.setOnComputeErrorInfo(computeErrorInfoWrapper);

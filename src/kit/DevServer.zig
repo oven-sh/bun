@@ -269,29 +269,6 @@ fn sendOutputFile(file: *const OutputFile, resp: *Response) void {
     }
 }
 
-fn sendFailure(fail: *const Failure, resp: *Response) void {
-    resp.writeStatus("500 Internal Server Error");
-    var buffer: [32768]u8 = undefined;
-
-    const message = message: {
-        var fbs = std.io.fixedBufferStream(&buffer);
-        const writer = fbs.writer();
-
-        writer.print("{}\n\n", .{fail.err}) catch
-            break :message null;
-
-        fail.log.printForLogLevelWithEnableAnsiColors(writer, false) catch
-            break :message null;
-
-        break :message fbs.getWritten();
-    } orelse message: {
-        const suffix = "...truncated";
-        @memcpy(buffer[buffer.len - suffix.len ..], suffix);
-        break :message &buffer;
-    };
-    resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
-}
-
 fn sendBuiltInNotFound(resp: *Response) void {
     const message = "404 Not Found";
     resp.writeStatus("404 Not Found");
@@ -466,11 +443,12 @@ pub const BundleTask = struct {
                 @tagName(task.kind),
                 route.pattern,
             });
+            Output.flush();
             task.log.printForLogLevel(Output.errorWriter()) catch {};
             Output.flush();
 
             // Store the log to print in the browser
-            bundle.* = .{ .failed = .{ .log = task.log, .err = task.result.err } };
+            bundle.* = .{ .failed = Failure.fromLog(task.log) };
 
             task.finishHttpRequestsFailure(&bundle.failed);
             return;
@@ -669,11 +647,57 @@ fn BundlePromise(T: type) type {
     };
 }
 
-/// Represents an error and it's associated log.
-/// These are stored to provide in-browser error messages.
-const Failure = struct {
-    log: Log,
-    err: anyerror,
+/// Represents an error from loading or server sided runtime. Information on
+/// what this error is from, such as the associated Route, is inferred from
+/// surrounding context.
+///
+/// In the case a route was not able to fully compile, the `Failure` is stored
+/// so that a browser refreshing the page can display this failure.
+const Failure = union(enum) {
+    /// Bundler and module resolution use `bun.logger` to report multiple errors at once.
+    bundler: std.ArrayList(bun.logger.Msg),
+    /// Thrown JavaScript exception while loading server code.
+    server_load: JSC.Strong,
+    /// Request handler threw. This error is never stored.
+    request: JSValue,
+
+    /// Consumes
+    pub fn fromLog(log: *Log) Failure {
+        const fail: Failure = .{ .bundler = log.msgs };
+        log.* = .{
+            .msgs = std.ArrayList(bun.logger.Msg).init(log.msgs.allocator),
+            .level = log.level,
+        };
+        return fail;
+    }
+
+    fn sendAsHttpResponse(fail: *const Failure, resp: *Response) void {
+        resp.writeStatus("500 Internal Server Error");
+        var buffer: [32768]u8 = undefined;
+
+        const message = message: {
+            var fbs = std.io.fixedBufferStream(&buffer);
+            const writer = fbs.writer();
+
+            switch (fail) {
+                .bundler => |log| {
+                    log.printForLogLevelWithEnableAnsiColors(writer, false) catch
+                        break :message null;
+                },
+                .server_load => {
+                    writer.writeAll("JavaScript exception") catch
+                        break :message null;
+                },
+            }
+
+            break :message fbs.getWritten();
+        } orelse message: {
+            const suffix = "...truncated";
+            @memcpy(buffer[buffer.len - suffix.len ..], suffix);
+            break :message &buffer;
+        };
+        resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
+    }
 
     fn deinit(fail: Failure) void {
         fail.log.deinit();

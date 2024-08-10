@@ -49,7 +49,7 @@ extern "C" JSC::EncodedJSValue KitGetRequestHandlerFromModule(
   ASSERT(module.isCell());
   JSC::JSModuleNamespaceObject* namespaceObject = global->moduleLoader()->getModuleNamespaceObject(global, module);
   ASSERT(namespaceObject);
-  return JSC::JSValue::encode(namespaceObject->get(global, JSC::Identifier::fromString(global->vm(), "default"_s)));
+  return JSC::JSValue::encode(namespaceObject->get(global, vm.propertyNames->defaultKeyword));
 }
 
 } // namespace Kit

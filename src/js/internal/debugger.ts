@@ -216,14 +216,14 @@ function versionInfo(): unknown {
 
 function debuggerInfo(d: Debugger): unknown {
     const ws = `${d.url}`.replace(/wss?:\/\//, '')
+    const id = `${ws}`.split('/').pop()
 
     return [
         {
             "description": `Bun instance (version: ${Bun.version}, revision: ${Bun.revision})`,
-            "devtoolsFrontendUrl": `devtools://devtools/bundled/js_app.html?experiments=true&v8only=true&ws=${ws}`,
-            "devtoolsFrontendUrlCompat": `devtools://devtools/bundled/inspector.html?experiments=true&v8only=true&ws=${ws}`,
+            "devtoolsFrontendUrl": `https://debug.bun.sh/#${ws}`,
             "faviconUrl": "https://bun.sh/logo_avatar.svg",
-            "id": `${ws}`.split('/').pop(),
+            id,
             "title": Bun.main,
             "type": "bun",
             "url": Bun.pathToFileURL(Bun.main),

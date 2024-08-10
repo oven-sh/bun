@@ -2187,7 +2187,7 @@ pub const Formatter = struct {
                     }
 
                     var i: u32 = 1;
-                    var j: u32 = 1;
+                    var nonempty_count: u32 = 1;
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
@@ -2197,14 +2197,14 @@ pub const Formatter = struct {
                             }
                             continue;
                         }
-                        if (j >= 100) {
+                        if (nonempty_count >= 100) {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n"); // we want the line break to be unconditional here
                             this.writeIndent(Writer, writer_) catch unreachable;
                             writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
                             break;
                         }
-                        j += 1;
+                        nonempty_count += 1;
 
                         if (empty_start) |empty| {
                             if (empty > 0) {

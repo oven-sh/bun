@@ -1,6 +1,7 @@
 import { it, expect } from "bun:test";
 import { join } from "path";
-import "harness";
+import { isWindows } from "harness";
+
 it("setInterval", async () => {
   var counter = 0;
   var start;
@@ -110,7 +111,10 @@ it("setInterval runs with at least the delay time", () => {
 
 it("setInterval doesn't leak memory", () => {
   expect([`run`, join(import.meta.dir, "setInterval-leak-fixture.js")]).toRun();
-}, 30_000);
+}, !isWindows ? 30_000 : 90_000);
+// ✓ setInterval doesn't leak memory [9930.00ms]
+// ✓ setInterval doesn't leak memory [80188.00ms]
+// TODO: investigate this discrepancy further
 
 it("setInterval doesn't run when cancelled after being scheduled", () => {
   expect([`run`, join(import.meta.dir, "setInterval-cancel-fixture.js")]).toRun();

@@ -635,7 +635,7 @@ const Socket = (function (InternalSocket) {
     _final(callback) {
       const socket = this[bunSocketInternal];
       // already closed
-      if (!socket) callback();
+      if (!socket) return callback();
 
       if (this.allowHalfOpen) {
         // wait socket close event

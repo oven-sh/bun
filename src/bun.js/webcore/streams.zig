@@ -669,17 +669,23 @@ pub const StreamResult = union(Tag) {
     into_array: IntoArray,
     into_array_and_done: IntoArray,
 
-    pub fn deinit(this: *StreamResult) void {
+    pub fn deinitWithoutGC(this: *StreamResult, allow_gc: bool) void {
         switch (this.*) {
             .owned => |*owned| owned.deinitWithAllocator(bun.default_allocator),
             .owned_and_done => |*owned_and_done| owned_and_done.deinitWithAllocator(bun.default_allocator),
             .err => |err| {
-                if (err == .JSValue) {
-                    err.JSValue.unprotect();
+                if (allow_gc) {
+                    if (err == .JSValue) {
+                        err.JSValue.unprotect();
+                    }
                 }
             },
             else => {},
         }
+    }
+
+    pub fn deinit(this: *StreamResult) void {
+        this.deinitWithoutGC(true);
     }
 
     pub const StreamError = union(enum) {
@@ -958,6 +964,11 @@ pub const StreamResult = union(Tag) {
 
     pub fn fulfillPromise(result: *StreamResult, promise: *JSC.JSPromise, globalThis: *JSC.JSGlobalObject) void {
         const vm = globalThis.bunVM();
+        if (vm.isShuttingDown()) {
+            result.deinitWithoutGC(false);
+            return;
+        }
+
         const loop = vm.eventLoop();
         const promise_value = promise.asValue(globalThis);
         defer promise_value.unprotect();
@@ -992,9 +1003,9 @@ pub const StreamResult = union(Tag) {
     }
 
     pub fn toJS(this: *const StreamResult, globalThis: *JSGlobalObject) JSValue {
-        if (JSC.VirtualMachine.get().isShuttingDown()) {
+        if (globalThis.bunVM().isShuttingDown()) {
             var that = this.*;
-            that.deinit();
+            that.deinitWithoutGC(false);
             return .zero;
         }
 

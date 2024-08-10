@@ -1176,7 +1176,7 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
 
 export function readableStreamFromArray(array) {
   return new ReadableStream({
-    start(controller) {
+    pull(controller) {
       for (let entry of array) {
         controller.enqueue(entry);
       }

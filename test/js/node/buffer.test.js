@@ -1862,9 +1862,9 @@ it("Buffer can be mocked", () => {
 
 it("constants", () => {
   expect(BufferModule.constants.MAX_LENGTH).toBe(4294967296);
-  expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(536870888);
+  expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(4294967295);
   expect(BufferModule.default.constants.MAX_LENGTH).toBe(4294967296);
-  expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(536870888);
+  expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(4294967295);
 });
 
 it("File", () => {

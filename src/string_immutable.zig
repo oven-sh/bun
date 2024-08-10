@@ -1963,7 +1963,7 @@ pub fn toUTF8ListWithTypeBun(list: *std.ArrayList(u8), comptime Type: type, utf1
     while (firstNonASCII16(Type, utf16_remaining)) |i| {
         const to_copy = utf16_remaining[0..i];
         utf16_remaining = utf16_remaining[i..];
-        const token = utf16_remaining[i];
+        const token = utf16_remaining[0];
 
         const replacement = utf16CodepointWithFFFDAndFirstInputChar(Type, token, utf16_remaining);
         utf16_remaining = utf16_remaining[replacement.len..];

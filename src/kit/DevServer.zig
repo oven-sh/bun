@@ -606,17 +606,7 @@ pub const BundleTask = struct {
     }
 
     pub fn completeOnBundleThread(task: *BundleTask) void {
-        const dev = task.route.dev;
-        // task.concurrent_task = switch (dev.event_loop) {
-        //     .js => .{ .js = undefined },
-        //     .mini => .{ .mini = undefined },
-        // };
-        // if (dev.event_loop == .js) {
-        //     dev.event_loop.js.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
-        // } else {
-        //     dev.event_loop.mini.enqueueTaskConcurrent(task.concurrent_task.mini.from(task, "completeMini"));
-        // }
-        dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
+        task.route.dev.vm.event_loop.enqueueTaskConcurrent(task.concurrent_task.js.from(task, .manual_deinit));
     }
 };
 

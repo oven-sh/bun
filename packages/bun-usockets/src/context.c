@@ -128,7 +128,7 @@ void us_internal_socket_context_link_listen_socket(struct us_socket_context_t *c
         context->head_listen_sockets->s.prev = &ls->s;
     }
     context->head_listen_sockets = ls;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
 
 /* We always add in the top, so we don't modify any s.next */
@@ -140,7 +140,7 @@ void us_internal_socket_context_link_socket(struct us_socket_context_t *context,
         context->head_sockets->prev = s;
     }
     context->head_sockets = s;
-    context->ref_count++;
+    us_socket_context_ref(0, context);
 }
 
 struct us_loop_t *us_socket_context_loop(int ssl, struct us_socket_context_t *context) {
@@ -277,9 +277,8 @@ struct us_bun_verify_error_t us_socket_verify_error(int ssl, struct us_socket_t 
     return (struct us_bun_verify_error_t) { .error = 0, .code = NULL, .reason = NULL };    
 }
 
-
-
 void us_internal_socket_context_free(int ssl, struct us_socket_context_t *context) {
+
 #ifndef LIBUS_NO_SSL
     if (ssl) {
         /* This function will call us again with SSL=false */
@@ -300,9 +299,10 @@ void us_internal_socket_context_free(int ssl, struct us_socket_context_t *contex
 void us_socket_context_ref(int ssl, struct us_socket_context_t *context) {
     context->ref_count++;
 }
-
 void us_socket_context_unref(int ssl, struct us_socket_context_t *context) {
-    if (--context->ref_count == 0) {
+    uint32_t ref_count = context->ref_count;
+    context->ref_count--;    
+    if (ref_count == 1) {
         us_internal_socket_context_free(ssl, context);
     }
 }
@@ -481,6 +481,7 @@ void *us_socket_context_connect(int ssl, struct us_socket_context_t *context, co
     struct us_connecting_socket_t *c = us_calloc(1, sizeof(struct us_connecting_socket_t) + socket_ext_size);
     c->socket_ext_size = socket_ext_size;
     c->context = context;
+    us_socket_context_ref(ssl, context);     
     c->options = options;
     c->ssl = ssl > 0;
     c->timeout = 255;
@@ -548,7 +549,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
     c->pending_resolve_callback = 0;
     // if the socket was closed while we were resolving the address, free it
     if (c->closed) {
-        us_connecting_socket_free(c);
+        us_connecting_socket_free(c->ssl, c);
         return;
     }
     struct addrinfo_result *result = Bun__addrinfo_getRequestResult(c->addrinfo_req);
@@ -556,7 +557,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         c->error = result->error;
         c->context->on_connect_error(c, result->error);
         Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 
@@ -567,7 +568,7 @@ void us_internal_socket_after_resolve(struct us_connecting_socket_t *c) {
         c->error = ECONNREFUSED;
         c->context->on_connect_error(c, ECONNREFUSED);
         Bun__addrinfo_freeRequest(c->addrinfo_req, 1);
-        us_connecting_socket_close(0, c);
+        us_connecting_socket_close(c->ssl, c);
         return;
     }
 }
@@ -638,7 +639,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
                     c->error = ECONNREFUSED;
                     c->context->on_connect_error(c, error);
                     Bun__addrinfo_freeRequest(c->addrinfo_req, ECONNREFUSED);
-                    us_connecting_socket_close(0, c);
+                    us_connecting_socket_close(c->ssl, c);
                 }
             }
         } else {
@@ -667,7 +668,7 @@ void us_internal_socket_after_open(struct us_socket_t *s, int error) {
             }
             // now that the socket is open, we can release the associated us_connecting_socket_t if it exists
             Bun__addrinfo_freeRequest(c->addrinfo_req, 0);
-            us_connecting_socket_free(c);
+            us_connecting_socket_free(c->ssl, c);
             s->connect_state = NULL;
         }
 

@@ -706,6 +706,8 @@ pub const Body = struct {
                     locked.promise = null;
 
                     switch (locked.action) {
+                        // These ones must use promise.wrap() to handle exceptions thrown while calling .toJS() on the value.
+                        // These exceptions can happen if the String is too long, ArrayBuffer is too large, JSON parse error, etc.
                         .getText => {
                             switch (new.*) {
                                 .WTFStringImpl,
@@ -713,37 +715,32 @@ pub const Body = struct {
                                 // .InlineBlob,
                                 => {
                                     var blob = new.useAsAnyBlobAllowNonUTF8String();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, AnyBlob.toStringTransfer, .{ &blob, global });
                                 },
                                 else => {
                                     var blob = new.use();
-                                    promise.resolve(global, blob.toString(global, .transfer));
+                                    promise.wrap(global, Blob.toStringTransfer, .{ &blob, global });
                                 },
                             }
                         },
                         .getJSON => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            const json_value = blob.toJSON(global, .share);
+                            promise.wrap(global, AnyBlob.toJSONShare, .{ &blob, global });
                             blob.detach();
-
-                            if (json_value.isAnyError()) {
-                                promise.reject(global, json_value);
-                            } else {
-                                promise.resolve(global, json_value);
-                            }
                         },
                         .getArrayBuffer => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toArrayBuffer(global, .transfer));
+                            promise.wrap(global, AnyBlob.toArrayBufferTransfer, .{ &blob, global });
                         },
                         .getBytes => {
                             var blob = new.useAsAnyBlobAllowNonUTF8String();
-                            promise.resolve(global, blob.toUint8Array(global, .transfer));
+                            promise.wrap(global, AnyBlob.toUint8ArrayTransfer, .{ &blob, global });
                         },
+
                         .getFormData => inner: {
                             var blob = new.useAsAnyBlob();
                             defer blob.detach();
-                            var async_form_data = locked.action.getFormData orelse {
+                            var async_form_data: *bun.FormData.AsyncFormData = locked.action.getFormData orelse {
                                 promise.reject(global, ZigString.init("Internal error: task for FormData must not be null").toErrorInstance(global));
                                 break :inner;
                             };
@@ -1068,7 +1065,7 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toString(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toString, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBody(
@@ -1103,6 +1100,14 @@ pub fn BodyMixin(comptime Type: type) type {
             );
         }
 
+        fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*AnyBlob, *JSC.JSGlobalObject) JSC.JSValue {
+            return struct {
+                fn wrap(this: *AnyBlob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                    return Fn(this, globalObject, lifetime);
+                }
+            }.wrap;
+        }
+
         pub fn getJSON(
             this: *Type,
             globalObject: *JSC.JSGlobalObject,
@@ -1121,9 +1126,8 @@ pub fn BodyMixin(comptime Type: type) type {
             }
 
             var blob = value.useAsAnyBlobAllowNonUTF8String();
-            const result = blob.toJSON(globalObject, .share);
 
-            return JSC.JSPromise.wrap(globalObject, result);
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toJSON, .share), .{ &blob, globalObject });
         }
 
         fn handleBodyAlreadyUsed(globalObject: *JSC.JSGlobalObject) JSValue {
@@ -1153,7 +1157,8 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toArrayBuffer(globalObject, .transfer));
+
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toArrayBuffer, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getBytes(
@@ -1176,7 +1181,7 @@ pub fn BodyMixin(comptime Type: type) type {
 
             // toArrayBuffer in AnyBlob checks for non-UTF8 strings
             var blob: AnyBlob = value.useAsAnyBlobAllowNonUTF8String();
-            return JSC.JSPromise.wrap(globalObject, blob.toUint8Array(globalObject, .transfer));
+            return JSC.JSPromise.wrap(globalObject, lifetimeWrap(AnyBlob.toUint8Array, .transfer), .{ &blob, globalObject });
         }
 
         pub fn getFormData(
@@ -1222,7 +1227,7 @@ pub fn BodyMixin(comptime Type: type) type {
                 ).reject();
             };
 
-            return JSC.JSPromise.wrap(
+            return JSC.JSPromise.wrapValue(
                 globalObject,
                 js_value,
             );

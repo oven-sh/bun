@@ -342,7 +342,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
         };
 
         pub fn markSocketAsDead(socket: HTTPSocket) void {
-            socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+            if (socket.ext(**anyopaque)) |ctx| {
+                ctx.* = bun.cast(**anyopaque, ActiveSocket.init(&dead_socket).ptr());
+            }
         }
 
         fn terminateSocket(socket: HTTPSocket) void {
@@ -461,7 +463,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (hostname.len <= MAX_KEEPALIVE_HOSTNAME and !socket.isClosedOrHasError() and socket.isEstablished()) {
                 if (this.pending_sockets.get()) |pending| {
-                    socket.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
+                    if (socket.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(pending).ptr());
+                    }
                     socket.flush();
                     socket.timeout(0);
                     socket.setTimeoutMinutes(5);
@@ -517,9 +521,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     // handshake completed but we may have ssl errors
                     client.flags.did_have_handshaking_error = handshake_error.error_no != 0;
                     if (handshake_success) {
-                        if(client.flags.reject_unauthorized) {
+                        if (client.flags.reject_unauthorized) {
                             // only reject the connection if reject_unauthorized == true
-                            if(client.flags.did_have_handshaking_error) {
+                            if (client.flags.did_have_handshaking_error) {
                                 client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                                 return;
                             }
@@ -537,7 +541,7 @@ fn NewHTTPContext(comptime ssl: bool) type {
                     } else {
                         // if we are here is because server rejected us, and the error_no is the cause of this
                         // if we set reject_unauthorized == false this means the server requires custom CA aka NODE_EXTRA_CA_CERTS
-                        if(client.flags.did_have_handshaking_error) {
+                        if (client.flags.did_have_handshaking_error) {
                             client.closeAndFail(BoringSSL.getCertErrorFromNo(handshake_error.error_no), comptime ssl, socket);
                             return;
                         }
@@ -545,7 +549,6 @@ fn NewHTTPContext(comptime ssl: bool) type {
                         client.closeAndFail(error.ConnectionRefused, comptime ssl, socket);
                         return;
                     }
-                
                 }
 
                 if (socket.isClosed()) {
@@ -745,7 +748,9 @@ fn NewHTTPContext(comptime ssl: bool) type {
 
             if (client.isKeepAlivePossible()) {
                 if (this.existingSocket(client.flags.reject_unauthorized, hostname, port)) |sock| {
-                    sock.ext(**anyopaque).* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    if (sock.ext(**anyopaque)) |ctx| {
+                        ctx.* = bun.cast(**anyopaque, ActiveSocket.init(client).ptr());
+                    }
                     client.allow_retry = true;
                     client.onOpen(comptime ssl, sock);
                     if (comptime ssl) {
@@ -2858,10 +2863,10 @@ pub fn onWritable(this: *HTTPClient, comptime is_first_call: bool, comptime is_s
 }
 
 pub fn closeAndFail(this: *HTTPClient, err: anyerror, comptime is_ssl: bool, socket: NewHTTPContext(is_ssl).HTTPSocket) void {
-    if (!socket.isClosed()) {
-        NewHTTPContext(is_ssl).terminateSocket(socket);
-    }
     if (this.state.stage != .fail and this.state.stage != .done) {
+        if (!socket.isClosed()) {
+            NewHTTPContext(is_ssl).terminateSocket(socket);
+        }
         log("closeAndFail: {s}", .{@errorName(err)});
         this.fail(err);
     }

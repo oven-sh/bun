@@ -26,10 +26,6 @@
 #include "JSBuffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 
@@ -272,8 +268,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     auto* executable = JSC::DirectEvalExecutable::create(
         targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
@@ -394,8 +390,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
     // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -446,6 +442,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     return JSValue::encode(jsString(vm, url));
 }
 
+Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
+{
+    return NodeVMGlobalObject::createStructure(vm, jsNull());
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -462,8 +463,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     }
     JSObject* context = asObject(contextArg);
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobalObject->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobalObject->NodeVMGlobalObjectStructure());
 
     auto proxyStructure = zigGlobalObject->globalProxyStructure();
     auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -536,6 +537,7 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptPrototype) };
 const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
 const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptConstructor) };
+const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 DEFINE_VISIT_CHILDREN(NodeVMScript);
 

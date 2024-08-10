@@ -259,7 +259,7 @@ fn makeGlobWalker(
 
     if (cwd != null) {
         var globWalker = alloc.create(GlobWalker) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         };
 
@@ -275,7 +275,7 @@ fn makeGlobWalker(
             error_on_broken_symlinks,
             only_files,
         ) catch {
-            globalThis.throw("Out of memory", .{});
+            globalThis.throwOutOfMemory();
             return null;
         }) {
             .err => |err| {
@@ -287,7 +287,7 @@ fn makeGlobWalker(
         return globWalker;
     }
     var globWalker = alloc.create(GlobWalker) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     };
 
@@ -301,7 +301,7 @@ fn makeGlobWalker(
         error_on_broken_symlinks,
         only_files,
     ) catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return null;
     }) {
         .err => |err| {
@@ -400,7 +400,7 @@ pub fn __scan(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.CallFram
     incrPendingActivityFlag(&this.has_pending_activity);
     var task = WalkTask.create(globalThis, alloc, globWalker, &this.has_pending_activity) catch {
         decrPendingActivityFlag(&this.has_pending_activity);
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     };
     task.schedule();
@@ -423,7 +423,7 @@ pub fn __scanSync(this: *Glob, globalThis: *JSGlobalObject, callframe: *JSC.Call
     defer globWalker.deinit(true);
 
     switch (globWalker.walk() catch {
-        globalThis.throw("Out of memory", .{});
+        globalThis.throwOutOfMemory();
         return .undefined;
     }) {
         .err => |err| {

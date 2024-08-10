@@ -83,9 +83,16 @@ pub const InternalLoopData = extern struct {
 pub const InternalSocket = union(enum) {
     done: *Socket,
     connecting: *ConnectingSocket,
-
+    detached: void,
+    pub fn isDetached(this: InternalSocket) bool {
+        return this == .detached;
+    }  
+    pub fn detach(this: *InternalSocket) void {
+        this.* = .detached;
+    }
     pub fn close(this: InternalSocket, comptime is_ssl: bool, code: CloseCode) void {
         switch (this) {
+            .detached => {},
             .done => |socket| {
                 debug("us_socket_close({d})", .{@intFromPtr(socket)});
                 _ = us_socket_close(
@@ -109,6 +116,7 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => |socket| us_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
             .connecting => |socket| us_connecting_socket_is_closed(@intFromBool(is_ssl), socket) > 0,
+            .detached => true,
         };
     }
 
@@ -116,6 +124,7 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => this.done,
             .connecting => null,
+            .detached => null,
         };
     }
 
@@ -123,11 +132,15 @@ pub const InternalSocket = union(enum) {
         return switch (this) {
             .done => switch (other) {
                 .done => this.done == other.done,
-                .connecting => false,
+                .connecting, .detached => false,
             },
             .connecting => switch (other) {
-                .done => false,
+                .done, .detached => false,
                 .connecting => this.connecting == other.connecting,
+            },
+            .detached => switch (other) {
+                .detached => true,
+                .done, .connecting => false,
             },
         };
     }
@@ -138,7 +151,13 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         const ssl_int: i32 = @intFromBool(is_ssl);
         socket: InternalSocket,
         const ThisSocket = @This();
-
+        pub const detached: NewSocketHandler(is_ssl) = NewSocketHandler(is_ssl){ .socket = .{ .detached = {} } };
+        pub fn detach(this: *ThisSocket) void {
+            this.socket.detach();
+        }
+        pub fn isDetached(this: ThisSocket) bool {
+            return this.socket.isDetached();
+        }
         pub fn verifyError(this: ThisSocket) us_bun_verify_error_t {
             const socket = this.socket.get() orelse return std.mem.zeroes(us_bun_verify_error_t);
             const ssl_error: us_bun_verify_error_t = uws.us_socket_verify_error(comptime ssl_int, socket);
@@ -154,6 +173,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| us_socket_timeout(comptime ssl_int, socket, seconds),
                 .connecting => |socket| us_connecting_socket_timeout(comptime ssl_int, socket, seconds),
+                .detached => {},
             }
         }
 
@@ -177,6 +197,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         us_connecting_socket_long_timeout(comptime ssl_int, socket, 0);
                     }
                 },
+                .detached => {},
             }
         }
 
@@ -190,19 +211,23 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     us_connecting_socket_timeout(comptime ssl_int, socket, 0);
                     us_connecting_socket_long_timeout(comptime ssl_int, socket, minutes);
                 },
+                .detached => {},
             }
         }
 
         pub fn startTLS(this: ThisSocket, is_client: bool) void {
-            const socket = this.socket.get() orelse @panic("socket is not open");
+            const socket = this.socket.get() orelse return;
             _ = us_socket_open(comptime ssl_int, socket, @intFromBool(is_client), null, 0);
         }
 
-        pub fn ssl(this: ThisSocket) *BoringSSL.SSL {
+        pub fn ssl(this: ThisSocket) ?*BoringSSL.SSL {
             if (comptime is_ssl) {
-                return @as(*BoringSSL.SSL, @ptrCast(this.getNativeHandle()));
+                if(this.getNativeHandle()) |handle| {
+                    return @as(*BoringSSL.SSL, @ptrCast(handle));
+                }
+                return null;
             }
-            @panic("socket is not a TLS socket");
+            return null;
         }
 
         // Note: this assumes that the socket is non-TLS and will be adopted and wrapped with a new TLS context
@@ -229,7 +254,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (TLSSocket.from(socket)).ext(ContextType).*;
+                        return (TLSSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (TLSSocket.from(socket)).ext(ContextType);
@@ -289,7 +314,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 }
                 pub fn on_connect_error(socket: *Socket, code: i32) callconv(.C) ?*Socket {
                     Fields.onConnectError(
-                        TLSSocket.from(socket).ext(ContextType).*,
+                        TLSSocket.from(socket).ext(ContextType).?.*,
                         TLSSocket.from(socket),
                         code,
                     );
@@ -328,7 +353,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 .on_long_timeout = SocketHandler.on_long_timeout,
             };
 
-            const this_socket = this.socket.get() orelse @panic("socket is not open");
+            const this_socket = this.socket.get() orelse return null;
 
             const socket = us_socket_wrap_with_tls(ssl_int, this_socket, options, events, socket_ext_size) orelse return null;
             return NewSocketHandler(true).from(socket);
@@ -338,6 +363,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             return @ptrCast(switch (this.socket) {
                 .done => |socket| us_socket_get_native_handle(comptime ssl_int, socket),
                 .connecting => |socket| us_connecting_socket_get_native_handle(comptime ssl_int, socket),
+                .detached => null,
             } orelse return null);
         }
 
@@ -361,7 +387,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             us_socket_sendfile_needs_more(socket);
         }
 
-        pub fn ext(this: ThisSocket, comptime ContextType: type) *ContextType {
+        pub fn ext(this: ThisSocket, comptime ContextType: type) ?*ContextType {
             const alignment = if (ContextType == *anyopaque)
                 @sizeOf(usize)
             else
@@ -370,6 +396,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const ptr = switch (this.socket) {
                 .done => |sock| us_socket_ext(comptime ssl_int, sock),
                 .connecting => |sock| us_connecting_socket_ext(comptime ssl_int, sock),
+                .detached => return null,
             };
 
             return @as(*align(alignment) ContextType, @ptrCast(@alignCast(ptr)));
@@ -380,6 +407,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             switch (this.socket) {
                 .done => |socket| return us_socket_context(comptime ssl_int, socket),
                 .connecting => |socket| return us_connecting_socket_context(comptime ssl_int, socket),
+                .detached => return null,
             }
         }
 
@@ -434,6 +462,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => {},
             }
         }
 
@@ -453,6 +482,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => {},
             }
         }
 
@@ -470,6 +500,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     ) > 0;
                 },
+                .detached => return true,
             }
         }
 
@@ -495,6 +526,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                         socket,
                     );
                 },
+                .detached => return 0,
             }
         }
 
@@ -642,8 +674,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
         ) ?ThisSocket {
             const socket_ = ThisSocket{ .socket = .{ .done = us_socket_from_fd(ctx, @sizeOf(*anyopaque), bun.socketcast(handle)) orelse return null } };
 
-            const holder = socket_.ext(*anyopaque);
-            holder.* = this;
+            if(socket_.ext(*anyopaque)) |holder| {
+                holder.* = this;
+            }
 
             if (comptime socket_field_name) |field| {
                 @field(this, field) = socket_;
@@ -679,8 +712,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 return error.FailedToOpenSocket;
 
             const socket_ = ThisSocket{ .socket = .{ .done = socket } };
-            const holder = socket_.ext(*anyopaque);
-            holder.* = ctx;
+            if(socket_.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             return socket_;
         }
 
@@ -721,9 +755,9 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                 ThisSocket{
                     .socket = .{ .connecting = @ptrCast(socket_ptr) },
                 };
-
-            const holder = socket.ext(*anyopaque);
-            holder.* = ptr;
+            if(socket.ext(*anyopaque)) |holder| {
+                holder.* = ptr;
+            }
             return socket;
         }
 
@@ -751,7 +785,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (SocketHandlerType.from(socket)).ext(ContextType).*;
+                        return (SocketHandlerType.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (SocketHandlerType.from(socket)).ext(ContextType);
@@ -806,7 +840,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.fromConnecting(socket).ext(ContextType).*
+                        SocketHandlerType.fromConnecting(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -820,7 +854,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        SocketHandlerType.from(socket).ext(ContextType).*
+                        SocketHandlerType.from(socket).ext(ContextType).?.*
                     else
                         SocketHandlerType.from(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -883,7 +917,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     }
 
                     if (comptime deref_) {
-                        return (ThisSocket.from(socket)).ext(ContextType).*;
+                        return (ThisSocket.from(socket)).ext(ContextType).?.*;
                     }
 
                     return (ThisSocket.from(socket)).ext(ContextType);
@@ -945,7 +979,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_connecting_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.fromConnecting(socket).ext(ContextType).*
+                        ThisSocket.fromConnecting(socket).ext(ContextType).?.*
                     else
                         ThisSocket.fromConnecting(socket).ext(ContextType);
                     Fields.onConnectError(
@@ -959,7 +993,7 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
                     const val = if (comptime ContextType == anyopaque)
                         us_socket_ext(comptime ssl_int, socket)
                     else if (comptime deref_)
-                        ThisSocket.from(socket).ext(ContextType).*
+                        ThisSocket.from(socket).ext(ContextType).?.*
                     else
                         ThisSocket.from(socket).ext(ContextType);
 
@@ -1033,14 +1067,14 @@ pub fn NewSocketHandler(comptime is_ssl: bool) type {
             const new_socket = us_socket_context_adopt_socket(comptime ssl_int, socket_ctx, socket, -1) orelse return false;
             bun.assert(new_socket == socket);
             var adopted = ThisSocket.from(new_socket);
-            const holder = adopted.ext(*anyopaque);
-            holder.* = ctx;
+            if(adopted.ext(*anyopaque)) |holder| {
+                holder.* = ctx;
+            }
             @field(ctx, socket_field_name) = adopted;
             return true;
         }
     };
 }
-
 pub const SocketTCP = NewSocketHandler(false);
 pub const SocketTLS = NewSocketHandler(true);
 
@@ -2312,7 +2346,6 @@ pub fn NewApp(comptime ssl: bool) type {
                 }
             }
             pub fn onAborted(res: *Response, comptime UserDataType: type, comptime handler: fn (UserDataType, *Response) void, opcional_data: UserDataType) void {
-                
                 const Wrapper = struct {
                     pub fn handle(this: *uws_res, user_data: ?*anyopaque) callconv(.C) void {
                         if (comptime UserDataType == void) {

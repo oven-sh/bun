@@ -2131,7 +2131,9 @@ pub const Subprocess = struct {
 
         if (subprocess.ipc_data) |*ipc_data| {
             if (Environment.isPosix) {
-                posix_ipc_info.ext(*Subprocess).* = subprocess;
+                if (posix_ipc_info.ext(*Subprocess)) |ctx| {
+                    ctx.* = subprocess;
+                }
             } else {
                 if (ipc_data.configureServer(
                     Subprocess,

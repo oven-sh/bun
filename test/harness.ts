@@ -100,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run

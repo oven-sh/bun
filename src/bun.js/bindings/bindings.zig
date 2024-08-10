@@ -3458,6 +3458,8 @@ pub const JSValue = enum(JSValueReprInt) {
         StringObject = 77,
         DerivedStringObject = 78,
 
+        InternalFieldTuple = 79,
+
         MaxJS = 0b11111111,
         Event = 0b11101111,
         DOMWrapper = 0b11101110,

@@ -452,32 +452,58 @@ pub const TextEncoderStreamEncoder = struct {
 
         if (input.len == 0) return .undefined;
 
-        const prepend_replacement = prepend_replacement: {
+        const prepend_replacement_len: usize = prepend_replacement: {
             if (this.pending_lead_surrogate != null) {
                 this.pending_lead_surrogate = null;
                 // no latin1 surrogate pairs
-                break :prepend_replacement true;
+                break :prepend_replacement 3;
             }
 
-            break :prepend_replacement false;
+            break :prepend_replacement 0;
         };
-
-        const length: usize = bun.simdutf.length.utf8.from.latin1(input) + @as(usize, if (prepend_replacement) 3 else 0);
-
-        const array_value, const bytes = ArrayBuffer.allocBuffer(globalObject, length);
-
-        var remain = bytes;
-
-        if (prepend_replacement) {
-            @memcpy(remain[0..3], &[3]u8{ 0xef, 0xbf, 0xbd });
-            remain = remain[3..];
+        // In a previous benchmark, counting the length took about as much time as allocating the buffer.
+        //
+        // Benchmark	Time %	CPU (ns)	Iterations	Ratio
+        // 288.00 ms   13.5%	288.00 ms	 	  simdutf::arm64::implementation::convert_latin1_to_utf8(char const*, unsigned long, char*) const
+        // 278.00 ms   13.0%	278.00 ms	 	  simdutf::arm64::implementation::utf8_length_from_latin1(char const*, unsigned long) const
+        //
+        //
+        var buffer = std.ArrayList(u8).initCapacity(bun.default_allocator, input.len + prepend_replacement_len) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
+        if (prepend_replacement_len > 0) {
+            buffer.appendSliceAssumeCapacity(&[3]u8{ 0xef, 0xbf, 0xbd });
         }
 
-        const count = bun.simdutf.convert.latin1.to.utf8(input, remain);
+        var remain = input;
+        while (remain.len > 0) {
+            const result = strings.copyLatin1IntoUTF8(buffer.unusedCapacitySlice(), []const u8, remain);
 
-        bun.debugAssert(count == remain.len);
+            buffer.items.len += result.written;
+            remain = remain[result.read..];
 
-        return array_value;
+            if (result.written == 0 and result.read == 0) {
+                buffer.ensureUnusedCapacity(2) catch {
+                    buffer.deinit();
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
+            } else if (buffer.items.len == buffer.capacity and remain.len > 0) {
+                buffer.ensureTotalCapacity(buffer.items.len + remain.len + 1) catch {
+                    buffer.deinit();
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
+            }
+        }
+
+        if (comptime Environment.isDebug) {
+            // wrap in comptime if so simdutf isn't called in a release build here.
+            bun.debugAssert(buffer.items.len == (bun.simdutf.length.utf8.from.latin1(input) + prepend_replacement_len));
+        }
+
+        return JSC.JSUint8Array.fromBytes(globalObject, buffer.items);
     }
 
     fn encodeUTF16(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, input: []const u16) JSValue {
@@ -526,107 +552,43 @@ pub const TextEncoderStreamEncoder = struct {
             break :prepend null;
         };
 
-        // TODO: use ExternalArrayBuffer and skip validation pass
-        const validate_result = bun.simdutf.validate.with_errors.utf16le(remain);
-        if (validate_result.status == .success) {
-            const len = bun.simdutf.length.utf8.from.utf16.le(remain);
-            if (len == 0) return .undefined;
-
-            const array_value, var bytes = ArrayBuffer.allocBuffer(globalObject, len + if (prepend) |pre| pre.len else 0);
-            if (array_value.isEmpty()) {
-                return .zero;
-            }
-
-            if (prepend) |pre| {
-                @memcpy(bytes[0..pre.len], pre.bytes[0..pre.len]);
-                bytes = bytes[pre.len..];
-            }
-
-            const convert_result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remain, bytes);
-            bun.debugAssert(convert_result.status == .success);
-
-            return array_value;
-        }
+        const length = bun.simdutf.length.utf8.from.utf16.le(remain);
 
         var buf = std.ArrayList(u8).initCapacity(
             bun.default_allocator,
-            validate_result.count + if (prepend) |pre| pre.len else 0,
-        ) catch bun.outOfMemory();
-        defer buf.deinit();
+            length + @as(usize, if (prepend) |pre| pre.len else 0),
+        ) catch {
+            globalObject.throwOutOfMemory();
+            return .zero;
+        };
 
-        if (prepend) |pre| {
+        if (prepend) |*pre| {
             buf.appendSliceAssumeCapacity(pre.bytes[0..pre.len]);
         }
 
-        var lead_surrogate: ?u16 = null;
+        const result = bun.simdutf.convert.utf16.to.utf8.with_errors.le(remain, buf.unusedCapacitySlice());
 
-        while (strings.firstNonASCII16([]const u16, remain)) |non_ascii| {
-            const token = remain[non_ascii];
-            const ascii_slice = remain[0..non_ascii];
-            remain = remain[non_ascii + 1 ..];
+        switch (result.status) {
+            else => {
+                // Slow path: there was invalid UTF-16, so we need to convert it without simdutf.
+                const lead_surrogate = strings.toUTF8ListWithTypeBun(&buf, []const u16, remain, true) catch {
+                    buf.deinit();
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
 
-            if (lead_surrogate) |lead| {
-                lead_surrogate = null;
-
-                if (ascii_slice.len != 0) {
-                    // - +3 for replacement character
-                    // - it's ascii, length will be the same, just need to convert u16 -> u8
-                    buf.ensureUnusedCapacity(ascii_slice.len + 3) catch bun.outOfMemory();
-                    buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
-                    strings.convertUTF16ToUTF8Append(&buf, ascii_slice) catch bun.outOfMemory();
-
-                    continue;
-                }
-
-                if (strings.u16IsTrail(token)) {
-                    const converted = strings.utf16CodepointWithFFFD([]const u16, &.{ lead, token });
-                    bun.debugAssert(!converted.fail);
-
-                    const sequence = strings.wtf8Sequence(converted.code_point);
-
-                    buf.appendSlice(sequence[0..converted.utf8Width()]) catch bun.outOfMemory();
-                    continue;
-                }
-
-                buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
-            }
-
-            if (strings.u16IsLead(token)) {
-                if (remain.len == 0) {
-                    this.pending_lead_surrogate = token;
+                if (lead_surrogate) |pending_lead| {
+                    this.pending_lead_surrogate = pending_lead;
                     if (buf.items.len == 0) return .undefined;
-                    return ArrayBuffer.createBuffer(globalObject, buf.items);
                 }
 
-                lead_surrogate = token;
-                continue;
-            }
-
-            bun.debugAssert(strings.u16IsTrail(token));
-
-            buf.appendSlice(&.{ 0xef, 0xbf, 0xbd }) catch bun.outOfMemory();
+                return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
+            },
+            .success => {
+                buf.items.len += result.count;
+                return JSC.JSUint8Array.fromBytes(globalObject, buf.items);
+            },
         }
-
-        if (lead_surrogate != null and remain.len == 0) {
-            this.pending_lead_surrogate = lead_surrogate;
-            if (buf.items.len == 0) return .undefined;
-            return ArrayBuffer.createBuffer(globalObject, buf.items);
-        }
-
-        const array_value, var bytes = ArrayBuffer.allocBuffer(globalObject, buf.items.len + remain.len + @as(usize, if (lead_surrogate != null) 3 else 0));
-        if (array_value.isEmpty()) return .zero;
-
-        @memcpy(bytes[0..buf.items.len], buf.items);
-        bytes = bytes[buf.items.len..];
-
-        if (lead_surrogate != null) {
-            @memcpy(bytes[0..3], &[3]u8{ 0xef, 0xbf, 0xbd });
-            bytes = bytes[3..];
-        }
-
-        _ = strings.convertUTF16toUTF8InBuffer(bytes, remain) catch unreachable;
-
-        return array_value;
     }
 
     pub fn flush(this: *TextEncoderStreamEncoder, globalObject: *JSGlobalObject, _: *JSC.CallFrame) JSValue {

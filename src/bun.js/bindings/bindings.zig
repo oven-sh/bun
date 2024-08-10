@@ -1705,6 +1705,12 @@ pub const JSUint8Array = opaque {
     pub fn slice(this: *JSUint8Array) []u8 {
         return this.ptr()[0..this.len()];
     }
+
+    extern fn JSUint8Array__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    /// *bytes* must come from bun.default_allocator
+    pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
+        return JSUint8Array__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
+    }
 };
 
 pub const JSCell = extern struct {

@@ -2139,7 +2139,6 @@ pub const Formatter = struct {
                     return;
                 }
 
-                //
                 var was_good_time = this.always_newline_scope or
                     // heuristic: more than 10, probably should have a newline before it
                     len > 10;

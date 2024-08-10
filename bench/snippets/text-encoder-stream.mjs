@@ -23,7 +23,7 @@ function create(src) {
         controller.close();
       },
     }).pipeThrough(encoderStream);
-    return await new Response(stream).text();
+    return await new Response(stream).bytes();
   }
 
   // if (new TextDecoder().decode(await runBench(oneKB)) !== src) {

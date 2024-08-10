@@ -68,11 +68,11 @@ const bunSocketServerOptions = Symbol.for("::bunnetserveroptions::");
 const bunSocketInternal = Symbol.for("::bunnetsocketinternal::");
 const bunTLSConnectOptions = Symbol.for("::buntlsconnectoptions::");
 
-function closeNT(self) {
-  self.emit("close");
-}
 function endNT(socket, callback, err) {
   socket.end();
+  callback(err);
+}
+function closeNT(callback, err) {
   callback(err);
 }
 
@@ -190,11 +190,14 @@ const Socket = (function (InternalSocket) {
     static #End(socket) {
       const self = socket.data;
       if (!self) return;
-      Socket.#Close(socket);
-      //https://nodejs.org/api/net.html#event-end
-      if (!self.allowHalfOpen) {
-        socket.end();
+      self.#ended = true;
+      const queue = self.#readQueue;
+      if (queue.isEmpty()) {
+        if (self.push(null)) {
+          return;
+        }
       }
+      queue.push(null);
     }
     static #Close(socket) {
       const self = socket.data;
@@ -202,11 +205,17 @@ const Socket = (function (InternalSocket) {
       self.#closed = true;
       //socket cannot be used after close
       self[bunSocketInternal] = null;
-      const queue = self.#readQueue;
-      if (queue.isEmpty()) {
-        if (self.push(null)) return;
+      if (self.#final_callback) {
+        self.#final_callback();
+        return;
       }
-      queue.push(null);
+      if (!self.#ended) {
+        const queue = self.#readQueue;
+        if (queue.isEmpty()) {
+          if (self.push(null)) return;
+        }
+        queue.push(null);
+      }
     }
 
     static #Drain(socket) {
@@ -331,6 +340,8 @@ const Socket = (function (InternalSocket) {
     bytesRead = 0;
     bytesWritten = 0;
     #closed = false;
+    #ended = false;
+    #final_callback = null;
     connecting = false;
     localAddress = "127.0.0.1";
     #readQueue = $createFIFO();
@@ -618,14 +629,21 @@ const Socket = (function (InternalSocket) {
     }
 
     _destroy(err, callback) {
-      const socket = this[bunSocketInternal];
-      socket && process.nextTick(endNT, socket, callback, err);
+      process.nextTick(closeNT, callback, err);
     }
 
     _final(callback) {
-      this[bunSocketInternal]?.end();
-      callback();
-      process.nextTick(closeNT, this);
+      const socket = this[bunSocketInternal];
+      // already closed
+      if (!socket) callback();
+
+      if (this.allowHalfOpen) {
+        // wait socket close event
+        this.#final_callback = callback;
+      } else {
+        // emit FIN not allowing half open
+        process.nextTick(endNT, socket, callback);
+      }
     }
 
     get localFamily() {

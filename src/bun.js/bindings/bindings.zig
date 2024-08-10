@@ -630,9 +630,7 @@ pub const ZigString = extern struct {
     }
 
     pub fn initUTF16(items: []const u16) ZigString {
-        var out = ZigString.Empty;
-        out._unsafe_ptr_do_not_use = @ptrCast(items.ptr);
-        out.len = items.len;
+        var out = ZigString{ ._unsafe_ptr_do_not_use = @ptrCast(items), .len = items.len };
         out.markUTF16();
         return out;
     }

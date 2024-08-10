@@ -24,6 +24,6 @@ public:
 };
 
 // Zig API
-extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner);
+extern "C" DevGlobalObject* KitCreateDevGlobal(DevServer* owner, void* console);
 
 }; // namespace Kit

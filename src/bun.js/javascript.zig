@@ -2654,11 +2654,11 @@ pub const VirtualMachine = struct {
             if (this.isWatcherEnabled()) {
                 this.eventLoop().performGC();
                 switch (this.pending_internal_promise.status(this.global.vm())) {
-                    JSC.JSPromise.Status.Pending => {
-                        while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                    .pending => {
+                        while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().tick();
 
-                            if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                            if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                                 this.eventLoop().autoTick();
                             }
                         }
@@ -2668,11 +2668,11 @@ pub const VirtualMachine = struct {
             } else {
                 this.eventLoop().performGC();
                 this.waitForPromise(JSC.AnyPromise{
-                    .Internal = promise,
+                    .internal = promise,
                 });
             }
 
-            if (promise.status(this.global.vm()) == .Rejected)
+            if (promise.status(this.global.vm()) == .rejected)
                 return promise;
         }
 
@@ -2753,7 +2753,7 @@ pub const VirtualMachine = struct {
         const promise = try this.reloadEntryPoint(entry_path);
         this.eventLoop().performGC();
         this.eventLoop().waitForPromiseWithTermination(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
         if (this.worker) |worker| {
             if (worker.hasRequestedTerminate()) {
@@ -2770,11 +2770,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2782,14 +2782,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         this.eventLoop().autoTick();
@@ -2804,11 +2802,11 @@ pub const VirtualMachine = struct {
         if (this.isWatcherEnabled()) {
             this.eventLoop().performGC();
             switch (this.pending_internal_promise.status(this.global.vm())) {
-                JSC.JSPromise.Status.Pending => {
-                    while (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                .pending => {
+                    while (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                         this.eventLoop().tick();
 
-                        if (this.pending_internal_promise.status(this.global.vm()) == .Pending) {
+                        if (this.pending_internal_promise.status(this.global.vm()) == .pending) {
                             this.eventLoop().autoTick();
                         }
                     }
@@ -2816,14 +2814,12 @@ pub const VirtualMachine = struct {
                 else => {},
             }
         } else {
-            if (promise.status(this.global.vm()) == .Rejected) {
+            if (promise.status(this.global.vm()) == .rejected) {
                 return promise;
             }
 
             this.eventLoop().performGC();
-            this.waitForPromise(JSC.AnyPromise{
-                .Internal = promise,
-            });
+            this.waitForPromise(.{ .internal = promise });
         }
 
         return this.pending_internal_promise;
@@ -2884,10 +2880,20 @@ pub const VirtualMachine = struct {
 
         promise = JSModuleLoader.loadAndEvaluateModule(this.global, &String.init(entry_path)) orelse return null;
         this.waitForPromise(JSC.AnyPromise{
-            .Internal = promise,
+            .internal = promise,
         });
 
         return promise;
+    }
+
+    pub fn printErrorLikeObjectSimple(this: *VirtualMachine, value: JSValue, writer: anytype, comptime escape_codes: bool) void {
+        this.printErrorlikeObject(value, null, null, @TypeOf(writer), writer, escape_codes, false);
+    }
+
+    pub fn printErrorLikeObjectToConsole(this: *VirtualMachine, value: JSValue) void {
+        switch (Output.enable_ansi_colors_stderr) {
+            inline else => |colors| this.printErrorLikeObjectSimple(value, Output.errorWriter(), colors),
+        }
     }
 
     // When the Error-like object is one of our own, it's best to rely on the object directly instead of serializing it to a ZigException.

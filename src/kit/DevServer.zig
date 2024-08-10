@@ -105,7 +105,7 @@ pub fn init(options: Options) *DevServer {
         .args = std.mem.zeroes(bun.Schema.Api.TransformOptions),
     }) catch |err|
         Output.panic("Failed to create Global object: {}", .{err});
-    dev.server_global = c.KitCreateDevGlobal(dev);
+    dev.server_global = c.KitCreateDevGlobal(dev, dev.vm.console);
     dev.vm.global = dev.server_global.js();
     dev.vm.regular_event_loop.global = dev.vm.global;
     dev.vm.jsc = dev.vm.global.vm();
@@ -367,7 +367,9 @@ fn getOrEnqueueBundle(
             // the same thread as this function is called.
             task.handlers.prepend(cb);
         },
-        .failed => @panic("TODO: Show bundle failure to browser"),
+        .failed => |fail| {
+            fail.sendAsHttpResponse(resp, route, kind);
+        },
         .value => |*val| {
             kind.completionFunction()(route, resp, ctx, val);
         },
@@ -438,19 +440,10 @@ pub const BundleTask = struct {
         assert(bundle.* == .pending);
 
         if (task.result == .err) {
-            // Only log to console once
-            Output.err(task.result.err, "Failed to bundle {s} for {s}", .{
-                @tagName(task.kind),
-                route.pattern,
-            });
-            Output.flush();
-            task.log.printForLogLevel(Output.errorWriter()) catch {};
-            Output.flush();
-
-            // Store the log to print in the browser
-            bundle.* = .{ .failed = Failure.fromLog(task.log) };
-
-            task.finishHttpRequestsFailure(&bundle.failed);
+            const fail = Failure.fromLog(&task.log);
+            fail.printToConsole(route, kind);
+            task.finishHttpRequestsFailure(&fail);
+            bundle.* = .{ .failed = fail };
             return;
         }
 
@@ -492,11 +485,17 @@ pub const BundleTask = struct {
                 const code = entry_point.value.buffer.bytes;
 
                 const server_code = c.KitLoadServerCode(dev.server_global, bun.String.createLatin1(code));
-                route.dev.server_global.js().bunVM().waitForPromise(.{ .Internal = server_code.promise });
+                dev.vm.waitForPromise(.{ .internal = server_code.promise });
 
-                switch (server_code.promise.unwrap(dev.vm.jsc)) {
+                switch (server_code.promise.unwrap(dev.vm.jsc, .mark_handled)) {
                     .pending => unreachable, // promise is settled
-                    .rejected => @panic("TODO: top level module load error"),
+                    .rejected => |err| {
+                        const fail = Failure.fromJSServerLoad(err, dev.server_global.js());
+                        fail.printToConsole(task.route, .server);
+                        task.finishHttpRequestsFailure(&fail);
+                        bundle.* = .{ .failed = fail };
+                        return;
+                    },
                     .fulfilled => |v| bun.assert(v == .undefined),
                 }
 
@@ -516,11 +515,7 @@ pub const BundleTask = struct {
         task.finishHttpRequestsSuccess(kind, &bundle.value);
     }
 
-    fn finishHttpRequestsSuccess(
-        task: *BundleTask,
-        comptime kind: BundleKind,
-        bundle: *kind.Bundle(),
-    ) void {
+    fn finishHttpRequestsSuccess(task: *BundleTask, comptime kind: BundleKind, bundle: *kind.Bundle()) void {
         const func = comptime kind.completionFunction();
 
         while (task.handlers.popFirst()) |node| {
@@ -531,14 +526,11 @@ pub const BundleTask = struct {
         }
     }
 
-    fn finishHttpRequestsFailure(
-        task: *BundleTask,
-        failure: *const Failure,
-    ) void {
+    fn finishHttpRequestsFailure(task: *BundleTask, failure: *const Failure) void {
         while (task.handlers.popFirst()) |node| {
             defer bun.destroy(node);
             if (node.data.resp) |resp| {
-                sendFailure(failure, resp);
+                failure.sendAsHttpResponse(resp, task.route, task.kind);
             }
         }
     }
@@ -658,10 +650,10 @@ const Failure = union(enum) {
     bundler: std.ArrayList(bun.logger.Msg),
     /// Thrown JavaScript exception while loading server code.
     server_load: JSC.Strong,
-    /// Request handler threw. This error is never stored.
-    request: JSValue,
+    /// Never stored; the current request handler threw an error.
+    request_handler: JSValue,
 
-    /// Consumes
+    /// Consumes the Log data, resetting it.
     pub fn fromLog(log: *Log) Failure {
         const fail: Failure = .{ .bundler = log.msgs };
         log.* = .{
@@ -671,7 +663,47 @@ const Failure = union(enum) {
         return fail;
     }
 
-    fn sendAsHttpResponse(fail: *const Failure, resp: *Response) void {
+    pub fn fromJSServerLoad(js: JSValue, global: *JSC.JSGlobalObject) Failure {
+        return .{ .server_load = JSC.Strong.create(js, global) };
+    }
+
+    // TODO: deduplicate the two methods here. that isnt trivial because one has to
+    // style with ansi codes, and the other has to style with HTML.
+
+    fn printToConsole(fail: *const Failure, route: *const Route, kind: BundleKind) void {
+        defer Output.flush();
+
+        switch (fail.*) {
+            .bundler => |msgs| {
+                Output.prettyErrorln("<red>Errors while bundling {s}-side for '{s}'<r>", .{
+                    @tagName(kind),
+                    route.pattern,
+                });
+                Output.flush();
+
+                var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
+                log.printForLogLevelColorsRuntime(
+                    Output.errorWriter(),
+                    Output.enable_ansi_colors_stderr,
+                ) catch {};
+            },
+            .server_load => |strong| {
+                Output.prettyErrorln("<red>Server route handler for '{s}' threw while loading<r>", .{
+                    route.pattern,
+                });
+                const err = strong.get() orelse unreachable;
+                route.dev.vm.printErrorLikeObjectToConsole(err);
+            },
+            .request_handler => |err| {
+                Output.prettyErrorln("<red>Request to handler '{s}' failed SSR<r>", .{
+                    route.pattern,
+                });
+                route.dev.vm.printErrorLikeObjectToConsole(err);
+            },
+        }
+    }
+
+    fn sendAsHttpResponse(fail: *const Failure, resp: *Response, route: *const Route, kind: BundleKind) void {
         resp.writeStatus("500 Internal Server Error");
         var buffer: [32768]u8 = undefined;
 
@@ -679,14 +711,29 @@ const Failure = union(enum) {
             var fbs = std.io.fixedBufferStream(&buffer);
             const writer = fbs.writer();
 
-            switch (fail) {
-                .bundler => |log| {
+            switch (fail.*) {
+                .bundler => |msgs| {
+                    writer.print("Errors while bundling {s}-side for '{s}'\n\n", .{
+                        @tagName(kind),
+                        route.pattern,
+                    }) catch break :message null;
+
+                    var log: Log = .{ .msgs = msgs, .errors = 1, .level = .err };
                     log.printForLogLevelWithEnableAnsiColors(writer, false) catch
                         break :message null;
                 },
-                .server_load => {
-                    writer.writeAll("JavaScript exception") catch
-                        break :message null;
+                .server_load => |strong| {
+                    writer.print("Server route handler for '{s}' threw while loading\n\n", .{
+                        route.pattern,
+                    }) catch break :message null;
+                    const err = strong.get() orelse unreachable;
+                    route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
+                },
+                .request_handler => |err| {
+                    writer.print("Server route handler for '{s}' threw while loading\n\n", .{
+                        route.pattern,
+                    }) catch break :message null;
+                    route.dev.vm.printErrorLikeObjectSimple(err, writer, false);
                 },
             }
 
@@ -697,10 +744,6 @@ const Failure = union(enum) {
             break :message &buffer;
         };
         resp.end(message, true); // TODO: "You should never call res.end(huge buffer)"
-    }
-
-    fn deinit(fail: Failure) void {
-        fail.log.deinit();
     }
 };
 
@@ -720,7 +763,7 @@ pub const KitSourceProvider = opaque {};
 
 pub const c = struct {
     // KitDevGlobalObject.cpp
-    extern fn KitCreateDevGlobal(owner: *DevServer) *DevGlobalObject;
+    extern fn KitCreateDevGlobal(owner: *DevServer, console: *JSC.ConsoleObject) *DevGlobalObject;
 
     // KitSourceProvider.cpp
     const LoadServerCodeResult = extern struct { promise: *JSInternalPromise, key: *JSC.JSString };

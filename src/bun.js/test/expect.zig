@@ -222,7 +222,7 @@ pub const Expect = struct {
 
                     const newValue = promise.result(vm);
                     switch (promise.status(vm)) {
-                        .Fulfilled => switch (resolution) {
+                        .fulfilled => switch (resolution) {
                             .resolves => {},
                             .rejects => {
                                 if (!silent) {
@@ -234,7 +234,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Rejected => switch (resolution) {
+                        .rejected => switch (resolution) {
                             .rejects => {},
                             .resolves => {
                                 if (!silent) {
@@ -246,7 +246,7 @@ pub const Expect = struct {
                             },
                             .none => unreachable,
                         },
-                        .Pending => unreachable,
+                        .pending => unreachable,
                     }
 
                     newValue.ensureStillAlive();
@@ -2315,43 +2315,39 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_fucntion: JSValue = value.call(globalThis, .undefined, &.{});
+            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{});
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
 
             if (return_value == .zero) {
-                return_value = return_value_from_fucntion;
+                return_value = return_value_from_function;
             }
 
             if (return_value.asAnyPromise()) |promise| {
                 vm.waitForPromise(promise);
                 scope.apply(vm);
-                const promise_result = promise.result(globalThis.vm());
-
-                switch (promise.status(globalThis.vm())) {
-                    .Fulfilled => {
+                switch (promise.unwrap(globalThis.vm(), .mark_handled)) {
+                    .fulfilled => {
                         break :brk null;
                     },
-                    .Rejected => {
-                        promise.setHandled(globalThis.vm());
-
+                    .rejected => |err| {
                         // since we know for sure it rejected, we should always return the error
-                        break :brk promise_result.toError() orelse promise_result;
+                        break :brk err.toError() orelse err;
                     },
-                    .Pending => unreachable,
+                    .pending => unreachable,
                 }
             }
 
-            if (return_value != return_value_from_fucntion) {
-                if (return_value_from_fucntion.asAnyPromise()) |existing| {
+            if (return_value != return_value_from_function) {
+                if (return_value_from_function.asAnyPromise()) |existing| {
                     existing.setHandled(globalThis.vm());
                 }
             }
 
             scope.apply(vm);
 
-            break :brk return_value.toError() orelse return_value_from_fucntion.toError();
+            break :brk return_value.toError() orelse return_value_from_function.toError();
         };
 
         const did_throw = result_ != null;
@@ -4631,9 +4627,9 @@ pub const Expect = struct {
             result.ensureStillAlive();
             assert(!result.isEmpty());
             switch (promise.status(vm)) {
-                .Pending => unreachable,
-                .Fulfilled => {},
-                .Rejected => {
+                .pending => unreachable,
+                .fulfilled => {},
+                .rejected => {
                     // TODO: rewrite this code to use .then() instead of blocking the event loop
                     JSC.VirtualMachine.get().runErrorHandler(result, null);
                     globalThis.throw("Matcher `{s}` returned a promise that rejected", .{matcher_name});

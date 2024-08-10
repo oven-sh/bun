@@ -7813,17 +7813,16 @@ pub const Macro = struct {
 
         vm.enableMacroMode();
 
-        var loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
+        const loaded_result = try vm.loadMacroEntryPoint(input_specifier, function_name, specifier, hash);
 
-        if (loaded_result.status(vm.global.vm()) == JSC.JSPromise.Status.Rejected) {
-            _ = vm.unhandledRejection(vm.global, loaded_result.result(vm.global.vm()), loaded_result.asValue());
-            vm.disableMacroMode();
-            return error.MacroLoadError;
+        switch (loaded_result.unwrap(vm.jsc, .leave_unhandled)) {
+            .rejected => |result| {
+                _ = vm.unhandledRejection(vm.global, result, loaded_result.asValue());
+                vm.disableMacroMode();
+                return error.MacroLoadError;
+            },
+            else => {},
         }
-
-        // We don't need to do anything with the result.
-        // We just want to make sure the promise is finished.
-        _ = loaded_result.result(vm.global.vm());
 
         return Macro{
             .vm = vm,
@@ -8120,8 +8119,9 @@ pub const Macro = struct {
                         const promise = value.asAnyPromise() orelse @panic("Unexpected promise type");
 
                         this.macro.vm.waitForPromise(promise);
-                        const promise_result = promise.result(this.global.vm());
-                        const rejected = promise.status(this.global.vm()) == .Rejected;
+
+                        const promise_result = promise.result(this.macro.vm.jsc);
+                        const rejected = promise.status(this.macro.vm.jsc) == .rejected;
 
                         if (promise_result.isUndefined() and this.is_top_level) {
                             this.is_top_level = false;

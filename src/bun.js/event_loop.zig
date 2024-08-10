@@ -1499,11 +1499,11 @@ pub const EventLoop = struct {
 
     pub fn waitForPromise(this: *EventLoop, promise: JSC.AnyPromise) void {
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }
@@ -1515,11 +1515,11 @@ pub const EventLoop = struct {
     pub fn waitForPromiseWithTermination(this: *EventLoop, promise: JSC.AnyPromise) void {
         const worker = this.virtual_machine.worker orelse @panic("EventLoop.waitForPromiseWithTermination: worker is not initialized");
         switch (promise.status(this.virtual_machine.jsc)) {
-            JSC.JSPromise.Status.Pending => {
-                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+            .pending => {
+                while (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                     this.tick();
 
-                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .Pending) {
+                    if (!worker.hasRequestedTerminate() and promise.status(this.virtual_machine.jsc) == .pending) {
                         this.autoTick();
                     }
                 }

@@ -18,7 +18,10 @@
 pub fn jsWipDevServer(global: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) JSValue {
     if (!bun.FeatureFlags.kit) return .undefined;
 
-    bun.Output.warn("Please be advised that kit is experimental. Its API will change frequently.", .{});
+    bun.Output.warn(
+        \\Be advised that Kit is highly experimental, and its API is subject to change
+    , .{});
+    bun.Output.flush();
 
     const options = devServerOptionsFromJs(global, callframe.argument(0)) catch {
         if (!global.hasException())

@@ -2888,7 +2888,7 @@ pub const PostgresSQLConnection = struct {
             &[_]JSValue{
                 instance,
             },
-        );
+        ) catch this.globalObject.reportActiveExceptionAsUnhandled();
     }
 
     pub fn onClose(this: *PostgresSQLConnection) void {

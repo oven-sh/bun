@@ -3174,7 +3174,7 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
                         server.globalThis,
                         server.thisObject,
                         &.{value},
-                    );
+                    ) catch server.globalThis.takeException();
                     defer result.ensureStillAlive();
                     if (!result.isEmptyOrUndefinedOrNull()) {
                         if (result.toError()) |err| {
@@ -3637,10 +3637,8 @@ pub const WebSocketServer = struct {
         pub fn runErrorCallback(this: *const Handler, vm: *JSC.VirtualMachine, globalObject: *JSC.JSGlobalObject, error_value: JSC.JSValue) void {
             const onError = this.onError;
             if (!onError.isEmptyOrUndefinedOrNull()) {
-                const err_ret = onError.call(globalObject, .undefined, &.{error_value});
-                if (err_ret.toError()) |actual_err| {
-                    _ = vm.uncaughtException(globalObject, actual_err, false);
-                }
+                _ = onError.call(globalObject, .undefined, &.{error_value}) catch
+                    this.globalObject.reportActiveExceptionAsUnhandled();
                 return;
             }
 
@@ -3961,10 +3959,11 @@ const Corker = struct {
 
     pub fn run(this: *Corker) void {
         const this_value = this.this_value;
-        this.result = if (this_value == .zero)
-            this.callback.call(this.globalObject, .undefined, this.args)
-        else
-            this.callback.call(this.globalObject, this_value, this.args);
+        this.result = this.callback.call(
+            this.globalObject,
+            if (this_value == .zero) .undefined else this_value,
+            this.args,
+        ) catch this.globalObject.takeException();
     }
 };
 
@@ -4205,16 +4204,15 @@ pub const ServerWebSocket = struct {
         loop.enter();
         defer loop.exit();
 
-        const result = cb.call(
+        _ = cb.call(
             globalThis,
             .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
-        );
-
-        if (result.toError()) |err| {
+        ) catch {
+            const err = globalThis.takeException();
             log("onPing error", .{});
             handler.runErrorCallback(vm, globalThis, err);
-        }
+        };
     }
 
     pub fn onPong(this: *ServerWebSocket, _: uws.AnyWebSocket, data: []const u8) void {
@@ -4234,16 +4232,15 @@ pub const ServerWebSocket = struct {
         loop.enter();
         defer loop.exit();
 
-        const result = cb.call(
+        _ = cb.call(
             globalThis,
             .undefined,
             &[_]JSC.JSValue{ this.this_value, this.binaryToJS(globalThis, data) },
-        );
-
-        if (result.toError()) |err| {
+        ) catch {
+            const err = globalThis.takeException();
             log("onPong error", .{});
             handler.runErrorCallback(vm, globalThis, err);
-        }
+        };
     }
 
     pub fn onClose(this: *ServerWebSocket, _: uws.AnyWebSocket, code: i32, message: []const u8) void {
@@ -4267,16 +4264,15 @@ pub const ServerWebSocket = struct {
             loop.enter();
             defer loop.exit();
             str.markUTF8();
-            const result = handler.onClose.call(
+            _ = handler.onClose.call(
                 globalObject,
                 .undefined,
                 &[_]JSC.JSValue{ this.this_value, JSValue.jsNumber(code), str.toJS(globalObject) },
-            );
-
-            if (result.toError()) |err| {
+            ) catch {
+                const err = globalObject.takeException();
                 log("onClose error", .{});
                 handler.runErrorCallback(vm, globalObject, err);
-            }
+            };
         }
 
         this.this_value.unprotect();
@@ -5704,7 +5700,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
                 this.globalThis,
                 this.thisObject,
                 &[_]JSC.JSValue{request.toJS(this.globalThis)},
-            );
+            ) catch this.globalThis.takeException();
 
             if (response_value.isAnyError()) {
                 return JSC.JSPromise.rejectedPromiseValue(ctx, response_value);
@@ -6326,7 +6322,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             const request_value = args[0];
             request_value.ensureStillAlive();
 
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch
+                this.globalThis.takeException();
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;
@@ -6392,7 +6389,8 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
             };
             const request_value = args[0];
             request_value.ensureStillAlive();
-            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args);
+            const response_value = this.config.onRequest.call(this.globalThis, this.thisObject, &args) catch
+                this.globalThis.takeException();
             defer {
                 // uWS request will not live longer than this function
                 request_object.request_context = JSC.API.AnyRequestContext.Null;

@@ -714,30 +714,31 @@ pub export fn napi_async_destroy(_: napi_env, _: *anyopaque) napi_status {
 }
 
 // this is just a regular function call
-pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value, func: napi_value, arg_count: usize, args: ?[*]const napi_value, result: ?*napi_value) napi_status {
+pub export fn napi_make_callback(env: napi_env, _: *anyopaque, recv: napi_value, func: napi_value, arg_count: usize, args: ?[*]const napi_value, result_ptr: ?*napi_value) napi_status {
     log("napi_make_callback", .{});
     if (func.isEmptyOrUndefinedOrNull() or !func.isCallable(env.vm())) {
         return .function_expected;
     }
 
-    const res = func.call(
+    const value = func.call(
         env,
         if (recv != .zero)
             recv
         else
             .undefined,
         if (arg_count > 0 and args != null)
-            @as([*]const JSC.JSValue, @ptrCast(args.?))[0..arg_count]
+            args.?[0..arg_count]
         else
             &.{},
-    );
+    ) catch // TODO: mark .pending_exception
+        env.takeException();
 
-    if (result) |result_| {
-        result_.* = res;
+    if (result_ptr) |result| {
+        result.* = value;
     }
 
     // TODO: this is likely incorrect
-    if (res.isAnyError()) {
+    if (value.isAnyError()) {
         return .pending_exception;
     }
 
@@ -1472,7 +1473,6 @@ pub const ThreadSafeFunction = struct {
 
     pub fn call(this: *ThreadSafeFunction) void {
         const task = this.channel.tryReadItem() catch null orelse return;
-        const vm = this.event_loop.virtual_machine;
         const globalObject = this.env;
 
         this.tracker.willDispatch(globalObject);
@@ -1483,10 +1483,9 @@ pub const ThreadSafeFunction = struct {
                 if (js_function.isEmptyOrUndefinedOrNull()) {
                     return;
                 }
-                const err = js_function.call(globalObject, .undefined, &.{});
-                if (err.isAnyError()) {
-                    _ = vm.uncaughtException(globalObject, err, false);
-                }
+
+                _ = js_function.call(globalObject, .undefined, &.{}) catch
+                    globalObject.reportActiveExceptionAsUnhandled();
             },
             .c => |cb| {
                 if (comptime bun.Environment.isDebug) {

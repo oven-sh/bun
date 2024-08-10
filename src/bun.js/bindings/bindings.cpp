@@ -1,5 +1,3 @@
-
-
 #include "root.h"
 
 #include "ErrorCode+List.h"
@@ -2417,7 +2415,7 @@ bool JSC__JSValue__jestDeepMatch(JSC__JSValue JSValue0, JSC__JSValue JSValue1, J
 
 // This is the same as the C API version, except it returns a JSValue which may be a *Exception
 // We want that so we can return stack traces.
-extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC__JSValue object,
+extern "C" JSC__JSValue Bun__JSValue__call(JSContextRef ctx, JSC__JSValue object,
     JSC__JSValue thisObject, size_t argumentCount,
     const JSValueRef* arguments)
 {
@@ -2462,8 +2460,10 @@ extern "C" JSC__JSValue JSObjectCallAsFunctionReturnValue(JSContextRef ctx, JSC_
         asyncContextData->putInternalField(vm, 0, restoreAsyncContext);
     }
 
+    auto scope = DECLARE_THROW_SCOPE(globalObject->vm());
     if (returnedException.get()) {
-        return JSC::JSValue::encode(JSC::JSValue(returnedException.get()));
+        scope.throwException(globalObject, returnedException.get());
+        return JSC::JSValue::encode({});
     }
 
     return JSC::JSValue::encode(result);
@@ -5903,6 +5903,23 @@ extern "C" EncodedJSValue JSArray__constructArray(
 extern "C" bool JSGlobalObject__hasException(JSC::JSGlobalObject* globalObject)
 {
     return DECLARE_CATCH_SCOPE(globalObject->vm()).exception() != 0;
+}
+
+extern "C" void JSGlobalObject__clearException(JSC::JSGlobalObject* globalObject)
+{
+    DECLARE_CATCH_SCOPE(globalObject->vm()).clearException();
+}
+
+extern "C" JSC::EncodedJSValue JSGlobalObject__tryTakeException(JSC::JSGlobalObject* globalObject)
+{
+    auto scope = DECLARE_CATCH_SCOPE(globalObject->vm());
+
+    if (auto exception = scope.exception()) {
+        scope.clearException();
+        return JSC::JSValue::encode(exception->value());
+    }
+
+    return {};
 }
 
 CPP_DECL bool JSC__GetterSetter__isGetterNull(JSC__GetterSetter* gettersetter)

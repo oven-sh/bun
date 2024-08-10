@@ -2309,7 +2309,8 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}) catch
+                                this.globalThis.takeException(),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2324,7 +2325,8 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.call(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}) catch
+                                this.globalThis.takeException(),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2566,15 +2568,16 @@ pub const Formatter = struct {
                 writer.writeAll("}");
             },
             .toJSON => {
-                if (value.get(this.globalThis, "toJSON")) |func| {
-                    const result = func.call(this.globalThis, value, &.{});
-                    if (result.toError() == null) {
-                        const prev_quote_keys = this.quote_keys;
-                        this.quote_keys = true;
-                        defer this.quote_keys = prev_quote_keys;
-                        this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
-                        return;
-                    }
+                if (value.get(this.globalThis, "toJSON")) |func| brk: {
+                    const result = func.call(this.globalThis, value, &.{}) catch {
+                        this.globalThis.clearException();
+                        break :brk;
+                    };
+                    const prev_quote_keys = this.quote_keys;
+                    this.quote_keys = true;
+                    defer this.quote_keys = prev_quote_keys;
+                    this.printAs(.Object, Writer, writer_, result, value.jsType(), enable_ansi_colors);
+                    return;
                 }
 
                 writer.writeAll("{}");

@@ -2315,7 +2315,7 @@ pub const Expect = struct {
             const prev_unhandled_pending_rejection_to_capture = vm.unhandled_pending_rejection_to_capture;
             vm.unhandled_pending_rejection_to_capture = &return_value;
             vm.onUnhandledRejection = &VirtualMachine.onQuietUnhandledRejectionHandlerCaptureValue;
-            const return_value_from_function: JSValue = value.call(globalThis, .undefined, &.{});
+            const return_value_from_function = value.call(globalThis, .undefined, &.{}) catch globalThis.takeException();
             vm.unhandled_pending_rejection_to_capture = prev_unhandled_pending_rejection_to_capture;
 
             vm.global.handleRejectedPromises();
@@ -2404,8 +2404,12 @@ pub const Expect = struct {
 
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
-                    const matches = test_fn.call(globalThis, expected_value, &.{received_message});
-                    if (!matches.toBooleanSlow(globalThis)) return .undefined;
+                    const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch {
+                        globalThis.clearException();
+                        return .undefined;
+                    };
+                    if (!matches.toBooleanSlow(globalThis))
+                        return .undefined;
                 }
 
                 this.throw(globalThis, signature, "\n\nExpected pattern: not <green>{any}<r>\nReceived message: <red>{any}<r>\n", .{
@@ -2481,8 +2485,11 @@ pub const Expect = struct {
             if (expected_value.isRegExp()) {
                 if (_received_message) |received_message| {
                     // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
-                    if (expected_value.get(globalThis, "test")) |test_fn| {
-                        const matches = test_fn.call(globalThis, expected_value, &.{received_message});
+                    if (expected_value.get(globalThis, "test")) |test_fn| brk: {
+                        const matches = test_fn.call(globalThis, expected_value, &.{received_message}) catch {
+                            globalThis.clearException();
+                            break :brk;
+                        };
                         if (matches.toBooleanSlow(globalThis)) return .undefined;
                     }
                 }
@@ -3738,18 +3745,12 @@ pub const Expect = struct {
         };
         value.ensureStillAlive();
 
-        const result = predicate.call(globalThis, .undefined, &.{value});
-
-        if (result.toError()) |err| {
-            var errors: [1]*anyopaque = undefined;
-            var _err = errors[0..errors.len];
-
-            _err[0] = err.asVoid();
-
+        const result = predicate.call(globalThis, .undefined, &.{value}) catch {
+            var err = globalThis.takeException().asVoid();
             const fmt = ZigString.init("toSatisfy() predicate threw an exception");
-            globalThis.vm().throwError(globalThis, globalThis.createAggregateError(_err.ptr, _err.len, &fmt));
+            globalThis.vm().throwError(globalThis, globalThis.createAggregateError((&err)[0..1], 1, &fmt));
             return .zero;
-        }
+        };
 
         const not = this.flags.not;
         const pass = (result.isBoolean() and result.toBoolean()) != not;
@@ -4610,7 +4611,7 @@ pub const Expect = struct {
         matcher_context_jsvalue.ensureStillAlive();
 
         // call the custom matcher implementation
-        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args);
+        var result = matcher_fn.call(globalThis, matcher_context_jsvalue, args) catch globalThis.takeException();
         assert(!result.isEmpty());
         if (result.toError()) |err| {
             globalThis.throwValue(err);
@@ -4681,7 +4682,8 @@ pub const Expect = struct {
             if (comptime Environment.allow_assert)
                 assert(message.isCallable(globalThis.vm())); // checked above
 
-            var message_result = message.callWithGlobalThis(globalThis, &[_]JSValue{});
+            const message_result = message.callWithGlobalThis(globalThis, &.{}) catch
+                globalThis.takeException();
             assert(!message_result.isEmpty());
             if (message_result.toError()) |err| {
                 globalThis.throwValue(err);
@@ -5363,15 +5365,13 @@ pub const ExpectCustomAsymmetricMatcher = struct {
                     args.appendAssumeCapacity(arg);
                 }
 
-                var result = matcher_fn.call(globalThis, thisValue, args.items);
-                if (result.toError()) |err| {
+                const result = matcher_fn.call(globalThis, thisValue, args.items) catch |err| {
                     if (dontThrow) {
+                        globalThis.clearException();
                         return false;
-                    } else {
-                        globalThis.throwValue(globalThis, err);
-                        return error.JSError;
                     }
-                }
+                    return err;
+                };
                 try writer.print("{}", .{result.toBunString(globalThis)});
             }
         }

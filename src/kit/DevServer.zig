@@ -201,22 +201,26 @@ fn onAssetRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.clie
 fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.server.Context(), bundle: *ServerBundle) void {
     _ = ctx; // autofix
     const dev = route.dev;
+    const global = dev.server_global.js();
 
-    const context = JSValue.createEmptyObject(dev.server_global.js(), 1);
+    const context = JSValue.createEmptyObject(global, 1);
     context.put(
         dev.server_global.js(),
         bun.String.static("clientEntryPoint"),
-        bun.String.init(route.client_bundled_url).toJS(dev.server_global.js()),
+        bun.String.init(route.client_bundled_url).toJS(global),
     );
 
     const result = bundle.server_request_callback.call(
-        dev.server_global.js(),
+        global,
         .undefined,
         &.{context},
-    );
-    if (dev.server_global.js().hasException()) {
-        @panic("WTF??");
-    }
+    ) catch {
+        const exception = global.takeException();
+        const fail: Failure = .{ .request_handler = exception };
+        fail.printToConsole(route, .server);
+        fail.sendAsHttpResponse(resp, route, .server);
+        return;
+    };
 
     // TODO: This interface and implementation is very poor. but fine until API
     // considerations become important (as of writing, there are 3 dozen todo
@@ -227,10 +231,6 @@ fn onServerRequestWithBundle(route: *Route, resp: *Response, ctx: BundleKind.ser
     // containing just a *uws.App, *JSC.EventLoop, and JSValue response object.
     //
     // This would allow us to support all of the nice things `new Response` allows
-
-    if (result == .zero) {
-        @panic("TODO: handle thrown exceptions");
-    }
 
     const bun_string = result.toBunString(dev.server_global.js());
     if (bun_string.tag == .Dead) @panic("TODO NOT STRING");
@@ -673,6 +673,8 @@ const Failure = union(enum) {
     fn printToConsole(fail: *const Failure, route: *const Route, kind: BundleKind) void {
         defer Output.flush();
 
+        Output.prettyErrorln("", .{});
+
         switch (fail.*) {
             .bundler => |msgs| {
                 Output.prettyErrorln("<red>Errors while bundling {s}-side for '{s}'<r>", .{
@@ -691,6 +693,8 @@ const Failure = union(enum) {
                 Output.prettyErrorln("<red>Server route handler for '{s}' threw while loading<r>", .{
                     route.pattern,
                 });
+                Output.flush();
+
                 const err = strong.get() orelse unreachable;
                 route.dev.vm.printErrorLikeObjectToConsole(err);
             },
@@ -698,6 +702,8 @@ const Failure = union(enum) {
                 Output.prettyErrorln("<red>Request to handler '{s}' failed SSR<r>", .{
                     route.pattern,
                 });
+                Output.flush();
+
                 route.dev.vm.printErrorLikeObjectToConsole(err);
             },
         }

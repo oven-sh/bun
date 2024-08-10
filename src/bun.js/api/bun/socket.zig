@@ -218,10 +218,8 @@ const Handlers = struct {
             return false;
         }
 
-        const result = onError.call(globalObject, thisValue, err);
-        if (result.isAnyError()) {
-            _ = vm.uncaughtException(globalObject, result, false);
-        }
+        _ = onError.call(globalObject, thisValue, err) catch
+            globalObject.reportActiveExceptionAsUnhandled();
 
         return true;
     }
@@ -1242,13 +1240,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-            });
-
-            if (result.toError()) |err_value| {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
-            }
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            };
         }
         pub fn onTimeout(
             this: *This,
@@ -1272,14 +1266,11 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-            });
-
-            if (result.toError()) |err_value| {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
-            }
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            };
         }
+
         fn handleConnectError(this: *This, socket_ctx: ?*uws.SocketContext, errno: c_int) void {
             log("onConnectError({d})", .{errno});
             const needs_deref = !this.flags.detached;
@@ -1327,7 +1318,7 @@ fn NewSocket(comptime ssl: bool) type {
             const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 err_value,
-            });
+            }) catch globalObject.takeException();
 
             if (result.toError()) |err_val| {
                 if (handlers.rejectPromise(err_val)) return;
@@ -1443,7 +1434,7 @@ fn NewSocket(comptime ssl: bool) type {
             defer vm.eventLoop().exit();
             const result = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
-            });
+            }) catch globalObject.takeException();
 
             if (result.toError()) |err| {
                 defer this.markInactive(socket.context());
@@ -1492,13 +1483,9 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
-                this_value,
-            });
-
-            if (result.toError()) |err_value| {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
-            }
+            _ = callback.call(globalObject, this_value, &.{this_value}) catch {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            };
         }
 
         pub fn onHandshake(this: *This, socket: Socket, success: i32, ssl_error: uws.us_bun_verify_error_t) void {
@@ -1538,7 +1525,7 @@ fn NewSocket(comptime ssl: bool) type {
             // open callback only have 1 parameters and its the socket
             // you should use getAuthorizationError and authorized getter to get those values in this case
             if (is_open) {
-                result = callback.call(globalObject, this_value, &[_]JSValue{this_value});
+                result = callback.call(globalObject, this_value, &[_]JSValue{this_value}) catch globalObject.takeException();
 
                 // only call onOpen once for clients
                 if (!handlers.is_server) {
@@ -1569,7 +1556,7 @@ fn NewSocket(comptime ssl: bool) type {
                     this_value,
                     JSValue.jsBoolean(authorized),
                     authorization_error,
-                });
+                }) catch globalObject.takeException();
             }
 
             if (result.toError()) |err_value| {
@@ -1608,14 +1595,12 @@ fn NewSocket(comptime ssl: bool) type {
 
             const globalObject = handlers.globalObject;
             const this_value = this.getThisValue(globalObject);
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
+            _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 JSValue.jsNumber(@as(i32, err)),
-            });
-
-            if (result.toError()) |err_value| {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
-            }
+            }) catch {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            };
         }
 
         pub fn onData(this: *This, socket: Socket, data: []const u8) void {
@@ -1640,14 +1625,12 @@ fn NewSocket(comptime ssl: bool) type {
             defer scope.exit(ssl, this.wrapped);
 
             // const encoding = handlers.encoding;
-            const result = callback.call(globalObject, this_value, &[_]JSValue{
+            _ = callback.call(globalObject, this_value, &[_]JSValue{
                 this_value,
                 output_value,
-            });
-
-            if (result.toError()) |err_value| {
-                _ = handlers.callErrorHandler(this_value, &[_]JSC.JSValue{ this_value, err_value });
-            }
+            }) catch {
+                _ = handlers.callErrorHandler(this_value, &.{ this_value, globalObject.takeException() });
+            };
         }
 
         pub fn getData(

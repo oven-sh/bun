@@ -2069,10 +2069,7 @@ fn callJSFunctionForTestRunner(vm: *JSC.VirtualMachine, globalObject: *JSGlobalO
     }
 
     globalObject.clearTerminationException();
-    const result = function.call(globalObject, .undefined, args);
-    result.ensureStillAlive();
-
-    return result;
+    return function.call(globalObject, .undefined, args) catch globalObject.takeException();
 }
 
 const assert = bun.assert;

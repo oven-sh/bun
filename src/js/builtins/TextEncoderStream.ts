@@ -31,7 +31,7 @@ export function initializeTextEncoderStream() {
     const encoder = $getByIdDirectPrivate(this, "textEncoderStreamEncoder");
     let buffer;
     try {
-      buffer = encoder.$encode(chunk);
+      buffer = encoder.encode(chunk);
     } catch (e) {
       return Promise.$reject(e);
     }
@@ -44,7 +44,7 @@ export function initializeTextEncoderStream() {
   };
   const flushAlgorithm = () => {
     const encoder = $getByIdDirectPrivate(this, "textEncoderStreamEncoder");
-    const buffer = encoder.$flush();
+    const buffer = encoder.flush();
     if (buffer) {
       const transformStream = $getByIdDirectPrivate(this, "textEncoderStreamTransform");
       const controller = $getByIdDirectPrivate(transformStream, "controller");

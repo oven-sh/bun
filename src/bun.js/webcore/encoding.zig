@@ -428,14 +428,7 @@ pub const TextEncoderStreamEncoder = struct {
             return .zero;
         }
 
-        if (!arguments[0].isString()) {
-            globalObject.throwInvalidArguments("TextEncoderStreamEncoder.encode expects a string argument", .{});
-            return .zero;
-        }
-
-        const str_value = arguments[0];
-
-        const str: ZigString = (str_value.toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);
+        const str: ZigString = (arguments[0].toStringOrNull(globalObject) orelse return .zero).getZigString(globalObject);
 
         if (str.is16Bit()) {
             return this.encodeUTF16(globalObject, str.utf16SliceAligned());

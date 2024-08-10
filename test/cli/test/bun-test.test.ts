@@ -27,6 +27,7 @@ describe("bun test", () => {
           });
         `,
       ],
+      expectedExitCode: 1,
     });
     expect(stderr).toContain("test #1");
     expect(stderr).toContain("test #2");
@@ -186,6 +187,7 @@ describe("bun test", () => {
             console.error("should run");
           });
         `,
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("should run");
     });
@@ -262,6 +264,7 @@ describe("bun test", () => {
     test("must provide a number bail", () => {
       const stderr = runTest({
         args: ["--bail=foo"],
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("expects a number");
     });
@@ -269,6 +272,7 @@ describe("bun test", () => {
     test("must provide non-negative bail", () => {
       const stderr = runTest({
         args: ["--bail=-1"],
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("expects a number");
     });
@@ -276,6 +280,7 @@ describe("bun test", () => {
     test("should not be 0", () => {
       const stderr = runTest({
         args: ["--bail=0"],
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("expects a number");
     });
@@ -292,6 +297,7 @@ describe("bun test", () => {
             expect(true).toBe(true);
           });
         `,
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("Bailed out after 1 failure");
       expect(stderr).not.toContain("test #2");
@@ -315,6 +321,7 @@ describe("bun test", () => {
             expect(true).toBe(true);
           });
         `,
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("Bailed out after 3 failures");
       expect(stderr).not.toContain("test #4");
@@ -324,12 +331,14 @@ describe("bun test", () => {
     test("must provide a number timeout", () => {
       const stderr = runTest({
         args: ["--timeout", "foo"],
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("Invalid timeout");
     });
     test("must provide non-negative timeout", () => {
       const stderr = runTest({
         args: ["--timeout", "-1"],
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("Invalid timeout");
     });
@@ -350,6 +359,7 @@ describe("bun test", () => {
             await expect(sleep(64)).resolves.toBeUndefined();
           });
         `,
+        expectedExitCode: 1,
       });
       expect(stderr).toHaveTestTimedOutAfter(30);
     });
@@ -363,6 +373,7 @@ describe("bun test", () => {
             await sleep(${time});
           });
         `,
+        expectedExitCode: 1,
       });
       expect(stderr).toHaveTestTimedOutAfter(5000);
     }, 10000);
@@ -420,6 +431,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("::group::");
       expect(stderr.match(/::group::/g)).toHaveLength(3);
@@ -446,6 +458,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toContain("::group::");
       expect(stderr.match(/::group::/g)).toHaveLength(6);
@@ -463,6 +476,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: undefined,
         },
+        expectedExitCode: 1,
       });
       expect(stderr).not.toContain("::error");
     });
@@ -506,6 +520,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
@@ -520,6 +535,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
@@ -535,6 +551,7 @@ describe("bun test", () => {
         env: {
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=error::/);
     });
@@ -550,6 +567,7 @@ describe("bun test", () => {
           FORCE_COLOR: "1",
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error file=.*,line=\d+,col=\d+,title=.*::/);
       expect(stderr).toMatch(/error: expect\(received\)\.toBe\(expected\)/); // stripped ansi
@@ -567,6 +585,7 @@ describe("bun test", () => {
           FORCE_COLOR: "1",
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error title=error: Oops!::/);
     });
@@ -582,6 +601,7 @@ describe("bun test", () => {
           FORCE_COLOR: "1",
           GITHUB_ACTIONS: "true",
         },
+        expectedExitCode: 1,
       });
       expect(stderr).toMatch(/::error title=error: Test \"time out\" timed out after \d+ms::/);
     });
@@ -752,6 +772,7 @@ describe("bun test", () => {
             expect(s).toBeType("string");
           });
         `,
+        expectedExitCode: 1,
       });
       strings.forEach(s => {
         expect(stderr).toContain(`with a string: ${s}`);
@@ -909,22 +930,26 @@ function runTest({
   cwd,
   args = [],
   env = {},
+  expectedExitCode = 0,
 }: {
   input?: string | (string | { filename: string; contents: string })[];
   cwd?: string;
   args?: string[];
   env?: Record<string, string | undefined>;
+  expectedExitCode?: number;
 } = {}): string {
   cwd ??= createTest(input);
   try {
-    const { stderr } = spawnSync({
+    const proc = spawnSync({
       cwd,
       cmd: [bunExe(), "test", ...args],
       env: { ...bunEnv, ...env },
       stderr: "pipe",
       stdout: "ignore",
     });
-    return stderr.toString();
+    expect(proc.signalCode).toBe(undefined);
+    expect(proc.exitCode).toBe(expectedExitCode);
+    return proc.stderr.toString();
   } finally {
     rmSync(cwd, { recursive: true });
   }

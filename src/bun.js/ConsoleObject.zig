@@ -2201,7 +2201,7 @@ pub const Formatter = struct {
                             this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
                             writer.writeAll("\n"); // we want the line break to be unconditional here
                             this.writeIndent(Writer, writer_) catch unreachable;
-                            writer.pretty("<r><d>{d} more items<r>", enable_ansi_colors, .{len - i});
+                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
                             break;
                         }
                         j += 1;

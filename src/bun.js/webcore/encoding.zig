@@ -526,6 +526,7 @@ pub const TextEncoderStreamEncoder = struct {
             break :prepend null;
         };
 
+        // TODO: use ExternalArrayBuffer and skip validation pass
         const validate_result = bun.simdutf.validate.with_errors.utf16le(remain);
         if (validate_result.status == .success) {
             const len = bun.simdutf.length.utf8.from.utf16.le(remain);

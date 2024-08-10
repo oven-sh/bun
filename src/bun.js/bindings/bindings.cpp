@@ -1049,6 +1049,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Uint16ArrayType:
     case Int32ArrayType:
     case Uint32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -2026,6 +2027,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:

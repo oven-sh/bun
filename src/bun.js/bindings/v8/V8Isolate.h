@@ -9,8 +9,9 @@ namespace v8 {
 
 class HandleScope;
 
-// This currently is just a pointer to a Zig::GlobalObject*
-// We do that so that we can recover the context and the VM from the "Isolate"
+// This currently is just a pointer to a v8::Roots
+// We do that so that we can recover the context and the VM from the "Isolate," and so that inlined
+// V8 functions can find values at certain fixed offsets from the Isolate
 class Isolate final {
 public:
     Isolate() = default;

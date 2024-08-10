@@ -38,7 +38,9 @@ int String::WriteUtf8(Isolate* isolate, char* buffer, int length, int* nchars_re
     WTF::String string = jsString->getString(isolate->globalObject());
 
     // TODO(@190n) handle 16 bit strings
-    RELEASE_ASSERT(string.is8Bit());
+    if (!string.is8Bit()) {
+        V8_UNIMPLEMENTED();
+    }
     auto span = string.span8();
 
     int to_copy = length;

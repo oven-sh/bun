@@ -13,6 +13,8 @@ EscapableHandleScopeBase::EscapableHandleScopeBase(Isolate* isolate)
     escape_slot = &handle;
 }
 
+// Store the handle escape_value in the escape slot that we have allocated from the parent
+// HandleScope, and return the escape slot
 uintptr_t* EscapableHandleScopeBase::EscapeSlot(uintptr_t* escape_value)
 {
     *escape_slot = *reinterpret_cast<Handle*>(escape_value);

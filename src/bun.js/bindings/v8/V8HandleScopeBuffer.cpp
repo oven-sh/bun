@@ -29,7 +29,8 @@ void HandleScopeBuffer::visitChildrenImpl(JSCell* cell, Visitor& visitor)
 
     for (int i = 0; i < thisObject->size; i++) {
         auto& handle = thisObject->storage[i];
-        if (handle.to_v8_object.type() != TaggedPointer::Type::Smi && handle.map.getPtr<Map>() == &Map::object_map) {
+        if (handle.to_v8_object.type() != TaggedPointer::Type::Smi
+            && (handle.map.getPtr<Map>() == &Map::object_map || handle.map.getPtr<Map>() == &Map::string_map)) {
             JSCell::visitChildren(reinterpret_cast<JSCell*>(thisObject->storage[i].ptr), visitor);
         }
     }

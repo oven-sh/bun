@@ -6,6 +6,8 @@
 
 namespace v8 {
 
+// Context is always a reinterpret pointer to V8::Roots, so that inlined V8 functions can find
+// values they expect to find at fixed offsets
 class Context : public Data {
 public:
     JSC::VM& vm() const

@@ -117,7 +117,7 @@ pub const sep_str_windows = CHAR_STR_BACKWARD_SLASH;
 inline fn formatExtT(comptime T: type, ext: []const T, buf: []T) []const T {
     const len = ext.len;
     if (len == 0) {
-        return comptime L(T, "");
+        return &.{};
     }
     if (ext[0] == CHAR_DOT) {
         return ext;
@@ -240,18 +240,18 @@ pub fn basenamePosixT(comptime T: type, path: []const T, suffix: ?[]const T) []c
     const len = path.len;
     // Exit early for easier number type use.
     if (len == 0) {
-        return comptime L(T, "");
+        return &.{};
     }
     var start: usize = 0;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     var end: ?usize = null;
     var matchedSlash: bool = true;
 
-    const _suffix = if (suffix) |_s| _s else comptime L(T, "");
+    const _suffix = if (suffix) |_s| _s else &.{};
     const _suffixLen = _suffix.len;
     if (suffix != null and _suffixLen > 0 and _suffixLen <= len) {
         if (std.mem.eql(T, _suffix, path)) {
-            return comptime L(T, "");
+            return &.{};
         }
         // We use an optional value instead of -1, as in Node code, for easier number type use.
         var extIdx: ?usize = _suffixLen - 1;
@@ -328,7 +328,7 @@ pub fn basenamePosixT(comptime T: type, path: []const T, suffix: ?[]const T) []c
     return if (end) |_end|
         path[start.._end]
     else
-        comptime L(T, "");
+        &.{};
 }
 
 /// Based on Node v21.6.1 path.win32.basename:
@@ -340,7 +340,7 @@ pub fn basenameWindowsT(comptime T: type, path: []const T, suffix: ?[]const T) [
     const len = path.len;
     // Exit early for easier number type use.
     if (len == 0) {
-        return comptime L(T, "");
+        return &.{};
     }
 
     const isSepT = isSepWindowsT;
@@ -357,11 +357,11 @@ pub fn basenameWindowsT(comptime T: type, path: []const T, suffix: ?[]const T) [
         start = 2;
     }
 
-    const _suffix = if (suffix) |_s| _s else comptime L(T, "");
+    const _suffix = if (suffix) |_s| _s else &.{};
     const _suffixLen = _suffix.len;
     if (suffix != null and _suffixLen > 0 and _suffixLen <= len) {
         if (std.mem.eql(T, _suffix, path)) {
-            return comptime L(T, "");
+            return &.{};
         }
         // We use an optional value instead of -1, as in Node code, for easier number type use.
         var extIdx: ?usize = _suffixLen - 1;
@@ -434,7 +434,7 @@ pub fn basenameWindowsT(comptime T: type, path: []const T, suffix: ?[]const T) [
     return if (end) |_end|
         path[start.._end]
     else
-        comptime L(T, "");
+        &.{};
 }
 
 pub inline fn basenamePosixJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, path: []const T, suffix: ?[]const T) JSC.JSValue {
@@ -453,7 +453,7 @@ pub inline fn basenameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, 
 }
 
 pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const suffix_ptr: ?JSC.JSValue = if (args_len > 1) args_ptr[1] else null;
+    const suffix_ptr: ?JSC.JSValue = if (args_len > 1 and args_ptr[1] != .undefined) args_ptr[1] else null;
 
     if (suffix_ptr) |_suffix_ptr| {
         // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
@@ -463,7 +463,7 @@ pub fn basename(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*
         };
     }
 
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         return .zero;
@@ -658,7 +658,7 @@ pub inline fn dirnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, i
 }
 
 pub fn dirname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -685,7 +685,7 @@ pub fn extnamePosixT(comptime T: type, path: []const T) []const T {
     const len = path.len;
     // Exit early for easier number type use.
     if (len == 0) {
-        return comptime L(T, "");
+        return &.{};
     }
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     var startDot: ?usize = null;
@@ -746,7 +746,7 @@ pub fn extnamePosixT(comptime T: type, path: []const T) []const T {
         _startDot == _end - 1 and
         _startDot == startPart + 1))
     {
-        return comptime L(T, "");
+        return &.{};
     }
 
     return path[_startDot.._end];
@@ -761,7 +761,7 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
     const len = path.len;
     // Exit early for easier number type use.
     if (len == 0) {
-        return comptime L(T, "");
+        return &.{};
     }
     var start: usize = 0;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
@@ -835,7 +835,7 @@ pub fn extnameWindowsT(comptime T: type, path: []const T) []const T {
         _startDot == _end - 1 and
         _startDot == startPart + 1))
     {
-        return comptime L(T, "");
+        return &.{};
     }
 
     return path[_startDot.._end];
@@ -857,7 +857,7 @@ pub inline fn extnameJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, i
 }
 
 pub fn extname(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -971,7 +971,7 @@ pub fn formatJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocator
 }
 
 pub fn format(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const pathObject_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const pathObject_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateObject(globalObject, pathObject_ptr, "pathObject", .{}, .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1045,7 +1045,7 @@ pub fn isAbsoluteWindowsZigString(pathZStr: JSC.ZigString) bool {
 }
 
 pub fn isAbsolute(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1085,7 +1085,7 @@ pub inline fn joinPosixT(comptime T: type, paths: []const []const T, buf: []T, b
     var bufOffset: usize = 0;
 
     // Back joined by expandable buf2 in case it is long.
-    var joined: []const T = comptime L(T, "");
+    var joined: []const T = &.{};
 
     for (paths) |path| {
         // validateString of `path is performed in pub fn join.
@@ -1131,8 +1131,8 @@ pub fn joinWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf2: 
     var bufOffset: usize = 0;
 
     // Backed by expandable buf2 in case it is long.
-    var joined: []const T = comptime L(T, "");
-    var firstPart: []const T = comptime L(T, "");
+    var joined: []const T = &.{};
+    var firstPart: []const T = &.{};
 
     for (paths) |path| {
         // validateString of `path` is performed in pub fn join.
@@ -1282,7 +1282,7 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
     var bufOffset: usize = 0;
     var bufSize: usize = 0;
 
-    var res: []const T = comptime L(T, "");
+    var res: []const T = &.{};
     var lastSegmentLength: usize = 0;
     // We use an optional value instead of -1, as in Node code, for easier number type use.
     var lastSlash: ?usize = null;
@@ -1317,7 +1317,7 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
                     if (bufSize > 2) {
                         const lastSlashIndex = std.mem.lastIndexOfScalar(T, buf[0..bufSize], separator);
                         if (lastSlashIndex == null) {
-                            res = comptime L(T, "");
+                            res = &.{};
                             bufSize = 0;
                             lastSegmentLength = 0;
                         } else {
@@ -1344,7 +1344,7 @@ fn normalizeStringT(comptime T: type, path: []const T, allowAboveRoot: bool, sep
                         dots = 0;
                         continue;
                     } else if (bufSize != 0) {
-                        res = comptime L(T, "");
+                        res = &.{};
                         bufSize = 0;
                         lastSegmentLength = 0;
                         lastSlash = i;
@@ -1658,7 +1658,7 @@ pub fn normalizeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, alloca
 }
 
 pub fn normalize(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -1687,12 +1687,12 @@ pub fn parsePosixT(comptime T: type, path: []const T) PathParsed(T) {
         return .{};
     }
 
-    var root: []const T = comptime L(T, "");
-    var dir: []const T = comptime L(T, "");
-    var base: []const T = comptime L(T, "");
-    var ext: []const T = comptime L(T, "");
+    var root: []const T = &.{};
+    var dir: []const T = &.{};
+    var base: []const T = &.{};
+    var ext: []const T = &.{};
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    var _name: []const T = comptime L(T, "");
+    var _name: []const T = &.{};
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
     const _isAbsolute = path[0] == CHAR_FORWARD_SLASH;
     var start: usize = 0;
@@ -1786,12 +1786,12 @@ pub fn parseWindowsT(comptime T: type, path: []const T) PathParsed(T) {
     comptime validatePathT(T, "parseWindowsT");
 
     // validateString of `path` is performed in pub fn parse.
-    var root: []const T = comptime L(T, "");
-    var dir: []const T = comptime L(T, "");
-    var base: []const T = comptime L(T, "");
-    var ext: []const T = comptime L(T, "");
+    var root: []const T = &.{};
+    var dir: []const T = &.{};
+    var base: []const T = &.{};
+    var ext: []const T = &.{};
     // Prefix with _ to avoid shadowing the identifier in the outer scope.
-    var _name: []const T = comptime L(T, "");
+    var _name: []const T = &.{};
 
     const len = path.len;
     if (len == 0) {
@@ -1981,7 +1981,7 @@ pub inline fn parseJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, isW
 }
 
 pub fn parse(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const path_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const path_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, path_ptr, "path", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
@@ -2006,7 +2006,7 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
 
     // validateString of `from` and `to` are performed in pub fn relative.
     if (std.mem.eql(T, from, to)) {
-        return MaybeSlice(T){ .result = comptime L(T, "") };
+        return MaybeSlice(T){ .result = &.{} };
     }
 
     // Trim leading forward slashes.
@@ -2023,7 +2023,7 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
     };
 
     if (std.mem.eql(T, fromOrig, toOrig)) {
-        return MaybeSlice(T){ .result = comptime L(T, "") };
+        return MaybeSlice(T){ .result = &.{} };
     }
 
     const fromStart = 1;
@@ -2081,7 +2081,7 @@ pub fn relativePosixT(comptime T: type, from: []const T, to: []const T, buf: []T
     var bufSize: usize = 0;
 
     // Backed by buf3.
-    var out: []const T = comptime L(T, "");
+    var out: []const T = &.{};
     // Add a block to isolate `i`.
     {
         // Generate the relative path based on the path difference between `to`
@@ -2138,7 +2138,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
 
     // validateString of `from` and `to` are performed in pub fn relative.
     if (std.mem.eql(T, from, to)) {
-        return MaybeSlice(T){ .result = comptime L(T, "") };
+        return MaybeSlice(T){ .result = &.{} };
     }
 
     // Backed by expandable buf2 because fromOrig may be long.
@@ -2156,7 +2156,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     if (std.mem.eql(T, fromOrig, toOrig) or
         eqlIgnoreCaseT(T, fromOrig, toOrig))
     {
-        return MaybeSlice(T){ .result = comptime L(T, "") };
+        return MaybeSlice(T){ .result = &.{} };
     }
 
     const toOrigLen = toOrig.len;
@@ -2256,7 +2256,7 @@ pub fn relativeWindowsT(comptime T: type, from: []const T, to: []const T, buf: [
     var bufSize: usize = 0;
 
     // Backed by buf3.
-    var out: []const T = comptime L(T, "");
+    var out: []const T = &.{};
     // Add a block to isolate `i`.
     {
         // Generate the relative path based on the path difference between `to`
@@ -2340,13 +2340,13 @@ pub fn relativeJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject, allocat
 }
 
 pub fn relative(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    const from_ptr = if (args_len > 0) args_ptr[0] else JSC.JSValue.jsUndefined();
+    const from_ptr = if (args_len > 0) args_ptr[0] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, from_ptr, "from", .{}) catch {
         // Returning .zero translates to a nullprt JSC.JSValue.
         return .zero;
     };
-    const to_ptr = if (args_len > 1) args_ptr[1] else JSC.JSValue.jsUndefined();
+    const to_ptr = if (args_len > 1) args_ptr[1] else .undefined;
     // Supress exeption in zig. It does globalThis.vm().throwError() in JS land.
     validateString(globalObject, to_ptr, "to", .{}) catch {
         return .zero;
@@ -2374,7 +2374,7 @@ pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2:
     // Backed by expandable buf2 because resolvedPath may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
-    var resolvedPath: []const T = comptime L(T, "");
+    var resolvedPath: []const T = &.{};
     var resolvedPathLen: usize = 0;
     var resolvedAbsolute: bool = false;
 
@@ -2383,7 +2383,7 @@ pub fn resolvePosixT(comptime T: type, paths: []const []const T, buf: []T, buf2:
 
     var i_i64: i64 = if (paths.len == 0) -1 else @as(i64, @intCast(paths.len - 1));
     while (i_i64 > -2 and !resolvedAbsolute) : (i_i64 -= 1) {
-        var path: []const T = comptime L(T, "");
+        var path: []const T = &.{};
         if (i_i64 >= 0) {
             path = paths[@as(usize, @intCast(i_i64))];
         } else {
@@ -2460,12 +2460,12 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
     var tmpBuf: [MAX_PATH_SIZE(T)]T = undefined;
 
     // Backed by tmpBuf.
-    var resolvedDevice: []const T = comptime L(T, "");
+    var resolvedDevice: []const T = &.{};
     var resolvedDeviceLen: usize = 0;
     // Backed by expandable buf2 because resolvedTail may be long.
     // We use buf2 here because resolvePosixT is called by other methods and using
     // buf2 here avoids stepping on others' toes.
-    var resolvedTail: []const T = comptime L(T, "");
+    var resolvedTail: []const T = &.{};
     var resolvedTailLen: usize = 0;
     var resolvedAbsolute: bool = false;
 
@@ -2477,7 +2477,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
     while (i_i64 > -2) : (i_i64 -= 1) {
         // Backed by expandable buf2, to not conflict with buf2 backed resolvedTail,
         // because path may be long.
-        var path: []const T = comptime L(T, "");
+        var path: []const T = &.{};
         if (i_i64 >= 0) {
             path = paths[@as(usize, @intCast(i_i64))];
             // validateString of `path` is performed in pub fn resolve.
@@ -2581,7 +2581,7 @@ pub fn resolveWindowsT(comptime T: type, paths: []const []const T, buf: []T, buf
         const len = path.len;
         var rootEnd: usize = 0;
         // Backed by tmpBuf or an anonymous buffer.
-        var device: []const T = comptime L(T, "");
+        var device: []const T = &.{};
         // Prefix with _ to avoid shadowing the identifier in the outer scope.
         var _isAbsolute: bool = false;
         const byte0 = if (len > 0) path[0] else 0;
@@ -2906,7 +2906,7 @@ pub fn toNamespacedPathJS_T(comptime T: type, globalObject: *JSC.JSGlobalObject,
 }
 
 pub fn toNamespacedPath(globalObject: *JSC.JSGlobalObject, isWindows: bool, args_ptr: [*]JSC.JSValue, args_len: u16) callconv(JSC.conv) JSC.JSValue {
-    if (args_len == 0) return JSC.JSValue.jsUndefined();
+    if (args_len == 0) return .undefined;
     var path_ptr = args_ptr[0];
 
     // Based on Node v21.6.1 path.win32.toNamespacedPath and path.posix.toNamespacedPath:

@@ -3,7 +3,7 @@ set -eo pipefail
 source "$(dirname -- "${BASH_SOURCE[0]}")/env.sh"
 
 if [[ "$CI" ]]; then
-  $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
+    $(dirname -- "${BASH_SOURCE[0]}")/update-submodules.sh
 fi
 
 FORCE=
@@ -27,18 +27,24 @@ BUILT_ANY=0
 SUBMODULES=
 CACHE_DIR=
 CACHE=0
-if [ -n "$BUN_DEPS_CACHE_DIR" ]; then
-    CACHE_DIR="$BUN_DEPS_CACHE_DIR"
-    CACHE=1
-    SUBMODULES="$(git submodule status)"
+
+if [ "$RELEASE" == "1" ]; then
+  FORCE=1
+elif [ -n "$BUN_DEPS_CACHE_DIR" ]; then
+  CACHE_DIR="$BUN_DEPS_CACHE_DIR"
+  CACHE=1
+  SUBMODULES="$(git submodule status)"
 fi
 
 dep() {
     local submodule="$1"
     local script="$2"
-    CACHE_KEY=
     if [ "$CACHE" == "1" ]; then
-        CACHE_KEY="$submodule/$(echo "$SUBMODULES" | grep "$submodule" | git hash-object --stdin)"
+        local hash="$(echo "$SUBMODULES" | grep "$submodule" | awk '{print $1}')"
+        local os="$(uname -s | tr '[:upper:]' '[:lower:]')"
+        local arch="$(uname -m)"
+        CACHE_KEY="$submodule/$hash-$os-$arch-$CPU_TARGET"
+        mkdir -p "$CACHE_DIR/$CACHE_KEY"
     fi
     if [ -z "$FORCE" ]; then
         HAS_ALL_DEPS=1
@@ -92,6 +98,7 @@ dep mimalloc mimalloc libmimalloc.a libmimalloc.o
 dep tinycc tinycc libtcc.a
 dep zlib zlib libz.a
 dep zstd zstd libzstd.a
+dep libdeflate libdeflate libdeflate.a
 dep ls-hpack lshpack liblshpack.a
 
 if [ "$BUILT_ANY" -eq 0 ]; then

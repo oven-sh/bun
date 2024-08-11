@@ -5,6 +5,7 @@ BUN_1.1 {
 	extern "C++" {
 		v8::*;
 		node::*;
+		JSC::CallFrame::describeFrame;
 	};
     local:
 	*;

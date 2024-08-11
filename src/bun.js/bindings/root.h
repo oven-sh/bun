@@ -69,6 +69,7 @@
 
 #include <wtf/PlatformCallingConventions.h>
 #include <JavaScriptCore/JSCJSValue.h>
+#include <wtf/text/MakeString.h>
 #include <JavaScriptCore/JSCInlines.h>
 #include <wtf/IsoMalloc.h>
 #include <wtf/IsoMallocInlines.h>

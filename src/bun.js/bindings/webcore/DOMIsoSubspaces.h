@@ -44,6 +44,7 @@ public:
     std::unique_ptr<IsoSubspace> m_subspaceForMockWithImplementationCleanupData;
     std::unique_ptr<IsoSubspace> m_subspaceForProcessObject;
     std::unique_ptr<IsoSubspace> m_subspaceForInternalModuleRegistry;
+    std::unique_ptr<IsoSubspace> m_subspaceForErrorCodeCache;
     std::unique_ptr<IsoSubspace> m_subspaceForBunInspectorConnection;
     std::unique_ptr<IsoSubspace> m_subspaceForJSNextTickQueue;
     std::unique_ptr<IsoSubspace> m_subspaceForNAPIFunction;
@@ -468,10 +469,10 @@ public:
     // std::unique_ptr<IsoSubspace> m_subspaceForStaticRange;
     // std::unique_ptr<IsoSubspace> m_subspaceForText;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoder;
-    // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextDecoderStreamDecoder;
     std::unique_ptr<IsoSubspace> m_subspaceForTextEncoder;
-    // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStream;
+    std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStream;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<IsoSubspace> m_subspaceForTextEvent;
     // std::unique_ptr<IsoSubspace> m_subspaceForTransitionEvent;

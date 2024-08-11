@@ -14,13 +14,23 @@ pub fn NewWorkPool(comptime max_threads: ?usize) type {
             @setCold(true);
 
             pool = ThreadPool.init(.{
-                .max_threads = max_threads orelse @max(@as(u32, @truncate(std.Thread.getCpuCount() catch 0)), 2),
+                .max_threads = max_threads orelse @max(2, max_threads: {
+                    if (bun.getenvZ("GOMAXPROCS")) |max_procs| try_override: {
+                        break :max_threads std.fmt.parseInt(u32, max_procs, 10) catch
+                            break :try_override;
+                    }
+
+                    break :max_threads @as(u32, @truncate(std.Thread.getCpuCount() catch 0));
+                }),
                 .stack_size = ThreadPool.default_thread_stack_size,
             });
             return &pool;
         }
+
+        /// Initialization of WorkPool is not thread-safe, as it is
+        /// assumed a single main thread sets everything up. Calling
+        /// this afterwards is thread-safe.
         pub inline fn get() *ThreadPool {
-            // lil racy
             if (loaded) return &pool;
             loaded = true;
 

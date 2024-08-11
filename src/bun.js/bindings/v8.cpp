@@ -11,7 +11,7 @@
 #define BUN_EXPORT JS_EXPORT
 #endif
 
-extern "C" Zig::GlobalObject* Bun__getDefaultGlobal();
+extern "C" Zig::GlobalObject* Bun__getDefaultGlobalObject();
 
 namespace v8 {
 
@@ -44,7 +44,7 @@ public:
 // Returns the isolate inside which the current thread is running or nullptr.
 Isolate* Isolate::TryGetCurrent()
 {
-    auto* global = Bun__getDefaultGlobal();
+    auto* global = Bun__getDefaultGlobalObject();
 
     return global ? reinterpret_cast<v8::Isolate*>(global) : nullptr;
 }
@@ -52,7 +52,7 @@ Isolate* Isolate::TryGetCurrent()
 // Returns the isolate inside which the current thread is running.
 Isolate* Isolate::GetCurrent()
 {
-    auto* global = Bun__getDefaultGlobal();
+    auto* global = Bun__getDefaultGlobalObject();
 
     return global ? reinterpret_cast<v8::Isolate*>(global) : nullptr;
 }

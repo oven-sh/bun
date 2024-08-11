@@ -366,12 +366,12 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         } else if (this.errno > 0 and this.errno < C.SystemErrno.max) {
             const system_errno = @as(C.SystemErrno, @enumFromInt(this.errno));
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 return errname;
             }
         }
@@ -408,7 +408,7 @@ pub const Error = struct {
 
                 break :brk @as(C.SystemErrno, @enumFromInt(this.errno));
             };
-            if (std.enums.tagName(bun.C.SystemErrno, system_errno)) |errname| {
+            if (bun.tagName(bun.C.SystemErrno, system_errno)) |errname| {
                 err.code = bun.String.static(errname);
                 if (C.SystemErrno.labels.get(system_errno)) |label| {
                     err.message = bun.String.static(label);
@@ -1868,7 +1868,8 @@ pub fn renameatConcurrentlyWithoutFallback(
             var err = switch (bun.sys.renameat2(from_dir_fd, from, to_dir_fd, to, .{
                 .exclude = true,
             })) {
-                .err => |err| err,
+                // if ENOENT don't retry
+                .err => |err| if (err.getErrno() == .NOENT) return .{ .err = err } else err,
                 .result => break :attempt_atomic_rename_and_fallback_to_racy_delete,
             };
 
@@ -1893,8 +1894,12 @@ pub fn renameatConcurrentlyWithoutFallback(
         }
 
         //  sad path: let's try to delete the folder and then rename it
-        var to_dir = to_dir_fd.asDir();
-        to_dir.deleteTree(to) catch {};
+        if (to_dir_fd.isValid()) {
+            var to_dir = to_dir_fd.asDir();
+            to_dir.deleteTree(to) catch {};
+        } else {
+            std.fs.deleteTreeAbsolute(to) catch {};
+        }
         switch (bun.sys.renameat(from_dir_fd, from, to_dir_fd, to)) {
             .err => |err| {
                 return .{ .err = err };

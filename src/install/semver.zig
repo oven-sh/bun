@@ -609,6 +609,10 @@ pub const Version = extern struct {
         return this.patch == 0 and this.minor == 0 and this.major == 0;
     }
 
+    pub fn parseUTF8(slice: []const u8) ParseResult {
+        return parse(.{ .buf = slice, .slice = slice });
+    }
+
     pub fn cloneInto(this: Version, slice: []const u8, buf: *[]u8) Version {
         return .{
             .major = this.major,

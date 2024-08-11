@@ -507,9 +507,11 @@ pub const WriteFileWindows = struct {
     fn onMkdirpComplete(this: *WriteFileWindows) void {
         this.event_loop.unrefConcurrently();
 
-        if (this.err) |err| {
-            this.throw(err);
-            bun.default_allocator.free(err.path);
+        const err = this.err;
+        this.err = null;
+        if (err) |err_| {
+            this.throw(err_);
+            bun.default_allocator.free(err_.path);
             return;
         }
 
@@ -685,12 +687,12 @@ pub const WriteFileWaitFromLockedValueTask = struct {
         var globalThis = this.globalThis;
         var file_blob = this.file_blob;
         switch (value.*) {
-            .Error => |err| {
+            .Error => |*err_ref| {
                 file_blob.detach();
                 _ = value.use();
                 this.promise.strong.deinit();
                 bun.destroy(this);
-                promise.reject(globalThis, err);
+                promise.reject(globalThis, err_ref.toJS(globalThis));
             },
             .Used => {
                 file_blob.detach();

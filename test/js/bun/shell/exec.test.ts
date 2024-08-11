@@ -71,6 +71,13 @@ describe("bun exec", () => {
     }
   });
 
+  TestBuilder.command`${BUN} exec cd`
+    .env(bunEnv)
+    .exitCode(0)
+    .stderr("")
+    .stdout("")
+    .runAsTest("cd with no arguments works");
+
   test("bun works even when not in PATH", async () => {
     const val = await $`bun exec 'bun'`.env({ ...bunEnv, PATH: "" }).nothrow();
     expect(val.stderr.toString()).not.toContain("bun: command not found: bun");

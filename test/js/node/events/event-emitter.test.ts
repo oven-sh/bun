@@ -70,6 +70,9 @@ describe("node:events", () => {
 describe("EventEmitter", () => {
   test("getEventListeners", () => {
     expect(getEventListeners(new EventEmitter(), "hey").length).toBe(0);
+    const emitter = new EventEmitter();
+    emitter.on("hey", () => {});
+    expect(getEventListeners(emitter, "hey").length).toBe(1);
   });
 
   test("constructor", () => {
@@ -848,4 +851,13 @@ test("getMaxListeners", () => {
   expect(emitter.getMaxListeners()).toBe(10);
   emitter.setMaxListeners(20);
   expect(emitter.getMaxListeners()).toBe(20);
+});
+
+test("getEventListeners", () => {
+  const target = new EventTarget();
+  expect(getEventListeners(target, "hey").length).toBe(0);
+  target.addEventListener("hey", () => {}, { once: true });
+  expect(getEventListeners(target, "hey").length).toBe(1);
+  target.dispatchEvent(new Event("hey"));
+  expect(getEventListeners(target, "hey").length).toBe(0);
 });

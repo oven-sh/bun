@@ -21,7 +21,7 @@ class ScriptExecutionContext;
 class DOMGuardedObject;
 class EventLoopTask;
 class DOMWrapperWorld;
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 class Performance;
@@ -44,9 +44,10 @@ class InternalModuleRegistry;
 #include "WebCoreJSBuiltins.h"
 #include "headers-handwritten.h"
 #include "BunCommonStrings.h"
+#include "BunGlobalScope.h"
 
 namespace WebCore {
-class GlobalScope;
+class WorkerGlobalScope;
 class SubtleCrypto;
 class EventTarget;
 }
@@ -68,8 +69,10 @@ using DOMGuardedObjectSet = HashSet<WebCore::DOMGuardedObject*>;
 
 #define ZIG_GLOBAL_OBJECT_DEFINED
 
-class GlobalObject : public JSC::JSGlobalObject {
-    using Base = JSC::JSGlobalObject;
+class GlobalObject : public Bun::GlobalScope {
+    using Base = Bun::GlobalScope;
+    // Move this to the front for better cache locality.
+    void* m_bunVM;
 
 public:
     static const JSC::ClassInfo s_info;
@@ -88,9 +91,9 @@ public:
 
     static constexpr const JSC::ClassInfo* info() { return &s_info; }
 
-    static JSC::Structure* createStructure(JSC::VM& vm, JSC::JSGlobalObject* global, JSC::JSValue prototype)
+    static JSC::Structure* createStructure(JSC::VM& vm)
     {
-        return JSC::Structure::create(vm, global, prototype, JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
+        return JSC::Structure::create(vm, nullptr, jsNull(), JSC::TypeInfo(JSC::GlobalObjectType, StructureFlags & ~IsImmutablePrototypeExoticObject), info());
     }
 
     // Make binding code generation easier.
@@ -240,7 +243,6 @@ public:
     JSC::JSMap* readableStreamNativeMap() const { return m_lazyReadableStreamPrototypeMap.getInitializedOnMainThread(this); }
     JSC::JSMap* requireMap() const { return m_requireMap.getInitializedOnMainThread(this); }
     JSC::JSMap* esmRegistryMap() const { return m_esmRegistryMap.getInitializedOnMainThread(this); }
-    JSC::Structure* encodeIntoObjectStructure() const { return m_encodeIntoObjectStructure.getInitializedOnMainThread(this); }
 
     JSC::Structure* callSiteStructure() const { return m_callSiteStructure.getInitializedOnMainThread(this); }
 
@@ -262,7 +264,7 @@ public:
 
     JSObject* lazyRequireCacheObject() const { return m_lazyRequireCacheObject.getInitializedOnMainThread(this); }
 
-    Structure* globalObjectStructure() const { return m_cachedGlobalObjectStructure.getInitializedOnMainThread(this); }
+    Structure* NodeVMGlobalObjectStructure() const { return m_cachedNodeVMGlobalObjectStructure.getInitializedOnMainThread(this); }
     Structure* globalProxyStructure() const { return m_cachedGlobalProxyStructure.getInitializedOnMainThread(this); }
     JSObject* lazyTestModuleObject() const { return m_lazyTestModuleObject.getInitializedOnMainThread(this); }
     JSObject* lazyPreloadTestModuleObject() const { return m_lazyPreloadTestModuleObject.getInitializedOnMainThread(this); }
@@ -312,7 +314,7 @@ public:
     WebCore::EventTarget& eventTarget();
 
     WebCore::ScriptExecutionContext* m_scriptExecutionContext;
-    Bun::GlobalScope& globalEventScope;
+    Bun::WorkerGlobalScope& globalEventScope;
 
     void resetOnEachMicrotaskTick();
 
@@ -401,6 +403,9 @@ public:
     // really set it or if it's just the default value.
     //
     LazyProperty<JSGlobalObject, JSC::JSFunction> m_errorConstructorPrepareStackTraceInternalValue;
+
+    LazyProperty<JSGlobalObject, JSObject> m_nodeErrorCache;
+    JSObject* nodeErrorCache() const { return m_nodeErrorCache.getInitializedOnMainThread(this); }
 
     Structure* memoryFootprintStructure()
     {
@@ -526,7 +531,6 @@ public:
     LazyProperty<JSGlobalObject, JSMap> m_lazyReadableStreamPrototypeMap;
     LazyProperty<JSGlobalObject, JSMap> m_requireMap;
     LazyProperty<JSGlobalObject, JSMap> m_esmRegistryMap;
-    LazyProperty<JSGlobalObject, Structure> m_encodeIntoObjectStructure;
     LazyProperty<JSGlobalObject, JSObject> m_JSArrayBufferControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSHTTPSResponseControllerPrototype;
     LazyProperty<JSGlobalObject, JSObject> m_JSFileSinkControllerPrototype;
@@ -538,7 +542,7 @@ public:
     LazyProperty<JSGlobalObject, JSObject> m_lazyTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_lazyPreloadTestModuleObject;
     LazyProperty<JSGlobalObject, JSObject> m_testMatcherUtilsObject;
-    LazyProperty<JSGlobalObject, Structure> m_cachedGlobalObjectStructure;
+    LazyProperty<JSGlobalObject, Structure> m_cachedNodeVMGlobalObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_cachedGlobalProxyStructure;
     LazyProperty<JSGlobalObject, Structure> m_commonJSModuleObjectStructure;
     LazyProperty<JSGlobalObject, Structure> m_JSSocketAddressStructure;
@@ -564,8 +568,6 @@ public:
 
 private:
     DOMGuardedObjectSet m_guardedObjects WTF_GUARDED_BY_LOCK(m_gcLock);
-    void* m_bunVM;
-
     WebCore::SubtleCrypto* m_subtleCrypto = nullptr;
 
     WTF::Vector<JSC::Strong<JSC::JSPromise>> m_aboutToBeNotifiedRejectedPromises;
@@ -588,7 +590,22 @@ public:
 // TODO: move this
 namespace Bun {
 
-String formatStackTrace(JSC::VM& vm, JSC::JSGlobalObject* globalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+String formatStackTrace(JSC::VM& vm, Zig::GlobalObject* globalObject, JSC::JSGlobalObject* lexicalGlobalObject, const WTF::String& name, const WTF::String& message, OrdinalNumber& line, OrdinalNumber& column, WTF::String& sourceURL, Vector<JSC::StackFrame>& stackTrace, JSC::JSObject* errorInstance);
+
+ALWAYS_INLINE void* vm(Zig::GlobalObject* globalObject)
+{
+    return globalObject->bunVM();
+}
+
+ALWAYS_INLINE void* vm(JSC::VM& vm)
+{
+    return WebCore::clientData(vm)->bunVM;
+}
+
+ALWAYS_INLINE void* vm(JSC::JSGlobalObject* lexicalGlobalObject)
+{
+    return WebCore::clientData(lexicalGlobalObject->vm())->bunVM;
+}
 
 }
 

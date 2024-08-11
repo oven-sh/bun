@@ -407,9 +407,7 @@ pub const Binding = struct {
                     loc,
                 );
             },
-            else => {
-                Global.panic("Internal error", .{});
-            },
+            else => |tag| Output.panic("Unexpected binding .{s}", .{@tagName(tag)}),
         }
     }
 
@@ -778,7 +776,7 @@ pub const G = struct {
                                 switch (val.data) {
                                     .e_arrow, .e_function => {},
                                     else => {
-                                        if (!val.canBeConstValue()) {
+                                        if (!val.canBeMoved()) {
                                             return false;
                                         }
                                     },
@@ -1552,6 +1550,12 @@ pub const E = struct {
         range: logger.Range,
     };
     pub const ImportMeta = struct {};
+    pub const ImportMetaMain = struct {
+        /// If we want to print `!import.meta.main`, set this flag to true
+        /// instead of wrapping in a unary not. This way, the printer can easily
+        /// print `require.main != module` instead of `!(require.main == module)`
+        inverted: bool = false,
+    };
 
     pub const Call = struct {
         // Node:
@@ -1682,8 +1686,23 @@ pub const E = struct {
         was_originally_identifier: bool = false,
     };
 
+    /// This is a dot expression on exports, such as `exports.<ref>`. It is given
+    /// it's own AST node to allow CommonJS unwrapping, in which this can just be
+    /// the identifier in the Ref
     pub const CommonJSExportIdentifier = struct {
         ref: Ref = Ref.None,
+        base: Base = .exports,
+
+        /// The original variant of the dot expression must be known so that in the case that we
+        /// - fail to convert this to ESM
+        /// - ALSO see an assignment to `module.exports` (commonjs_module_exports_assigned_deoptimized)
+        /// It must be known if `exports` or `module.exports` was written in source
+        /// code, as the distinction will alter behavior. The fixup happens in the printer when
+        /// printing this node.
+        pub const Base = enum {
+            exports,
+            module_dot_exports,
+        };
     };
 
     // This is similar to EIdentifier but it represents class-private fields and
@@ -2475,6 +2494,12 @@ pub const E = struct {
             }
         }
 
+        pub fn stringDecodedUTF8(s: *const String, allocator: std.mem.Allocator) !bun.string {
+            const utf16_decode = try bun.js_lexer.decodeStringLiteralEscapeSequencesToUTF16(try s.string(allocator), allocator);
+            defer allocator.free(utf16_decode);
+            return try bun.strings.toUTF8Alloc(allocator, utf16_decode);
+        }
+
         pub fn hash(s: *const String) u64 {
             if (s.isBlank()) return 0;
 
@@ -2520,7 +2545,7 @@ pub const E = struct {
             if (s.isUTF8()) {
                 return JSC.ZigString.fromUTF8(s.slice(allocator));
             } else {
-                return JSC.ZigString.init16(s.slice16());
+                return JSC.ZigString.initUTF16(s.slice16());
             }
         }
 
@@ -2765,8 +2790,7 @@ pub const E = struct {
     pub const RequireResolveString = struct {
         import_record_index: u32 = 0,
 
-        /// TODO:
-        close_paren_loc: logger.Loc = logger.Loc.Empty,
+        // close_paren_loc: logger.Loc = logger.Loc.Empty,
     };
 
     pub const InlinedEnum = struct {
@@ -2776,10 +2800,10 @@ pub const E = struct {
 
     pub const Import = struct {
         expr: ExprNodeIndex,
+        options: ExprNodeIndex = Expr.empty,
         import_record_index: u32,
-        // This will be dynamic at some point.
-        type_attribute: TypeAttribute = .none,
 
+        /// TODO:
         /// Comments inside "import()" expressions have special meaning for Webpack.
         /// Preserving comments inside these expressions makes it possible to use
         /// esbuild as a TypeScript-to-JavaScript frontend for Webpack to improve
@@ -2787,30 +2811,43 @@ pub const E = struct {
         /// because esbuild is not Webpack. But we do preserve them since doing so is
         /// harmless, easy to maintain, and useful to people. See the Webpack docs for
         /// more info: https://webpack.js.org/api/module-methods/#magic-comments.
-        /// TODO:
-        leading_interior_comments: []G.Comment = &([_]G.Comment{}),
+        // leading_interior_comments: []G.Comment = &([_]G.Comment{}),
 
         pub fn isImportRecordNull(this: *const Import) bool {
             return this.import_record_index == std.math.maxInt(u32);
         }
 
-        pub const TypeAttribute = enum {
-            none,
-            json,
-            toml,
-            text,
-            file,
+        pub fn importRecordTag(import: *const Import) ?ImportRecord.Tag {
+            const obj = import.options.data.as(.e_object) orelse
+                return null;
+            const with = obj.get("with") orelse obj.get("assert") orelse
+                return null;
+            const with_obj = with.data.as(.e_object) orelse
+                return null;
+            const str = (with_obj.get("type") orelse
+                return null).data.as(.e_string) orelse
+                return null;
 
-            pub fn tag(this: TypeAttribute) ImportRecord.Tag {
-                return switch (this) {
-                    .none => .none,
-                    .json => .with_type_json,
-                    .toml => .with_type_toml,
-                    .text => .with_type_text,
-                    .file => .with_type_file,
+            if (str.eqlComptime("json")) {
+                return .with_type_json;
+            } else if (str.eqlComptime("toml")) {
+                return .with_type_toml;
+            } else if (str.eqlComptime("text")) {
+                return .with_type_text;
+            } else if (str.eqlComptime("file")) {
+                return .with_type_file;
+            } else if (str.eqlComptime("sqlite")) {
+                const embed = brk: {
+                    const embed = with_obj.get("embed") orelse break :brk false;
+                    const embed_str = embed.data.as(.e_string) orelse break :brk false;
+                    break :brk embed_str.eqlComptime("true");
                 };
+
+                return if (embed) .with_type_sqlite_embedded else .with_type_sqlite;
             }
-        };
+
+            return null;
+        }
     };
 };
 
@@ -3018,6 +3055,10 @@ pub const Stmt = struct {
             S.With => Stmt.allocateData(allocator, "s_with", S.With, origData, loc),
             else => @compileError("Invalid type in Stmt.init"),
         };
+    }
+
+    pub fn allocateExpr(allocator: std.mem.Allocator, expr: Expr) Stmt {
+        return Stmt.allocate(allocator, S.SExpr, S.SExpr{ .value = expr }, expr.loc);
     }
 
     pub const Tag = enum(u6) {
@@ -3246,8 +3287,13 @@ pub const Expr = struct {
             else => true,
         };
     }
+
     pub fn canBeConstValue(this: Expr) bool {
         return this.data.canBeConstValue();
+    }
+
+    pub fn canBeMoved(expr: Expr) bool {
+        return expr.data.canBeMoved();
     }
 
     pub fn unwrapInlined(expr: Expr) Expr {
@@ -4237,6 +4283,7 @@ pub const Expr = struct {
                     .data = Data{
                         .e_commonjs_export_identifier = .{
                             .ref = st.ref,
+                            .base = st.base,
                         },
                     },
                 };
@@ -4433,6 +4480,7 @@ pub const Expr = struct {
         e_import_identifier,
         e_private_identifier,
         e_commonjs_export_identifier,
+        e_module_dot_exports,
         e_boolean,
         e_number,
         e_big_int,
@@ -4448,13 +4496,12 @@ pub const Expr = struct {
         e_undefined,
         e_new_target,
         e_import_meta,
+        e_import_meta_main,
+        e_require_main,
         e_inlined_enum,
 
         /// A string that is UTF-8 encoded without escaping for use in JavaScript.
         e_utf8_string,
-
-        // This should never make it to the printer
-        inline_identifier,
 
         // object, regex and array may have had side effects
         pub fn isPrimitiveLiteral(tag: Tag) bool {
@@ -5128,6 +5175,7 @@ pub const Expr = struct {
         e_import_identifier: E.ImportIdentifier,
         e_private_identifier: E.PrivateIdentifier,
         e_commonjs_export_identifier: E.CommonJSExportIdentifier,
+        e_module_dot_exports,
 
         e_boolean: E.Boolean,
         e_number: E.Number,
@@ -5136,8 +5184,8 @@ pub const Expr = struct {
 
         e_require_string: E.RequireString,
         e_require_resolve_string: E.RequireResolveString,
-        e_require_call_target: void,
-        e_require_resolve_call_target: void,
+        e_require_call_target,
+        e_require_resolve_call_target,
 
         e_missing: E.Missing,
         e_this: E.This,
@@ -5146,13 +5194,16 @@ pub const Expr = struct {
         e_undefined: E.Undefined,
         e_new_target: E.NewTarget,
         e_import_meta: E.ImportMeta,
-        e_inlined_enum: *E.InlinedEnum,
 
+        e_import_meta_main: E.ImportMetaMain,
+        e_require_main,
+
+        e_inlined_enum: *E.InlinedEnum,
         e_utf8_string: *E.UTF8String,
 
-        // This type should not exist outside of MacroContext
-        // If it ends up in JSParser or JSPrinter, it is a bug.
-        inline_identifier: i32,
+        comptime {
+            bun.assert_eql(@sizeOf(Data), 24); // Do not increase the size of Expr
+        }
 
         pub fn as(data: Data, comptime tag: Tag) ?std.meta.FieldType(Data, tag) {
             return if (data == tag) @field(data, @tagName(tag)) else null;
@@ -5463,9 +5514,8 @@ pub const Expr = struct {
                 .e_import => |el| {
                     const item = bun.create(allocator, E.Import, .{
                         .expr = try el.expr.deepClone(allocator),
+                        .options = try el.options.deepClone(allocator),
                         .import_record_index = el.import_record_index,
-                        .type_attribute = el.type_attribute,
-                        .leading_interior_comments = el.leading_interior_comments,
                     });
                     return .{ .e_import = item };
                 },
@@ -5497,12 +5547,53 @@ pub const Expr = struct {
             };
         }
 
+        /// "const values" here refers to expressions that can participate in constant
+        /// inlining, as they have no side effects on instantiation, and there would be
+        /// no observable difference if duplicated. This is a subset of canBeMoved()
         pub fn canBeConstValue(this: Expr.Data) bool {
             return switch (this) {
-                .e_number, .e_boolean, .e_null, .e_undefined => true,
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                .e_inlined_enum,
+                => true,
                 .e_string => |str| str.next == null,
                 .e_array => |array| array.was_originally_macro,
                 .e_object => |object| object.was_originally_macro,
+                else => false,
+            };
+        }
+
+        /// Expressions that can be moved are those that do not have side
+        /// effects on their own. This is used to determine what can be moved
+        /// outside of a module wrapper (__esm/__commonJS).
+        pub fn canBeMoved(data: Expr.Data) bool {
+            return switch (data) {
+                .e_class => |class| class.canBeMoved(),
+
+                .e_arrow,
+                .e_function,
+
+                .e_number,
+                .e_boolean,
+                .e_null,
+                .e_undefined,
+                // .e_reg_exp,
+                .e_big_int,
+                .e_string,
+                .e_inlined_enum,
+                .e_import_meta,
+                .e_utf8_string,
+                => true,
+
+                .e_template => |template| template.tag == null and template.parts.len == 0,
+
+                .e_array => |array| array.was_originally_macro,
+                .e_object => |object| object.was_originally_macro,
+
+                // TODO: experiment with allowing some e_binary, e_unary, e_if as movable
+
                 else => false,
             };
         }
@@ -5694,6 +5785,14 @@ pub const Expr = struct {
             equal: bool = false,
             ok: bool = false,
 
+            /// This extra flag is unfortunately required for the case of visiting the expression
+            /// `require.main === module` (and any combination of !==, ==, !=, either ordering)
+            ///
+            /// We want to replace this with the dedicated import_meta_main node, which:
+            /// - Stops this module from having p.require_ref, allowing conversion to ESM
+            /// - Allows us to inline `import.meta.main`'s value, if it is known (bun build --compile)
+            is_require_main_and_module: bool = false,
+
             pub const @"true" = Equality{ .ok = true, .equal = true };
             pub const @"false" = Equality{ .ok = true, .equal = false };
             pub const unknown = Equality{ .ok = false };
@@ -5705,12 +5804,14 @@ pub const Expr = struct {
         pub fn eql(
             left: Expr.Data,
             right: Expr.Data,
-            allocator: std.mem.Allocator,
+            p: anytype,
             comptime kind: enum { loose, strict },
         ) Equality {
+            comptime bun.assert(@typeInfo(@TypeOf(p)).Pointer.size == .One); // pass *Parser
+
             // https://dorey.github.io/JavaScript-Equality-Table/
             switch (left) {
-                .e_inlined_enum => |inlined| return inlined.value.data.eql(right, allocator, kind),
+                .e_inlined_enum => |inlined| return inlined.value.data.eql(right, p, kind),
 
                 .e_null, .e_undefined => {
                     const ok = switch (@as(Expr.Tag, right)) {
@@ -5821,8 +5922,8 @@ pub const Expr = struct {
                 .e_string => |l| {
                     switch (right) {
                         .e_string => |r| {
-                            r.resolveRopeIfNeeded(allocator);
-                            l.resolveRopeIfNeeded(allocator);
+                            r.resolveRopeIfNeeded(p.allocator);
+                            l.resolveRopeIfNeeded(p.allocator);
                             return .{
                                 .ok = true,
                                 .equal = r.eql(E.String, l),
@@ -5832,8 +5933,8 @@ pub const Expr = struct {
                             if (inlined.value.data == .e_string) {
                                 const r = inlined.value.data.e_string;
 
-                                r.resolveRopeIfNeeded(allocator);
-                                l.resolveRopeIfNeeded(allocator);
+                                r.resolveRopeIfNeeded(p.allocator);
+                                l.resolveRopeIfNeeded(p.allocator);
 
                                 return .{
                                     .ok = true,
@@ -5864,7 +5965,20 @@ pub const Expr = struct {
                         else => {},
                     }
                 },
-                else => {},
+
+                else => {
+                    // Do not need to check left because e_require_main is
+                    // always re-ordered to the right side.
+                    if (right == .e_require_main) {
+                        if (left.as(.e_identifier)) |id| {
+                            if (id.ref.eql(p.module_ref)) return .{
+                                .ok = true,
+                                .equal = true,
+                                .is_require_main_and_module = true,
+                            };
+                        }
+                    }
+                },
             }
 
             return Equality.unknown;
@@ -5889,7 +6003,6 @@ pub const Expr = struct {
 
                 .e_identifier,
                 .e_import_identifier,
-                .inline_identifier,
                 .e_private_identifier,
                 .e_commonjs_export_identifier,
                 => error.@"Cannot convert identifier to JS. Try a statically-known value",
@@ -6047,11 +6160,7 @@ pub const S = struct {
 
         pub fn canBeMoved(self: *const ExportDefault) bool {
             return switch (self.value) {
-                .expr => |e| switch (e.data) {
-                    .e_class => |class| class.canBeMoved(),
-                    .e_arrow, .e_function => true,
-                    else => e.canBeConstValue(),
-                },
+                .expr => |e| e.canBeMoved(),
                 .stmt => |s| switch (s.data) {
                     .s_class => |class| class.class.canBeMoved(),
                     .s_function => true,
@@ -6529,6 +6638,7 @@ pub const Ast = struct {
     uses_exports_ref: bool = false,
     uses_module_ref: bool = false,
     uses_require_ref: bool = false,
+    commonjs_module_exports_assigned_deoptimized: bool = false,
 
     force_cjs_to_esm: bool = false,
     exports_kind: ExportsKind = ExportsKind.none,
@@ -6580,7 +6690,7 @@ pub const Ast = struct {
     /// Not to be confused with `commonjs_named_exports`
     /// This is a list of named exports that may exist in a CommonJS module
     /// We use this with `commonjs_at_runtime` to re-export CommonJS
-    commonjs_export_names: []string = &([_]string{}),
+    has_commonjs_export_names: bool = false,
     import_meta_ref: Ref = Ref.None,
 
     pub const CommonJSNamedExport = struct {
@@ -6688,19 +6798,20 @@ pub const BundledAst = struct {
     pub const CommonJSNamedExports = Ast.CommonJSNamedExports;
     pub const ConstValuesMap = Ast.ConstValuesMap;
 
-    pub const Flags = packed struct {
+    pub const Flags = packed struct(u8) {
         // This is a list of CommonJS features. When a file uses CommonJS features,
         // it's not a candidate for "flat bundling" and must be wrapped in its own
         // closure.
         uses_exports_ref: bool = false,
         uses_module_ref: bool = false,
         // uses_require_ref: bool = false,
-
         uses_export_keyword: bool = false,
-
         has_char_freq: bool = false,
         force_cjs_to_esm: bool = false,
         has_lazy_export: bool = false,
+        commonjs_module_exports_assigned_deoptimized: bool = false,
+
+        _: u1 = 0,
     };
 
     pub const empty = BundledAst.init(Ast.empty);
@@ -6711,9 +6822,6 @@ pub const BundledAst = struct {
     pub inline fn uses_module_ref(this: *const BundledAst) bool {
         return this.flags.uses_module_ref;
     }
-    // pub inline fn uses_require_ref(this: *const BundledAst) bool {
-    //     return this.flags.uses_require_ref;
-    // }
 
     pub fn toAST(this: *const BundledAst) Ast {
         return .{
@@ -6763,6 +6871,7 @@ pub const BundledAst = struct {
             .export_keyword = .{ .len = if (this.flags.uses_export_keyword) 1 else 0, .loc = .{} },
             .force_cjs_to_esm = this.flags.force_cjs_to_esm,
             .has_lazy_export = this.flags.has_lazy_export,
+            .commonjs_module_exports_assigned_deoptimized = this.flags.commonjs_module_exports_assigned_deoptimized,
         };
     }
 
@@ -6816,6 +6925,7 @@ pub const BundledAst = struct {
                 .has_char_freq = ast.char_freq != null,
                 .force_cjs_to_esm = ast.force_cjs_to_esm,
                 .has_lazy_export = ast.has_lazy_export,
+                .commonjs_module_exports_assigned_deoptimized = ast.commonjs_module_exports_assigned_deoptimized,
             },
         };
     }
@@ -7685,7 +7795,7 @@ pub const Macro = struct {
             defer resolver.opts.transform_options = old_transform_options;
 
             // JSC needs to be initialized if building from CLI
-            JSC.initialize();
+            JSC.initialize(false);
 
             var _vm = try JavaScript.VirtualMachine.init(.{
                 .allocator = default_allocator,

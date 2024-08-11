@@ -163,7 +163,6 @@ pub const UpgradeCheckerThread = struct {
 };
 
 pub const UpgradeCommand = struct {
-    pub const timeout: u32 = 30000;
     const default_github_headers: string = "Acceptapplication/vnd.github.v3+json";
     var github_repository_url_buf: bun.PathBuffer = undefined;
     var current_executable_buf: bun.PathBuffer = undefined;
@@ -245,12 +244,11 @@ pub const UpgradeCommand = struct {
             headers_buf,
             &metadata_body,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (!silent) async_http.client.progress_node = progress.?;
         const response = try async_http.sendSync(true);
@@ -528,14 +526,12 @@ pub const UpgradeCommand = struct {
                 "",
                 zip_file_buffer,
                 "",
-                timeout,
                 http_proxy,
                 null,
                 HTTP.FetchRedirect.follow,
             );
-            async_http.client.timeout = timeout;
             async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+            async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
             const response = try async_http.sendSync(true);
 
@@ -656,10 +652,10 @@ pub const UpgradeCommand = struct {
                     // Run a powershell script to unzip the file
                     const unzip_script = try std.fmt.allocPrint(
                         ctx.allocator,
-                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path {s} {s} -Force",
+                        "$global:ProgressPreference='SilentlyContinue';Expand-Archive -Path \"{}\" \"{}\" -Force",
                         .{
-                            tmpname,
-                            tmpdir_path,
+                            bun.fmt.escapePowershell(tmpname),
+                            bun.fmt.escapePowershell(tmpdir_path),
                         },
                     );
 

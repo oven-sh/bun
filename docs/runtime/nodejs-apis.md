@@ -153,7 +153,7 @@ Some methods are not optimized yet.
 
 ### [`node:util`](https://nodejs.org/api/util.html)
 
-🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `getSystemErrorName` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
+🟡 Missing `MIMEParams` `MIMEType` `aborted` `debug` `getSystemErrorMap` `transferableAbortController` `transferableAbortSignal` `stripVTControlCharacters`
 
 ### [`node:v8`](https://nodejs.org/api/v8.html)
 
@@ -413,7 +413,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
 
@@ -421,7 +421,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
 

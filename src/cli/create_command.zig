@@ -1811,7 +1811,6 @@ pub const Example = struct {
 
     const examples_url: string = "https://registry.npmjs.org/bun-examples-all/latest";
     var url: URL = undefined;
-    pub const timeout: u32 = 6000;
 
     var app_name_buf: [512]u8 = undefined;
     pub fn print(examples: []const Example, default_app_name: ?string) void {
@@ -1977,13 +1976,12 @@ pub const Example = struct {
             headers_buf,
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         const response = try async_http.sendSync(true);
 
@@ -2055,13 +2053,12 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         var response = try async_http.sendSync(true);
 
@@ -2145,13 +2142,12 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
         async_http.client.progress_node = progress;
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         refresher.maybeRefresh();
 
@@ -2188,12 +2184,11 @@ pub const Example = struct {
             "",
             mutable,
             "",
-            60 * std.time.ns_per_min,
             http_proxy,
             null,
             HTTP.FetchRedirect.follow,
         );
-        async_http.client.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
+        async_http.client.flags.reject_unauthorized = env_loader.getTLSRejectUnauthorized();
 
         if (Output.enable_ansi_colors) {
             async_http.client.progress_node = progress_node;

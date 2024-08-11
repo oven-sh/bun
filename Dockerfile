@@ -52,12 +52,8 @@ ENV CI 1
 ENV CPU_TARGET=${CPU_TARGET}
 ENV BUILDARCH=${BUILDARCH}
 ENV BUN_DEPS_OUT_DIR=${BUN_DEPS_OUT_DIR}
-ENV BUN_ENABLE_LTO 1
+ENV USE_LTO 1
 
-ENV CXX=clang++-${LLVM_VERSION}
-ENV CC=clang-${LLVM_VERSION}
-ENV AR=/usr/bin/llvm-ar-${LLVM_VERSION}
-ENV LD=lld-${LLVM_VERSION}
 ENV LC_CTYPE=en_US.UTF-8
 ENV LC_ALL=en_US.UTF-8
 
@@ -94,6 +90,8 @@ RUN install_packages \
   clangd-${LLVM_VERSION} \
   libc++-${LLVM_VERSION}-dev \
   libc++abi-${LLVM_VERSION}-dev \
+  llvm-${LLVM_VERSION}-runtime \
+  llvm-${LLVM_VERSION}-dev \
   make \
   cmake \
   ninja-build \
@@ -120,6 +118,15 @@ RUN install_packages \
   && ln -sf /usr/bin/lldb-${LLVM_VERSION} /usr/bin/lldb \
   && ln -sf /usr/bin/clangd-${LLVM_VERSION} /usr/bin/clangd \
   && ln -sf /usr/bin/llvm-ar-${LLVM_VERSION} /usr/bin/llvm-ar \
+  && ln -sf /usr/bin/ld.lld /usr/bin/ld \
+  && ln -sf /usr/bin/llvm-ranlib-${LLVM_VERSION} /usr/bin/ranlib \
+  && ln -sf /usr/bin/clang /usr/bin/cc \
+  && ln -sf /usr/bin/clang /usr/bin/c89 \
+  && ln -sf /usr/bin/clang /usr/bin/c99 \
+  && ln -sf /usr/bin/clang++ /usr/bin/c++ \
+  && ln -sf /usr/bin/clang++ /usr/bin/g++ \
+  && ln -sf /usr/bin/llvm-ar /usr/bin/ar \
+  && ln -sf /usr/bin/clang /usr/bin/gcc \
   && arch="$(dpkg --print-architecture)" \
   && case "${arch##*-}" in \
   amd64) variant="x64";; \
@@ -132,6 +139,7 @@ RUN install_packages \
   && ln -s /usr/bin/bun /usr/bin/bunx \
   && rm -rf bun-linux-${variant} bun-linux-${variant}.zip \
   && mkdir -p ${BUN_DIR} ${BUN_DEPS_OUT_DIR}
+
 # && if [ -n "${SCCACHE_BUCKET}" ]; then \
 #   echo "Setting up sccache" \
 #   && wget https://github.com/mozilla/sccache/releases/download/v0.5.4/sccache-v0.5.4-${BUILD_MACHINE_ARCH}-unknown-linux-musl.tar.gz \
@@ -168,13 +176,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/c-ares ${BUN_DIR}/src/deps/c-ares
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make c-ares \
-  && rm -rf ${BUN_DIR}/src/deps/c-ares ${BUN_DIR}/Makefile
+  && bash ./scripts/build-cares.sh \
+  && rm -rf ${BUN_DIR}/src/deps/c-ares ${BUN_DIR}/Makefile ${BUN_DIR}/scripts
 
 FROM bun-base as lolhtml
 
@@ -205,13 +214,14 @@ ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/mimalloc ${BUN_DIR}/src/deps/mimalloc
+COPY scripts ${BUN_DIR}/scripts
 
 ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd ${BUN_DIR} \
-  && make mimalloc \
+  && bash ./scripts/build-mimalloc.sh \
   && rm -rf src/deps/mimalloc Makefile
 
 FROM bun-base as mimalloc-debug
@@ -241,14 +251,38 @@ ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/zlib ${BUN_DIR}/src/deps/zlib
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make zlib \
-  && rm -rf src/deps/zlib Makefile
+  && bash ./scripts/build-zlib.sh && rm -rf src/deps/zlib scripts
+
+
+FROM bun-base as libdeflate
+
+ARG BUN_DIR
+ARG CPU_TARGET
+ENV CPU_TARGET=${CPU_TARGET}
+ARG CCACHE_DIR=/ccache
+ENV CCACHE_DIR=${CCACHE_DIR}
+
+COPY Makefile ${BUN_DIR}/Makefile
+COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
+COPY scripts ${BUN_DIR}/scripts
+COPY src/deps/libdeflate ${BUN_DIR}/src/deps/libdeflate
+COPY package.json bun.lockb Makefile .gitmodules ${BUN_DIR}/
+
+WORKDIR $BUN_DIR
+
+RUN --mount=type=cache,target=${CCACHE_DIR} \
+  cd $BUN_DIR \
+  && bash ./scripts/build-libdeflate.sh && rm -rf src/deps/libdeflate scripts
+
 
 FROM bun-base as libarchive
 
@@ -287,6 +321,7 @@ ARG CPU_TARGET
 ENV CPU_TARGET=${CPU_TARGET}
 
 COPY Makefile ${BUN_DIR}/Makefile
+COPY scripts ${BUN_DIR}/scripts
 COPY src/deps/boringssl ${BUN_DIR}/src/deps/boringssl
 
 WORKDIR $BUN_DIR
@@ -296,7 +331,7 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd ${BUN_DIR} \
-  && make boringssl \
+  && bash ./scripts/build-boringssl.sh \
   && rm -rf src/deps/boringssl Makefile
 
 
@@ -312,12 +347,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/zstd ${BUN_DIR}/src/deps/zstd
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make zstd
+  && bash ./scripts/build-zstd.sh \
+  && rm -rf src/deps/zstd scripts
 
 FROM bun-base as ls-hpack
 
@@ -331,12 +368,14 @@ ENV CCACHE_DIR=${CCACHE_DIR}
 
 COPY Makefile ${BUN_DIR}/Makefile
 COPY src/deps/ls-hpack ${BUN_DIR}/src/deps/ls-hpack
+COPY scripts ${BUN_DIR}/scripts
 
 WORKDIR $BUN_DIR
 
 RUN --mount=type=cache,target=${CCACHE_DIR} \
   cd $BUN_DIR \
-  && make lshpack
+  && bash ./scripts/build-lshpack.sh \
+  && rm -rf src/deps/ls-hpack scripts
 
 FROM bun-base-with-zig as bun-identifier-cache
 
@@ -393,6 +432,9 @@ COPY packages ${BUN_DIR}/packages
 COPY src ${BUN_DIR}/src
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY src/deps/boringssl/include ${BUN_DIR}/src/deps/boringssl/include
+
+# for uWebSockets
+COPY src/deps/libdeflate ${BUN_DIR}/src/deps/libdeflate
 
 ARG CCACHE_DIR=/ccache
 ENV CCACHE_DIR=${CCACHE_DIR}
@@ -492,11 +534,13 @@ RUN mkdir -p build bun-webkit
 
 # lol
 COPY src/bun.js/bindings/sqlite/sqlite3.c ${BUN_DIR}/src/bun.js/bindings/sqlite/sqlite3.c
+COPY src/deps/brotli ${BUN_DIR}/src/deps/brotli
 
 COPY src/symbols.dyn src/linker.lds ${BUN_DIR}/src/
 
 COPY CMakeLists.txt ${BUN_DIR}/CMakeLists.txt
 COPY --from=zlib ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
+COPY --from=libdeflate ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=libarchive ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=boringssl ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=lolhtml ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
@@ -506,7 +550,8 @@ COPY --from=tinycc ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=c-ares ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=ls-hpack ${BUN_DEPS_OUT_DIR}/* ${BUN_DEPS_OUT_DIR}/
 COPY --from=bun-compile-zig-obj /tmp/bun-zig.o ${BUN_DIR}/build/bun-zig.o
-COPY --from=bun-cpp-objects ${BUN_DIR}/build/bun-cpp-objects.a ${BUN_DIR}/build/bun-cpp-objects.a
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/*.a ${BUN_DIR}/build/
+COPY --from=bun-cpp-objects ${BUN_DIR}/build/*.o ${BUN_DIR}/build/ 
 COPY --from=bun-cpp-objects ${BUN_DIR}/bun-webkit/lib ${BUN_DIR}/bun-webkit/lib
 
 WORKDIR $BUN_DIR/build

@@ -59,6 +59,11 @@ describe("napi", () => {
     });
   });
 
+  it("threadsafe function does not hang on finalize", () => {
+    const result = checkSameOutput("test_napi_threadsafe_function_does_not_hang_after_finalize", []);
+    expect(result).toBe("success!");
+  });
+
   it("#1288", async () => {
     const result = checkSameOutput("self", []);
     expect(result).toBe("hello world!");

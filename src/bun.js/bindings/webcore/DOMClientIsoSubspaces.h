@@ -44,6 +44,7 @@ public:
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForMockWithImplementationCleanupData;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForProcessObject;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForInternalModuleRegistry;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForErrorCodeCache;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForBunInspectorConnection;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForJSNextTickQueue;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForNAPIFunction;
@@ -475,10 +476,10 @@ public:
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForStaticRange;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForText;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextDecoderStreamDecoder;
     std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoder;
-    // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
+    std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStream;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEncoderStreamEncoder;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTextEvent;
     // std::unique_ptr<GCClient::IsoSubspace> m_clientSubspaceForTransitionEvent;

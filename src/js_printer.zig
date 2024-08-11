@@ -65,8 +65,8 @@ const ascii_only_always_on_unless_minifying = true;
 fn formatUnsignedIntegerBetween(comptime len: u16, buf: *[len]u8, val: u64) void {
     comptime var i: u16 = len;
     var remainder = val;
-    // Write out the number from the end to the front
 
+    // Write out the number from the end to the front
     inline while (i > 0) {
         comptime i -= 1;
         buf[comptime i] = @as(u8, @intCast((remainder % 10))) + '0';
@@ -526,16 +526,21 @@ pub const Options = struct {
     source_map_handler: ?SourceMapHandler = null,
     source_map_builder: ?*bun.sourcemap.Chunk.Builder = null,
     css_import_behavior: Api.CssInJsBehavior = Api.CssInJsBehavior.facade,
+    target: options.Target = .browser,
 
     runtime_transpiler_cache: ?*bun.JSC.RuntimeTranspilerCache = null,
 
     commonjs_named_exports: js_ast.Ast.CommonJSNamedExports = .{},
     commonjs_named_exports_deoptimized: bool = false,
+    commonjs_module_exports_assigned_deoptimized: bool = false,
     commonjs_named_exports_ref: Ref = Ref.None,
+    commonjs_module_ref: Ref = Ref.None,
 
     minify_whitespace: bool = false,
     minify_identifiers: bool = false,
     minify_syntax: bool = false,
+    print_dce_annotations: bool = true,
+
     transform_only: bool = false,
     inline_require_and_import_errors: bool = true,
     has_run_symbol_renamer: bool = false,
@@ -544,7 +549,7 @@ pub const Options = struct {
 
     module_type: options.OutputFormat = .preserve,
 
-    /// Used for cross-module inlining of import items when bundling
+    // /// Used for cross-module inlining of import items when bundling
     // const_values: Ast.ConstValuesMap = .{},
     ts_enums: Ast.TsEnumsMap = .{},
 
@@ -1105,7 +1110,14 @@ fn NewPrinter(
                 p.print("=");
                 p.printSpaceBeforeIdentifier();
                 if (comptime Statement == void) {
-                    p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
+                    p.printRequireOrImportExpr(
+                        import.import_record_index,
+                        false,
+                        &.{},
+                        Expr.empty,
+                        Level.lowest,
+                        ExprFlag.None(),
+                    );
                 } else {
                     p.print(statement);
                 }
@@ -1119,7 +1131,14 @@ fn NewPrinter(
                 p.printSymbol(default.ref.?);
                 if (comptime Statement == void) {
                     p.@"print = "();
-                    p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
+                    p.printRequireOrImportExpr(
+                        import.import_record_index,
+                        false,
+                        &.{},
+                        Expr.empty,
+                        Level.lowest,
+                        ExprFlag.None(),
+                    );
                 } else {
                     p.@"print = "();
                     p.print(statement);
@@ -1161,7 +1180,7 @@ fn NewPrinter(
 
                 if (import.star_name_loc == null and import.default_name == null) {
                     if (comptime Statement == void) {
-                        p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Level.lowest, ExprFlag.None());
+                        p.printRequireOrImportExpr(import.import_record_index, false, &.{}, Expr.empty, Level.lowest, ExprFlag.None());
                     } else {
                         p.print(statement);
                     }
@@ -1916,9 +1935,12 @@ fn NewPrinter(
             import_record_index: u32,
             was_unwrapped_require: bool,
             leading_interior_comments: []G.Comment,
+            import_options: Expr,
             level_: Level,
             flags: ExprFlag.Set,
         ) void {
+            _ = leading_interior_comments; // TODO:
+
             var level = level_;
             const wrap = level.gte(.new) or flags.contains(.forbid_call);
             if (wrap) p.print("(");
@@ -1998,12 +2020,12 @@ fn NewPrinter(
                 }
                 defer if (record.kind == .dynamic) p.printDotThenSuffix();
 
-                // Make sure the comma operator is propertly wrapped
-
-                if (meta.exports_ref.isValid() and level.gte(.comma)) {
-                    p.print("(");
-                }
-                defer if (meta.exports_ref.isValid() and level.gte(.comma)) p.print(")");
+                // Make sure the comma operator is properly wrapped
+                const wrap_comma_operator = meta.exports_ref.isValid() and
+                    meta.wrapper_ref.isValid() and
+                    level.gte(.comma);
+                if (wrap_comma_operator) p.print("(");
+                defer if (wrap_comma_operator) p.print(")");
 
                 // Wrap this with a call to "__toESM()" if this is a CommonJS file
                 const wrap_with_to_esm = record.wrap_with_to_esm;
@@ -2014,17 +2036,20 @@ fn NewPrinter(
                 }
 
                 if (!meta.was_unwrapped_require) {
-
                     // Call the wrapper
-                    p.printSpaceBeforeIdentifier();
-                    p.printSymbol(meta.wrapper_ref);
-                    p.print("()");
+                    if (meta.wrapper_ref.isValid()) {
+                        p.printSpaceBeforeIdentifier();
+                        p.printSymbol(meta.wrapper_ref);
+                        p.print("()");
+
+                        if (meta.exports_ref.isValid()) {
+                            p.print(",");
+                            p.printSpace();
+                        }
+                    }
 
                     // Return the namespace object if this is an ESM file
                     if (meta.exports_ref.isValid()) {
-                        p.print(",");
-                        p.printSpace();
-
                         // Wrap this with a call to "__toCommonJS()" if this is an ESM file
                         const wrap_with_to_cjs = record.wrap_with_to_commonjs;
                         if (wrap_with_to_cjs) {
@@ -2090,14 +2115,14 @@ fn NewPrinter(
             }
 
             // External import()
-            if (leading_interior_comments.len > 0) {
-                p.printNewline();
-                p.indent();
-                for (leading_interior_comments) |comment| {
-                    p.printIndentedComment(comment.text);
-                }
-                p.printIndent();
-            }
+            // if (leading_interior_comments.len > 0) {
+            //     p.printNewline();
+            //     p.indent();
+            //     for (leading_interior_comments) |comment| {
+            //         p.printIndentedComment(comment.text);
+            //     }
+            //     p.printIndent();
+            // }
             p.addSourceMapping(record.range.loc);
 
             p.printSpaceBeforeIdentifier();
@@ -2106,49 +2131,30 @@ fn NewPrinter(
             p.print("import(");
             p.printImportRecordPath(record);
 
-            switch (record.tag) {
-                .with_type_sqlite, .with_type_sqlite_embedded => {
-                    // we do not preserve "embed": "true" since it is not necessary
-                    p.printWhitespacer(ws(", { with: { type: \"sqlite\" } }"));
-                },
-                .with_type_text => {
-                    if (comptime is_bun_platform) {
-                        p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
-                    }
-                },
-                .with_type_json => {
-                    // backwards compatibility: previously, we always stripped type json
-                    if (comptime is_bun_platform) {
-                        p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
-                    }
-                },
-                .with_type_toml => {
-                    // backwards compatibility: previously, we always stripped type
-                    if (comptime is_bun_platform) {
-                        p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
-                    }
-                },
-                .with_type_file => {
-                    // backwards compatibility: previously, we always stripped type
-                    if (comptime is_bun_platform) {
-                        p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
-                    }
-                },
-                else => {},
+            if (!import_options.isMissing()) {
+                // since we previously stripped type, it is a breaking change to
+                // enable this for non-bun platforms
+                if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
+                    p.printWhitespacer(ws(", "));
+                    p.printExpr(import_options, .comma, .{});
+                }
             }
+
             p.print(")");
 
-            if (leading_interior_comments.len > 0) {
-                p.printNewline();
-                p.unindent();
-                p.printIndent();
-            }
+            // if (leading_interior_comments.len > 0) {
+            //     p.printNewline();
+            //     p.unindent();
+            //     p.printIndent();
+            // }
 
             return;
         }
 
-        // noop for now
-        pub inline fn printPure(_: *Printer) void {}
+        pub inline fn printPure(p: *Printer) void {
+            if (Environment.allow_assert) assert(p.options.print_dce_annotations);
+            p.printWhitespacer(ws("/* @__PURE__ */ "));
+        }
 
         pub fn printQuotedUTF8(p: *Printer, str: string, allow_backtick: bool) void {
             const quote = if (comptime !is_json)
@@ -2279,8 +2285,8 @@ fn NewPrinter(
             }
         }
 
-        pub fn printExpr(p: *Printer, expr: Expr, level: Level, _flags: ExprFlag.Set) void {
-            var flags = _flags;
+        pub fn printExpr(p: *Printer, expr: Expr, level: Level, in_flags: ExprFlag.Set) void {
+            var flags = in_flags;
 
             switch (expr.data) {
                 .e_missing => {},
@@ -2330,6 +2336,62 @@ fn NewPrinter(
                         p.printSymbol(p.options.import_meta_ref);
                     }
                 },
+                .e_import_meta_main => |data| {
+                    if (p.options.module_type == .esm and p.options.target != .node) {
+                        // Node.js doesn't support import.meta.main
+                        // Most of the time, leave it in there
+                        if (data.inverted) {
+                            p.addSourceMapping(expr.loc);
+                            p.print("!");
+                        } else {
+                            p.printSpaceBeforeIdentifier();
+                            p.addSourceMapping(expr.loc);
+                        }
+                        p.print("import.meta.main");
+                    } else {
+                        p.printSpaceBeforeIdentifier();
+                        p.addSourceMapping(expr.loc);
+
+                        if (p.options.require_ref) |require|
+                            p.printSymbol(require)
+                        else
+                            p.print("require");
+
+                        if (data.inverted)
+                            p.printWhitespacer(ws(".main != "))
+                        else
+                            p.printWhitespacer(ws(".main == "));
+
+                        if (p.options.target == .node) {
+                            // "__require.module"
+                            if (p.options.require_ref) |require|
+                                p.printSymbol(require)
+                            else
+                                p.print("require");
+
+                            p.print(".module");
+                        } else if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
+                    }
+                },
+                .e_module_dot_exports => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.commonjs_module_exports_assigned_deoptimized) {
+                        if (p.options.commonjs_module_ref.isValid()) {
+                            p.printSymbol(p.options.commonjs_module_ref);
+                        } else {
+                            p.print("module");
+                        }
+                        p.print(".exports");
+                    } else {
+                        p.printSymbol(p.options.commonjs_named_exports_ref);
+                    }
+                },
                 .e_commonjs_export_identifier => |id| {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2337,7 +2399,16 @@ fn NewPrinter(
                     for (p.options.commonjs_named_exports.keys(), p.options.commonjs_named_exports.values()) |key, value| {
                         if (value.loc_ref.ref.?.eql(id.ref)) {
                             if (p.options.commonjs_named_exports_deoptimized or value.needs_decl) {
-                                p.printSymbol(p.options.commonjs_named_exports_ref);
+                                if (p.options.commonjs_module_exports_assigned_deoptimized and
+                                    id.base == .module_dot_exports and
+                                    p.options.commonjs_module_ref.isValid())
+                                {
+                                    p.printSymbol(p.options.commonjs_module_ref);
+                                    p.print(".exports");
+                                } else {
+                                    p.printSymbol(p.options.commonjs_named_exports_ref);
+                                }
+
                                 if (p.canPrintIdentifier(key)) {
                                     p.print(".");
                                     p.print(key);
@@ -2354,7 +2425,7 @@ fn NewPrinter(
                     }
                 },
                 .e_new => |e| {
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     const wrap = level.gte(.call) or (has_pure_comment and level.gte(.postfix));
 
                     if (wrap) {
@@ -2404,7 +2475,7 @@ fn NewPrinter(
                         wrap = true;
                     }
 
-                    const has_pure_comment = e.can_be_unwrapped_if_unused;
+                    const has_pure_comment = e.can_be_unwrapped_if_unused and p.options.print_dce_annotations;
                     if (has_pure_comment and level.gte(.postfix)) {
                         wrap = true;
                     }
@@ -2458,6 +2529,19 @@ fn NewPrinter(
                         p.print(")");
                     }
                 },
+                .e_require_main => {
+                    p.printSpaceBeforeIdentifier();
+                    p.addSourceMapping(expr.loc);
+
+                    if (p.options.module_type == .esm and is_bun_platform) {
+                        p.print("import.meta.require.main");
+                    } else if (p.options.require_ref) |require_ref| {
+                        p.printSymbol(require_ref);
+                        p.print(".main");
+                    } else {
+                        p.print("require.main");
+                    }
+                },
                 .e_require_call_target => {
                     p.printSpaceBeforeIdentifier();
                     p.addSourceMapping(expr.loc);
@@ -2485,7 +2569,14 @@ fn NewPrinter(
                 },
                 .e_require_string => |e| {
                     if (!rewrite_esm_to_cjs) {
-                        p.printRequireOrImportExpr(e.import_record_index, e.unwrapped_id != std.math.maxInt(u32), &([_]G.Comment{}), level, flags);
+                        p.printRequireOrImportExpr(
+                            e.import_record_index,
+                            e.unwrapped_id != std.math.maxInt(u32),
+                            &([_]G.Comment{}),
+                            Expr.empty,
+                            level,
+                            flags,
+                        );
                     }
                 },
                 .e_require_resolve_string => |e| {
@@ -2514,7 +2605,6 @@ fn NewPrinter(
                     }
                 },
                 .e_import => |e| {
-
                     // Handle non-string expressions
                     if (e.isImportRecordNull()) {
                         const wrap = level.gte(.new) or flags.contains(.forbid_call);
@@ -2525,47 +2615,45 @@ fn NewPrinter(
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(expr.loc);
                         p.print("import(");
-                        if (e.leading_interior_comments.len > 0) {
-                            p.printNewline();
-                            p.indent();
-                            for (e.leading_interior_comments) |comment| {
-                                p.printIndentedComment(comment.text);
-                            }
-                            p.printIndent();
-                        }
+                        // TODO:
+                        // if (e.leading_interior_comments.len > 0) {
+                        //     p.printNewline();
+                        //     p.indent();
+                        //     for (e.leading_interior_comments) |comment| {
+                        //         p.printIndentedComment(comment.text);
+                        //     }
+                        //     p.printIndent();
+                        // }
                         p.printExpr(e.expr, .comma, ExprFlag.None());
 
-                        if (comptime is_bun_platform) {
+                        if (!e.options.isMissing()) {
                             // since we previously stripped type, it is a breaking change to
                             // enable this for non-bun platforms
-                            switch (e.type_attribute) {
-                                .none => {},
-                                .text => {
-                                    p.printWhitespacer(ws(", { with: { type: \"text\" } }"));
-                                },
-                                .json => {
-                                    p.printWhitespacer(ws(", { with: { type: \"json\" } }"));
-                                },
-                                .toml => {
-                                    p.printWhitespacer(ws(", { with: { type: \"toml\" } }"));
-                                },
-                                .file => {
-                                    p.printWhitespacer(ws(", { with: { type: \"file\" } }"));
-                                },
+                            if (is_bun_platform or bun.FeatureFlags.breaking_changes_1_2) {
+                                p.printWhitespacer(ws(", "));
+                                p.printExpr(e.options, .comma, .{});
                             }
                         }
 
-                        if (e.leading_interior_comments.len > 0) {
-                            p.printNewline();
-                            p.unindent();
-                            p.printIndent();
-                        }
+                        // TODO:
+                        // if (e.leading_interior_comments.len > 0) {
+                        //     p.printNewline();
+                        //     p.unindent();
+                        //     p.printIndent();
+                        // }
                         p.print(")");
                         if (wrap) {
                             p.print(")");
                         }
                     } else {
-                        p.printRequireOrImportExpr(e.import_record_index, false, e.leading_interior_comments, level, flags);
+                        p.printRequireOrImportExpr(
+                            e.import_record_index,
+                            false,
+                            &.{}, // e.leading_interior_comments,
+                            e.options,
+                            level,
+                            flags,
+                        );
                     }
                 },
                 .e_dot => |e| {
@@ -2768,7 +2856,7 @@ fn NewPrinter(
                     if (e.func.name) |sym| {
                         p.printSpaceBeforeIdentifier();
                         p.addSourceMapping(sym.loc);
-                        p.printSymbol(sym.ref orelse Global.panic("internal error: expected E.Function's name symbol to have a ref\n{any}", .{e.func}));
+                        p.printSymbol(sym.ref orelse Output.panic("internal error: expected E.Function's name symbol to have a ref\n{any}", .{e.func}));
                     }
 
                     p.printFunc(e.func);
@@ -2789,7 +2877,7 @@ fn NewPrinter(
                     if (e.class_name) |name| {
                         p.print(" ");
                         p.addSourceMapping(name.loc);
-                        p.printSymbol(name.ref orelse Global.panic("internal error: expected E.Class's name symbol to have a ref\n{any}", .{e}));
+                        p.printSymbol(name.ref orelse Output.panic("internal error: expected E.Class's name symbol to have a ref\n{any}", .{e}));
                     }
                     p.printClass(e.*);
                     if (wrap) {
@@ -3218,7 +3306,11 @@ fn NewPrinter(
                         p.print(" */");
                     }
                 },
-                else => {
+
+                .e_jsx_element,
+                .e_private_identifier,
+                .e_template_part,
+                => {
                     if (Environment.isDebug)
                         Output.panic("Unexpected expression of type .{s}", .{@tagName(expr.data)});
                 },
@@ -3881,7 +3973,7 @@ fn NewPrinter(
                     p.print("}");
                 },
                 else => {
-                    Global.panic("Unexpected binding of type {any}", .{binding});
+                    Output.panic("Unexpected binding of type {any}", .{binding});
                 },
             }
         }
@@ -3910,8 +4002,8 @@ fn NewPrinter(
                 .s_function => |s| {
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
-                    const name = s.func.name orelse Global.panic("Internal error: expected func to have a name ref\n{any}", .{s});
-                    const nameRef = name.ref orelse Global.panic("Internal error: expected func to have a name\n{any}", .{s});
+                    const name = s.func.name orelse Output.panic("Internal error: expected func to have a name ref\n{any}", .{s});
+                    const nameRef = name.ref orelse Output.panic("Internal error: expected func to have a name\n{any}", .{s});
 
                     if (s.func.flags.contains(.is_export)) {
                         if (!rewrite_esm_to_cjs) {
@@ -4035,7 +4127,7 @@ fn NewPrinter(
 
                                     if (class.class.class_name) |name| {
                                         p.print("class ");
-                                        p.printSymbol(name.ref orelse Global.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
+                                        p.printSymbol(name.ref orelse Output.panic("Internal error: Expected class to have a name ref\n{any}", .{class}));
                                     } else {
                                         p.print("class");
                                     }
@@ -4045,7 +4137,7 @@ fn NewPrinter(
                                     p.printNewline();
                                 },
                                 else => {
-                                    Global.panic("Internal error: unexpected export default stmt data {any}", .{s});
+                                    Output.panic("Internal error: unexpected export default stmt data {any}", .{s});
                                 },
                             }
                         },
@@ -4441,7 +4533,7 @@ fn NewPrinter(
                         p.printIndent();
                     }
                     p.printSpaceBeforeIdentifier();
-                    p.printSymbol(s.name.ref orelse Global.panic("Internal error: expected label to have a name {any}", .{s}));
+                    p.printSymbol(s.name.ref orelse Output.panic("Internal error: expected label to have a name {any}", .{s}));
                     p.print(":");
                     p.printBody(s.stmt);
                 },
@@ -4637,8 +4729,6 @@ fn NewPrinter(
                         else => {},
                     }
 
-                    var item_count: usize = 0;
-
                     p.printIndent();
                     p.printSpaceBeforeIdentifier();
 
@@ -4757,6 +4847,8 @@ fn NewPrinter(
 
                     p.print("import");
 
+                    var item_count: usize = 0;
+
                     if (s.default_name) |name| {
                         p.print(" ");
                         p.printSymbol(name.ref.?);
@@ -4812,7 +4904,11 @@ fn NewPrinter(
                     }
 
                     if (item_count > 0) {
-                        p.print(" ");
+                        if (!p.options.minify_whitespace or
+                            record.contains_import_star or
+                            s.items.len == 0)
+                            p.print(" ");
+
                         p.printWhitespacer(ws("from "));
                     }
 
@@ -4926,9 +5022,9 @@ fn NewPrinter(
                     const to_print: []const u8 = if (slice.len > 1024) slice[slice.len - 1024 ..] else slice;
 
                     if (to_print.len > 0) {
-                        Global.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
+                        Output.panic("\n<r><red>voluntary crash<r> while printing:<r>\n{s}\n---This is a <b>bug<r>. Not your fault.\n", .{to_print});
                     } else {
-                        Global.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
+                        Output.panic("\n<r><red>voluntary crash<r> while printing. This is a <b>bug<r>. Not your fault.\n", .{});
                     }
                 },
             }
@@ -5155,7 +5251,7 @@ fn NewPrinter(
                 // for(;)
                 .s_empty => {},
                 else => {
-                    Global.panic("Internal error: Unexpected stmt in for loop {any}", .{initSt});
+                    Output.panic("Internal error: Unexpected stmt in for loop {any}", .{initSt});
                 },
             }
         }
@@ -5664,7 +5760,7 @@ pub fn NewWriter(
         pub inline fn print(writer: *Self, comptime ValueType: type, str: ValueType) void {
             if (FeatureFlags.disable_printing_null) {
                 if (str == 0) {
-                    Global.panic("Attempted to print null char", .{});
+                    Output.panic("Attempted to print null char", .{});
                 }
             }
 
@@ -5917,6 +6013,7 @@ pub const BufferWriter = struct {
     pub fn reset(ctx: *BufferWriter) void {
         ctx.buffer.reset();
         ctx.approximate_newline_count = 0;
+        ctx.written = &.{};
     }
 
     pub fn writtenWithoutTrailingZero(ctx: *const BufferWriter) []u8 {
@@ -6124,6 +6221,11 @@ pub fn printAst(
         renamer,
         getSourceMapBuilder(if (generate_source_map) .lazy else .disable, ascii_only, opts, source, &tree),
     );
+    defer {
+        if (comptime generate_source_map) {
+            printer.source_map_builder.line_offset_tables.deinit(opts.allocator);
+        }
+    }
     var bin_stack_heap = std.heap.stackFallback(1024, bun.default_allocator);
     printer.binary_expression_stack = std.ArrayList(PrinterType.BinaryExpressionVisitor).init(bin_stack_heap.get());
     defer printer.binary_expression_stack.clearAndFree();
@@ -6286,6 +6388,10 @@ pub fn printWithWriterAndPlatform(
     renamer: bun.renamer.Renamer,
     comptime generate_source_maps: bool,
 ) PrintResult {
+    const prev_action = bun.crash_handler.current_action;
+    defer bun.crash_handler.current_action = prev_action;
+    bun.crash_handler.current_action = .{ .print = source.path.text };
+
     const PrinterType = NewPrinter(
         // if it's bun, it is also ascii_only
         is_bun_platform,
@@ -6354,6 +6460,10 @@ pub fn printCommonJS(
     opts: Options,
     comptime generate_source_map: bool,
 ) !usize {
+    const prev_action = bun.crash_handler.current_action;
+    defer bun.crash_handler.current_action = prev_action;
+    bun.crash_handler.current_action = .{ .print = source.path.text };
+
     const PrinterType = NewPrinter(ascii_only, Writer, true, false, false, generate_source_map);
     const writer = _writer;
     var renamer = rename.NoOpRenamer.init(symbols, source);

@@ -223,7 +223,7 @@ describe("spawn()", () => {
 
   it("should allow us to spawn in the default shell", async () => {
     const shellPath: string = await new Promise(resolve => {
-      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell: true });
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell: true });
       child.stdout.on("data", data => {
         resolve(data.toString().trim());
       });
@@ -240,7 +240,7 @@ describe("spawn()", () => {
   it("should allow us to spawn in a specified shell", async () => {
     const shell = shellExe();
     const shellPath: string = await new Promise(resolve => {
-      const child = spawn("echo", [isWindows ? "$env:SHELL" : "$SHELL"], { shell });
+      const child = spawn("echo", [isWindows ? "$PSHOME" : "$SHELL"], { shell });
       child.stdout.on("data", data => {
         resolve(data.toString().trim());
       });

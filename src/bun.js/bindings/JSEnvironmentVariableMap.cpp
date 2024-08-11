@@ -348,7 +348,7 @@ JSValue createEnvironmentVariablesMap(Zig::GlobalObject* globalObject)
         Identifier::fromString(vm, BUN_CONFIG_VERBOSE_FETCH), JSC::CustomGetterSetter::create(vm, jsBunConfigVerboseFetchGetter, jsBunConfigVerboseFetchSetter), BUN_CONFIG_VERBOSE_FETCH_Attrs);
 
 #if OS(WINDOWS)
-    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
+    JSC::JSFunction* getSourceEvent = JSC::JSFunction::create(vm, globalObject, processObjectInternalsWindowsEnvCodeGenerator(vm), globalObject);
     RETURN_IF_EXCEPTION(scope, {});
     JSC::MarkedArgumentBuffer args;
     args.append(object);

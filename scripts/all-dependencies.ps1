@@ -3,10 +3,14 @@ param(
 )
 
 $ErrorActionPreference = 'Stop'
-. (Join-Path $PSScriptRoot "env.ps1")
 
-if ($env:CI) {
+. (Join-Path $PSScriptRoot "env.ps1")
+if ($env:CI -eq "true") {
   & (Join-Path $PSScriptRoot "update-submodules.ps1")
+}
+
+if ($env:RELEASE -eq "1") {
+  $Force = $true
 }
 
 $DidAnything = $false;
@@ -78,6 +82,10 @@ Build-Dependency `
 Build-Dependency `
   -Script "lshpack" `
   -Outputs @("lshpack.lib")
+
+Build-Dependency `
+  -Script "libdeflate" `
+  -Outputs @("deflate.lib")
 
 if (!($Script:DidAnything)) {
   Write-Host "(run with -Force to rebuild all)"

@@ -2,6 +2,8 @@ const std = @import("std");
 const bun = @import("root").bun;
 const unicode = std.unicode;
 
+const js_ast = bun.JSAst;
+
 pub const NodeIndex = u32;
 pub const NodeIndexNone = 4294967293;
 
@@ -100,6 +102,8 @@ pub const Index = packed struct(u32) {
 /// The maps can be merged quickly by creating a single outer array containing
 /// all inner arrays from all parsed files.
 pub const Ref = packed struct(u64) {
+    pub const Int = u31;
+
     inner_index: Int = 0,
 
     tag: enum(u2) {
@@ -114,18 +118,16 @@ pub const Ref = packed struct(u64) {
     /// Represents a null state without using an extra bit
     pub const None = Ref{ .inner_index = 0, .source_index = 0, .tag = .invalid };
 
+    comptime {
+        bun.assert(None.isEmpty());
+    }
+
     pub inline fn isEmpty(this: Ref) bool {
         return this.asU64() == 0;
     }
 
     pub const ArrayHashCtx = RefHashCtx;
     pub const HashCtx = RefCtx;
-
-    pub const Int = std.meta.Int(.unsigned, (64 - 2) / 2);
-
-    pub fn toInt(value: anytype) Int {
-        return @as(Int, @intCast(value));
-    }
 
     pub fn isSourceIndexNull(this: anytype) bool {
         return this == std.math.maxInt(Int);
@@ -140,9 +142,37 @@ pub const Ref = packed struct(u64) {
             writer,
             "Ref[inner={d}, src={d}, .{s}]",
             .{
-                ref.sourceIndex(),
                 ref.innerIndex(),
+                ref.sourceIndex(),
                 @tagName(ref.tag),
+            },
+        );
+    }
+
+    pub fn dump(ref: Ref, symbol_table: anytype) std.fmt.Formatter(dumpImpl) {
+        return .{ .data = .{
+            .ref = ref,
+            .symbol_table = switch (@TypeOf(symbol_table)) {
+                *const std.ArrayList(js_ast.Symbol) => symbol_table.items,
+                *std.ArrayList(js_ast.Symbol) => symbol_table.items,
+                []const js_ast.Symbol => symbol_table,
+                []js_ast.Symbol => symbol_table,
+                else => |T| @compileError("Unsupported type to Ref.dump: " ++ @typeName(T)),
+            },
+        } };
+    }
+
+    fn dumpImpl(data: struct { ref: Ref, symbol_table: []const js_ast.Symbol }, comptime _: []const u8, _: std.fmt.FormatOptions, writer: anytype) !void {
+        const symbol = data.symbol_table[data.ref.inner_index];
+        try std.fmt.format(
+            writer,
+            "Ref[inner={d}, src={d}, .{s}; original_name={s}, uses={d}]",
+            .{
+                data.ref.inner_index,
+                data.ref.source_index,
+                @tagName(data.ref.tag),
+                symbol.original_name,
+                symbol.use_count_estimate,
             },
         );
     }
@@ -177,11 +207,11 @@ pub const Ref = packed struct(u64) {
     }
 
     pub fn hash(key: Ref) u32 {
-        return @as(u32, @truncate(key.hash64()));
+        return @truncate(key.hash64());
     }
 
     pub inline fn asU64(key: Ref) u64 {
-        return @as(u64, @bitCast(key));
+        return @bitCast(key);
     }
 
     pub inline fn hash64(key: Ref) u64 {
@@ -192,9 +222,7 @@ pub const Ref = packed struct(u64) {
         return ref.asU64() == other.asU64();
     }
 
-    pub inline fn isNull(self: Ref) bool {
-        return self.tag == .invalid;
-    }
+    pub const isNull = isEmpty; // deprecated
 
     pub fn jsonStringify(self: *const Ref, writer: anytype) !void {
         return try writer.write([2]u32{ self.sourceIndex(), self.innerIndex() });

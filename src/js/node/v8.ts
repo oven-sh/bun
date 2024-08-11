@@ -160,4 +160,6 @@ hideFromStack(
   DefaultDeserializer,
   DefaultSerializer,
   GCProfiler,
+  DefaultDeserializer,
+  DefaultSerializer,
 );

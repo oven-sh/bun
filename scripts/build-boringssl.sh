@@ -6,7 +6,7 @@ cd $BUN_DEPS_DIR/boringssl
 mkdir -p build
 cd build
 
-cmake "${CMAKE_FLAGS[@]}" -DCMAKE_EXE_LINKER_FLAGS="-fuse-ld=lld" -GNinja ..
+cmake "${CMAKE_FLAGS[@]}" -GNinja ..
 ninja libcrypto.a libssl.a libdecrepit.a
 
 cp **/libcrypto.a $BUN_DEPS_OUT_DIR/libcrypto.a

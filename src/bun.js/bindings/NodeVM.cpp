@@ -1,4 +1,6 @@
+
 #include "root.h"
+#include "JavaScriptCore/ExecutableInfo.h"
 
 #include "NodeVM.h"
 #include "JavaScriptCore/JSObjectInlines.h"
@@ -24,10 +26,6 @@
 #include "JSBuffer.h"
 
 #include <JavaScriptCore/DOMJITAbstractHeap.h>
-#include "DOMJITIDLConvert.h"
-#include "DOMJITIDLType.h"
-#include "DOMJITIDLTypeFilter.h"
-#include "DOMJITHelpers.h"
 #include <JavaScriptCore/DFGAbstractHeap.h>
 #include <JavaScriptCore/Completion.h>
 
@@ -144,8 +142,8 @@ static JSC::EncodedJSValue runInContext(JSGlobalObject* globalObject, NodeVMScri
     if (executable == nullptr) {
         // Note: it accepts a JSGlobalObject, but it just reads stuff from JSC::VM.
         executable = JSC::DirectEvalExecutable::create(
-            globalObject, script->source(), DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-            false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+            globalObject, script->source(), NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+            false, false, EvalContextType::None, nullptr, nullptr);
         RETURN_IF_EXCEPTION(throwScope, {});
         script->m_cachedDirectExecutable.set(vm, script, executable);
     }
@@ -270,12 +268,12 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInNewContext, (JSGlobalObject * globalObject
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        targetContext, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+        targetContext, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
@@ -345,8 +343,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModuleRunInThisContext, (JSGlobalObject * globalObjec
     context->setPrototypeDirect(vm, proxy);
 
     auto* executable = JSC::DirectEvalExecutable::create(
-        globalObject, source, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
-        false, false, EvalContextType::None, nullptr, nullptr, ECMAMode::sloppy());
+        globalObject, source, NoLexicallyScopedFeatures, DerivedContextType::None, NeedsClassFieldInitializer::No, PrivateBrandRequirement::None,
+        false, false, EvalContextType::None, nullptr, nullptr);
     RETURN_IF_EXCEPTION(throwScope, {});
 
     JSScope* contextScope = JSWithScope::create(vm, globalObject, globalObject->globalScope(), context);
@@ -392,8 +390,8 @@ JSC_DEFINE_HOST_FUNCTION(scriptRunInNewContext, (JSGlobalObject * globalObject, 
 
     auto* zigGlobal = reinterpret_cast<Zig::GlobalObject*>(globalObject);
     JSObject* context = asObject(contextObjectValue);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobal->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobal->NodeVMGlobalObjectStructure());
 
     // auto proxyStructure = JSGlobalProxy::createStructure(vm, globalObject, JSC::jsNull());
     // auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -444,6 +442,11 @@ JSC_DEFINE_CUSTOM_GETTER(scriptGetSourceMapURL, (JSGlobalObject * globalObject, 
     return JSValue::encode(jsString(vm, url));
 }
 
+Structure* createNodeVMGlobalObjectStructure(JSC::VM& vm)
+{
+    return NodeVMGlobalObject::createStructure(vm, jsNull());
+}
+
 JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject, CallFrame* callFrame))
 {
     auto& vm = globalObject->vm();
@@ -460,8 +463,8 @@ JSC_DEFINE_HOST_FUNCTION(vmModule_createContext, (JSGlobalObject * globalObject,
     }
     JSObject* context = asObject(contextArg);
     auto* zigGlobalObject = reinterpret_cast<Zig::GlobalObject*>(globalObject);
-    auto* targetContext = JSC::JSGlobalObject::create(
-        vm, zigGlobalObject->globalObjectStructure());
+    auto* targetContext = NodeVMGlobalObject::create(
+        vm, zigGlobalObject->NodeVMGlobalObjectStructure());
 
     auto proxyStructure = zigGlobalObject->globalProxyStructure();
     auto proxy = JSGlobalProxy::create(vm, proxyStructure);
@@ -534,6 +537,7 @@ static const struct HashTableValue scriptPrototypeTableValues[] = {
 const ClassInfo NodeVMScriptPrototype::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptPrototype) };
 const ClassInfo NodeVMScript::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScript) };
 const ClassInfo NodeVMScriptConstructor::s_info = { "Script"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMScriptConstructor) };
+const ClassInfo NodeVMGlobalObject::s_info = { "NodeVMGlobalObject"_s, &Base::s_info, nullptr, nullptr, CREATE_METHOD_TABLE(NodeVMGlobalObject) };
 
 DEFINE_VISIT_CHILDREN(NodeVMScript);
 

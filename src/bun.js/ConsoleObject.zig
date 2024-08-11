@@ -71,8 +71,8 @@ pub const MessageType = enum(u32) {
     _,
 };
 
-var stderr_mutex: bun.Lock = bun.Lock.init();
-var stdout_mutex: bun.Lock = bun.Lock.init();
+var stderr_mutex: bun.Lock = .{};
+var stdout_mutex: bun.Lock = .{};
 
 threadlocal var stderr_lock_count: u16 = 0;
 threadlocal var stdout_lock_count: u16 = 0;
@@ -869,7 +869,6 @@ pub const Formatter = struct {
 
     pub const ZigFormatter = struct {
         formatter: *ConsoleObject.Formatter,
-        global: *JSGlobalObject,
         value: JSValue,
 
         pub const WriteError = error{UhOh};
@@ -878,9 +877,8 @@ pub const Formatter = struct {
             defer {
                 self.formatter.remaining_values = &[_]JSValue{};
             }
-            self.formatter.globalThis = self.global;
             self.formatter.format(
-                Tag.get(self.value, self.global),
+                Tag.get(self.value, self.formatter.globalThis),
                 @TypeOf(writer),
                 writer,
                 self.value,
@@ -1079,6 +1077,7 @@ pub const Formatter = struct {
                         };
                     }
                 }
+                if (globalThis.hasException()) return .{ .tag = .RevokedProxy };
             }
 
             if (js_type == .DOMWrapper) {
@@ -1283,6 +1282,7 @@ pub const Formatter = struct {
                             writer.writeAll(end);
                             // then skip the second % so we dont hit it again
                             slice = slice[@min(slice.len, i + 1)..];
+                            len = @truncate(slice.len);
                             i = 0;
                             continue;
                         },
@@ -1295,7 +1295,7 @@ pub const Formatter = struct {
                     slice = slice[@min(slice.len, i + 1)..];
                     i = 0;
                     hit_percent = true;
-                    len = @as(u32, @truncate(slice.len));
+                    len = @truncate(slice.len);
                     const next_value = this.remaining_values[0];
                     this.remaining_values = this.remaining_values[1..];
 
@@ -1568,7 +1568,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             count: usize = 0,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (single_line and this.count > 0) {
                     this.formatter.printComma(Writer, this.writer, enable_ansi_colors) catch unreachable;
@@ -1632,7 +1632,7 @@ pub const Formatter = struct {
             formatter: *ConsoleObject.Formatter,
             writer: Writer,
             is_first: bool = true,
-            pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+            pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                 var this: *@This() = bun.cast(*@This(), ctx orelse return);
                 if (single_line) {
                     if (!this.is_first) {
@@ -2187,6 +2187,7 @@ pub const Formatter = struct {
                     }
 
                     var i: u32 = 1;
+                    var nonempty_count: u32 = 1;
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
@@ -2196,6 +2197,15 @@ pub const Formatter = struct {
                             }
                             continue;
                         }
+                        if (nonempty_count >= 100) {
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            writer.writeAll("\n"); // we want the line break to be unconditional here
+                            this.estimated_line_length = 0;
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
+                            break;
+                        }
+                        nonempty_count += 1;
 
                         if (empty_start) |empty| {
                             if (empty > 0) {
@@ -2310,7 +2320,7 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2325,7 +2335,7 @@ pub const Formatter = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -2574,7 +2584,7 @@ pub const Formatter = struct {
             },
             .toJSON => {
                 if (value.get(this.globalThis, "toJSON")) |func| {
-                    const result = func.callWithThis(this.globalThis, value, &.{});
+                    const result = func.call(this.globalThis, value, &.{});
                     if (result.toError() == null) {
                         const prev_quote_keys = this.quote_keys;
                         this.quote_keys = true;

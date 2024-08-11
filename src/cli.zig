@@ -70,6 +70,19 @@ pub const Cli = struct {
     pub threadlocal var is_main_thread: bool = false;
 };
 
+pub const debug_flags = if (Environment.isDebug) struct {
+    var resolve_breakpoints: []const []const u8 = &.{};
+
+    pub fn hasResolveBreakpoint(str: []const u8) bool {
+        for (resolve_breakpoints) |bp| {
+            if (strings.contains(str, bp)) {
+                return true;
+            }
+        }
+        return false;
+    }
+} else @compileError("Do not access this namespace in a release build");
+
 const LoaderMatcher = strings.ExactSizeMatcher(4);
 const ColonListType = @import("./cli/colon_list_type.zig").ColonListType;
 pub const LoaderColonList = ColonListType(Api.Loader, Arguments.loader_resolver);
@@ -146,7 +159,7 @@ pub const Arguments = struct {
 
     pub const ParamType = clap.Param(clap.Help);
 
-    const base_params_ = [_]ParamType{
+    const base_params_ = (if (Environment.isDebug) debug_params else [_]ParamType{}) ++ [_]ParamType{
         clap.parseParam("--env-file <STR>...               Load environment variables from the specified file(s)") catch unreachable,
         clap.parseParam("--cwd <STR>                       Absolute path to resolve files & entry points from. This just changes the process' cwd.") catch unreachable,
         clap.parseParam("-c, --config <PATH>?              Specify path to Bun config file. Default <d>$cwd<r>/bunfig.toml") catch unreachable,
@@ -156,6 +169,10 @@ pub const Arguments = struct {
         // This will print more error return traces, as a debug aid
         clap.parseParam("--verbose-error-trace") catch unreachable,
     } else [_]ParamType{};
+
+    const debug_params = [_]ParamType{
+        clap.parseParam("--breakpoint-resolve <STR>...     DEBUG MODE: breakpoint when resolving something that includes this string") catch unreachable,
+    };
 
     const transpiler_params_ = [_]ParamType{
         clap.parseParam("--main-fields <STR>...            Main fields to lookup in package.json. Defaults to --target dependent") catch unreachable,
@@ -168,6 +185,7 @@ pub const Arguments = struct {
         clap.parseParam("--jsx-fragment <STR>              Changes the function called when compiling JSX fragments") catch unreachable,
         clap.parseParam("--jsx-import-source <STR>         Declares the module specifier to be used for importing the jsx and jsxs factory functions. Default: \"react\"") catch unreachable,
         clap.parseParam("--jsx-runtime <STR>               \"automatic\" (default) or \"classic\"") catch unreachable,
+        clap.parseParam("--ignore-dce-annotations          Ignore tree-shaking annotations such as @__PURE__") catch unreachable,
     };
     const runtime_params_ = [_]ParamType{
         clap.parseParam("--watch                           Automatically restart the process on file change") catch unreachable,
@@ -189,6 +207,7 @@ pub const Arguments = struct {
         clap.parseParam("-p, --port <STR>                  Set the default port for Bun.serve") catch unreachable,
         clap.parseParam("-u, --origin <STR>") catch unreachable,
         clap.parseParam("--conditions <STR>...             Pass custom conditions to resolve") catch unreachable,
+        clap.parseParam("--fetch-preconnect <STR>...       Preconnect to a URL while code is loading") catch unreachable,
     };
 
     const auto_or_run_params = [_]ParamType{
@@ -220,7 +239,7 @@ pub const Arguments = struct {
         clap.parseParam("--no-clear-screen                Disable clearing the terminal screen on reload when --watch is enabled") catch unreachable,
         clap.parseParam("--target <STR>                   The intended execution environment for the bundle. \"browser\", \"bun\" or \"node\"") catch unreachable,
         clap.parseParam("--outdir <STR>                   Default to \"dist\" if multiple files") catch unreachable,
-        clap.parseParam("--outfile <STR>                   Write to a file") catch unreachable,
+        clap.parseParam("--outfile <STR>                  Write to a file") catch unreachable,
         clap.parseParam("--sourcemap <STR>?               Build with sourcemaps - 'inline', 'external', or 'none'") catch unreachable,
         clap.parseParam("--format <STR>                   Specifies the module format to build to. Only \"esm\" is supported.") catch unreachable,
         clap.parseParam("--root <STR>                     Root directory used for multiple entry points") catch unreachable,
@@ -233,10 +252,11 @@ pub const Arguments = struct {
         clap.parseParam("--asset-naming <STR>             Customize asset filenames. Defaults to \"[name]-[hash].[ext]\"") catch unreachable,
         clap.parseParam("--server-components              Enable React Server Components (experimental)") catch unreachable,
         clap.parseParam("--no-bundle                      Transpile file only, do not bundle") catch unreachable,
+        clap.parseParam("--emit-dce-annotations           Re-emit DCE annotations in bundles. Enabled by default unless --minify-whitespace is passed.") catch unreachable,
         clap.parseParam("--minify                         Enable all minification flags") catch unreachable,
         clap.parseParam("--minify-syntax                  Minify syntax and inline data") catch unreachable,
         clap.parseParam("--minify-whitespace              Minify whitespace") catch unreachable,
-        clap.parseParam("--minify-identifiers              Minify identifiers") catch unreachable,
+        clap.parseParam("--minify-identifiers             Minify identifiers") catch unreachable,
         clap.parseParam("--dump-environment-variables") catch unreachable,
         clap.parseParam("--conditions <STR>...            Pass custom conditions to resolve") catch unreachable,
     };
@@ -632,6 +652,8 @@ pub const Arguments = struct {
             }
             ctx.runtime_options.if_present = args.flag("--if-present");
             ctx.runtime_options.smol = args.flag("--smol");
+            ctx.runtime_options.preconnect = args.options("--fetch-preconnect");
+
             if (args.option("--inspect")) |inspect_flag| {
                 ctx.runtime_options.debugger = if (inspect_flag.len == 0)
                     Command.Debugger{ .enable = .{} }
@@ -677,6 +699,8 @@ pub const Arguments = struct {
         const output_dir: ?string = null;
         const output_file: ?string = null;
 
+        ctx.bundler_options.ignore_dce_annotations = args.flag("--ignore-dce-annotations");
+
         if (cmd == .BuildCommand) {
             ctx.bundler_options.transform_only = args.flag("--no-bundle");
 
@@ -688,6 +712,9 @@ pub const Arguments = struct {
             ctx.bundler_options.minify_syntax = minify_flag or args.flag("--minify-syntax");
             ctx.bundler_options.minify_whitespace = minify_flag or args.flag("--minify-whitespace");
             ctx.bundler_options.minify_identifiers = minify_flag or args.flag("--minify-identifiers");
+
+            ctx.bundler_options.emit_dce_annotations = args.flag("--emit-dce-annotations") or
+                !ctx.bundler_options.minify_whitespace;
 
             if (args.options("--external").len > 0) {
                 var externals = try allocator.alloc([]u8, args.options("--external").len);
@@ -747,6 +774,7 @@ pub const Arguments = struct {
 
             if (args.flag("--compile")) {
                 ctx.bundler_options.compile = true;
+                ctx.bundler_options.inline_entrypoint_import_meta_main = true;
             }
 
             if (args.option("--outdir")) |outdir| {
@@ -819,6 +847,13 @@ pub const Arguments = struct {
                 } else {
                     Output.prettyErrorln("<r><red>error<r>: Invalid sourcemap setting: \"{s}\"", .{setting});
                     Global.crash();
+                }
+
+                // when using --compile, only `external` works, as we do not
+                // look at the source map comment. so after we validate the
+                // user's choice was in the list, we secretly override it
+                if (ctx.bundler_options.compile) {
+                    opts.source_map = .external;
                 }
             }
         }
@@ -959,6 +994,10 @@ pub const Arguments = struct {
             }
         }
 
+        if (Environment.isDebug) {
+            debug_flags.resolve_breakpoints = args.options("--breakpoint-resolve");
+        }
+
         return opts;
     }
 };
@@ -1045,7 +1084,7 @@ pub const HelpCommand = struct {
         \\  <b><blue>update<r>    <d>{s:<16}<r>     Update outdated dependencies
         \\  <b><blue>link<r>      <d>[\<package\>]<r>          Register or link a local npm package
         \\  <b><blue>unlink<r>                         Unregister a local npm package
-        \\  <b><blue>patch <d>\<pkg\><r>                     Prepare a package for patching
+        \\  <b><blue>patch <d>\<pkg\><r>                    Prepare a package for patching
         \\  <b><blue>pm <d>\<subcommand\><r>                Additional package management utilities
         \\
         \\  <b><yellow>build<r>     <d>./a.ts ./b.jsx<r>       Bundle TypeScript & JavaScript into a single file
@@ -1207,16 +1246,11 @@ pub const Command = struct {
             script: []const u8 = "",
             eval_and_print: bool = false,
         } = .{},
+        preconnect: []const []const u8 = &[_][]const u8{},
     };
 
     var global_cli_ctx: Context = undefined;
-
-    var context_data: ContextData = ContextData{
-        .args = std.mem.zeroes(Api.TransformOptions),
-        .log = undefined,
-        .start_time = 0,
-        .allocator = undefined,
-    };
+    var context_data: ContextData = undefined;
 
     pub const init = ContextData.create;
 
@@ -1253,17 +1287,23 @@ pub const Command = struct {
             react_server_components: bool = false,
             code_splitting: bool = false,
             transform_only: bool = false,
+            inline_entrypoint_import_meta_main: bool = false,
             minify_syntax: bool = false,
             minify_whitespace: bool = false,
             minify_identifiers: bool = false,
+            ignore_dce_annotations: bool = false,
+            emit_dce_annotations: bool = true,
         };
 
         pub fn create(allocator: std.mem.Allocator, log: *logger.Log, comptime command: Command.Tag) anyerror!Context {
             Cli.cmd = command;
+            context_data = .{
+                .args = std.mem.zeroes(Api.TransformOptions),
+                .log = log,
+                .start_time = start_time,
+                .allocator = allocator,
+            };
             global_cli_ctx = &context_data;
-            global_cli_ctx.log = log;
-            global_cli_ctx.start_time = start_time;
-            global_cli_ctx.allocator = allocator;
 
             if (comptime Command.Tag.uses_global_options.get(command)) {
                 global_cli_ctx.args = try Arguments.parse(allocator, global_cli_ctx, command);

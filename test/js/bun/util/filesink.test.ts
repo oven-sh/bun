@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { isWindows, tmpdirSync } from "harness";
+import { fileDescriptorLeakChecker, getMaxFD, isWindows, tmpdirSync } from "harness";
 import { mkfifo } from "mkfifo";
 import { join } from "node:path";
 
@@ -83,11 +83,18 @@ describe("FileSink", () => {
 
         it(`${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer();
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
+          {
+            using _ = fileDescriptorLeakChecker();
+
+            const sink = Bun.file(path).writer();
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+            }
+            await sink.end();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
-          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
@@ -104,12 +111,20 @@ describe("FileSink", () => {
 
         it(`flushing -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer();
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
-            await sink.flush();
+
+          {
+            using _ = fileDescriptorLeakChecker();
+            const sink = Bun.file(path).writer();
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+              await sink.flush();
+            }
+            await sink.end();
+
+            // For the file descriptor leak checker.
+            await Bun.sleep(10);
           }
-          await sink.end();
+
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());
             for (let i = 0; i < expected.length; i++) {
@@ -124,12 +139,16 @@ describe("FileSink", () => {
 
         it(`highWaterMark -> ${JSON.stringify(label)}`, async () => {
           const path = getPathOrFd();
-          const sink = Bun.file(path).writer({ highWaterMark: 1 });
-          for (let i = 0; i < input.length; i++) {
-            sink.write(input[i]);
-            await sink.flush();
+          {
+            using _ = fileDescriptorLeakChecker();
+            const sink = Bun.file(path).writer({ highWaterMark: 1 });
+            for (let i = 0; i < input.length; i++) {
+              sink.write(input[i]);
+              await sink.flush();
+            }
+            await sink.end();
+            await Bun.sleep(10); // For the file descriptor leak checker.
           }
-          await sink.end();
 
           if (!isPipe) {
             const output = new Uint8Array(await Bun.file(path).arrayBuffer());

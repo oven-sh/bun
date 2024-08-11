@@ -1733,7 +1733,6 @@ describe("bundler", () => {
     useDefineForClassFields: true,
   });
   itBundled("ts/ImportMTS", {
-    todo: true,
     files: {
       "/entry.ts": `import './imported.mjs'`,
       "/imported.mts": `console.log('works')`,

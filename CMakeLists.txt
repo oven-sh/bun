@@ -4,7 +4,7 @@ cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
 set(Bun_VERSION "1.1.23")
-set(WEBKIT_TAG 28337092b5736eae0f6bbe5d8095e6f5445a5713)
+set(WEBKIT_TAG 678c7618beaddac8d83712cb677279a5df9eed4f)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1284,6 +1284,7 @@ endif()
 if(UNIX AND NOT APPLE)
     target_link_options(${bun} PUBLIC
         -fuse-ld=lld-${LLVM_VERSION}
+        --rtlib=compiler-rt
         -fno-pic
         -static-libstdc++
         -static-libgcc

@@ -88,23 +88,6 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
 
-static inline double __real_exp(double x)
-{
-    return __builtin_exp(x);
-}
-static inline double __real_log(double x)
-{
-    return __builtin_log(x);
-}
-static inline double __real_log2(double x)
-{
-    return __builtin_log2(x);
-}
-static inline double __real_fmod(double x, double y)
-{
-    return __builtin_fmod(x, y);
-}
-
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
 {
     va_list va;

@@ -1041,6 +1041,14 @@ pub const VirtualMachine = struct {
                 this.aggressive_garbage_collection = .aggressive;
                 has_bun_garbage_collector_flag_enabled = true;
             }
+
+            if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
+                if (std.fmt.parseInt(usize, value, 10)) |limit| {
+                    synthetic_allocation_limit = limit;
+                } else |_| {
+                    Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
+                }
+            }
         }
     }
 
@@ -4261,3 +4269,29 @@ export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_
 }
 
 pub export var isBunTest: bool = false;
+
+// TODO: evaluate if this has any measurable performance impact.
+/// Defaults to 4.7 GB, which is the limit for typed arrays
+pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
+
+comptime {
+    @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
+}
+
+pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    const args = callframe.arguments(1).slice();
+    if (args.len < 1) {
+        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
+        return JSValue.zero;
+    }
+
+    if (!args[0].isNumber()) {
+        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
+        return JSValue.zero;
+    }
+
+    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const prev = synthetic_allocation_limit;
+    synthetic_allocation_limit = limit;
+    return JSValue.jsNumber(prev);
+}

@@ -3330,7 +3330,7 @@ noinline fn assertionFailureWithLocation(src: std.builtin.SourceLocation) noretu
     });
 }
 
-pub inline fn debugAssert(cheap_value_only_plz: bool) void {
+pub fn debugAssert(cheap_value_only_plz: bool) callconv(callconv_inline) void {
     if (comptime !Environment.isDebug) {
         return;
     }
@@ -3649,4 +3649,8 @@ pub fn tagName(comptime Enum: type, value: Enum) ?[:0]const u8 {
     return inline for (@typeInfo(Enum).Enum.fields) |f| {
         if (@intFromEnum(value) == f.value) break f.name;
     } else null;
+}
+extern "C" fn Bun__ramSize() usize;
+pub fn getTotalMemorySize() usize {
+    return Bun__ramSize();
 }

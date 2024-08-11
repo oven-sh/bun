@@ -113,11 +113,10 @@ static JSC_DECLARE_HOST_FUNCTION(functionPerformanceNow);
 static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject*, JSPerformance*));
 }
 
-static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* globalObject)
+static inline JSC::EncodedJSValue functionPerformanceNowBody(VM& vm)
 {
-    auto* global = reinterpret_cast<GlobalObject*>(globalObject);
     // nanoseconds to seconds
-    double time = static_cast<double>(Bun__readOriginTimer(global->bunVM()));
+    double time = static_cast<double>(Bun__readOriginTimer(Bun::vm(vm)));
     double result = time / 1000000.0;
 
     // https://github.com/oven-sh/bun/issues/5604
@@ -126,7 +125,7 @@ static inline JSC::EncodedJSValue functionPerformanceNowBody(JSGlobalObject* glo
 
 JSC_DEFINE_HOST_FUNCTION(functionPerformanceNow, (JSGlobalObject * globalObject, JSC::CallFrame* callFrame))
 {
-    return functionPerformanceNowBody(globalObject);
+    return functionPerformanceNowBody(globalObject->vm());
 }
 
 JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSPerformance* castedThis))
@@ -136,7 +135,7 @@ JSC_DEFINE_JIT_OPERATION(functionPerformanceNowWithoutTypeCheck, JSC::EncodedJSV
     CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
     IGNORE_WARNINGS_END
     JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    return { functionPerformanceNowBody(lexicalGlobalObject) };
+    return { functionPerformanceNowBody(vm) };
 }
 
 // -- end copied --

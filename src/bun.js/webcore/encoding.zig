@@ -577,7 +577,7 @@ pub const TextEncoderStreamEncoder = struct {
 
         bun.debugAssert(remain.len != 0);
 
-        const max_length = (remain.len * 3) + prepend.len;
+        const max_length = ((remain.len + 1) * 3) + prepend.len;
 
         const buf = bun.default_allocator.alloc(u8, max_length) catch {
             globalObject.throwOutOfMemory();

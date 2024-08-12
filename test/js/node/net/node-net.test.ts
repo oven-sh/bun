@@ -491,7 +491,7 @@ it("socket should keep process alive if unref is not called", async () => {
   expect(await process.exited).toBe(1);
 });
 
-it.only("should not hang after FIN", async () => {
+it("should not hang after FIN", async () => {
   const net = require("node:net");
   const { promise: listening, resolve: resolveListening, reject } = Promise.withResolvers();
   const server = net.createServer(c => {

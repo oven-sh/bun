@@ -205,8 +205,10 @@ const Socket = (function (InternalSocket) {
       self.#closed = true;
       //socket cannot be used after close
       self[bunSocketInternal] = null;
-      if (self.#final_callback) {
-        self.#final_callback();
+      const finalCallback = self.#final_callback;
+      if (finalCallback) {
+        self.#final_callback = null;
+        finalCallback();
         return;
       }
       if (!self.#ended) {

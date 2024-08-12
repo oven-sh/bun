@@ -1,5 +1,6 @@
 import { expect, it } from "bun:test";
 import tomlFromCustomTypeAttribute from "./toml-fixture.toml.txt" with { type: "toml" };
+import emptyToml from "./toml-empty.toml";
 
 function checkToml(toml) {
   expect(toml.framework).toBe("next");
@@ -34,4 +35,8 @@ it("via dynamic import with type attribute", async () => {
   delete require.cache[require.resolve("./toml-fixture.toml.txt")];
   const toml = (await import("./toml-fixture.toml.txt", { with: { type: "toml" } })).default;
   checkToml(toml);
+});
+
+it("empty via import statement", () => {
+  expect(emptyToml).toEqual({});
 });

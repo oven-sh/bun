@@ -1324,6 +1324,13 @@ pub const AnyRequestContext = struct {
         return .{ .tagged_pointer = Pointer.init(request_ctx) };
     }
 
+    pub fn getRemoteSocketId(self: AnyRequestContext) i32 {
+        if (self.tagged_pointer.as(HTTPServer.RequestContext).getNativeHandle()) |handle| {
+            return handle.cast();
+        }
+        return 0;
+    }
+
     pub fn getRemoteSocketInfo(self: AnyRequestContext) ?uws.SocketAddress {
         if (self.tagged_pointer.isNull()) {
             return null;
@@ -3584,6 +3591,10 @@ fn NewRequestContext(comptime ssl_enabled: bool, comptime debug_mode: bool, comp
             return onStartStreamingRequestBody(bun.cast(*RequestContext, this));
         }
 
+        pub fn getNativeHandle(this: *RequestContext) ?bun.FileDescriptor {
+            return (this.resp orelse return null).getNativeHandle();
+        }
+
         pub fn getRemoteSocketInfo(this: *RequestContext) ?uws.SocketAddress {
             return (this.resp orelse return null).getRemoteSocketInfo();
         }
@@ -5321,6 +5332,7 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         pub const doReload = onReload;
         pub const doFetch = onFetch;
         pub const doRequestIP = JSC.wrapInstanceMethod(ThisServer, "requestIP", false);
+        pub const doRequestSocketId = JSC.wrapInstanceMethod(ThisServer, "socketId", false);
 
         pub usingnamespace NamespaceType;
         pub usingnamespace bun.New(@This());
@@ -5331,6 +5343,10 @@ pub fn NewServer(comptime NamespaceType: type, comptime ssl_enabled_: bool, comp
         }
 
         extern fn JSSocketAddress__create(global: *JSC.JSGlobalObject, ip: JSValue, port: i32, is_ipv6: bool) JSValue;
+
+        pub fn socketId(_: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
+            return JSC.JSValue.jsNumber(request.request_context.getRemoteSocketId());
+        }
 
         pub fn requestIP(this: *ThisServer, request: *JSC.WebCore.Request) JSC.JSValue {
             if (this.config.address == .unix) {

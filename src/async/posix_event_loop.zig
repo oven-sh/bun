@@ -953,7 +953,7 @@ pub const FilePoll = struct {
 
     pub fn unregisterWithFd(this: *FilePoll, loop: *Loop, fd: bun.FileDescriptor, force_unregister: bool) JSC.Maybe(void) {
         if (Environment.allow_assert) {
-            bun.assert(fd.int() >= 0 and fd != bun.invalid_fd);
+            bun.assert(fd != bun.invalid_fd);
         }
         defer this.deactivate(loop);
 

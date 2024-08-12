@@ -139,11 +139,12 @@ pub const ProcessExitHandler = struct {
         }
     }
 };
-pub const PidFDType = if (Environment.isLinux) fd_t else u0;
+pub const PidFDType = if (Environment.isLinux) bun.FD else u0;
+const pidfd_invalid = if (Environment.isLinux) bun.invalid_fd else 0;
 
 pub const Process = struct {
     pid: pid_t = 0,
-    pidfd: PidFDType = 0,
+    pidfd: PidFDType = pidfd_invalid,
     status: Status = Status{ .running = {} },
     poller: Poller = Poller{
         .detached = {},
@@ -174,7 +175,7 @@ pub const Process = struct {
     ) *Process {
         return Process.new(.{
             .pid = posix.pid,
-            .pidfd = posix.pidfd orelse 0,
+            .pidfd = posix.pidfd orelse pidfd_invalid,
             .event_loop = JSC.EventLoopHandle.init(event_loop),
             .sync = sync_,
             .poller = .{ .detached = {} },
@@ -454,9 +455,9 @@ pub const Process = struct {
         }
 
         if (comptime Environment.isLinux) {
-            if (this.pidfd != bun.invalid_fd.int() and this.pidfd > 0) {
+            if (this.pidfd != bun.invalid_fd) {
                 _ = bun.sys.close(bun.toFD(this.pidfd));
-                this.pidfd = @intCast(bun.invalid_fd.int());
+                this.pidfd = bun.invalid_fd;
             }
         }
     }
@@ -1125,7 +1126,7 @@ pub const PosixSpawnResult = struct {
         );
         while (true) {
             switch (bun.C.getErrno(rc)) {
-                .SUCCESS => return JSC.Maybe(PidFDType){ .result = @intCast(rc) },
+                .SUCCESS => return JSC.Maybe(PidFDType){ .result = bun.toFD(@as(u32, @intCast(rc))) },
                 .INTR => {
                     rc = std.os.linux.pidfd_open(
                         @intCast(this.pid),

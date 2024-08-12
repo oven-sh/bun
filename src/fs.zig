@@ -1372,7 +1372,7 @@ pub const FileSystem = struct {
 
             if (is_symlink) {
                 var file = try if (existing_fd != .zero)
-                    std.fs.File{ .handle = existing_fd.int() }
+                    existing_fd.asFile()
                 else if (store_fd)
                     std.fs.openFileAbsoluteZ(absolute_path_c, .{ .mode = .read_only })
                 else

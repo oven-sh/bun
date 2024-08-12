@@ -972,7 +972,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @intCast(fd.int());
+                event.ident = @intCast(fd.cast());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -1068,7 +1068,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
                 event.fflags = std.c.NOTE_WRITE | std.c.NOTE_RENAME | std.c.NOTE_DELETE;
 
                 // id
-                event.ident = @intCast(fd.int());
+                event.ident = @intCast(fd.cast());
 
                 // Store the hash for fast filtering later
                 event.udata = @as(usize, @intCast(watchlist_id));
@@ -1233,7 +1233,7 @@ pub fn NewWatcher(comptime ContextType: type) type {
             if (this.indexOf(hash)) |index| {
                 if (comptime FeatureFlags.atomic_file_watcher) {
                     // On Linux, the file descriptor might be out of date.
-                    if (fd.int() > 0) {
+                    if (fd.cast() > 0) {
                         var fds = this.watchlist.items(.fd);
                         fds[index] = fd;
                     }

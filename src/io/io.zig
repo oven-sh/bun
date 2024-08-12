@@ -519,7 +519,7 @@ pub const Poll = struct {
 
             kqueue_event.* = switch (comptime action) {
                 .readable => .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -528,7 +528,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number, 0 },
                 },
                 .writable => .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,
@@ -537,7 +537,7 @@ pub const Poll = struct {
                     .ext = .{ generation_number, 0 },
                 },
                 .cancel => if (poll.flags.contains(.poll_readable)) .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.posix.system.EVFILT_READ,
                     .data = 0,
                     .fflags = 0,
@@ -545,7 +545,7 @@ pub const Poll = struct {
                     .flags = std.c.EV_DELETE,
                     .ext = .{ poll.generation_number, 0 },
                 } else if (poll.flags.contains(.poll_writable)) .{
-                    .ident = @as(u64, @intCast(fd.int())),
+                    .ident = @intCast(fd.cast()),
                     .filter = std.posix.system.EVFILT_WRITE,
                     .data = 0,
                     .fflags = 0,

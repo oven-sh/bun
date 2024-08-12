@@ -539,7 +539,7 @@ pub const TextEncoderStreamEncoder = struct {
 
                     remain = remain[1..];
                     if (remain.len == 0) {
-                        return ArrayBuffer.createBuffer(
+                        return ArrayBuffer.createUint8Array(
                             globalObject,
                             sequence[0..converted.utf8Width()],
                         );
@@ -568,7 +568,7 @@ pub const TextEncoderStreamEncoder = struct {
                     return .undefined;
                 }
 
-                return ArrayBuffer.createBuffer(
+                return ArrayBuffer.createUint8Array(
                     globalObject,
                     prepend.bytes[0..prepend.len],
                 );
@@ -654,7 +654,7 @@ pub const TextEncoderStreamEncoder = struct {
         return if (this.pending_lead_surrogate == null)
             .undefined
         else
-            JSC.ArrayBuffer.createBuffer(globalObject, &.{ 0xef, 0xbf, 0xbd });
+            JSC.ArrayBuffer.createUint8Array(globalObject, &.{ 0xef, 0xbf, 0xbd });
     }
 };
 

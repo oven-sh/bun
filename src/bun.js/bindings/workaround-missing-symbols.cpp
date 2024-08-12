@@ -57,6 +57,7 @@ extern "C" int kill(int pid, int sig)
 #include <fcntl.h>
 // #include <sys/stat.h>
 #include <stdarg.h>
+#include <math.h>
 #include <errno.h>
 #include <dlfcn.h>
 
@@ -70,9 +71,10 @@ extern "C" int kill(int pid, int sig)
 #endif
 #endif
 
-#ifndef BUN_PANIC
-extern "C" void __attribute((__noreturn__)) Bun__panic(const char* message, size_t length);
-#define BUN_PANIC(message) Bun__panic(message, sizeof(message) - 1)
+#if defined(__x86_64__)
+// Force older versions of symbols
+__asm__(".symver pow,pow@GLIBC_2.2.5");
+__asm__(".symver log,log@GLIBC_2.2.5");
 #endif
 
 // ban statx, for now
@@ -81,28 +83,58 @@ extern "C" int __wrap_statx(int fd, const char* path, int flags,
 {
     errno = ENOSYS;
 #ifdef BUN_DEBUG
-    BUN_PANIC("Called statx! Don't call statx.");
+    abort();
 #endif
     return -1;
 }
 
 extern "C" int __real_fcntl(int fd, int cmd, ...);
+typedef double (*MathFunction)(double);
+typedef double (*MathFunction2)(double, double);
 
 static inline double __real_exp(double x)
 {
-    return __builtin_exp(x);
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "exp"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
 }
 static inline double __real_log(double x)
 {
-    return __builtin_log(x);
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
 }
 static inline double __real_log2(double x)
 {
-    return __builtin_log2(x);
+    static MathFunction function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction>(dlsym(nullptr, "log2"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x);
 }
 static inline double __real_fmod(double x, double y)
 {
-    return __builtin_fmod(x, y);
+    static MathFunction2 function = nullptr;
+    if (UNLIKELY(function == nullptr)) {
+        function = reinterpret_cast<MathFunction2>(dlsym(nullptr, "fmod"));
+        if (UNLIKELY(function == nullptr))
+            abort();
+    }
+
+    return function(x, y);
 }
 
 extern "C" int __wrap_fcntl(int fd, int cmd, ...)
@@ -123,32 +155,47 @@ extern "C" int __wrap_fcntl64(int fd, int cmd, ...)
 
 extern "C" double __wrap_pow(double x, double y)
 {
-    return __builtin_pow(x, y);
+    static void* pow_ptr = nullptr;
+    if (UNLIKELY(pow_ptr == nullptr)) {
+        pow_ptr = dlsym(RTLD_DEFAULT, "pow");
+    }
+
+    return ((double (*)(double, double))pow_ptr)(x, y);
 }
 
 extern "C" double __wrap_exp(double x)
 {
-    return __builtin_exp(x);
+    return __real_exp(x);
 }
 
 extern "C" double __wrap_log(double x)
 {
-    return __builtin_log(x);
+    return __real_log(x);
 }
 
 extern "C" double __wrap_log2(double x)
 {
-    return __builtin_log2(x);
+    return __real_log2(x);
 }
 
 extern "C" double __wrap_fmod(double x, double y)
 {
-    return __builtin_fmod(x, y);
+    return __real_fmod(x, y);
+}
+
+static inline float __real_expf(float arg)
+{
+    static void* ptr = nullptr;
+    if (UNLIKELY(ptr == nullptr)) {
+        ptr = dlsym(RTLD_DEFAULT, "expf");
+    }
+
+    return ((float (*)(float))ptr)(arg);
 }
 
 extern "C" float __wrap_expf(float arg)
 {
-    return __builtin_expf(arg);
+    return __real_expf(arg);
 }
 
 #ifndef _MKNOD_VER

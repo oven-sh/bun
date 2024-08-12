@@ -22,6 +22,7 @@
 #include <string.h>
 #include <stdint.h>
 #include <stdio.h>
+#include <errno.h>
 
 #ifndef WIN32
 #include <fcntl.h>
@@ -132,9 +133,10 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
 void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
+
     c->next = c->context->loop->data.closed_connecting_head;
     c->context->loop->data.closed_connecting_head = c;
-    us_socket_context_unref(ssl, c->context);
 }
 
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
@@ -153,7 +155,15 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         /* Any socket with prev = context is marked as closed */
         s->prev = (struct us_socket_t *) s->context;
     }
-
+    if(!c->error) {
+        // if we have no error, we have to set that we were aborted aka we called close
+        c->error = ECONNABORTED;
+    }
+    c->context->on_connect_error(c, c->error);
+    if(c->addrinfo_req) {
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
+        c->addrinfo_req = 0;
+    }
     // we can only schedule the socket to be freed if there is no pending callback
     // otherwise, the callback will see that the socket is closed and will free it
     if (!c->pending_resolve_callback) {

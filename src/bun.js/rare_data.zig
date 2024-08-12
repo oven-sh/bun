@@ -49,12 +49,23 @@ listening_sockets_for_watch_mode_lock: bun.Lock = .{},
 
 temp_pipe_read_buffer: ?*PipeReadBuffer = null,
 
+text_encoder_stream_buffer: ?*TextEncoderStreamBuffer = undefined,
+
+pub const TextEncoderStreamBuffer = [256 * 1024]u8;
+
 const PipeReadBuffer = [256 * 1024]u8;
 
 pub fn pipeReadBuffer(this: *RareData) *PipeReadBuffer {
     return this.temp_pipe_read_buffer orelse {
         this.temp_pipe_read_buffer = default_allocator.create(PipeReadBuffer) catch bun.outOfMemory();
         return this.temp_pipe_read_buffer.?;
+    };
+}
+
+pub fn textEncoderStreamBuffer(this: *RareData) *PipeReadBuffer {
+    return this.text_encoder_stream_buffer orelse {
+        this.text_encoder_stream_buffer = default_allocator.create(TextEncoderStreamBuffer) catch bun.outOfMemory();
+        return this.text_encoder_stream_buffer.?;
     };
 }
 

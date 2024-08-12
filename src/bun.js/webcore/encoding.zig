@@ -577,21 +577,40 @@ pub const TextEncoderStreamEncoder = struct {
 
         bun.debugAssert(remain.len != 0);
 
-        const max_length = ((remain.len + 1) * 3) + prepend.len;
+        const buf, const exact_size = buf: {
+            const max_length = ((remain.len + 1) * 3) + prepend.len;
+            if (max_length < @sizeOf(JSC.RareData.TextEncoderStreamBuffer)) {
+                break :buf .{
+                    globalObject.bunVM().rareData().textEncoderStreamBuffer(),
+                    false,
+                };
+            }
 
-        const buf = bun.default_allocator.alloc(u8, max_length) catch {
-            globalObject.throwOutOfMemory();
-            return .zero;
+            const length = bun.simdutf.length.utf8.from.utf16.le(remain) + prepend.len;
+
+            break :buf .{
+                bun.default_allocator.alloc(u8, length) catch {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                },
+                true,
+            };
         };
 
         const count = bun.simdutf.convert.utf16.to.utf8.le(remain, buf);
 
         if (count == 0) {
-            var arr = std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, buf);
+            var arr = if (exact_size)
+                std.ArrayList(u8).fromOwnedSlice(bun.default_allocator, buf)
+            else
+                std.ArrayList(u8).init(bun.default_allocator);
             arr.items.len = 0;
 
             if (prepend.len != 0) {
-                arr.appendSliceAssumeCapacity(prepend.bytes[0..prepend.len]);
+                arr.appendSlice(prepend.bytes[0..prepend.len]) catch {
+                    globalObject.throwOutOfMemory();
+                    return .zero;
+                };
             }
 
             _ = strings.toUTF8ListWithTypeBun(&arr, []const u16, remain, false) catch {
@@ -619,9 +638,7 @@ pub const TextEncoderStreamEncoder = struct {
             return JSC.JSUint8Array.fromBytes(globalObject, result_bytes);
         }
 
-        const result_bytes = result_bytes: {
-            defer bun.default_allocator.free(buf);
-
+        const result_bytes = if (exact_size) buf else result_bytes: {
             const owned = bun.default_allocator.alloc(u8, count + prepend.len) catch {
                 globalObject.throwOutOfMemory();
                 return .zero;

@@ -134,8 +134,8 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
         } else {
             context->head_connecting_sockets = c->next_pending;
         }
-        if (c->next) {
-            c->next->prev_pending = c->prev_pending;
+        if (c->next_pending) {
+            c->next_pending->prev_pending = c->prev_pending;
         }
     }
     us_socket_context_unref(ssl, context);

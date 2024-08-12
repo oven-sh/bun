@@ -130,9 +130,9 @@ void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_sock
         context->head_connecting_sockets = 0;
     } else {
         if (c->prev_pending) {
-            c->prev_pending->next = c->next;
+            c->prev_pending->next_pending = c->next_pending;
         } else {
-            context->head_connecting_sockets = c->next;
+            context->head_connecting_sockets = c->next_pending;
         }
         if (c->next) {
             c->next->prev_pending = c->prev_pending;

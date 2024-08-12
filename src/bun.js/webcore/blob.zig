@@ -3421,6 +3421,7 @@ pub const Blob = struct {
                 };
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
+            sink.writer.owns_fd = pathlike != .fd;
 
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
@@ -3432,7 +3433,6 @@ pub const Blob = struct {
                     },
                     else => {},
                 }
-                sink.writer.is_fd = pathlike == .fd;
             } else {
                 switch (sink.writer.start(fd, true)) {
                     .err => |err| {
@@ -3443,7 +3443,6 @@ pub const Blob = struct {
                     },
                     else => {},
                 }
-                sink.writer.is_fd = pathlike == .fd;
             }
 
             return sink.toJS(globalThis);

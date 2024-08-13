@@ -2390,6 +2390,7 @@ pub const Expect = struct {
                     JSValue.fromCell(js_str)
                 else
                     .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
 
                 // TODO: remove this allocation
                 // partial match
@@ -2415,6 +2416,8 @@ pub const Expect = struct {
                     JSValue.fromCell(js_str)
                 else
                     .undefined) orelse .undefined;
+
+                if (globalThis.hasException()) return .zero;
                 // TODO: REMOVE THIS GETTER! Expose a binding to call .test on the RegExp object directly.
                 if (expected_value.get(globalThis, "test")) |test_fn| {
                     const matches = test_fn.call(globalThis, expected_value, &.{received_message});
@@ -2435,6 +2438,8 @@ pub const Expect = struct {
                     JSValue.fromCell(js_str)
                 else
                     .undefined) orelse .undefined;
+                if (globalThis.hasException()) return .zero;
+
                 // no partial match for this case
                 if (!expected_message.isSameValue(received_message, globalThis)) return .undefined;
 

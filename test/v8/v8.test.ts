@@ -16,8 +16,8 @@ if (process.platform == "darwin") {
 describe("v8", () => {
   beforeAll(() => {
     // set up a clean directory for the version built with node
-    fs.rmSync("v8-module-node", { recursive: true, force: true });
-    fs.cpSync("v8-module", "v8-module-node", { recursive: true });
+    fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
+    fs.cpSync(join(__dirname, "v8-module"), join(__dirname, "v8-module-node"), { recursive: true });
 
     // build code using bun
     const bunInstall = spawnSync({

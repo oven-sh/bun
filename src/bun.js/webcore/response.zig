@@ -356,7 +356,13 @@ pub const Response = struct {
             },
             .url = bun.String.empty,
         };
-
+        var did_succeed = false;
+        defer {
+            if (!did_succeed) {
+                response.body.deinit(bun.default_allocator);
+                response.init.deinit(bun.default_allocator);
+            }
+        }
         const json_value = args.nextEat() orelse JSC.JSValue.zero;
 
         if (@intFromEnum(json_value) != 0) {
@@ -364,6 +370,10 @@ pub const Response = struct {
             // calling JSON.stringify on an empty string adds extra quotes
             // so this is correct
             json_value.jsonStringify(globalThis, 0, &str);
+
+            if (globalThis.hasException()) {
+                return .zero;
+            }
 
             if (!str.isEmpty()) {
                 if (str.value.WTFStringImpl.toUTF8IfNeeded(bun.default_allocator)) |bytes| {
@@ -386,7 +396,7 @@ pub const Response = struct {
             if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
                 response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
             } else {
-                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
+                if (Response.Init.init(globalThis, init) catch |err| if (err == error.JSError) return .zero else null) |_init| {
                     response.init = _init;
                 }
             }
@@ -394,6 +404,7 @@ pub const Response = struct {
 
         var headers_ref = response.getOrCreateHeaders(globalThis);
         headers_ref.putDefault("content-type", MimeType.json.value, globalThis);
+        did_succeed = true;
         return bun.new(Response, response).toJS(globalThis);
     }
     pub fn constructRedirect(
@@ -404,35 +415,52 @@ pub const Response = struct {
         // https://github.com/remix-run/remix/blob/db2c31f64affb2095e4286b91306b96435967969/packages/remix-server-runtime/responses.ts#L4
         var args = JSC.Node.ArgumentsSlice.init(globalThis.bunVM(), args_list.ptr[0..args_list.len]);
 
-        var response = Response{
-            .init = Response.Init{
-                .status_code = 302,
-            },
-            .body = Body{
-                .value = .{ .Empty = {} },
-            },
-            .url = bun.String.empty,
-        };
-
-        const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
-        var url_string = ZigString.init("");
-
-        if (@intFromEnum(url_string_value) != 0) {
-            url_string = url_string_value.getZigString(globalThis.ptr());
-        }
-        var url_string_slice = url_string.toSlice(getAllocator(globalThis));
+        var url_string_slice = ZigString.Slice.empty;
         defer url_string_slice.deinit();
+        var response: Response = brk: {
+            var response = Response{
+                .init = Response.Init{
+                    .status_code = 302,
+                },
+                .body = Body{
+                    .value = .{ .Empty = {} },
+                },
+                .url = bun.String.empty,
+            };
 
-        if (args.nextEat()) |init| {
-            if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
-                response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
-            } else {
-                if (Response.Init.init(getAllocator(globalThis), globalThis, init) catch null) |_init| {
-                    response.init = _init;
-                    response.init.status_code = 302;
+            const url_string_value = args.nextEat() orelse JSC.JSValue.zero;
+            var url_string = ZigString.init("");
+
+            if (@intFromEnum(url_string_value) != 0) {
+                url_string = url_string_value.getZigString(globalThis.ptr());
+            }
+            url_string_slice = url_string.toSlice(getAllocator(globalThis));
+            var did_succeed = false;
+            defer {
+                if (!did_succeed) {
+                    response.body.deinit(bun.default_allocator);
+                    response.init.deinit(bun.default_allocator);
                 }
             }
-        }
+
+            if (args.nextEat()) |init| {
+                if (init.isUndefinedOrNull()) {} else if (init.isNumber()) {
+                    response.init.status_code = @as(u16, @intCast(@min(@max(0, init.toInt32()), std.math.maxInt(u16))));
+                } else {
+                    if (Response.Init.init(globalThis, init) catch |err|
+                        if (err == error.JSError) return .zero else null) |_init|
+                    {
+                        response.init = _init;
+                        response.init.status_code = 302;
+                    }
+                }
+            }
+            if (globalThis.hasException()) {
+                return .zero;
+            }
+            did_succeed = true;
+            break :brk response;
+        };
 
         response.init.headers = response.getOrCreateHeaders(globalThis);
         var headers_ref = response.init.headers.?;
@@ -474,7 +502,7 @@ pub const Response = struct {
 
         const arguments = args_list.ptr[0..args_list.len];
 
-        const init: Init = @as(?Init, brk: {
+        var init: Init = @as(?Init, brk: {
             switch (arguments.len) {
                 0 => {
                     break :brk Init{
@@ -490,19 +518,25 @@ pub const Response = struct {
                 },
                 else => {
                     if (arguments[1].isObject()) {
-                        break :brk Init.init(bun.default_allocator, globalThis, arguments[1]) catch null;
+                        break :brk Init.init(globalThis, arguments[1]) catch null;
                     }
 
-                    bun.assert(!arguments[1].isEmptyOrUndefinedOrNull());
+                    if (!globalThis.hasException()) {
+                        globalThis.throwInvalidArguments("new Response() requires a Response-like object in the 2nd argument", .{});
+                    }
 
-                    globalThis.throwInvalidArguments("Expected options to be one of: null, undefined, or object", .{});
                     break :brk null;
                 },
             }
             unreachable;
         }) orelse return null;
 
-        const body: Body = brk: {
+        if (globalThis.hasException()) {
+            init.deinit(bun.default_allocator);
+            return null;
+        }
+
+        var body: Body = brk: {
             switch (arguments.len) {
                 0 => {
                     break :brk Body{
@@ -514,7 +548,17 @@ pub const Response = struct {
                 },
             }
             unreachable;
-        } orelse return null;
+        } orelse {
+            init.deinit(bun.default_allocator);
+
+            return null;
+        };
+
+        if (globalThis.hasException()) {
+            body.deinit(bun.default_allocator);
+            init.deinit(bun.default_allocator);
+            return null;
+        }
 
         var response = bun.new(Response, Response{
             .body = body,
@@ -551,8 +595,11 @@ pub const Response = struct {
             return that;
         }
 
-        pub fn init(_: std.mem.Allocator, ctx: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
+        pub fn init(globalThis: *JSGlobalObject, response_init: JSC.JSValue) !?Init {
             var result = Init{ .status_code = 200 };
+            errdefer {
+                result.deinit(bun.default_allocator);
+            }
 
             if (!response_init.isCell())
                 return null;
@@ -563,7 +610,7 @@ pub const Response = struct {
                 if (response_init.asDirect(Request)) |req| {
                     if (req.getFetchHeaders()) |headers| {
                         if (!headers.isEmpty()) {
-                            result.headers = headers.cloneThis(ctx);
+                            result.headers = headers.cloneThis(globalThis);
                         }
                     }
 
@@ -572,39 +619,61 @@ pub const Response = struct {
                 }
 
                 if (response_init.asDirect(Response)) |resp| {
-                    return resp.init.clone(ctx);
+                    return resp.init.clone(globalThis);
                 }
             }
 
-            if (response_init.fastGet(ctx, .headers)) |headers| {
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            if (response_init.fastGet(globalThis, .headers)) |headers| {
                 if (headers.as(FetchHeaders)) |orig| {
                     if (!orig.isEmpty()) {
-                        result.headers = orig.cloneThis(ctx);
+                        result.headers = orig.cloneThis(globalThis);
                     }
                 } else {
-                    result.headers = FetchHeaders.createFromJS(ctx.ptr(), headers);
+                    result.headers = FetchHeaders.createFromJS(globalThis.ptr(), headers);
                 }
             }
 
-            if (response_init.fastGet(ctx, .status)) |status_value| {
-                const number = status_value.coerceToInt64(ctx);
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            if (response_init.fastGet(globalThis, .status)) |status_value| {
+                const number = status_value.coerceToInt64(globalThis);
                 if ((200 <= number and number < 600) or number == 101) {
                     result.status_code = @as(u16, @truncate(@as(u32, @intCast(number))));
                 } else {
-                    const err = ctx.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
-                    ctx.throwValue(err);
-                    return null;
+                    if (!globalThis.hasException()) {
+                        const err = globalThis.createRangeErrorInstance("The status provided ({d}) must be 101 or in the range of [200, 599]", .{number});
+                        globalThis.throwValue(err);
+                    }
+                    return error.JSError;
                 }
             }
 
-            if (response_init.fastGet(ctx, .statusText)) |status_text| {
-                result.status_text = bun.String.fromJS(status_text, ctx);
+            if (globalThis.hasException()) {
+                return error.JSError;
             }
 
-            if (response_init.fastGet(ctx, .method)) |method_value| {
-                if (Method.fromJS(ctx, method_value)) |method| {
+            if (response_init.fastGet(globalThis, .statusText)) |status_text| {
+                result.status_text = bun.String.fromJS(status_text, globalThis);
+            }
+
+            if (globalThis.hasException()) {
+                return error.JSError;
+            }
+
+            if (response_init.fastGet(globalThis, .method)) |method_value| {
+                if (Method.fromJS(globalThis, method_value)) |method| {
                     result.method = method;
                 }
+            }
+
+            if (globalThis.hasException()) {
+                return error.JSError;
             }
 
             return result;
@@ -618,6 +687,7 @@ pub const Response = struct {
             }
 
             this.status_text.deref();
+            this.status_text = bun.String.empty;
         }
     };
 

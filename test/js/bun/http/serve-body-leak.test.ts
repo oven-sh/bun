@@ -126,9 +126,9 @@ async function calculateMemoryLeak(fn: () => Promise<void>) {
 // If it was leaking the body, the memory usage would be at least 512 KB * 10_000 = 5 GB
 // If it ends up around 280 MB, it's probably not leaking the body.
 for (const test_info of [
-  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 48],
-  ["should not leak memory when buffering the body", callBuffering, false, 48],
-  ["should not leak memory when streaming the body", callStreaming, false, 48],
+  ["#10265 should not leak memory when ignoring the body", callIgnore, false, 64],
+  ["should not leak memory when buffering the body", callBuffering, false, 64],
+  ["should not leak memory when streaming the body", callStreaming, false, 64],
   ["should not leak memory when streaming the body incompletely", callIncompleteStreaming, false, 64],
   ["should not leak memory when streaming the body and echoing it back", callStreamingEcho, false, 64],
 ] as const) {

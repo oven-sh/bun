@@ -100,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -296,6 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
+  "float16array": Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -1174,6 +1175,17 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
   return parseFloat(macOSVersion) >= minVersion;
 }
 
+export function readableStreamFromArray(array) {
+  return new ReadableStream({
+    pull(controller) {
+      for (let entry of array) {
+        controller.enqueue(entry);
+      }
+      controller.close();
+    },
+  });
+}
+
 let hasGuardMalloc = -1;
 export function forceGuardMalloc(env) {
   if (process.platform !== "darwin") {
@@ -1194,4 +1206,16 @@ export function forceGuardMalloc(env) {
   } else {
     console.warn("Guard malloc is not available on this platform for some reason.");
   }
+}
+
+export function fileDescriptorLeakChecker() {
+  const initial = getMaxFD();
+  return {
+    [Symbol.dispose]() {
+      const current = getMaxFD();
+      if (current > initial) {
+        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
+      }
+    },
+  };
 }

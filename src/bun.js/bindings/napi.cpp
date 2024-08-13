@@ -1242,7 +1242,6 @@ static JSValue createErrorForNapi(napi_env env, napi_value code, napi_value msg,
         }
     }
 
-        return {};
     }
 
     auto* error = constructor(globalObject, message);

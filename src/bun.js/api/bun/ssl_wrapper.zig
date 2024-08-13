@@ -158,7 +158,7 @@ pub fn SSLWrapper(T: type) type {
                     this.flags.fatal_error = true;
                     this.triggerCloseCallback();
                 }
-            }
+            };
             return ret == 1; // truly closed
         }
 
@@ -308,11 +308,11 @@ pub fn SSLWrapper(T: type) type {
                 if (err != BoringSSL.SSL_ERROR_WANT_READ and err != BoringSSL.SSL_ERROR_WANT_WRITE) {
                     // clear per thread error queue if it may contain something
                     this.flags.fatal_error = err == BoringSSL.SSL_ERROR_SSL or err == BoringSSL.SSL_ERROR_SYSCALL;
-                    
+
                     this.flags.handshake_state = HandshakeState.HANDSHAKE_COMPLETED;
                     this.triggerHandshakeCallback(false, this.getVerifyError());
-                    
-                    if(this.flags.fatal_error) {
+
+                    if (this.flags.fatal_error) {
                         this.triggerCloseCallback();
                         return false;
                     }
@@ -381,7 +381,7 @@ pub fn SSLWrapper(T: type) type {
                         if (read > 0) {
                             this.triggerDataCallback(buffer[0..read]);
                         }
-                       
+
                         this.triggerCloseCallback();
                         return false;
                     } else {

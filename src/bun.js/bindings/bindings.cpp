@@ -1049,6 +1049,7 @@ bool Bun__deepEquals(JSC__JSGlobalObject* globalObject, JSValue v1, JSValue v2, 
     case Uint16ArrayType:
     case Int32ArrayType:
     case Uint32ArrayType:
+    case Float16ArrayType:
     case Float32ArrayType:
     case Float64ArrayType:
     case BigInt64ArrayType:
@@ -1872,7 +1873,7 @@ extern "C" JSC__JSValue ZigString__toJSONObject(const ZigString* strPtr, JSC::JS
     if (str.isNull()) {
         // isNull() will be true for empty strings and for strings which are too long.
         // So we need to check the length is plausibly due to a long string.
-        if (strPtr->len > Bun__syntheticAllocationLimit) {
+        if (strPtr->len > Bun__stringSyntheticAllocationLimit) {
             scope.throwException(globalObject, Bun::createError(globalObject, Bun::ErrorCode::ERR_STRING_TOO_LONG, "Cannot parse a JSON string longer than 2^32-1 characters"_s));
             return {};
         }
@@ -2026,6 +2027,7 @@ double JSC__JSValue__getLengthIfPropertyExistsInternal(JSC__JSValue value, JSC__
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:
@@ -2768,6 +2770,7 @@ bool JSC__JSValue__asArrayBuffer_(JSC__JSValue JSValue0, JSC__JSGlobalObject* ar
     case JSC::JSType::Uint16ArrayType:
     case JSC::JSType::Int32ArrayType:
     case JSC::JSType::Uint32ArrayType:
+    case JSC::JSType::Float16ArrayType:
     case JSC::JSType::Float32ArrayType:
     case JSC::JSType::Float64ArrayType:
     case JSC::JSType::BigInt64ArrayType:

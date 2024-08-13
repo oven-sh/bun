@@ -452,6 +452,7 @@ pub const StringOrBuffer = union(enum) {
             .Int32Array,
             .Uint32Array,
             .Float32Array,
+            .Float16Array,
             .Float64Array,
             .BigInt64Array,
             .BigUint64Array,

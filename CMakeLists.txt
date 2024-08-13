@@ -29,7 +29,7 @@ cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
 cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-set(REPORTED_NODEJS_VERSION "22.3.0")
+set(REPORTED_NODEJS_VERSION "22.6.0")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.

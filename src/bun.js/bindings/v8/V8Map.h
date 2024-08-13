@@ -10,6 +10,11 @@ enum class InstanceType : uint16_t {
     // "Oddball" in V8 means undefined or null
     // v8-internal.h:788
     Oddball = 0x83,
+    // v8-internal.h:1016 kFirstNonstringType
+    // this cannot be kJSObjectType (or anything in the range [kJSObjectType, kLastJSApiObjectType])
+    // because then V8 will try to access internal fields directly instead of calling
+    // SlowGetInternalField
+    Object = 0x80,
 };
 
 // V8's description of the structure of an object

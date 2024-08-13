@@ -1286,7 +1286,7 @@ pub fn spawnProcessPosix(
             .inherit => {
                 try actions.inherit(fileno);
             },
-            .ignore => {
+            .ipc, .ignore => {
                 try actions.openZ(fileno, "/dev/null", flag | bun.O.CREAT, 0o664);
             },
             .path => |path| {
@@ -1405,7 +1405,7 @@ pub fn spawnProcessPosix(
             .path => |path| {
                 try actions.open(fileno, path, bun.O.RDWR | bun.O.CREAT, 0o664);
             },
-            .buffer => {
+            .ipc, .buffer => {
                 const fds: [2]bun.FileDescriptor = brk: {
                     var fds_: [2]std.c.fd_t = undefined;
                     const rc = std.c.socketpair(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0, &fds_);

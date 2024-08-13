@@ -697,41 +697,37 @@ pub fn format2(
         };
         const tag = ConsoleObject.Formatter.Tag.get(vals[0], global);
 
-        var unbuffered_writer = if (comptime Writer != RawWriter)
-            if (@hasDecl(@TypeOf(writer.context.unbuffered_writer.context), "quietWriter"))
-                writer.context.unbuffered_writer.context.quietWriter()
-            else
-                writer.context.unbuffered_writer.context.writer()
-        else
-            writer;
-
         if (tag.tag == .String) {
             if (options.enable_colors) {
                 if (level == .Error) {
-                    unbuffered_writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
+                    writer.writeAll(comptime Output.prettyFmt("<r><red>", true)) catch {};
                 }
                 fmt.format(
                     tag,
-                    @TypeOf(unbuffered_writer),
-                    unbuffered_writer,
+                    Writer,
+                    writer,
                     vals[0],
                     global,
                     true,
                 );
                 if (level == .Error) {
-                    unbuffered_writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
+                    writer.writeAll(comptime Output.prettyFmt("<r>", true)) catch {};
                 }
             } else {
                 fmt.format(
                     tag,
-                    @TypeOf(unbuffered_writer),
-                    unbuffered_writer,
+                    Writer,
+                    writer,
                     vals[0],
                     global,
                     false,
                 );
             }
-            if (options.add_newline) _ = unbuffered_writer.write("\n") catch 0;
+            if (options.add_newline) {
+                _ = writer.write("\n") catch 0;
+            }
+
+            writer.context.flush() catch {};
         } else {
             defer {
                 if (comptime Writer != RawWriter) {

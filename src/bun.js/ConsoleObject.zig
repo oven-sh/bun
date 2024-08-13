@@ -725,8 +725,9 @@ pub fn format2(
             }
             if (options.add_newline) {
                 _ = writer.write("\n") catch 0;
-                writer.context.flush() catch {};
             }
+
+            writer.context.flush() catch {};
         } else {
             defer {
                 if (comptime Writer != RawWriter) {

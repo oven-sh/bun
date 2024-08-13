@@ -78,13 +78,11 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--minify`
 - `--minify`
-- No differences
 
 ---
 
 - `--outdir`
 - `--outdir`
-- No differences
 
 ---
 
@@ -95,7 +93,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--packages`
 - `--packages`
-- No differences
 
 ---
 
@@ -113,25 +110,22 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--sourcemap`
 - `--sourcemap`
-- No differences
 
 ---
 
 - `--splitting`
 - `--splitting`
-- No differences
 
 ---
 
 - `--target`
 - n/a
-- No supported. Bun's bundler performs no syntactic down-leveling at this time.
+- Not supported. Bun's bundler performs no syntactic down-leveling at this time.
 
 ---
 
 - `--watch`
 - `--watch`
-- No differences
 
 ---
 
@@ -392,7 +386,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `--sourcemap`
 - `--sourcemap`
-- No differences
 
 ---
 
@@ -552,7 +545,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `external`
 - `external`
-- No differences
 
 ---
 
@@ -750,13 +742,11 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `outdir`
 - `outdir`
-- No differences
 
 ---
 
 - `outfile`
 - `outfile`
-- No differences
 
 ---
 
@@ -786,7 +776,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `publicPath`
 - `publicPath`
-- No differences
 
 ---
 
@@ -828,7 +817,6 @@ In Bun's CLI, simple boolean flags like `--minify` do not accept an argument. Ot
 
 - `splitting`
 - `splitting`
-- No differences
 
 ---
 

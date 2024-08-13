@@ -2396,7 +2396,7 @@ pub const Expect = struct {
                 {
                     const expected_slice = expected_value.toSliceOrNull(globalThis) orelse return .zero;
                     defer expected_slice.deinit();
-                    const received_slice = received_message.toSlice(globalThis) orelse return .zero;
+                    const received_slice = received_message.toSliceOrNull(globalThis) orelse return .zero;
                     defer received_slice.deinit();
                     if (!strings.contains(received_slice.slice(), expected_slice.slice())) return .undefined;
                 }

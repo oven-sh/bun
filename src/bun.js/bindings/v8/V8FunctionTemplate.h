@@ -31,10 +31,10 @@ class FunctionCallbackInfo {
     ImplicitArgs* implicit_args;
     // index -1 is this
     TaggedPointer* values;
-    size_t length;
+    int length;
 
 public:
-    FunctionCallbackInfo(ImplicitArgs* implicit_args_, TaggedPointer* values_, size_t length_)
+    FunctionCallbackInfo(ImplicitArgs* implicit_args_, TaggedPointer* values_, int length_)
         : implicit_args(implicit_args_)
         , values(values_)
         , length(length_)

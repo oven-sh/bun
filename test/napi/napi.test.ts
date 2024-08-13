@@ -26,27 +26,6 @@ describe("napi", () => {
   });
 
   describe("v8 c++", () => {
-    describe("External", () => {
-      it("can create an external and read back the correct value", () => {
-        checkSameOutput("test_v8_external", []);
-      });
-    });
-    describe("Object", () => {
-      it("can create an object and set properties", () => {
-        checkSameOutput("test_v8_object", []);
-      });
-    });
-    describe("Array", () => {
-      // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
-      it.skip("can create an array from a C array of Locals", () => {
-        checkSameOutput("test_v8_array_new", []);
-      });
-    });
-    describe("ObjectTemplate", () => {
-      it("creates objects with internal fields", () => {
-        checkSameOutput("test_v8_object_template", []);
-      });
-    });
     describe("FunctionTemplate", () => {
       it("doesn't crash", () => {
         checkSameOutput("test_v8_function_template", []);

@@ -1,5 +1,6 @@
 #include <node.h>
 
+#include <cinttypes>
 #include <cstdarg>
 
 using namespace v8;
@@ -18,7 +19,7 @@ enum class ValueKind : uint16_t {
   Number = 1 << 8,
 };
 
-static bool check_value_kind(const Local<Value> &value, ValueKind kind) {
+static bool check_value_kind(Local<Value> value, ValueKind kind) {
   uint16_t matched_kinds = 0;
   if (value->IsUndefined()) {
     matched_kinds |= static_cast<uint16_t>(ValueKind::Undefined);
@@ -79,6 +80,7 @@ static bool check_value_kind(const Local<Value> &value, ValueKind kind) {
            (matched_kinds == (static_cast<uint16_t>(ValueKind::False) |
                               static_cast<uint16_t>(ValueKind::Boolean)));
   }
+  return false;
 }
 
 void fail(const FunctionCallbackInfo<Value> &info, const char *fmt, ...) {
@@ -162,7 +164,6 @@ static bool perform_string_test(const FunctionCallbackInfo<Value> &info,
                                 int encoded_utf_8_length,
                                 const char *encoded_utf_8_data) {
   Isolate *isolate = info.GetIsolate();
-  int len = strlen(c_string);
   char buf[256] = {0};
   int retval;
   int nchars;
@@ -294,6 +295,146 @@ void test_v8_string_invalid_utf8(const FunctionCallbackInfo<Value> &info) {
   perform_string_test(info, mixed_sequence, 9, 15, replaced_sequence);
 }
 
+void test_v8_external(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  int x = 5;
+  Local<External> external = External::New(isolate, &x);
+  if (external->Value() != &x) {
+    return fail(info,
+                "External::Value() returned wrong pointer: expected %p got %p",
+                &x, external->Value());
+  }
+  return ok(info);
+}
+
+void test_v8_object(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<Object> obj = Object::New(isolate);
+  auto key = String::NewFromUtf8(isolate, "key").ToLocalChecked();
+  auto val = Number::New(isolate, 5.0);
+  Maybe<bool> retval = Nothing<bool>();
+  if ((retval = obj->Set(isolate->GetCurrentContext(), key, val)) !=
+      Just<bool>(true)) {
+    return fail(info, "Object::Set wrong return: expected Just(true), got %s",
+                retval.IsNothing() ? "Nothing" : "Just(false)");
+  }
+
+  return ok(info);
+}
+
+static std::string describe(Isolate *isolate, Local<Value> value) {
+  if (value->IsUndefined()) {
+    return "undefined";
+  } else if (value->IsNull()) {
+    return "null";
+  } else if (value->IsTrue()) {
+    return "true";
+  } else if (value->IsFalse()) {
+    return "false";
+  } else if (value->IsString()) {
+    char buf[1024] = {0};
+    value.As<String>()->WriteUtf8(isolate, buf, sizeof(buf) - 1);
+    std::string result = "\"";
+    result += buf;
+    result += "\"";
+    return result;
+  } else if (value->IsObject()) {
+    return "[object Object]";
+  } else if (value->IsNumber()) {
+    return std::to_string(value.As<Number>()->Value());
+  } else {
+    return "unknown";
+  }
+}
+
+void test_v8_array_new(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+
+  Local<Value> vals[5] = {
+      Number::New(isolate, 50.0),
+      String::NewFromUtf8(isolate, "meow").ToLocalChecked(),
+      Number::New(isolate, 8.5),
+      Null(isolate),
+      Boolean::New(isolate, true),
+  };
+  Local<Array> v8_array =
+      Array::New(isolate, vals, sizeof(vals) / sizeof(Local<Value>));
+
+  if (v8_array->Length() != 5) {
+    return fail(info, "Array::Length wrong return: expected 5, got %" PRIu32,
+                v8_array->Length());
+  }
+
+  for (uint32_t i = 0; i < 5; i++) {
+    Local<Value> array_value =
+        v8_array->Get(isolate->GetCurrentContext(), i).ToLocalChecked();
+    if (!array_value->StrictEquals(vals[i])) {
+      return fail(info, "array has wrong value at index %" PRIu32 ": %s", i,
+                  describe(isolate, array_value).c_str());
+    }
+  }
+
+  return ok(info);
+}
+
+void test_v8_object_template(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  Local<Context> context = isolate->GetCurrentContext();
+
+  Local<ObjectTemplate> obj_template = ObjectTemplate::New(isolate);
+  obj_template->SetInternalFieldCount(2);
+  if (obj_template->InternalFieldCount() != 2) {
+    return fail(info,
+                "ObjectTemplate did not remember internal field count: "
+                "expected 2, got %d",
+                obj_template->InternalFieldCount());
+  }
+
+  Local<Object> obj1 = obj_template->NewInstance(context).ToLocalChecked();
+  obj1->SetInternalField(0, Number::New(isolate, 3.0));
+  obj1->SetInternalField(1, Number::New(isolate, 4.0));
+
+  Local<Object> obj2 = obj_template->NewInstance(context).ToLocalChecked();
+  obj2->SetInternalField(0, Number::New(isolate, 5.0));
+  obj2->SetInternalField(1, Number::New(isolate, 6.0));
+
+  double value = obj1->GetInternalField(0).As<Number>()->Value();
+  if (value != 3.0) {
+    return fail(info,
+                "obj1 internal field 0 has wrong value: expected 3.0, got %f",
+                value);
+  }
+  value = obj1->GetInternalField(1).As<Number>()->Value();
+  if (value != 4.0) {
+    return fail(info,
+                "obj1 internal field 1 has wrong value: expected 4.0, got %f",
+                value);
+  }
+  value = obj2->GetInternalField(0).As<Number>()->Value();
+  if (value != 5.0) {
+    return fail(info,
+                "obj2 internal field 0 has wrong value: expected 5.0, got %f",
+                value);
+  }
+  value = obj2->GetInternalField(1).As<Number>()->Value();
+  if (value != 6.0) {
+    return fail(info,
+                "obj2 internal field 1 has wrong value: expected 6.0, got %f",
+                value);
+  }
+}
+
+void print_values_from_js(const FunctionCallbackInfo<Value> &info) {
+  Isolate *isolate = info.GetIsolate();
+  printf("%d arguments\n", info.Length());
+  printf("this = %s\n", describe(isolate, info.This()).c_str());
+  for (int i = 0; i < info.Length(); i++) {
+    printf("argument %d = %s\n", i, describe(isolate, info[i]).c_str());
+  }
+  return ok(info);
+}
+
 void initialize(Local<Object> exports) {
   NODE_SET_METHOD(exports, "test_v8_native_call", test_v8_native_call);
   NODE_SET_METHOD(exports, "test_v8_primitives", test_v8_primitives);
@@ -305,6 +446,11 @@ void initialize(Local<Object> exports) {
   NODE_SET_METHOD(exports, "test_v8_string_utf8", test_v8_string_utf8);
   NODE_SET_METHOD(exports, "test_v8_string_invalid_utf8",
                   test_v8_string_invalid_utf8);
+  NODE_SET_METHOD(exports, "test_v8_external", test_v8_external);
+  NODE_SET_METHOD(exports, "test_v8_object", test_v8_object);
+  NODE_SET_METHOD(exports, "test_v8_array_new", test_v8_array_new);
+  NODE_SET_METHOD(exports, "test_v8_object_template", test_v8_object_template);
+  NODE_SET_METHOD(exports, "print_values_from_js", print_values_from_js);
 }
 
 NODE_MODULE(NODE_GYP_MODULE_NAME, initialize)

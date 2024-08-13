@@ -3,6 +3,7 @@ import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
 import { join } from "path";
 import fs from "node:fs";
+import assert from "node:assert";
 
 // clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
 // test environment
@@ -15,11 +16,14 @@ if (process.platform == "darwin") {
 
 describe("v8", () => {
   beforeAll(() => {
-    // set up a clean directory for the version built with node
+    // set up a clean directory for the version built with node and the version built in debug mode
     fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
+    fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });
     fs.cpSync(join(__dirname, "v8-module"), join(__dirname, "v8-module-node"), { recursive: true });
+    fs.cpSync(join(__dirname, "v8-module"), join(__dirname, "v8-module-debug"), { recursive: true });
 
     // build code using bun
+    // we install/build with separate commands so that we can use --bun to run node-gyp
     const bunInstall = spawnSync({
       cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
       cwd: join(__dirname, "v8-module"),
@@ -40,6 +44,30 @@ describe("v8", () => {
       stderr: "inherit",
     });
     if (!bunBuild.success) {
+      throw new Error("build failed");
+    }
+
+    // build code using bun, in debug mode
+    const bunDebugInstall = spawnSync({
+      cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
+      cwd: join(__dirname, "v8-module-debug"),
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (!bunDebugInstall.success) {
+      throw new Error("build failed");
+    }
+    const bunDebugBuild = spawnSync({
+      cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild", "--debug"],
+      cwd: join(__dirname, "v8-module-debug"),
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (!bunDebugBuild.success) {
       throw new Error("build failed");
     }
 
@@ -94,8 +122,39 @@ describe("v8", () => {
     });
   });
 
+  describe("External", () => {
+    it("can create an external and read back the correct value", () => {
+      checkSameOutput("test_v8_external", []);
+    });
+  });
+
+  describe("Object", () => {
+    it("can create an object and set properties", () => {
+      checkSameOutput("test_v8_object", []);
+    });
+  });
+  describe("Array", () => {
+    // v8::Array::New is broken as it still tries to reinterpret locals as JSValues
+    it.skip("can create an array from a C array of Locals", () => {
+      checkSameOutput("test_v8_array_new", []);
+    });
+  });
+
+  describe("ObjectTemplate", () => {
+    it("creates objects with internal fields", () => {
+      checkSameOutput("test_v8_object_template", []);
+    });
+  });
+
+  describe("Function", () => {
+    it("correctly receives all its arguments from JS", () => {
+      checkSameOutput("print_values_from_js", [5.0, true, null, false, "meow", {}], {});
+    });
+  });
+
   afterAll(() => {
-    fs.rmSync("v8-module-node", { recursive: true, force: true });
+    fs.rmSync(join(__dirname, "v8-module-node"), { recursive: true, force: true });
+    fs.rmSync(join(__dirname, "v8-module-debug"), { recursive: true, force: true });
   });
 });
 
@@ -104,27 +163,54 @@ enum Runtime {
   bun,
 }
 
-function checkSameOutput(test: string, args: any[]) {
-  const nodeResult = runOn(Runtime.node, test, args).trim();
-  let bunResult = runOn(Runtime.bun, test, args);
+enum BuildMode {
+  debug,
+  release,
+}
+
+function checkSameOutput(testName: string, args: any[], thisValue?: any) {
+  const nodeResult = runOn(Runtime.node, BuildMode.release, testName, args, thisValue).trim();
+  let bunReleaseResult = runOn(Runtime.bun, BuildMode.release, testName, args, thisValue);
+  let bunDebugResult = runOn(Runtime.bun, BuildMode.debug, testName, args, thisValue);
+
   // remove all debug logs
-  bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
-  expect(bunResult).toBe(nodeResult);
+  bunReleaseResult = bunReleaseResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+  bunDebugResult = bunDebugResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
+
+  expect(bunReleaseResult, `test ${testName} printed different output under bun vs. under node`).toBe(nodeResult);
+  expect(bunDebugResult, `test ${testName} printed different output under bun in debug mode vs. under node`).toBe(
+    nodeResult,
+  );
   return nodeResult;
 }
 
-function runOn(runtime: Runtime, test: string, args: any[]) {
+function runOn(runtime: Runtime, buildMode: BuildMode, testName: string, jsArgs: any[], thisValue?: any) {
+  if (runtime == Runtime.node) {
+    assert(buildMode == BuildMode.release);
+  }
+  const baseDir =
+    runtime == Runtime.node ? "v8-module-node" : buildMode == BuildMode.debug ? "v8-module-debug" : "v8-module";
+  const exe = runtime == Runtime.node ? "node" : bunExe();
+
+  const cmd = [
+    exe,
+    join(__dirname, baseDir, "main.js"),
+    testName,
+    JSON.stringify(jsArgs),
+    JSON.stringify(thisValue ?? null),
+  ];
+  if (buildMode == BuildMode.debug) {
+    cmd.push("debug");
+  }
+
   const exec = spawnSync({
-    cmd:
-      runtime == Runtime.node
-        ? ["node", join(__dirname, "v8-module-node/main.js"), test, JSON.stringify(args)]
-        : [bunExe(), join(__dirname, "v8-module/main.js"), test, JSON.stringify(args)],
+    cmd,
     env: bunEnv,
   });
   const errs = exec.stderr.toString();
   if (errs !== "") {
     throw new Error(errs);
   }
-  expect(exec.success).toBeTrue();
+  expect(exec.success, `test ${testName} crashed under ${Runtime[runtime]} in ${BuildMode[buildMode]} mode`).toBeTrue();
   return exec.stdout.toString();
 }

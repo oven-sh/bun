@@ -608,3 +608,11 @@ EXPORTS
   ?IsNumber@Value@v8@@QEBA_NXZ
   ?IsUint32@Value@v8@@QEBA_NXZ
   ?Uint32Value@Value@v8@@QEBA?AV?$Maybe@I@2@V?$Local@VContext@v8@@@2@@Z
+  ?IsUndefined@Value@v8@@QEBA_NXZ
+  ?IsNull@Value@v8@@QEBA_NXZ
+  ?IsNullOrUndefined@Value@v8@@QEBA_NXZ
+  ?IsTrue@Value@v8@@QEBA_NXZ
+  ?IsFalse@Value@v8@@QEBA_NXZ
+  ?IsString@Value@v8@@QEBA_NXZ
+  ?New@Boolean@v8@@SA?AV?$Local@VBoolean@v8@@@2@PEAVIsolate@2@_N@Z
+  ?GetInternalField@Object@v8@@QEAA?AV?$Local@VData@v8@@@2@H@Z

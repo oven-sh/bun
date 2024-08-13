@@ -68,6 +68,11 @@ void Object::SetInternalField(int index, Local<Data> data)
     }
 }
 
+Local<Data> Object::GetInternalField(int index)
+{
+    return SlowGetInternalField(index);
+}
+
 Local<Data> Object::SlowGetInternalField(int index)
 {
     auto* fields = getInternalFieldsContainer(this);

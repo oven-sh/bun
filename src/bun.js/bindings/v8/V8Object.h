@@ -15,6 +15,8 @@ public:
     BUN_EXPORT static Local<Object> New(Isolate* isolate);
     BUN_EXPORT Maybe<bool> Set(Local<Context> context, Local<Value> key, Local<Value> value);
     BUN_EXPORT void SetInternalField(int index, Local<Data> data);
+    // usually inlined
+    BUN_EXPORT Local<Data> GetInternalField(int index);
 
 private:
     BUN_EXPORT Local<Data> SlowGetInternalField(int index);

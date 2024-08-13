@@ -15,6 +15,14 @@ public:
     BUN_EXPORT bool IsUint32() const;
     BUN_EXPORT Maybe<uint32_t> Uint32Value(Local<Context> context) const;
 
+    // usually inlined:
+    BUN_EXPORT bool IsUndefined() const;
+    BUN_EXPORT bool IsNull() const;
+    BUN_EXPORT bool IsNullOrUndefined() const;
+    BUN_EXPORT bool IsTrue() const;
+    BUN_EXPORT bool IsFalse() const;
+    BUN_EXPORT bool IsString() const;
+
 private:
     // non-inlined versions of these
     BUN_EXPORT bool FullIsTrue() const;

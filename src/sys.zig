@@ -225,6 +225,7 @@ pub const Tag = enum(u8) {
     pidfd_open,
     poll,
     watch,
+    bind,
 
     kevent,
     kqueue,
@@ -295,6 +296,12 @@ pub const Error = struct {
         var copy = this.*;
         copy.path = try allocator.dupe(u8, copy.path);
         return copy;
+    }
+
+    pub fn fromLibcErrno(syscall: Syscall.Tag) ?Error {
+        const errno = bun.C.getErrno(bun.C.getErrno(@as(c_int, -1)));
+        if (errno == .SUCCESS) return null;
+        return .{ .errno = @intFromEnum(errno), .syscall = syscall };
     }
 
     pub fn fromCode(errno: E, syscall: Syscall.Tag) Error {

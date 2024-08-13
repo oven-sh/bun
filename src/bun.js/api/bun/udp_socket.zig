@@ -330,7 +330,11 @@ pub const UDPSocket = struct {
         )) |socket| {
             this.socket = socket;
         } else {
-            globalThis.throw("Failed to bind socket", .{});
+            if (bun.sys.Error.fromLibcErrno(.bind)) |err| {
+                globalThis.throwValue(err.toJSC(globalThis));
+            } else {
+                globalThis.throwError("Failed to bind socket", .{});
+            }
             return .zero;
         }
 

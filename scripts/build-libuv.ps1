@@ -7,7 +7,7 @@ $ErrorActionPreference = 'Stop' # Setting strict mode, similar to 'set -euo pipe
 $CWD = Get-Location
 
 $Source = (Join-Path $PSScriptRoot "../src/deps/libuv")
-$Commit = "e9f29cb984231524e3931aa0ae2c5dae1a32884e"
+$Commit = "v1.48.0"
 
 if (!(Test-Path -PathType Container $Source)) {
   Write-Host "Cloning libuv: $Commit"

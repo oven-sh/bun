@@ -299,7 +299,7 @@ pub const Error = struct {
     }
 
     pub fn fromLibcErrno(syscall: Syscall.Tag) ?Error {
-        const errno = bun.C.getErrno(bun.C.getErrno(@as(c_int, -1)));
+        const errno = bun.C.getErrno(@as(i32, -1));
         if (errno == .SUCCESS) return null;
         return .{ .errno = @intFromEnum(errno), .syscall = syscall };
     }

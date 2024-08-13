@@ -1,20 +1,57 @@
-import { it, expect, test, beforeAll, describe } from "bun:test";
+import { it, expect, test, beforeAll, describe, afterAll } from "bun:test";
 import { bunExe, bunEnv } from "harness";
 import { spawnSync } from "bun";
 import { join } from "path";
+import fs from "node:fs";
+
+// clang-cl does not work on Windows with node-gyp 10.2.0, so we should not let that affect the
+// test environment
+delete bunEnv.CC;
+delete bunEnv.CXX;
+if (process.platform == "darwin") {
+  bunEnv.CXXFLAGS ??= "";
+  bunEnv.CXXFLAGS += "-std=gnu++17";
+}
 
 describe("v8", () => {
   beforeAll(() => {
-    // build gyp
-    const install = spawnSync({
-      cmd: [bunExe(), "install", "--verbose"],
+    // set up a clean directory for the version built with node
+    fs.rmSync("v8-module-node", { recursive: true, force: true });
+    fs.cpSync("v8-module", "v8-module-node", { recursive: true });
+
+    // build code using bun
+    const bunInstall = spawnSync({
+      cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
       cwd: join(__dirname, "v8-module"),
-      stderr: "inherit",
       env: bunEnv,
-      stdout: "inherit",
       stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
     });
-    if (!install.success) {
+    if (!bunInstall.success) {
+      throw new Error("build failed");
+    }
+    const bunBuild = spawnSync({
+      cmd: [bunExe(), "x", "--bun", "node-gyp", "rebuild"],
+      cwd: join(__dirname, "v8-module"),
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (!bunBuild.success) {
+      throw new Error("build failed");
+    }
+
+    const nodeInstall = spawnSync({
+      cmd: ["npm", "install", "--verbose", "--foreground-scripts"],
+      cwd: join(__dirname, "v8-module-node"),
+      env: bunEnv,
+      stdin: "inherit",
+      stdout: "inherit",
+      stderr: "inherit",
+    });
+    if (!nodeInstall.success) {
       throw new Error("build failed");
     }
   });
@@ -56,20 +93,32 @@ describe("v8", () => {
       checkSameOutput("test_v8_string_invalid_utf8", []);
     });
   });
+
+  afterAll(() => {
+    fs.rmSync("v8-module-node", { recursive: true, force: true });
+  });
 });
 
+enum Runtime {
+  node,
+  bun,
+}
+
 function checkSameOutput(test: string, args: any[]) {
-  const nodeResult = runOn("node", test, args).trim();
-  let bunResult = runOn(bunExe(), test, args);
+  const nodeResult = runOn(Runtime.node, test, args).trim();
+  let bunResult = runOn(Runtime.bun, test, args);
   // remove all debug logs
   bunResult = bunResult.replaceAll(/^\[\w+\].+$/gm, "").trim();
   expect(bunResult).toBe(nodeResult);
   return nodeResult;
 }
 
-function runOn(executable: string, test: string, args: any[]) {
+function runOn(runtime: Runtime, test: string, args: any[]) {
   const exec = spawnSync({
-    cmd: [executable, join(__dirname, "v8-module/main.js"), test, JSON.stringify(args)],
+    cmd:
+      runtime == Runtime.node
+        ? ["node", join(__dirname, "v8-module-node/main.js"), test, JSON.stringify(args)]
+        : [bunExe(), join(__dirname, "v8-module/main.js"), test, JSON.stringify(args)],
     env: bunEnv,
   });
   const errs = exec.stderr.toString();

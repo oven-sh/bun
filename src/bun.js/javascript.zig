@@ -1041,6 +1041,7 @@ pub const VirtualMachine = struct {
             if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
                 if (std.fmt.parseInt(usize, value, 10)) |limit| {
                     synthetic_allocation_limit = limit;
+                    string_allocation_limit = limit;
                 } else |_| {
                     Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
                 }
@@ -4267,11 +4268,12 @@ export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_
 pub export var isBunTest: bool = false;
 
 // TODO: evaluate if this has any measurable performance impact.
-/// Defaults to 4.7 GB, which is the limit for typed arrays
 pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
+pub var string_allocation_limit: usize = std.math.maxInt(u32);
 
 comptime {
     @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
+    @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
 }
 
 pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
@@ -4289,5 +4291,6 @@ pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGl
     const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
     const prev = synthetic_allocation_limit;
     synthetic_allocation_limit = limit;
+    string_allocation_limit = limit;
     return JSValue.jsNumber(prev);
 }

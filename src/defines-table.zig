@@ -234,6 +234,7 @@ pub const pure_global_identifiers = .{
     .{ "EvalError", pure_global_identifier_define },
     .{ "Event", pure_global_identifier_define },
     .{ "EventTarget", pure_global_identifier_define },
+    .{ "Float16Array", pure_global_identifier_define },
     .{ "Float32Array", pure_global_identifier_define },
     .{ "Float64Array", pure_global_identifier_define },
     .{ "Int16Array", pure_global_identifier_define },

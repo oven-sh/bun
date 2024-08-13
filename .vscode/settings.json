@@ -135,6 +135,7 @@
   },
   "files.associations": {
     "*.idl": "cpp",
+    "array": "cpp",
   },
   "C_Cpp.files.exclude": {
     "**/.vscode": true,

@@ -251,9 +251,9 @@ pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
-    offset: u32 = 0,
-    len: u32 = 0,
-    byte_len: u32 = 0,
+    offset: usize = 0,
+    len: usize = 0,
+    byte_len: usize = 0,
     typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
@@ -1353,6 +1353,7 @@ pub const BinaryType = enum(u4) {
     Int8Array,
     Int16Array,
     Int32Array,
+    Float16Array,
     Float32Array,
     Float64Array,
     // DataView,
@@ -1363,6 +1364,7 @@ pub const BinaryType = enum(u4) {
             .Buffer => .Uint8Array,
             // .DataView => .DataView,
             .Float32Array => .Float32Array,
+            .Float16Array => .Float16Array,
             .Float64Array => .Float64Array,
             .Int16Array => .Int16Array,
             .Int32Array => .Int32Array,
@@ -1384,6 +1386,7 @@ pub const BinaryType = enum(u4) {
             .{ "Buffer", .Buffer },
             // .{ "DataView", .DataView },
             .{ "Float32Array", .Float32Array },
+            .{ "Float16Array", .Float16Array },
             .{ "Float64Array", .Float64Array },
             .{ "Int16Array", .Int16Array },
             .{ "Int32Array", .Int32Array },
@@ -1394,6 +1397,7 @@ pub const BinaryType = enum(u4) {
             .{ "arraybuffer", .ArrayBuffer },
             .{ "buffer", .Buffer },
             // .{ "dataview", .DataView },
+            .{ "float16array", .Float16Array },
             .{ "float32array", .Float32Array },
             .{ "float64array", .Float64Array },
             .{ "int16array", .Int16Array },
@@ -1426,7 +1430,7 @@ pub const BinaryType = enum(u4) {
             .Uint8Array => return JSC.ArrayBuffer.create(globalThis, bytes, .Uint8Array),
 
             // These aren't documented, but they are supported
-            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float32Array, .Float64Array => {
+            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float16Array, .Float32Array, .Float64Array => {
                 const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
                 return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
             },

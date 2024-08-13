@@ -401,7 +401,6 @@ const NamedPipeIPCData = struct {
             .context = @ptrCast(instance),
         };
         this.connected = true;
-        ipc_pipe.setPendingInstancesCount(1);
         ipc_pipe.unref();
 
         const startPipeResult = this.writer.startWithPipe(ipc_pipe);
@@ -420,8 +419,6 @@ const NamedPipeIPCData = struct {
             this.close();
             return readStartResult;
         }
-        this.writeVersionPacket();
-        _ = this.writer.flush();
         return .{ .result = {} };
     }
 
@@ -436,6 +433,7 @@ const NamedPipeIPCData = struct {
             bun.default_allocator.destroy(ipc_pipe);
             return err;
         };
+        ipc_pipe.unref();
         this.connected = true;
 
         this.writer.startWithPipe(ipc_pipe).unwrap() catch |err| {
@@ -457,9 +455,6 @@ const NamedPipeIPCData = struct {
             this.close();
             return err;
         };
-        this.writeVersionPacket();
-
-        _ = this.writer.flush();
     }
 
     fn deinit(this: *NamedPipeIPCData) void {

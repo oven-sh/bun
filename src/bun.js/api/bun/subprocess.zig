@@ -2155,6 +2155,7 @@ pub const Subprocess = struct {
                     return .zero;
                 }
             }
+            ipc_data.writeVersionPacket();
         }
 
         if (subprocess.stdin == .pipe) {

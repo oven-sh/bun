@@ -3085,6 +3085,19 @@ JSC__JSModuleLoader__loadAndEvaluateModule(JSC__JSGlobalObject* globalObject,
 {
     auto& vm = globalObject->vm();
     auto scope = DECLARE_THROW_SCOPE(vm);
+
+    // Clear any pending exceptions
+    //
+    // Relevant for:
+    //
+    // - bun --hot
+    // - bun test (when loading the next module)
+    //
+    if (UNLIKELY(scope.exception())) {
+        scope.clearException();
+        vm.clearLastException();
+    }
+
     auto name = makeAtomString(arg1->toWTFString());
 
     auto* promise = JSC::loadAndEvaluateModule(globalObject, name, JSC::jsUndefined(), JSC::jsUndefined());

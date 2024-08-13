@@ -1304,8 +1304,9 @@ pub const Pipe = extern struct {
         return .{ .result = {} };
     }
 
-    pub fn open(this: *Pipe, file: uv_file) Maybe(void) {
-        if (uv_pipe_open(this, file).toError(.open)) |err| return .{ .err = err };
+    pub fn open(this: *Pipe, file: bun.FileDescriptor) Maybe(void) {
+        const uv_fd = bun.uvfdcast(file);
+        if (uv_pipe_open(this, uv_fd).toError(.open)) |err| return .{ .err = err };
 
         return .{ .result = {} };
     }

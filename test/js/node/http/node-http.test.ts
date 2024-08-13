@@ -2207,3 +2207,48 @@ it("should propagate exception in async data handler", async () => {
   expect(stdout.toString()).toContain("Test passed");
   expect(exitCode).toBe(0);
 });
+// This test is disabled because it can OOM the CI
+it.skip("should be able to stream huge amounts of data", async () => {
+  const buf = Buffer.alloc(1024 * 1024 * 256);
+  const CONTENT_LENGTH = 3 * 1024 * 1024 * 1024;
+  let received = 0;
+  let written = 0;
+  const { promise: listen, resolve: resolveListen } = Promise.withResolvers();
+  const server = http
+    .createServer((req, res) => {
+      res.writeHead(200, {
+        "Content-Type": "text/plain",
+        "Content-Length": CONTENT_LENGTH,
+      });
+      function commit() {
+        if (written < CONTENT_LENGTH) {
+          written += buf.byteLength;
+          res.write(buf, commit);
+        } else {
+          res.end();
+        }
+      }
+
+      commit();
+    })
+    .listen(0, "localhost", resolveListen);
+  await listen;
+
+  try {
+    const response = await fetch(`http://localhost:${server.address().port}`);
+    expect(response.status).toBe(200);
+    expect(response.headers.get("content-type")).toBe("text/plain");
+    const reader = response.body.getReader();
+    while (true) {
+      const { done, value } = await reader.read();
+      received += value ? value.byteLength : 0;
+      if (done) {
+        break;
+      }
+    }
+    expect(written).toBe(CONTENT_LENGTH);
+    expect(received).toBe(CONTENT_LENGTH);
+  } finally {
+    server.close();
+  }
+}, 30_000);

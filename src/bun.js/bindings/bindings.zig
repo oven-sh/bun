@@ -137,7 +137,7 @@ pub const ZigString = extern struct {
 
     pub fn dupeForJS(utf8: []const u8, allocator: std.mem.Allocator) !ZigString {
         if (try strings.toUTF16Alloc(allocator, utf8, false, false)) |utf16| {
-            var out = ZigString.init16(utf16);
+            var out = ZigString.initUTF16(utf16);
             out.mark();
             out.markUTF16();
             return out;
@@ -629,8 +629,8 @@ pub const ZigString = extern struct {
         return shim.cppFn("toAtomicValue", .{ this, globalThis });
     }
 
-    pub fn init16(slice_: []const u16) ZigString {
-        var out = ZigString{ ._unsafe_ptr_do_not_use = std.mem.sliceAsBytes(slice_).ptr, .len = slice_.len };
+    pub fn initUTF16(items: []const u16) ZigString {
+        var out = ZigString{ ._unsafe_ptr_do_not_use = @ptrCast(items), .len = items.len };
         out.markUTF16();
         return out;
     }
@@ -677,6 +677,11 @@ pub const ZigString = extern struct {
     }
 
     pub fn toExternalU16(ptr: [*]const u16, len: usize, global: *JSGlobalObject) JSValue {
+        if (len > String.max_length()) {
+            bun.default_allocator.free(ptr[0..len]);
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            return JSValue.zero;
+        }
         return shim.cppFn("toExternalU16", .{ ptr, len, global });
     }
 
@@ -858,6 +863,11 @@ pub const ZigString = extern struct {
 
     pub fn toExternalValue(this: *const ZigString, global: *JSGlobalObject) JSValue {
         this.assertGlobal();
+        if (this.len > String.max_length()) {
+            bun.default_allocator.free(@constCast(this.byteSlice()));
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            return .zero;
+        }
         return shim.cppFn("toExternalValue", .{ this, global });
     }
 
@@ -875,6 +885,12 @@ pub const ZigString = extern struct {
         ctx: ?*anyopaque,
         callback: *const fn (ctx: ?*anyopaque, ptr: ?*anyopaque, len: usize) callconv(.C) void,
     ) JSValue {
+        if (this.len > String.max_length()) {
+            callback(ctx, @constCast(@ptrCast(this.byteSlice().ptr)), this.len);
+            global.ERR_STRING_TOO_LONG("Cannot create a string longer than 2^32-1 characters", .{}).throw();
+            return .zero;
+        }
+
         return shim.cppFn("external", .{ this, global, ctx, callback });
     }
 
@@ -1689,6 +1705,12 @@ pub const JSUint8Array = opaque {
     pub fn slice(this: *JSUint8Array) []u8 {
         return this.ptr()[0..this.len()];
     }
+
+    extern fn JSUint8Array__fromDefaultAllocator(*JSC.JSGlobalObject, ptr: [*]u8, len: usize) JSC.JSValue;
+    /// *bytes* must come from bun.default_allocator
+    pub fn fromBytes(globalThis: *JSGlobalObject, bytes: []u8) JSC.JSValue {
+        return JSUint8Array__fromDefaultAllocator(globalThis, bytes.ptr, bytes.len);
+    }
 };
 
 pub const JSCell = extern struct {
@@ -2288,7 +2310,28 @@ pub const JSPromise = extern struct {
         }
     };
 
+    extern fn JSC__JSPromise__wrap(*JSC.JSGlobalObject, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) JSC.JSValue;
+
     pub fn wrap(
+        globalObject: *JSGlobalObject,
+        comptime Function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(Function)),
+    ) JSValue {
+        const Args = std.meta.ArgsTuple(@TypeOf(Function));
+        const Fn = Function;
+        const Wrapper = struct {
+            args: Args,
+
+            pub fn call(this: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
+                return @call(.auto, Fn, this.args);
+            }
+        };
+
+        var ctx = Wrapper{ .args = args };
+        return JSC__JSPromise__wrap(globalObject, &ctx, @ptrCast(&Wrapper.call));
+    }
+
+    pub fn wrapValue(
         globalObject: *JSGlobalObject,
         value: JSValue,
     ) JSValue {
@@ -2685,6 +2728,27 @@ pub const AnyPromise = union(enum) {
             .Internal => |promise| promise.asValue(),
         };
     }
+    extern fn JSC__AnyPromise__wrap(*JSC.JSGlobalObject, JSValue, *anyopaque, *const fn (*anyopaque, *JSC.JSGlobalObject) callconv(.C) JSC.JSValue) void;
+
+    pub fn wrap(
+        this: AnyPromise,
+        globalObject: *JSGlobalObject,
+        comptime Function: anytype,
+        args: std.meta.ArgsTuple(@TypeOf(Function)),
+    ) void {
+        const Args = std.meta.ArgsTuple(@TypeOf(Function));
+        const Fn = Function;
+        const Wrapper = struct {
+            args: Args,
+
+            pub fn call(wrap_: *@This(), _: *JSC.JSGlobalObject) JSC.JSValue {
+                return @call(.auto, Fn, wrap_.args);
+            }
+        };
+
+        var ctx = Wrapper{ .args = args };
+        JSC__AnyPromise__wrap(globalObject, this.asValue(globalObject), &ctx, @ptrCast(&Wrapper.call));
+    }
 };
 
 // SourceProvider.h
@@ -2778,8 +2842,9 @@ pub const JSGlobalObject = opaque {
         return this.bunVM().allocator;
     }
 
+    extern fn JSGlobalObject__throwOutOfMemoryError(this: *JSGlobalObject) void;
     pub fn throwOutOfMemory(this: *JSGlobalObject) void {
-        this.throwValue(this.createErrorInstance("Out of memory", .{}));
+        JSGlobalObject__throwOutOfMemoryError(this);
     }
 
     pub fn throwTODO(this: *JSGlobalObject, msg: []const u8) void {
@@ -3365,40 +3430,41 @@ pub const JSValue = enum(JSValueReprInt) {
         Uint16Array = 43,
         Int32Array = 44,
         Uint32Array = 45,
-        Float32Array = 46,
-        Float64Array = 47,
-        BigInt64Array = 48,
-        BigUint64Array = 49,
-        DataView = 50,
-        GlobalObject = 51,
-        GlobalLexicalEnvironment = 52,
-        LexicalEnvironment = 53,
-        ModuleEnvironment = 54,
-        StrictEvalActivation = 55,
-        WithScope = 56,
-        ModuleNamespaceObject = 57,
-        ShadowRealm = 58,
-        RegExpObject = 59,
-        JSDate = 60,
-        ProxyObject = 61,
-        JSGenerator = 62,
-        JSAsyncGenerator = 63,
-        JSArrayIterator = 64,
-        JSMapIterator = 65,
-        JSSetIterator = 66,
-        JSStringIterator = 67,
-        JSPromise = 68,
-        JSMap = 69,
-        JSSet = 70,
-        JSWeakMap = 71,
-        JSWeakSet = 72,
-        WebAssemblyModule = 73,
-        WebAssemblyInstance = 74,
-        WebAssemblyGCObject = 75,
-        StringObject = 76,
-        DerivedStringObject = 77,
+        Float16Array = 46,
+        Float32Array = 47,
+        Float64Array = 48,
+        BigInt64Array = 49,
+        BigUint64Array = 50,
+        DataView = 51,
+        GlobalObject = 52,
+        GlobalLexicalEnvironment = 53,
+        LexicalEnvironment = 54,
+        ModuleEnvironment = 55,
+        StrictEvalActivation = 56,
+        WithScope = 57,
+        ModuleNamespaceObject = 58,
+        ShadowRealm = 59,
+        RegExpObject = 60,
+        JSDate = 61,
+        ProxyObject = 62,
+        JSGenerator = 63,
+        JSAsyncGenerator = 64,
+        JSArrayIterator = 65,
+        JSMapIterator = 66,
+        JSSetIterator = 67,
+        JSStringIterator = 68,
+        JSPromise = 69,
+        JSMap = 70,
+        JSSet = 71,
+        JSWeakMap = 72,
+        JSWeakSet = 73,
+        WebAssemblyModule = 74,
+        WebAssemblyInstance = 75,
+        WebAssemblyGCObject = 76,
+        StringObject = 77,
+        DerivedStringObject = 78,
 
-        InternalFieldTuple,
+        InternalFieldTuple = 79,
 
         MaxJS = 0b11111111,
         Event = 0b11101111,
@@ -3425,6 +3491,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .Event,
                 .FinalObject,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .GlobalObject,
                 .Int16Array,
@@ -3481,6 +3548,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,
@@ -3576,6 +3644,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,
@@ -3617,6 +3686,7 @@ pub const JSValue = enum(JSValueReprInt) {
                 .BigInt64Array,
                 .BigUint64Array,
                 .Float32Array,
+                .Float16Array,
                 .Float64Array,
                 .Int16Array,
                 .Int32Array,

@@ -176,6 +176,7 @@ struct us_socket_t {
 struct us_connecting_socket_t {
     alignas(LIBUS_EXT_ALIGNMENT) struct addrinfo_request *addrinfo_req;
     struct us_socket_context_t *context;
+    // this is used to track all dns resolutions in this connection
     struct us_connecting_socket_t *next;
     struct us_socket_t *connecting_head;
     int options;
@@ -186,9 +187,13 @@ struct us_connecting_socket_t {
     uint16_t port;
     int error;
     struct addrinfo *addrinfo_head;
+    // this is used to track pending connecting sockets in the context
+    struct us_connecting_socket_t* next_pending;
+    struct us_connecting_socket_t* prev_pending;
 };
 
 struct us_wrapped_socket_context_t {
+  struct us_socket_context_t* tcp_context;
   struct us_socket_events_t events;
   struct us_socket_events_t old_events;
 };
@@ -263,6 +268,7 @@ struct us_socket_context_t {
   unsigned char long_timestamp;
   struct us_socket_t *head_sockets;
   struct us_listen_socket_t *head_listen_sockets;
+  struct us_connecting_socket_t *head_connecting_sockets;
   struct us_socket_t *iterator;
   struct us_socket_context_t *prev, *next;
 
@@ -433,6 +439,9 @@ us_internal_ssl_socket_open(us_internal_ssl_socket_r s, int is_client,
                             char *ip, int ip_length);
 
 int us_raw_root_certs(struct us_cert_string_t **out);
+
+void us_internal_socket_context_unlink_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c);
+void us_internal_socket_context_link_connecting_socket(int ssl, struct us_socket_context_t *context, struct us_connecting_socket_t *c);
 #endif
 
 #endif // INTERNAL_H

@@ -251,9 +251,9 @@ pub const JSStringList = std.ArrayList(js.JSStringRef);
 
 pub const ArrayBuffer = extern struct {
     ptr: [*]u8 = undefined,
-    offset: u32 = 0,
-    len: u32 = 0,
-    byte_len: u32 = 0,
+    offset: usize = 0,
+    len: usize = 0,
+    byte_len: usize = 0,
     typed_array_type: JSC.JSValue.JSType = .Cell,
     value: JSC.JSValue = JSC.JSValue.zero,
     shared: bool = false,
@@ -403,6 +403,21 @@ pub const ArrayBuffer = extern struct {
     pub fn createBuffer(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
         JSC.markBinding(@src());
         return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
+    }
+
+    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
+        JSC.markBinding(@src());
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+    }
+
+    extern "C" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSValue;
+    pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSValue, []u8 } {
+        var ptr: [*]u8 = undefined;
+        const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
+        if (buffer.isEmpty()) {
+            return .{ buffer, &.{} };
+        }
+        return .{ buffer, ptr[0..len] };
     }
 
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
@@ -761,6 +776,7 @@ const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
+const TextEncoderStreamEncoder = WebCore.TextEncoderStreamEncoder;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
 const Comment = JSC.Cloudflare.Comment;
@@ -1337,6 +1353,7 @@ pub const BinaryType = enum(u4) {
     Int8Array,
     Int16Array,
     Int32Array,
+    Float16Array,
     Float32Array,
     Float64Array,
     // DataView,
@@ -1347,6 +1364,7 @@ pub const BinaryType = enum(u4) {
             .Buffer => .Uint8Array,
             // .DataView => .DataView,
             .Float32Array => .Float32Array,
+            .Float16Array => .Float16Array,
             .Float64Array => .Float64Array,
             .Int16Array => .Int16Array,
             .Int32Array => .Int32Array,
@@ -1368,6 +1386,7 @@ pub const BinaryType = enum(u4) {
             .{ "Buffer", .Buffer },
             // .{ "DataView", .DataView },
             .{ "Float32Array", .Float32Array },
+            .{ "Float16Array", .Float16Array },
             .{ "Float64Array", .Float64Array },
             .{ "Int16Array", .Int16Array },
             .{ "Int32Array", .Int32Array },
@@ -1378,6 +1397,7 @@ pub const BinaryType = enum(u4) {
             .{ "arraybuffer", .ArrayBuffer },
             .{ "buffer", .Buffer },
             // .{ "dataview", .DataView },
+            .{ "float16array", .Float16Array },
             .{ "float32array", .Float32Array },
             .{ "float64array", .Float64Array },
             .{ "int16array", .Int16Array },
@@ -1410,7 +1430,7 @@ pub const BinaryType = enum(u4) {
             .Uint8Array => return JSC.ArrayBuffer.create(globalThis, bytes, .Uint8Array),
 
             // These aren't documented, but they are supported
-            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float32Array, .Float64Array => {
+            .Uint16Array, .Uint32Array, .Int8Array, .Int16Array, .Int32Array, .Float16Array, .Float32Array, .Float64Array => {
                 const buffer = JSC.ArrayBuffer.create(globalThis, bytes, .ArrayBuffer);
                 return JSC.JSValue.c(JSC.C.JSObjectMakeTypedArrayWithArrayBuffer(globalThis, this.toTypedArrayType(), buffer.asObjectRef(), null));
             },

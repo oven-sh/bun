@@ -3241,11 +3241,13 @@ pub const Blob = struct {
         );
     }
 
-    fn promisified(
-        value: JSC.JSValue,
-        global: *JSGlobalObject,
-    ) JSC.JSValue {
-        return JSC.JSPromise.wrap(global, value);
+    // Zig doesn't let you pass a function with a comptime argument to a runtime-knwon function.
+    fn lifetimeWrap(comptime Fn: anytype, comptime lifetime: JSC.WebCore.Lifetime) fn (*Blob, *JSC.JSGlobalObject) JSC.JSValue {
+        return struct {
+            fn wrap(this: *Blob, globalObject: *JSC.JSGlobalObject) JSC.JSValue {
+                return Fn(this, globalObject, lifetime);
+            }
+        }.wrap;
     }
 
     pub fn getText(
@@ -3256,7 +3258,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toString, .clone), .{ this, globalThis });
     }
 
     pub fn getTextTransfer(
@@ -3266,7 +3268,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toString(globalObject, .transfer), globalObject);
+        return JSC.JSPromise.wrap(globalObject, lifetimeWrap(toString, .transfer), .{ this, globalObject });
     }
 
     pub fn getJSON(
@@ -3278,7 +3280,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toJSON(globalThis, .share), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toJSON, .share), .{ this, globalThis });
     }
 
     pub fn getArrayBufferTransfer(
@@ -3289,7 +3291,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toArrayBuffer(globalThis, .transfer), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .transfer), .{ this, globalThis });
     }
 
     pub fn getArrayBuffer(
@@ -3300,7 +3302,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toArrayBuffer(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toArrayBuffer, .clone), .{ this, globalThis });
     }
 
     pub fn getBytes(
@@ -3311,7 +3313,7 @@ pub const Blob = struct {
         const store = this.store;
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
-        return promisified(this.toUint8Array(globalThis, .clone), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toUint8Array, .clone), .{ this, globalThis });
     }
 
     pub fn getFormData(
@@ -3323,7 +3325,7 @@ pub const Blob = struct {
         if (store) |st| st.ref();
         defer if (store) |st| st.deref();
 
-        return promisified(this.toFormData(globalThis, .temporary), globalThis);
+        return JSC.JSPromise.wrap(globalThis, lifetimeWrap(toFormData, .temporary), .{ this, globalThis });
     }
 
     fn getExistsSync(this: *Blob) JSC.JSValue {
@@ -3419,6 +3421,7 @@ pub const Blob = struct {
                 };
             };
             var sink = JSC.WebCore.FileSink.init(fd, this.globalThis.bunVM().eventLoop());
+            sink.writer.owns_fd = pathlike != .fd;
 
             if (is_stdout_or_stderr) {
                 switch (sink.writer.startSync(fd, false)) {
@@ -3851,7 +3854,8 @@ pub const Blob = struct {
                         globalThis.throwInvalidArguments("new Blob() expects an Array", .{});
                         return null;
                     }
-                    globalThis.throw("out of memory", .{});
+                    if (!globalThis.hasException())
+                        globalThis.throwOutOfMemory();
                     return null;
                 };
 
@@ -4116,10 +4120,13 @@ pub const Blob = struct {
         const bom, const buf = strings.BOM.detectAndSplit(raw_bytes);
 
         if (buf.len == 0) {
+            // If all it contained was the bom, we need to free the bytes
+            if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             return ZigString.Empty.toJS(global);
         }
 
         if (bom == .utf16_le) {
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
             defer out.deref();
             return out.toJS(global);
@@ -4193,6 +4200,10 @@ pub const Blob = struct {
         }
     }
 
+    pub fn toStringTransfer(this: *Blob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
     pub fn toString(this: *Blob, global: *JSGlobalObject, comptime lifetime: Lifetime) JSValue {
         if (this.needsToReadFile()) {
             return this.doReadFile(toStringWithBytes, global);
@@ -4223,6 +4234,8 @@ pub const Blob = struct {
 
         if (bom == .utf16_le) {
             var out = bun.String.createUTF16(bun.reinterpretSlice(u16, buf));
+            defer if (lifetime == .temporary) bun.default_allocator.free(raw_bytes);
+            defer if (lifetime == .transfer) this.detach();
             defer out.deref();
             return out.toJSByParseJSON(global);
         }
@@ -4237,7 +4250,7 @@ pub const Blob = struct {
             // if toUTF16Alloc returns null, it means there are no non-ASCII characters
             if (strings.toUTF16Alloc(allocator, buf, false, false) catch null) |external| {
                 if (comptime lifetime != .temporary) this.setIsASCIIFlag(false);
-                const result = ZigString.init16(external).toJSONObject(global);
+                const result = ZigString.initUTF16(external).toJSONObject(global);
                 allocator.free(external);
                 return result;
             }
@@ -4269,6 +4282,12 @@ pub const Blob = struct {
     pub fn toArrayBufferViewWithBytes(this: *Blob, global: *JSGlobalObject, buf: []u8, comptime lifetime: Lifetime, comptime TypedArrayView: JSC.JSValue.JSType) JSValue {
         switch (comptime lifetime) {
             .clone => {
+                if (buf.len > JSC.synthetic_allocation_limit) {
+                    global.throwOutOfMemory();
+                    this.detach();
+                    return JSValue.zero;
+                }
+
                 if (comptime Environment.isLinux) {
                     // If we can use a copy-on-write clone of the buffer, do so.
                     if (this.store) |store| {
@@ -4303,6 +4322,11 @@ pub const Blob = struct {
                 return JSC.ArrayBuffer.create(global, buf, TypedArrayView);
             },
             .share => {
+                if (buf.len > JSC.synthetic_allocation_limit) {
+                    global.throwOutOfMemory();
+                    return JSValue.zero;
+                }
+
                 this.store.?.ref();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
                     global,
@@ -4312,6 +4336,12 @@ pub const Blob = struct {
                 );
             },
             .transfer => {
+                if (buf.len > JSC.synthetic_allocation_limit) {
+                    global.throwOutOfMemory();
+                    this.detach();
+                    return JSValue.zero;
+                }
+
                 const store = this.store.?;
                 this.transfer();
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJSWithContext(
@@ -4322,6 +4352,12 @@ pub const Blob = struct {
                 );
             },
             .temporary => {
+                if (buf.len > JSC.synthetic_allocation_limit) {
+                    global.throwOutOfMemory();
+                    bun.default_allocator.free(buf);
+                    return JSValue.zero;
+                }
+
                 return JSC.ArrayBuffer.fromBytes(buf, TypedArrayView).toJS(
                     global,
                     null,
@@ -4467,6 +4503,7 @@ pub const Blob = struct {
                 JSC.JSValue.JSType.Uint16Array,
                 JSC.JSValue.JSType.Int32Array,
                 JSC.JSValue.JSType.Uint32Array,
+                JSC.JSValue.JSType.Float16Array,
                 JSC.JSValue.JSType.Float32Array,
                 JSC.JSValue.JSType.Float64Array,
                 JSC.JSValue.JSType.BigInt64Array,
@@ -4551,9 +4588,9 @@ pub const Blob = struct {
                             switch (item.jsTypeLoose()) {
                                 .NumberObject,
                                 .Cell,
-                                JSC.JSValue.JSType.String,
-                                JSC.JSValue.JSType.StringObject,
-                                JSC.JSValue.JSType.DerivedStringObject,
+                                .String,
+                                .StringObject,
+                                .DerivedStringObject,
                                 => {
                                     var sliced = item.toSlice(global, bun.default_allocator);
                                     const allocator = sliced.allocator.get();
@@ -4561,19 +4598,20 @@ pub const Blob = struct {
                                     joiner.push(sliced.slice(), allocator);
                                     continue;
                                 },
-                                JSC.JSValue.JSType.ArrayBuffer,
-                                JSC.JSValue.JSType.Int8Array,
-                                JSC.JSValue.JSType.Uint8Array,
-                                JSC.JSValue.JSType.Uint8ClampedArray,
-                                JSC.JSValue.JSType.Int16Array,
-                                JSC.JSValue.JSType.Uint16Array,
-                                JSC.JSValue.JSType.Int32Array,
-                                JSC.JSValue.JSType.Uint32Array,
-                                JSC.JSValue.JSType.Float32Array,
-                                JSC.JSValue.JSType.Float64Array,
-                                JSC.JSValue.JSType.BigInt64Array,
-                                JSC.JSValue.JSType.BigUint64Array,
-                                JSC.JSValue.JSType.DataView,
+                                .ArrayBuffer,
+                                .Int8Array,
+                                .Uint8Array,
+                                .Uint8ClampedArray,
+                                .Int16Array,
+                                .Uint16Array,
+                                .Int32Array,
+                                .Uint32Array,
+                                .Float16Array,
+                                .Float32Array,
+                                .Float64Array,
+                                .BigInt64Array,
+                                .BigUint64Array,
+                                .DataView,
                                 => {
                                     could_have_non_ascii = true;
                                     var buf = item.asArrayBuffer(global).?;
@@ -4616,19 +4654,20 @@ pub const Blob = struct {
                     }
                 },
 
-                JSC.JSValue.JSType.ArrayBuffer,
-                JSC.JSValue.JSType.Int8Array,
-                JSC.JSValue.JSType.Uint8Array,
-                JSC.JSValue.JSType.Uint8ClampedArray,
-                JSC.JSValue.JSType.Int16Array,
-                JSC.JSValue.JSType.Uint16Array,
-                JSC.JSValue.JSType.Int32Array,
-                JSC.JSValue.JSType.Uint32Array,
-                JSC.JSValue.JSType.Float32Array,
-                JSC.JSValue.JSType.Float64Array,
-                JSC.JSValue.JSType.BigInt64Array,
-                JSC.JSValue.JSType.BigUint64Array,
-                JSC.JSValue.JSType.DataView,
+                .ArrayBuffer,
+                .Int8Array,
+                .Uint8Array,
+                .Uint8ClampedArray,
+                .Int16Array,
+                .Uint16Array,
+                .Int32Array,
+                .Uint32Array,
+                .Float16Array,
+                .Float32Array,
+                .Float64Array,
+                .BigInt64Array,
+                .BigUint64Array,
+                .DataView,
                 => {
                     var buf = current.asArrayBuffer(global).?;
                     joiner.pushStatic(buf.slice());
@@ -4726,6 +4765,22 @@ pub const AnyBlob = union(enum) {
                 return str.toJSByParseJSON(global);
             },
         }
+    }
+
+    pub fn toJSONShare(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toJSON(global, .share);
+    }
+
+    pub fn toStringTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toString(global, .transfer);
+    }
+
+    pub fn toUint8ArrayTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toUint8Array(global, .transfer);
+    }
+
+    pub fn toArrayBufferTransfer(this: *AnyBlob, global: *JSGlobalObject) JSValue {
+        return this.toArrayBuffer(global, .transfer);
     }
 
     pub fn toString(this: *AnyBlob, global: *JSGlobalObject, comptime lifetime: JSC.WebCore.Lifetime) JSValue {

@@ -220,9 +220,11 @@ using namespace JSC;
     macro(stream) \
     macro(structuredCloneForStream) \
     macro(syscall) \
+    macro(textDecoder) \
     macro(textDecoderStreamDecoder) \
     macro(textDecoderStreamTransform) \
     macro(textEncoderStreamEncoder) \
+    macro(TextEncoderStreamEncoder) \
     macro(textEncoderStreamTransform) \
     macro(toNamespacedPath) \
     macro(trace) \

@@ -1008,16 +1008,12 @@ pub const VirtualMachine = struct {
                 IPC.Mode.fromString(mode_kv.value.value) orelse .json
             else
                 .json;
-            if (Environment.isWindows) {
-                IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
-                this.initIPCInstance(fd_s, mode);
-            } else {
-                IPC.log("IPC environment variables: NODE_CHANNEL_FD={d}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
-                if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
-                    this.initIPCInstance(bun.toFD(fd), mode);
-                } else |_| {
-                    Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
-                }
+
+            IPC.log("IPC environment variables: NODE_CHANNEL_FD={s}, NODE_CHANNEL_SERIALIZATION_MODE={s}", .{ fd_s, @tagName(mode) });
+            if (std.fmt.parseInt(i32, fd_s, 10)) |fd| {
+                this.initIPCInstance(bun.toFD(fd), mode);
+            } else |_| {
+                Output.warn("Failed to parse IPC channel number '{s}'", .{fd_s});
             }
         }
 
@@ -1040,6 +1036,15 @@ pub const VirtualMachine = struct {
             } else if (strings.eqlComptime(gc_level, "2")) {
                 this.aggressive_garbage_collection = .aggressive;
                 has_bun_garbage_collector_flag_enabled = true;
+            }
+
+            if (map.get("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT")) |value| {
+                if (std.fmt.parseInt(usize, value, 10)) |limit| {
+                    synthetic_allocation_limit = limit;
+                    string_allocation_limit = limit;
+                } else |_| {
+                    Output.panic("BUN_FEATURE_FLAG_SYNTHETIC_MEMORY_LIMIT must be a positive integer", .{});
+                }
             }
         }
     }
@@ -3775,9 +3780,9 @@ pub const VirtualMachine = struct {
         pub const Handlers = IPC.NewIPCHandler(IPCInstance);
     };
 
-    const IPCInfoType = if (Environment.isWindows) []const u8 else bun.FileDescriptor;
+    const IPCInfoType = bun.FileDescriptor;
     pub fn initIPCInstance(this: *VirtualMachine, info: IPCInfoType, mode: IPC.Mode) void {
-        IPC.log("initIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{info});
+        IPC.log("initIPCInstance {}", .{info});
         this.ipc = .{ .waiting = .{ .info = info, .mode = mode } };
     }
 
@@ -3786,7 +3791,7 @@ pub const VirtualMachine = struct {
         if (this.ipc.? != .waiting) return this.ipc.?.initialized;
         const opts = this.ipc.?.waiting;
 
-        IPC.log("getIPCInstance {" ++ (if (Environment.isWindows) "s" else "") ++ "}", .{opts.info});
+        IPC.log("getIPCInstance {}", .{opts.info});
 
         this.event_loop.ensureWaker();
 
@@ -3823,7 +3828,7 @@ pub const VirtualMachine = struct {
                 instance.data.configureClient(IPCInstance, instance, opts.info) catch {
                     instance.destroy();
                     this.ipc = null;
-                    Output.warn("Unable to start IPC pipe '{s}'", .{opts.info});
+                    Output.warn("Unable to start IPC pipe '{}'", .{opts.info});
                     return null;
                 };
 
@@ -4261,3 +4266,31 @@ export fn Bun__removeSourceProviderSourceMap(vm: *VirtualMachine, opaque_source_
 }
 
 pub export var isBunTest: bool = false;
+
+// TODO: evaluate if this has any measurable performance impact.
+pub var synthetic_allocation_limit: usize = std.math.maxInt(u32);
+pub var string_allocation_limit: usize = std.math.maxInt(u32);
+
+comptime {
+    @export(synthetic_allocation_limit, .{ .name = "Bun__syntheticAllocationLimit" });
+    @export(string_allocation_limit, .{ .name = "Bun__stringSyntheticAllocationLimit" });
+}
+
+pub export fn Bun__setSyntheticAllocationLimitForTesting(globalObject: *JSC.JSGlobalObject, callframe: *JSC.CallFrame) callconv(JSC.conv) JSValue {
+    const args = callframe.arguments(1).slice();
+    if (args.len < 1) {
+        globalObject.throwNotEnoughArguments("setSyntheticAllocationLimitForTesting", 1, args.len);
+        return JSValue.zero;
+    }
+
+    if (!args[0].isNumber()) {
+        globalObject.throwInvalidArguments("setSyntheticAllocationLimitForTesting expects a number", .{});
+        return JSValue.zero;
+    }
+
+    const limit: usize = @intCast(@max(args[0].coerceToInt64(globalObject), 1024 * 1024));
+    const prev = synthetic_allocation_limit;
+    synthetic_allocation_limit = limit;
+    string_allocation_limit = limit;
+    return JSValue.jsNumber(prev);
+}

@@ -532,21 +532,10 @@ static JSValue toJS(JSC::VM& vm, JSC::JSGlobalObject* globalObject, sqlite3_stmt
 
     return jsNull();
 }
-extern "C" {
-static JSC_DECLARE_JIT_OPERATION_WITHOUT_WTF_INTERNAL(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, JSC::EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLStatement* castedThis));
-}
-
-static const JSC::DOMJIT::Signature DOMJITSignatureForjsSQLStatementExecuteStatementFunctionGet(
-    jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking,
-    JSSQLStatement::info(),
-    // We use HeapRange::top() because MiscFields and SideState and HeapObjectIdentity were not enough to tell the compiler that it cannot skip calling the function.
-    // https://github.com/oven-sh/bun/issues/7694
-    JSC::DOMJIT::Effect::forDef(JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top(), JSC::DOMJIT::HeapRange::top()),
-    JSC::SpecFinalObject);
 
 static const HashTableValue JSSQLStatementPrototypeTableValues[] = {
     { "run"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRun, 1 } },
-    { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function | JSC::PropertyAttribute::DOMJITFunction), NoIntrinsic, { HashTableValue::DOMJITFunctionType, jsSQLStatementExecuteStatementFunctionGet, &DOMJITSignatureForjsSQLStatementExecuteStatementFunctionGet } },
+    { "get"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionGet, 1 } },
     { "all"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionAll, 1 } },
     { "as"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementSetPrototypeFunction, 1 } },
     { "values"_s, static_cast<unsigned>(JSC::PropertyAttribute::Function), NoIntrinsic, { HashTableValue::NativeFunctionType, jsSQLStatementExecuteStatementFunctionRows, 1 } },
@@ -2090,53 +2079,6 @@ JSC_DEFINE_HOST_FUNCTION(jsSQLStatementExecuteStatementFunctionGet, (JSC::JSGlob
         throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
         sqlite3_reset(stmt);
         return JSValue::encode(jsUndefined());
-    }
-}
-
-JSC_DEFINE_JIT_OPERATION(jsSQLStatementExecuteStatementFunctionGetWithoutTypeChecking, EncodedJSValue, (JSC::JSGlobalObject * lexicalGlobalObject, JSSQLStatement* castedThis))
-{
-    VM& vm = JSC::getVM(lexicalGlobalObject);
-    IGNORE_WARNINGS_BEGIN("frame-address")
-    CallFrame* callFrame = DECLARE_CALL_FRAME(vm);
-    IGNORE_WARNINGS_END
-    JSC::JITOperationPrologueCallFrameTracer tracer(vm, callFrame);
-    auto scope = DECLARE_THROW_SCOPE(vm);
-
-    auto* stmt = castedThis->stmt;
-    CHECK_PREPARED_JIT
-
-    int statusCode = sqlite3_reset(stmt);
-    if (UNLIKELY(statusCode != SQLITE_OK)) {
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
-        return { .value = 0 };
-    }
-
-    int status = sqlite3_step(stmt);
-    if (!sqlite3_stmt_readonly(stmt)) {
-        castedThis->version_db->version++;
-    }
-
-    if (!castedThis->hasExecuted || castedThis->need_update()) {
-        initializeColumnNames(lexicalGlobalObject, castedThis);
-    }
-
-    JSValue result = jsNull();
-    if (status == SQLITE_ROW) {
-        bool useBigInt64 = castedThis->useBigInt64;
-
-        result = useBigInt64 ? constructResultObject<true>(lexicalGlobalObject, castedThis)
-                             : constructResultObject<false>(lexicalGlobalObject, castedThis);
-        while (status == SQLITE_ROW) {
-            status = sqlite3_step(stmt);
-        }
-    }
-
-    if (status == SQLITE_DONE || status == SQLITE_OK) {
-        RELEASE_AND_RETURN(scope, { JSValue::encode(result) });
-    } else {
-        throwException(lexicalGlobalObject, scope, createSQLiteError(lexicalGlobalObject, castedThis->version_db->db));
-        sqlite3_reset(stmt);
-        return { JSValue::encode(jsUndefined()) };
     }
 }
 

@@ -1747,7 +1747,7 @@ extern "C" napi_status napi_create_range_error(napi_env env, napi_value code,
     if (UNLIKELY(!err)) {
         return napi_generic_failure;
     }
-
+    *result = toNapi(err);
     return napi_ok;
 }
 

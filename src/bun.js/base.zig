@@ -405,6 +405,21 @@ pub const ArrayBuffer = extern struct {
         return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, true);
     }
 
+    pub fn createUint8Array(globalThis: *JSC.JSGlobalObject, bytes: []const u8) JSValue {
+        JSC.markBinding(@src());
+        return Bun__createUint8ArrayForCopy(globalThis, bytes.ptr, bytes.len, false);
+    }
+
+    extern "C" fn Bun__allocUint8ArrayForCopy(*JSC.JSGlobalObject, usize, **anyopaque) JSValue;
+    pub fn allocBuffer(globalThis: *JSC.JSGlobalObject, len: usize) struct { JSValue, []u8 } {
+        var ptr: [*]u8 = undefined;
+        const buffer = Bun__allocUint8ArrayForCopy(globalThis, len, @ptrCast(&ptr));
+        if (buffer.isEmpty()) {
+            return .{ buffer, &.{} };
+        }
+        return .{ buffer, ptr[0..len] };
+    }
+
     extern "C" fn Bun__createUint8ArrayForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize, buffer: bool) JSValue;
     extern "C" fn Bun__createArrayBufferForCopy(*JSC.JSGlobalObject, ptr: ?*const anyopaque, len: usize) JSValue;
 
@@ -761,6 +776,7 @@ const TestScope = Test.TestScope;
 const NodeFS = JSC.Node.NodeFS;
 const TextEncoder = WebCore.TextEncoder;
 const TextDecoder = WebCore.TextDecoder;
+const TextEncoderStreamEncoder = WebCore.TextEncoderStreamEncoder;
 const HTMLRewriter = JSC.Cloudflare.HTMLRewriter;
 const Element = JSC.Cloudflare.Element;
 const Comment = JSC.Cloudflare.Comment;

@@ -1077,6 +1077,7 @@ pub const Formatter = struct {
                         };
                     }
                 }
+                if (globalThis.hasException()) return .{ .tag = .RevokedProxy };
             }
 
             if (js_type == .DOMWrapper) {
@@ -2186,6 +2187,7 @@ pub const Formatter = struct {
                     }
 
                     var i: u32 = 1;
+                    var nonempty_count: u32 = 1;
 
                     while (i < len) : (i += 1) {
                         const element = value.getDirectIndex(this.globalThis, i);
@@ -2195,6 +2197,15 @@ pub const Formatter = struct {
                             }
                             continue;
                         }
+                        if (nonempty_count >= 100) {
+                            this.printComma(Writer, writer_, enable_ansi_colors) catch unreachable;
+                            writer.writeAll("\n"); // we want the line break to be unconditional here
+                            this.estimated_line_length = 0;
+                            this.writeIndent(Writer, writer_) catch unreachable;
+                            writer.pretty("<r><d>... {d} more items<r>", enable_ansi_colors, .{len - i});
+                            break;
+                        }
+                        nonempty_count += 1;
 
                         if (empty_start) |empty| {
                             if (empty > 0) {

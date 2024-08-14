@@ -71,7 +71,7 @@ pub const Async = struct {
     pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
     pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
     pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
-    pub const fstat = NewAsyncFSTask(Return.Fstat, Arguments.Fstat, NodeFS.fstat);
+    pub const fstat = NewUVFSRequest(Return.Fstat, Arguments.Fstat, .fstat);
     pub const fsync = NewAsyncFSTask(Return.Fsync, Arguments.Fsync, NodeFS.fsync);
     pub const ftruncate = NewAsyncFSTask(Return.Ftruncate, Arguments.FTruncate, NodeFS.ftruncate);
     pub const futimes = NewAsyncFSTask(Return.Futimes, Arguments.Futimes, NodeFS.futimes);
@@ -92,7 +92,7 @@ pub const Async = struct {
     pub const rename = NewAsyncFSTask(Return.Rename, Arguments.Rename, NodeFS.rename);
     pub const rm = NewAsyncFSTask(Return.Rm, Arguments.Rm, NodeFS.rm);
     pub const rmdir = NewAsyncFSTask(Return.Rmdir, Arguments.RmDir, NodeFS.rmdir);
-    pub const stat = NewAsyncFSTask(Return.Stat, Arguments.Stat, NodeFS.stat);
+    pub const stat = NewUVFSRequest(Return.Stat, Arguments.Stat, .stat);
     pub const symlink = NewAsyncFSTask(Return.Symlink, Arguments.Symlink, NodeFS.symlink);
     pub const truncate = NewAsyncFSTask(Return.Truncate, Arguments.Truncate, NodeFS.truncate);
     pub const unlink = NewAsyncFSTask(Return.Unlink, Arguments.Unlink, NodeFS.unlink);
@@ -154,6 +154,8 @@ pub const Async = struct {
             .write,
             .readv,
             .writev,
+            .stat,
+            .fstat,
             => {},
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
@@ -262,6 +264,22 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
+                    .stat => {
+                        const args_: Arguments.Stat = task.args;
+                        const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
+
+                        const rc = uv.uv_fs_stat(loop, &task.req, path.ptr, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv stat({s}) = ~~", .{path});
+                    },
+                    .fstat => {
+                        const args_: Arguments.Fstat = task.args;
+                        const fd = args_.fd.impl().uv();
+
+                        const rc = uv.uv_fs_fstat(loop, &task.req, fd, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv fstat({d}) = ~~", .{fd});
+                    },
                     else => @compileError("unimplemented fire uv_" ++ @tagName(FunctionEnum)),
                 }
 
@@ -281,6 +299,8 @@ pub const Async = struct {
                     .write => Maybe(Return.Write){ .err = .{ .errno = @intCast(-rc), .syscall = .write, .fd = args.fd } },
                     .readv => Maybe(Return.Readv){ .err = .{ .errno = @intCast(-rc), .syscall = .readv, .fd = args.fd } },
                     .writev => Maybe(Return.Writev){ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
+                    .stat => if (!args.throw_if_no_entry and rc == uv.UV_ENOENT) .{ .result = .not_found } else .{ .err = .{ .errno = @intCast(-rc), .syscall = .stat, .path = args.path.slice() } },
+                    .fstat => .{ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 } else switch (comptime FunctionEnum) {
                     .open => Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc))))),
@@ -289,6 +309,8 @@ pub const Async = struct {
                     .write => Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) }),
                     .readv => Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) }),
                     .writev => Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) }),
+                    .stat => Maybe(Return.Stat).initResult(.{ .stats = Stats.init(req.statbuf, args.big_int) }),
+                    .fstat => Maybe(Return.Fstat).initResult(Stats.init(req.statbuf, false)),
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 };
 

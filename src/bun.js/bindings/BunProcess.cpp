@@ -2295,13 +2295,7 @@ JSC_DEFINE_HOST_FUNCTION(Process_functionCpuUsage,
     if (callFrame->argumentCount() > 0) {
         JSValue comparatorValue = callFrame->argument(0);
         if (!comparatorValue.isUndefined()) {
-            if (UNLIKELY(!comparatorValue.isCell())) {
-                throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
-                return JSC::JSValue::encode(JSC::jsUndefined());
-            }
-
             JSC::JSObject* comparator = comparatorValue.getObject();
-
             if (UNLIKELY(!comparator)) {
                 throwTypeError(globalObject, throwScope, "Expected an object as the first argument"_s);
                 return JSC::JSValue::encode(JSC::jsUndefined());

@@ -96,7 +96,7 @@ function assert_buildkite_agent() {
 function export_environment() {
   source "${ROOT_DIR}/scripts/env.sh"
   source "${ROOT_DIR}/scripts/update-submodules.sh"
-  
+
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
@@ -130,12 +130,14 @@ function export_environment() {
     export USE_DEBUG_JSC="OFF"
   fi
   if { [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ] || [ "$BUILDKITE_BRANCH" == "main" ]; }; then
-    rm -rf "$CCACHE_DIR"
-    rm -rf "$SCCACHE_DIR"
-    rm -rf "$ZIG_LOCAL_CACHE_DIR"
-    rm -rf "$ZIG_GLOBAL_CACHE_DIR"
-    rm -rf "$BUN_DEPS_CACHE_DIR"
-    mkdir -p "$BUN_DEPS_CACHE_DIR"
+    rm -rf "$CCACHE_DIR" "$SCCACHE_DIR" "$ZIG_LOCAL_CACHE_DIR" "$ZIG_GLOBAL_CACHE_DIR" "$BUN_DEPS_CACHE_DIR"
+    tempdir_to_use=$(mktemp -d 2>/dev/null || mktemp -d -t 'new')
+    CCACHE_DIR="$(tempdir_to_use)/ccache"
+    SCCACHE_DIR="$(tempdir_to_use)/sccache"
+    ZIG_LOCAL_CACHE_DIR="$(tempdir_to_use)/zig-local"
+    ZIG_GLOBAL_CACHE_DIR="$(tempdir_to_use)/zig-global"
+    BUN_DEPS_CACHE_DIR="$(tempdir_to_use)/bun-deps"
+    mkdir -p "$BUN_DEPS_CACHE_DIR $CCACHE_DIR $SCCACHE_DIR $ZIG_LOCAL_CACHE_DIR $ZIG_GLOBAL_CACHE_DIR"
     export CCACHE_RECACHE="1"
   fi
 }

@@ -1,6 +1,6 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
 
 function assert_buildkite_agent() {
   if ! command -v buildkite-agent &>/dev/null; then
@@ -50,7 +50,7 @@ function upload_buildkite_artifact() {
     run_command rm -f "$path."*
     run_command split -b 50MB -d "$path" "$path."
     run_command buildkite-agent artifact upload "$path.*" "${args[@]}"
-  else
+  elif ["${args[@]:-}" != ""]; then
     run_command buildkite-agent artifact upload "$path" "${args[@]}"
   fi
 }

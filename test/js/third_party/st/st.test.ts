@@ -3,7 +3,7 @@ import { expect, it } from "bun:test";
 import { join, dirname } from "node:path";
 
 it("works", async () => {
-  const fixture_path = join(import.meta.dirname, "_fixtures", "st.ts");
+  const fixture_path = join(import.meta.dirname, "st.fixture.ts");
   const fixture_data = await Bun.file(fixture_path).text();
   let { stdout, stderr, exited } = Bun.spawn({
     cmd: [bunExe(), "run", fixture_path],

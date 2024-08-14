@@ -12,6 +12,8 @@ BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
 BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
 BUILDKITE_STEP_KEY=${BUILDKITE_STEP_KEY:-}
 
+ROOT_DIR="$(realpath "$(dirname "$0")/../../")"
+
 function assert_os() {
   local os="$(uname -s)"
   case "$os" in
@@ -85,8 +87,8 @@ function assert_buildkite_agent() {
 }
 
 function export_environment() {
-  source "$(realpath "$(dirname "$0")/../../scripts/env.sh")"
-  source "$(realpath "$(dirname "$0")/../../scripts/update-submodules.sh")"
+  source "$(realpath "${ROOT_DIR}/scripts/env.sh")"
+  source "$(realpath "${ROOT_DIR}/scripts/update-submodules.sh")"
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"

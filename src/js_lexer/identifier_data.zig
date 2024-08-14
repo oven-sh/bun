@@ -44,7 +44,10 @@ pub const IDContinueType = std.bit_set.StaticBitSet(id_end_count + 1);
 const Cache = @import("./identifier_cache.zig");
 
 pub fn main() anyerror!void {
+    std.log.warn("start", .{});
     try std.posix.chdir(std.fs.path.dirname(@src().file).?);
+
+    std.log.warn("id_start_bitset.meta.blob", .{});
     var start = try std.fs.cwd().createFileZ("id_start_bitset.meta.blob", .{ .truncate = true });
     {
         defer start.close();
@@ -53,6 +56,7 @@ pub fn main() anyerror!void {
         try start.writeAll(std.mem.asBytes(&id_start_cached));
     }
 
+    std.log.warn("id_start_bitset.blob", .{});
     var start_masks = try std.fs.cwd().createFileZ("id_start_bitset.blob", .{ .truncate = true });
     {
         defer start_masks.close();
@@ -74,6 +78,7 @@ pub fn main() anyerror!void {
         try start_masks.writeAll(id_start_data);
     }
 
+    std.log.warn("id_continue_bitset.meta.blob", .{});
     var continue_meta = try std.fs.cwd().createFileZ("id_continue_bitset.meta.blob", .{ .truncate = true });
     {
         defer continue_meta.close();
@@ -82,6 +87,7 @@ pub fn main() anyerror!void {
         try continue_meta.writeAll(std.mem.asBytes(&id_continue_cached));
     }
 
+    std.log.warn("id_continue_bitset.blob", .{});
     var continue_blob = try std.fs.cwd().createFileZ("id_continue_bitset.blob", .{ .truncate = true });
     {
         defer continue_blob.close();
@@ -102,4 +108,6 @@ pub fn main() anyerror!void {
         const id_continue_data = std.mem.asBytes(&id_continue.masks);
         try continue_blob.writeAll(std.mem.asBytes(id_continue_data));
     }
+
+    std.log.warn("fin", .{});
 }

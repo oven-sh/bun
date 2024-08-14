@@ -264,17 +264,35 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
-                    else => comptime unreachable,
+                    else => @compileError("unimplemented fire uv_" ++ @tagName(FunctionEnum)),
                 }
 
                 return task.promise.value();
             }
 
             fn uv_callback(req: *uv.fs_t) callconv(.C) void {
-                defer uv.uv_fs_req_cleanup(req);
                 const this: *Task = @ptrCast(@alignCast(req.data.?));
                 var node_fs = NodeFS{};
-                this.result = @field(NodeFS, "uv_" ++ @tagName(FunctionEnum))(&node_fs, this.args, @intFromEnum(req.result));
+                const args = &this.args;
+                const rc = @intFromEnum(req.result);
+
+                this.result = if (rc < 0) switch (comptime FunctionEnum) {
+                    .open => Maybe(Return.Open){ .err = .{ .errno = @intCast(-rc), .syscall = .open, .path = args.path.slice() } },
+                    .close => Maybe(Return.Close){ .err = .{ .errno = @intCast(-rc), .syscall = .close, .fd = args.fd } },
+                    .read => Maybe(Return.Read){ .err = .{ .errno = @intCast(-rc), .syscall = .read, .fd = args.fd } },
+                    .write => Maybe(Return.Write){ .err = .{ .errno = @intCast(-rc), .syscall = .write, .fd = args.fd } },
+                    .readv => Maybe(Return.Readv){ .err = .{ .errno = @intCast(-rc), .syscall = .readv, .fd = args.fd } },
+                    .writev => Maybe(Return.Writev){ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
+                    else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
+                } else switch (comptime FunctionEnum) {
+                    .open => Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc))))),
+                    .close => Maybe(Return.Close).success,
+                    .read => Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) }),
+                    .write => Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) }),
+                    .readv => Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) }),
+                    .writev => Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) }),
+                    else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
+                };
 
                 if (this.result == .err) {
                     this.result.err.path = bun.default_allocator.dupe(u8, this.result.err.path) catch "";
@@ -327,6 +345,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.deinit();
+                this.req.deinit();
                 this.destroy();
             }
         };
@@ -4325,17 +4344,6 @@ pub const NodeFS = struct {
         return if (Syscall.close(args.fd)) |err| .{ .err = err } else Maybe(Return.Close).success;
     }
 
-    pub fn uv_close(_: *NodeFS, args: Arguments.Close, rc: i64) Maybe(Return.Close) {
-        if (rc < 0) {
-            return Maybe(Return.Close){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .close,
-                .fd = args.fd,
-            } };
-        }
-        return Maybe(Return.Close).success;
-    }
-
     // since we use a 64 KB stack buffer, we should not let this function get inlined
     pub noinline fn copyFileUsingReadWriteLoop(src: [:0]const u8, dest: [:0]const u8, src_fd: FileDescriptor, dest_fd: FileDescriptor, stat_size: usize, wrote: *u64) Maybe(Return.CopyFile) {
         var stack_buf: [64 * 1024]u8 = undefined;
@@ -5087,18 +5095,6 @@ pub const NodeFS = struct {
         };
     }
 
-    pub fn uv_open(this: *NodeFS, args: Arguments.Open, rc: i64) Maybe(Return.Open) {
-        _ = this;
-        if (rc < 0) {
-            return Maybe(Return.Open){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .open,
-                .path = args.path.slice(),
-            } };
-        }
-        return Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc)))));
-    }
-
     pub fn openDir(_: *NodeFS, _: Arguments.OpenDir, comptime _: Flavor) Maybe(Return.OpenDir) {
         return Maybe(Return.OpenDir).todo();
     }
@@ -5152,30 +5148,6 @@ pub const NodeFS = struct {
             );
     }
 
-    pub fn uv_read(this: *NodeFS, args: Arguments.Read, rc: i64) Maybe(Return.Read) {
-        _ = this;
-        if (rc < 0) {
-            return Maybe(Return.Read){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .read,
-                .fd = args.fd,
-            } };
-        }
-        return Maybe(Return.Read).initResult(.{ .bytes_read = @intCast(rc) });
-    }
-
-    pub fn uv_readv(this: *NodeFS, args: Arguments.Readv, rc: i64) Maybe(Return.Readv) {
-        _ = this;
-        if (rc < 0) {
-            return Maybe(Return.Readv){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .readv,
-                .fd = args.fd,
-            } };
-        }
-        return Maybe(Return.Readv).initResult(.{ .bytes_read = @intCast(rc) });
-    }
-
     pub fn readv(this: *NodeFS, args: Arguments.Readv, comptime flavor: Flavor) Maybe(Return.Readv) {
         return if (args.position != null) _preadv(this, args, flavor) else _readv(this, args, flavor);
     }
@@ -5186,30 +5158,6 @@ pub const NodeFS = struct {
 
     pub fn write(this: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {
         return if (args.position != null) _pwrite(this, args, flavor) else _write(this, args, flavor);
-    }
-
-    pub fn uv_write(this: *NodeFS, args: Arguments.Write, rc: i64) Maybe(Return.Write) {
-        _ = this;
-        if (rc < 0) {
-            return Maybe(Return.Write){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .write,
-                .fd = args.fd,
-            } };
-        }
-        return Maybe(Return.Write).initResult(.{ .bytes_written = @intCast(rc) });
-    }
-
-    pub fn uv_writev(this: *NodeFS, args: Arguments.Writev, rc: i64) Maybe(Return.Writev) {
-        _ = this;
-        if (rc < 0) {
-            return Maybe(Return.Writev){ .err = .{
-                .errno = @intCast(-rc),
-                .syscall = .writev,
-                .fd = args.fd,
-            } };
-        }
-        return Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) });
     }
 
     fn _write(_: *NodeFS, args: Arguments.Write, comptime flavor: Flavor) Maybe(Return.Write) {

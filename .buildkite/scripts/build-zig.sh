@@ -1,7 +1,14 @@
 #!/bin/bash
 
 set -euo pipefail
+
+export CMAKE_FLAGS=""
 source "$(dirname "$0")/env.sh"
+
+if [[ -n "$CMAKE_FLAGS" ]]; then
+  echo "CMAKE_FLAGS should not be empty"
+  exit 1
+fi
 
 function assert_target() {
   local arch="${2-$(uname -m)}"

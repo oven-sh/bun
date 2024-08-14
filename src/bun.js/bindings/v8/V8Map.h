@@ -18,7 +18,7 @@ enum class InstanceType : uint16_t {
 };
 
 // V8's description of the structure of an object
-class Map {
+struct Map {
     // the structure of the map itself (always points to map_map)
     TaggedPointer meta_map;
     // TBD whether we need to put anything here to please inlined V8 functions
@@ -29,7 +29,6 @@ class Map {
     // (v8::internal::Internals::CanHaveInternalField, in v8-internal.h)
     InstanceType instance_type;
 
-public:
     // the map used by maps
     static const Map map_map;
     // the map used by objects inheriting JSCell

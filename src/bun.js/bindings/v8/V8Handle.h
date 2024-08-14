@@ -49,6 +49,23 @@ struct Handle {
 
     Handle() {}
 
+    bool isCell() const
+    {
+        if (to_v8_object.type() == TaggedPointer::Type::Smi) {
+            return false;
+        }
+        const Map* map_ptr = map.getPtr<Map>();
+        if (map_ptr == &Map::object_map || map_ptr == &Map::string_map) {
+            return true;
+        } else if (map_ptr == &Map::map_map || map_ptr == &Map::raw_ptr_map
+            || map_ptr == &Map::oddball_map || map_ptr == &Map::boolean_map) {
+            return false;
+        } else {
+            RELEASE_ASSERT_NOT_REACHED("unknown Map at %p with instance type %" PRIx16,
+                map_ptr, map_ptr->instance_type);
+        }
+    }
+
     // if not SMI, holds &this->map so that V8 can see what kind of object this is
     TaggedPointer to_v8_object;
     // these two fields are laid out so that V8 can find the map

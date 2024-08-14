@@ -274,7 +274,7 @@ pub const Async = struct {
                     std.mem.doNotOptimizeAway(&node_fs);
                 }
 
-                this.globalObject.bunVMConcurrently().eventLoop().enqueueTaskConcurrent(JSC.ConcurrentTask.createFrom(this));
+                this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
             }
 
             pub fn runFromJSThread(this: *Task) void {

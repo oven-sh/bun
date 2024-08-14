@@ -30,6 +30,8 @@ cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
 set(REPORTED_NODEJS_VERSION "22.6.0")
+# Used in process.versions.modules and compared while loading V8 modules
+set(REPORTED_NODEJS_ABI_VERSION "127")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -1042,6 +1044,7 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
     "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${REPORTED_NODEJS_ABI_VERSION}"
 )
 
 if(NOT ASSERT_ENABLED)

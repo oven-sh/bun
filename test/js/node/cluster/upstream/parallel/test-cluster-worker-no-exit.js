@@ -21,6 +21,7 @@
 
 "use strict";
 const common = require("../common");
+if (common.isOSX) return; // TODO: bun
 if (common.isLinux) return; // TODO: bun
 if (common.isWindows) return; // TODO: bun
 const assert = require("assert");

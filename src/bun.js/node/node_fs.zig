@@ -190,7 +190,7 @@ pub const Async = struct {
                 const log = bun.sys.syslog;
                 const loop = uv.Loop.get();
                 task.req.data = task;
-                switch (FunctionEnum) {
+                switch (comptime FunctionEnum) {
                     .open => {
                         var buf: bun.PathBuffer = undefined; // uv copies path so its okay to use stack memory for this
                         var path = args.path.sliceZ(&buf);

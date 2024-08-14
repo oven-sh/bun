@@ -1,9 +1,11 @@
 #!/bin/bash
 
 set -eo pipefail
-source "$(dirname "$0")/env.sh"
 export FORCE_UPDATE_SUBMODULES=1
-source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
+
+# env.sh calls update_submodules.sh
+source "$(dirname "$0")/env.sh"
+
 { set +x; } 2>/dev/null
 
 function run_command() {

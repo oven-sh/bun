@@ -143,5 +143,3 @@ function export_environment() {
 assert_build
 assert_buildkite_agent
 export_environment
-
-source "$ROOT_DIR/.buildkite/scripts/secrets.sh"

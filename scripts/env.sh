@@ -2,6 +2,8 @@
 
 set -euo pipefail
 
+export USE_LTO=${USE_LTO:-0}
+
 # Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   if [ -f ~/.bashrc ]; then
@@ -51,7 +53,7 @@ export RANLIB=${RANLIB:-$(which llvm-ranlib-$LLVM_VERSION || which llvm-ranlib |
 # on Linux, force using lld as the linker
 if [[ $(uname -s) == 'Linux' ]]; then
   export LD=${LD:-$(which ld.lld-$LLVM_VERSION || which ld.lld || which ld)}
-  export LDFLAGS="${LDFLAGS} -fuse-ld=lld "
+  export LDFLAGS="${LDFLAGS:-} -fuse-ld=lld "
 fi
 
 export CMAKE_CXX_COMPILER=${CXX}
@@ -67,7 +69,7 @@ export CXXFLAGS="-O3 -fno-exceptions -fno-rtti -fvisibility=hidden -fvisibility-
 if [ "$USE_LTO" == "1" ] || [ "$USE_LTO" == "ON" ]; then
   export CFLAGS="$CFLAGS -flto=full "
   export CXXFLAGS="$CXXFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
-  export LDFLAGS="$LDFLAGS -flto=full -fwhole-program-vtables -fforce-emit-vtables "
+  export LDFLAGS="${LDFLAGS:-} -flto=full -fwhole-program-vtables -fforce-emit-vtables "
 fi
 
 if [[ $(uname -s) == 'Linux' ]]; then

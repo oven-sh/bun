@@ -2,20 +2,16 @@
 
 extern "C" {
 static node::node_module _module = {
-    .nm_version = 127,
-    .nm_flags = 0,
-    .nm_dso_handle = nullptr,
-    .nm_filename = "no_entrypoint.cpp",
-    .nm_register_func = nullptr,
-    .nm_context_register_func = nullptr,
-    .nm_modname = "no_entrypoint",
-    .nm_priv = nullptr,
-    .nm_link = nullptr,
+    127,                 // nm_version
+    0,                   // nm_flags
+    nullptr,             // nm_dso_handle
+    "no_entrypoint.cpp", // nm_filename
+    nullptr,             // nm_register_func
+    nullptr,             // nm_context_register_func
+    "no_entrypoint",     // nm_modname
+    nullptr,             // nm_priv
+    nullptr,             // nm_link
 };
 
-static void _register_mismatched_abi_version(void) __attribute__((constructor));
-
-static void _register_mismatched_abi_version(void) {
-  node_module_register(&_module);
-}
+NODE_C_CTOR(_register_no_entrypoint) { node_module_register(&_module); }
 }

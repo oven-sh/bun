@@ -9,20 +9,18 @@ void init(v8::Local<v8::Object> exports, v8::Local<v8::Value> module,
 extern "C" {
 static node::node_module _module = {
     // bun expects 127
-    .nm_version = 42,
-    .nm_flags = 0,
-    .nm_dso_handle = nullptr,
-    .nm_filename = "mismatched_abi_version.cpp",
-    .nm_register_func = init,
-    .nm_context_register_func = nullptr,
-    .nm_modname = "mismatched_abi_version",
-    .nm_priv = nullptr,
-    .nm_link = nullptr,
+    42,                           // nm_version
+    0,                            // nm_flags
+    nullptr,                      // nm_dso_handle
+    "mismatched_abi_version.cpp", // nm_filename
+    init,                         // nm_register_func
+    nullptr,                      // nm_context_register_func
+    "mismatched_abi_version",     // nm_modname
+    nullptr,                      // nm_priv
+    nullptr,                      // nm_link
 };
 
-static void _register_mismatched_abi_version(void) __attribute__((constructor));
-
-static void _register_mismatched_abi_version(void) {
+NODE_C_CTOR(_register_mismatched_abi_version) {
   node_module_register(&_module);
 }
 }

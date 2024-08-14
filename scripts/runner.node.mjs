@@ -55,7 +55,6 @@ async function getSecret(secret) {
 
   const proc = spawn("buildkite-agent", ["secret", "get", secret], {
     encoding: "utf-8",
-    timeout: spawnTimeout,
     stdio: ["inherit", "pipe", "inherit"],
   });
   let { resolve, reject, promise } = Promise.withResolvers();

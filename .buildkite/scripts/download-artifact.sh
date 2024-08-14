@@ -1,9 +1,9 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
 
 function assert_buildkite_agent() {
-  if ! command -v buildkite-agent &> /dev/null; then
+  if ! command -v buildkite-agent &>/dev/null; then
     echo "error: Cannot find buildkite-agent, please install it:"
     echo "https://buildkite.com/docs/agent/v3/install"
     exit 1
@@ -11,25 +11,38 @@ function assert_buildkite_agent() {
 }
 
 function download_buildkite_artifact() {
-  local path="$1"; shift
+  # Check if at least one argument is provided
+  if [ $# -eq 0 ]; then
+    echo "error: No path provided for artifact download"
+    exit 1
+  fi
+
+  local path="$1"
+  shift
   local split="0"
   local args=()
-  while true; do
-    if [ -z "$1" ]; then
-      break
-    fi
+
+  while [ $# -gt 0 ]; do
     case "$1" in
-      --split) split="1"; shift ;;
-      *) args+=("$1"); shift ;;
+    --split)
+      split="1"
+      shift
+      ;;
+    *)
+      args+=("$1")
+      shift
+      ;;
     esac
   done
+
   if [ "$split" == "1" ]; then
-    run_command buildkite-agent artifact download "$path.*" . "${args[@]}"
-    run_command cat $path.?? > "$path"
-    run_command rm -f $path.??
+    run_command buildkite-agent artifact download "$path.*" . "${args[@]:-}"
+    run_command cat "$path".?? >"$path"
+    run_command rm -f "$path".??
   else
-    run_command buildkite-agent artifact download "$path" . "${args[@]}"
+    run_command buildkite-agent artifact download "$path" . "${args[@]:-}"
   fi
+
   if [[ "$path" != *"*"* ]] && [ ! -f "$path" ]; then
     echo "error: Could not find artifact: $path"
     exit 1

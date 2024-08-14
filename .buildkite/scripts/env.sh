@@ -134,4 +134,4 @@ assert_build
 assert_buildkite_agent
 export_environment
 
-source "$(realpath "$(dirname "$0")/../../scripts/secrets.sh")"
+source "$(realpath "$(dirname "$0")/secrets.sh")"

@@ -3,8 +3,10 @@
 set -euo pipefail
 
 function ensure_secret() {
-  local name="$1"
-  local value="$(buildkite-agent secret get $name)"
+  local name=""
+  local value=""
+  name="$1"
+  value="$(buildkite-agent secret get $name)"
   # If secret is not found, then we should exit with an error
   if [ -z "$value" ]; then
     echo "error: Secret $name not found"
@@ -15,8 +17,11 @@ function ensure_secret() {
 }
 
 function optional_secret() {
-  local name="$1"
-  local value="$(buildkite-agent secret get $name) 2>/dev/null"
+  local name=""
+  local value=""
+  name="$1"
+  value="$(buildkite-agent secret get $name) 2>/dev/null"
+
   export "$name"="$value"
 }
 

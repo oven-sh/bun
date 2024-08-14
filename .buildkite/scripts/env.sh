@@ -2,6 +2,7 @@
 
 set -euo pipefail
 
+BUILDKITE_REPO=${BUILDKITE_REPO:-}
 BUILDKITE_CLEAN_CHECKOUT=${BUILDKITE_CLEAN_CHECKOUT:-}
 BUILDKITE_BRANCH=${BUILDKITE_BRANCH:-}
 CCACHE_DIR=${CCACHE_DIR:-}
@@ -13,6 +14,12 @@ BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
 BUILDKITE_STEP_KEY=${BUILDKITE_STEP_KEY:-}
 
 ROOT_DIR="$(realpath "$(dirname "$0")/../../")"
+
+# Fail if we cannot find the root directory
+if [ ! -d "$ROOT_DIR" ]; then
+  echo "error: Cannot find root directory: '$ROOT_DIR'" 1>&2
+  exit 1
+fi
 
 function assert_os() {
   local os="$(uname -s)"
@@ -87,8 +94,9 @@ function assert_buildkite_agent() {
 }
 
 function export_environment() {
-  source "$(realpath "${ROOT_DIR}/scripts/env.sh")"
-  source "$(realpath "${ROOT_DIR}/scripts/update-submodules.sh")"
+  source "${ROOT_DIR}/scripts/env.sh"
+  source "${ROOT_DIR}/scripts/update-submodules.sh"
+  
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
@@ -136,4 +144,4 @@ assert_build
 assert_buildkite_agent
 export_environment
 
-source "$(realpath "$(dirname "$0")/secrets.sh")"
+source "$ROOT_DIR/.buildkite/scripts/secrets.sh"

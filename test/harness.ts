@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
 import { isAbsolute, join, dirname } from "path";
@@ -1220,25 +1220,47 @@ export function fileDescriptorLeakChecker() {
   };
 }
 
-export function requireCredentials(...envNames: any[]) {
-  const envs = envNames.slice(0, envNames.length - 1);
-  const testFn = envNames[envNames.length - 1];
-  const missing = envs.filter(envName => !process.env[envName]);
-  if (missing.length > 0) {
-    return function (label: string, fn: Function) {
-      return testFn(label, () => {
-        const err = new Error(
-          "Test is missing required credentials: " +
-            missing.map(envName => JSON.stringify(envName)).join(", ") +
-            "\n\nPlease set the following environment variables:\n" +
-            missing.map(envName => "- " + JSON.stringify(envName)).join("\n") +
-            "\n",
-        );
-        err.name = "MissingCredentialError";
-        throw err;
-      });
-    };
+/**
+ * Gets a secret from the environment.
+ *
+ * In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+ * and are not available as an environment variable.
+ */
+export function getSecret(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+
+  // When not running in CI, allow the secret to be missing.
+  if (!isCI) {
+    return value;
   }
 
-  return testFn;
+  // In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+  if (!value && isBuildKite) {
+    const { exitCode, stdout } = spawnSync({
+      cmd: ["buildkite-agent", "secret", "get", name],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    if (exitCode === 0) {
+      value = stdout.toString().trim();
+    }
+  }
+
+  // Throw an error if the secret is not found, so the test fails in CI.
+  if (!value) {
+    let hint;
+    if (isBuildKite) {
+      hint = `Create a secret with the name "${name}" in the Buildkite UI.
+https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
+    } else {
+      hint = `Define an environment variable with the name "${name}".`;
+    }
+
+    throw new Error(`Secret not found: ${name}\n${hint}`);
+  }
+
+  // Set the secret in the environment so that it can be used in tests.
+  process.env[name] = value;
+
+  return value;
 }

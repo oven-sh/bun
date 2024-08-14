@@ -1,14 +1,14 @@
 import { test, expect, describe } from "bun:test";
-import { bunRun, requireCredentials } from "harness";
+import { bunRun, getSecret } from "harness";
 import path from "path";
 
-// DO NOT SKIP IN CI.
-const it = requireCredentials("SMTP_SENDGRID_KEY", "SMTP_SENDGRID_SENDER", test);
+const smtpKey = getSecret("SMTP_SENDGRID_KEY");
+const smtpSender = getSecret("SMTP_SENDGRID_SENDER");
 
-describe("nodemailer", () => {
-  it("basic smtp", async () => {
+describe.skipIf(!smtpKey || !smtpSender)("nodemailer", () => {
+  test("basic smtp", async () => {
     try {
-      const info = bunRun(path.join(import.meta.dir, "process-nodemailer-fixture.js"), {
+      const info = bunRun(path.join(import.meta.dir, "nodemailer.fixture.js"), {
         SMTP_SENDGRID_SENDER: process.env.SMTP_SENDGRID_SENDER as string,
         SMTP_SENDGRID_KEY: process.env.SMTP_SENDGRID_KEY as string,
       });

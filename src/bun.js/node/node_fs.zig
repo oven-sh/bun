@@ -211,9 +211,7 @@ pub const Async = struct {
 
                         if (fd == 1 or fd == 2) {
                             log("uv close({}) SKIPPED", .{fd});
-                            task.result = Maybe(Return.Close).success;
-                            task.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
-                            return task.promise.value();
+                            return task.earlyResolve(Maybe(Return.Close).success);
                         }
 
                         const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
@@ -300,6 +298,12 @@ pub const Async = struct {
                 }
 
                 this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
+            }
+
+            fn earlyResolve(this: *Task, value: Maybe(ReturnType)) JSC.JSValue {
+                this.result = value;
+                this.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(this));
+                return this.promise.value();
             }
 
             pub fn runFromJSThread(this: *Task) void {

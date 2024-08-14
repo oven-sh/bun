@@ -441,7 +441,6 @@ const Socket = (function (InternalSocket) {
       connection[bunSocketInternal] = null;
       connection.unref();
       connection.destroy();
-      process.nextTick(closeNT, connection);
     }
 
     connect(...args) {

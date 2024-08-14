@@ -49,39 +49,6 @@ Promise.withResolvers ??= function () {
 };
 
 async function getSecret(secret) {
-  const proc = spawn("buildkite-agent", ["secret", "get", secret], {
-    encoding: "utf-8",
-    stdio: ["inherit", "pipe", "inherit"],
-  });
-  let { resolve, reject, promise } = Promise.withResolvers();
-
-  let stdoutPromise;
-  {
-    let { resolve, reject, promise } = Promise.withResolvers();
-    stdoutPromise = promise;
-    let stdout = "";
-    proc.stdout.setEncoding("utf-8");
-    proc.stdout.on("data", chunk => {
-      stdout += chunk.toString();
-    });
-    proc.stdout.on("end", () => {
-      stdout = stdout.trim();
-      resolve(stdout);
-    });
-  }
-
-  proc.on("exit", (code, signal) => {
-    if (code === 0) {
-      resolve();
-    } else {
-      reject(new Error(`Secret "${secret}" not found with code ${code}, signal ${signal}`));
-    }
-  });
-
-  await promise;
-
-  resolve(await stdoutPromise);
-}
 await Promise.all(
   secrets.map(async secret => {
     if (process.env[secret]) {
@@ -92,7 +59,7 @@ await Promise.all(
     if (value) {
       process.env[secret] = value;
     } else {
-      throw new Error(`Secret "${secret}" not found`);
+      console.error(new Error(`Secret "${secret}" not found. Continuing anyway.`));
     }
   }),
 );

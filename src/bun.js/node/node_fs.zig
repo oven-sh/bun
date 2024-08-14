@@ -172,8 +172,10 @@ pub const Async = struct {
 
             pub const heap_label = "Async" ++ bun.meta.typeBaseName(@typeName(ArgumentType)) ++ "UvTask";
 
+            pub usingnamespace bun.New(@This());
+
             pub fn create(globalObject: *JSC.JSGlobalObject, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
-                var task = bun.new(Task, Task{
+                var task = Task.new(.{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
                     .args = args,
                     .result = undefined,
@@ -318,7 +320,7 @@ pub const Async = struct {
                     this.args.deinit();
                 }
                 this.promise.deinit();
-                bun.destroy(this);
+                this.destroy();
             }
         };
     }

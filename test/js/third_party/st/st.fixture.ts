@@ -14,5 +14,5 @@ function listen(server): Promise<URL> {
 }
 await using server = createServer(st(process.cwd()));
 const url = await listen(server);
-const res = await fetch(new URL("/st.ts", url));
+const res = await fetch(new URL("/st.fixture.ts", url));
 console.log(await res.text());

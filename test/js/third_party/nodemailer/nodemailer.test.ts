@@ -1,8 +1,10 @@
 import { test, expect, describe } from "bun:test";
-import { bunRun } from "harness";
+import { bunRun, requireCredentials } from "harness";
 import path from "path";
 
-const it = process.env.SMTP_SENDGRID_KEY && process.env.SMTP_SENDGRID_SENDER ? test : test.skip;
+// DO NOT SKIP IN CI.
+const it = requireCredentials("SMTP_SENDGRID_KEY", "SMTP_SENDGRID_SENDER", test);
+
 describe("nodemailer", () => {
   it("basic smtp", async () => {
     try {

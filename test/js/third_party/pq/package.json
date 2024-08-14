@@ -1,0 +1,6 @@
+{
+  "name": "pq",
+  "dependencies": {
+    "pg": "8.11.1"
+  }
+}

@@ -26,6 +26,85 @@ import { normalize as normalizeWindows } from "node:path/win32";
 import { isIP } from "node:net";
 import { parseArgs } from "node:util";
 
+const secrets = [
+  "TLS_MONGODB_DATABASE_URL",
+  "TLS_POSTGRES_DATABASE_URL",
+  "TEST_INFO_STRIPE",
+  "TEST_INFO_AZURE_SERVICE_BUS",
+  "SMTP_SENDGRID_KEY",
+  "SMTP_SENDGRID_SENDER",
+];
+Promise.withResolvers ??= function () {
+  var resolvers = {
+    resolve: null,
+    reject: null,
+    promise: null,
+  };
+  resolvers.promise = new Promise((resolve, reject) => {
+    resolvers.resolve = resolve;
+    resolvers.reject = reject;
+  });
+
+  return resolvers;
+};
+
+async function getSecret(secret) {
+  if (process.env[secret]) {
+    return process.env[secret];
+  }
+
+  const proc = spawn("buildkite-agent", ["secret", "get", secret], {
+    encoding: "utf-8",
+    timeout: spawnTimeout,
+    stdio: ["inherit", "pipe", "inherit"],
+  });
+  let { resolve, reject, promise } = Promise.withResolvers();
+
+  let stdoutPromise;
+  {
+    let { resolve, reject, promise } = Promise.withResolvers();
+    stdoutPromise = promise;
+    let stdout = "";
+    proc.stdout.setEncoding("utf-8");
+    proc.stdout.on("data", chunk => {
+      stdout += chunk.toString();
+    });
+    proc.stdout.on("end", () => {
+      stdout = stdout.trim();
+      resolve(stdout);
+    });
+  }
+
+  proc.on("exit", (code, signal) => {
+    if (code === 0) {
+      resolve();
+    } else {
+      reject(new Error(`Secret "${secret}" not found with code ${code}, signal ${signal}`));
+    }
+  });
+
+  await promise;
+
+  resolve(await stdoutPromise);
+}
+await Promise.all(
+  secrets.map(async secret => {
+    if (process.env[secret]) {
+      return;
+    }
+
+    try {
+      const value = await getSecret(secret);
+      if (value) {
+        process.env[secret] = value;
+      }
+    } catch (error) {
+      console.warn(error);
+      // We continue to let the individual tests fail.
+    }
+  }),
+);
+
 const spawnTimeout = 5_000;
 const testTimeout = 3 * 60_000;
 const integrationTimeout = 5 * 60_000;

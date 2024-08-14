@@ -1,9 +1,14 @@
 #!/usr/bin/env bash
+
+set -euo pipefail
+
+ FORCE_UPDATE_SUBMODULES=${FORCE_UPDATE_SUBMODULES:-0}
+
 cd "$(dirname "${BASH_SOURCE[0]}")"
 cd ..
 NAMES=$(cat .gitmodules | grep 'path = ' | awk '{print $3}')
 
-if ! [ "$1" == '--webkit' ]; then
+if ! [ "${1:-}" == '--webkit' ]; then
   # we will exclude webkit unless you explicitly clone it yourself (a huge download)
   if [ ! -e "src/bun.js/WebKit/.git" ]; then
     NAMES=$(echo "$NAMES" | grep -v 'WebKit')

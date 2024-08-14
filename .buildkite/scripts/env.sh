@@ -1,32 +1,55 @@
 #!/bin/bash
 
-set -eo pipefail
+set -euo pipefail
+
+BUILDKITE_REPO=${BUILDKITE_REPO:-}
+BUILDKITE_CLEAN_CHECKOUT=${BUILDKITE_CLEAN_CHECKOUT:-}
+BUILDKITE_BRANCH=${BUILDKITE_BRANCH:-}
+CCACHE_DIR=${CCACHE_DIR:-}
+SCCACHE_DIR=${SCCACHE_DIR:-}
+ZIG_LOCAL_CACHE_DIR=${ZIG_LOCAL_CACHE_DIR:-}
+ZIG_GLOBAL_CACHE_DIR=${ZIG_GLOBAL_CACHE_DIR:-}
+BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
+BUN_DEPS_CACHE_DIR=${BUN_DEPS_CACHE_DIR:-}
+BUILDKITE_STEP_KEY=${BUILDKITE_STEP_KEY:-}
+
+ROOT_DIR="$(realpath "$(dirname "$0")/../../")"
+
+# Fail if we cannot find the root directory
+if [ ! -d "$ROOT_DIR" ]; then
+  echo "error: Cannot find root directory: '$ROOT_DIR'" 1>&2
+  exit 1
+fi
 
 function assert_os() {
   local os="$(uname -s)"
   case "$os" in
-    Linux)
-      echo "linux" ;;
-    Darwin)
-      echo "darwin" ;;
-    *)
-      echo "error: Unsupported operating system: $os" 1>&2
-      exit 1
-      ;;
+  Linux)
+    echo "linux"
+    ;;
+  Darwin)
+    echo "darwin"
+    ;;
+  *)
+    echo "error: Unsupported operating system: $os" 1>&2
+    exit 1
+    ;;
   esac
 }
 
 function assert_arch() {
   local arch="$(uname -m)"
   case "$arch" in
-    aarch64 | arm64)
-      echo "aarch64" ;;
-    x86_64 | amd64)
-      echo "x64" ;;
-    *)
-      echo "error: Unknown architecture: $arch" 1>&2
-      exit 1
-      ;;
+  aarch64 | arm64)
+    echo "aarch64"
+    ;;
+  x86_64 | amd64)
+    echo "x64"
+    ;;
+  *)
+    echo "error: Unknown architecture: $arch" 1>&2
+    exit 1
+    ;;
   esac
 }
 
@@ -63,7 +86,7 @@ function assert_build() {
 }
 
 function assert_buildkite_agent() {
-  if ! command -v buildkite-agent &> /dev/null; then
+  if (! command -v buildkite-agent &>/dev/null); then
     echo "error: Cannot find buildkite-agent, please install it:"
     echo "https://buildkite.com/docs/agent/v3/install"
     exit 1
@@ -71,8 +94,9 @@ function assert_buildkite_agent() {
 }
 
 function export_environment() {
-  source "$(realpath $(dirname "$0")/../../scripts/env.sh)"
-  source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
+  source "${ROOT_DIR}/scripts/env.sh"
+  source "${ROOT_DIR}/scripts/update-submodules.sh"
+  
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
@@ -90,22 +114,22 @@ function export_environment() {
   else
     export CPU_TARGET="haswell"
   fi
-  if $(buildkite-agent meta-data exists release &> /dev/null); then
+  if $(buildkite-agent meta-data exists release &>/dev/null); then
     export CMAKE_BUILD_TYPE="$(buildkite-agent meta-data get release)"
   else
     export CMAKE_BUILD_TYPE="Release"
   fi
-  if $(buildkite-agent meta-data exists canary &> /dev/null); then
+  if $(buildkite-agent meta-data exists canary &>/dev/null); then
     export CANARY="$(buildkite-agent meta-data get canary)"
   else
     export CANARY="1"
   fi
-  if $(buildkite-agent meta-data exists assertions &> /dev/null); then
+  if $(buildkite-agent meta-data exists assertions &>/dev/null); then
     export USE_DEBUG_JSC="$(buildkite-agent meta-data get assertions)"
   else
     export USE_DEBUG_JSC="OFF"
   fi
-  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" || "$BUILDKITE_BRANCH" == "main" ]; then
+  if { [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ] || [ "$BUILDKITE_BRANCH" == "main" ]; }; then
     rm -rf "$CCACHE_DIR"
     rm -rf "$SCCACHE_DIR"
     rm -rf "$ZIG_LOCAL_CACHE_DIR"
@@ -119,3 +143,5 @@ function export_environment() {
 assert_build
 assert_buildkite_agent
 export_environment
+
+source "$ROOT_DIR/.buildkite/scripts/secrets.sh"

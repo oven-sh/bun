@@ -10,9 +10,15 @@ function ensure_secret() {
   export "$name"="$value"
 }
 
+function optional_secret() {
+  local name="$1"
+  local value="$(buildkite-agent secret get $name) 2>/dev/null"
+  export "$name"="$value"
+}
+
 ensure_secret "TLS_MONGODB_DATABASE_URL"
 ensure_secret "TLS_POSTGRES_DATABASE_URL"
 ensure_secret "TEST_INFO_STRIPE"
 ensure_secret "TEST_INFO_AZURE_SERVICE_BUS"
-ensure_secret "SMTP_SENDGRID_KEY"
-ensure_secret "SMTP_SENDGRID_SENDER"
+optional_secret "SMTP_SENDGRID_KEY"
+optional_secret "SMTP_SENDGRID_SENDER"

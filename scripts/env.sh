@@ -7,6 +7,8 @@ export FORCE_PIC=${FORCE_PIC:-}
 UNAME_OS="$(uname -s)"
 UNAME_ARCH="$(uname -m)"
 
+export CMAKE_FLAGS="${CMAKE_FLAGS:-}"
+
 # Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   if [ -f ~/.bashrc ]; then

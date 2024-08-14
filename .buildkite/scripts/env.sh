@@ -77,7 +77,7 @@ function assert_build() {
 }
 
 function assert_buildkite_agent() {
-  if ! command -v buildkite-agent &>/dev/null; then
+  if (! command -v buildkite-agent &>/dev/null); then
     echo "error: Cannot find buildkite-agent, please install it:"
     echo "https://buildkite.com/docs/agent/v3/install"
     exit 1
@@ -85,8 +85,8 @@ function assert_buildkite_agent() {
 }
 
 function export_environment() {
-  source "$(realpath $(dirname "$0")/../../scripts/env.sh)"
-  source "$(realpath $(dirname "$0")/../../scripts/update-submodules.sh)"
+  source "$(realpath "$(dirname "$0")/../../scripts/env.sh")"
+  source "$(realpath "$(dirname "$0")/../../scripts/update-submodules.sh")"
   { set +x; } 2>/dev/null
   export GIT_SHA="$BUILDKITE_COMMIT"
   export CCACHE_DIR="$HOME/.cache/ccache/$BUILDKITE_STEP_KEY"
@@ -119,7 +119,7 @@ function export_environment() {
   else
     export USE_DEBUG_JSC="OFF"
   fi
-  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true"] || [ "$BUILDKITE_BRANCH" == "main" ]; then
+  if { [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ] || [ "$BUILDKITE_BRANCH" == "main" ]; }; then
     rm -rf "$CCACHE_DIR"
     rm -rf "$SCCACHE_DIR"
     rm -rf "$ZIG_LOCAL_CACHE_DIR"
@@ -134,4 +134,4 @@ assert_build
 assert_buildkite_agent
 export_environment
 
-source "$(realpath $(dirname "$0")/../../scripts/env.sh)"
+source "$(realpath "$(dirname "$0")/../../scripts/env.sh")"

@@ -63,12 +63,12 @@ const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
     pub const access = NewUVFSRequest(Return.Access, Arguments.Access, .access);
     pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
-    pub const chmod = NewAsyncFSTask(Return.Chmod, Arguments.Chmod, NodeFS.chmod);
+    pub const chmod = NewUVFSRequest(Return.Chmod, Arguments.Chmod, .chmod);
     pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
     pub const close = NewUVFSRequest(Return.Close, Arguments.Close, .close);
     pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
     pub const exists = NewUVFSRequest(Return.Exists, Arguments.Exists, .exists);
-    pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
+    pub const fchmod = NewUVFSRequest(Return.Fchmod, Arguments.FChmod, .fchmod);
     pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
     pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
     pub const fstat = NewUVFSRequest(Return.Fstat, Arguments.Fstat, .fstat);
@@ -158,6 +158,8 @@ pub const Async = struct {
             .fstat,
             .access,
             .exists,
+            .chmod,
+            .fchmod,
             => {},
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
@@ -300,6 +302,22 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv exists({s}) = ~~", .{slice});
                     },
+                    .chmod => {
+                        const args_: Arguments.Chmod = task.args;
+                        const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
+                        const mode = args_.mode;
+                        const rc = uv.uv_fs_chmod(loop, &task.req, path.ptr, mode, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv chmod({s}, {d}) = ~~", .{ path, mode });
+                    },
+                    .fchmod => {
+                        const args_: Arguments.FChmod = task.args;
+                        const fd = args_.fd.impl().uv();
+                        const mode = args_.mode;
+                        const rc = uv.uv_fs_fchmod(loop, &task.req, fd, mode, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv fchmod({d}, {d}) = ~~", .{ fd, mode });
+                    },
                     else => @compileError("unimplemented fire uv_" ++ @tagName(FunctionEnum)),
                 }
 
@@ -323,6 +341,8 @@ pub const Async = struct {
                     .fstat => .{ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
                     .access => .{ .err = .{ .errno = @intCast(-rc), .syscall = .access, .path = args.path.slice() } },
                     .exists => .{ .result = false },
+                    .chmod => .{ .err = .{ .errno = @intCast(-rc), .syscall = .chmod, .path = args.path.slice() } },
+                    .fchmod => .{ .err = .{ .errno = @intCast(-rc), .syscall = .fchmod, .fd = args.fd } },
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 } else switch (comptime FunctionEnum) {
                     .open => Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc))))),
@@ -335,6 +355,8 @@ pub const Async = struct {
                     .fstat => Maybe(Return.Fstat).initResult(Stats.init(req.statbuf, false)),
                     .access => Maybe(Return.Access).success,
                     .exists => Maybe(Return.Exists).initResult(true),
+                    .chmod => Maybe(Return.Chmod).success,
+                    .fchmod => Maybe(Return.Fchmod).success,
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 };
 

@@ -683,7 +683,7 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = false;
-        return;
+        return this;
       }
       socket.ref();
       return this;
@@ -722,7 +722,7 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = true;
-        return;
+        return this;
       }
       socket.unref();
       return this;

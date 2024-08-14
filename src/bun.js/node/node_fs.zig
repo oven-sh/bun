@@ -64,12 +64,12 @@ pub const Async = struct {
     pub const access = NewUVFSRequest(Return.Access, Arguments.Access, .access);
     pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
     pub const chmod = NewUVFSRequest(Return.Chmod, Arguments.Chmod, .chmod);
-    pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
+    pub const chown = NewUVFSRequest(Return.Chown, Arguments.Chown, .chown);
     pub const close = NewUVFSRequest(Return.Close, Arguments.Close, .close);
     pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
     pub const exists = NewUVFSRequest(Return.Exists, Arguments.Exists, .exists);
     pub const fchmod = NewUVFSRequest(Return.Fchmod, Arguments.FChmod, .fchmod);
-    pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
+    pub const fchown = NewUVFSRequest(Return.Fchown, Arguments.Fchown, .fchown);
     pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
     pub const fstat = NewUVFSRequest(Return.Fstat, Arguments.Fstat, .fstat);
     pub const fsync = NewAsyncFSTask(Return.Fsync, Arguments.Fsync, NodeFS.fsync);
@@ -160,6 +160,8 @@ pub const Async = struct {
             .exists,
             .chmod,
             .fchmod,
+            .chown,
+            .fchown,
             => {},
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
@@ -318,6 +320,24 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv fchmod({d}, {d}) = ~~", .{ fd, mode });
                     },
+                    .chown => {
+                        const args_: Arguments.Chown = task.args;
+                        const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
+                        const uid = args_.uid;
+                        const gid = args_.gid;
+                        const rc = uv.uv_fs_chown(loop, &task.req, path.ptr, uid, gid, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv chown({s}, {d}, {d}) = ~~", .{ path, uid, gid });
+                    },
+                    .fchown => {
+                        const args_: Arguments.Fchown = task.args;
+                        const fd = args_.fd.impl().uv();
+                        const uid = args_.uid;
+                        const gid = args_.gid;
+                        const rc = uv.uv_fs_fchown(loop, &task.req, fd, uid, gid, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv chown({d}, {d}, {d}) = ~~", .{ fd, uid, gid });
+                    },
                     else => @compileError("unimplemented fire uv_" ++ @tagName(FunctionEnum)),
                 }
 
@@ -343,6 +363,8 @@ pub const Async = struct {
                     .exists => .{ .result = false },
                     .chmod => .{ .err = .{ .errno = @intCast(-rc), .syscall = .chmod, .path = args.path.slice() } },
                     .fchmod => .{ .err = .{ .errno = @intCast(-rc), .syscall = .fchmod, .fd = args.fd } },
+                    .chown => .{ .err = .{ .errno = @intCast(-rc), .syscall = .chown, .path = args.path.slice() } },
+                    .fchown => .{ .err = .{ .errno = @intCast(-rc), .syscall = .fchown, .fd = args.fd } },
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 } else switch (comptime FunctionEnum) {
                     .open => Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc))))),
@@ -357,6 +379,8 @@ pub const Async = struct {
                     .exists => Maybe(Return.Exists).initResult(true),
                     .chmod => Maybe(Return.Chmod).success,
                     .fchmod => Maybe(Return.Fchmod).success,
+                    .chown => Maybe(Return.Chown).success,
+                    .fchown => Maybe(Return.Fchown).success,
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 };
 

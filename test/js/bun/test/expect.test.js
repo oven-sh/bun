@@ -4671,6 +4671,25 @@ describe("expect()", () => {
   test(' " " to contain ""', () => {
     expect(" ").toContain("");
   });
+
+  test("should work #13267", () => {
+    try {
+      expect(() => {
+        throw "!";
+      }).not.toThrow(/ball/);
+    } catch (e) {
+      expect(e).toBeUndefined();
+    }
+    try {
+      expect(() => {
+        throw "ball";
+      }).not.toThrow(/ball/);
+    } catch (e) {
+      expect(e).toBeDefined();
+      expect(e.message).toContain("Received message: ");
+      expect(e.message).toContain('"ball"');
+    }
+  });
 });
 
 function tmpFile(exists) {

@@ -50,8 +50,8 @@ function upload_buildkite_artifact() {
     run_command rm -f "$path."*
     run_command split -b 50MB -d "$path" "$path."
     run_command buildkite-agent artifact upload "$path.*" "${args[@]}"
-  elif ["${args[@]:-}" != ""]; then
-    run_command buildkite-agent artifact upload "$path" "${args[@]}"
+  elif [ "${args[@]:-}" != "" ]; then
+    run_command buildkite-agent artifact upload "$path" "${args[@]:-}"
   fi
 }
 

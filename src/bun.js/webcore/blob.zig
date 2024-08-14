@@ -2480,7 +2480,7 @@ pub const Blob = struct {
                 this.read_write_loop.close();
                 this.destination_file_store.deref();
                 this.source_file_store.deref();
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 this.io_request.deinit();
                 this.destroy();
             }

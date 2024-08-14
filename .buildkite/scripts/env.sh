@@ -119,7 +119,7 @@ function export_environment() {
   else
     export USE_DEBUG_JSC="OFF"
   fi
-  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" || "$BUILDKITE_BRANCH" == "main" ]; then
+  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true"] || [ "$BUILDKITE_BRANCH" == "main" ]; then
     rm -rf "$CCACHE_DIR"
     rm -rf "$SCCACHE_DIR"
     rm -rf "$ZIG_LOCAL_CACHE_DIR"

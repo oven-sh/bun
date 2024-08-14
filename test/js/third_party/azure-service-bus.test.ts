@@ -1,10 +1,12 @@
 import { bunExe } from "bun:harness";
-import { bunEnv, tmpdirSync } from "harness";
-import { expect, it } from "bun:test";
+import { bunEnv, requireCredentials, tmpdirSync } from "harness";
+import { expect, test } from "bun:test";
 import * as path from "node:path";
 
-// prettier-ignore
-it.skipIf(!bunEnv.TEST_INFO_AZURE_SERVICE_BUS)("works", async () => {
+// DO NOT SKIP IN CI.
+const it = requireCredentials("TEST_INFO_AZURE_SERVICE_BUS", test);
+
+it("works", async () => {
   const package_dir = tmpdirSync("bun-test-");
 
   let { stdout, stderr, exited } = Bun.spawn({

@@ -22,6 +22,8 @@ function upload_buildkite_artifact() {
   if [ -z "${1:-}" ]; then
     return
   fi
+
+  local path="$1"
   shift
   local split="0"
   local args=()
@@ -30,8 +32,13 @@ function upload_buildkite_artifact() {
       break
     fi
     case "$1" in
-      --split) split="1"; shift ;;
-      *) args+=("$1"); shift ;;
+    --split)
+      split="1"
+      shift
+      ;;
+    *)
+      args+=("$1")
+      shift
       ;;
     esac
   done

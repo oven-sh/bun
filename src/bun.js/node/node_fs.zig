@@ -317,7 +317,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             }
         };
@@ -416,7 +416,7 @@ pub const Async = struct {
                 } else {
                     this.args.deinit();
                 }
-                this.promise.strong.deinit();
+                this.promise.deinit();
                 bun.destroy(this);
             }
         };
@@ -678,7 +678,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
             this.deinitialized = true;
             if (comptime !is_shell) this.ref.unref(this.evtloop);
             this.args.deinit();
-            this.promise.strong.deinit();
+            this.promise.deinit();
             this.arena.deinit();
             bun.destroy(this);
         }
@@ -1241,7 +1241,7 @@ pub const AsyncReaddirRecursiveTask = struct {
         this.args.deinit();
         bun.default_allocator.free(this.root_path.slice());
         this.clearResultList();
-        this.promise.strong.deinit();
+        this.promise.deinit();
         this.destroy();
     }
 };

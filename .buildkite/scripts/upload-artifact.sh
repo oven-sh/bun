@@ -57,6 +57,7 @@ function upload_buildkite_artifact() {
   elif [ "${args[@]:-}" != "" ]; then
     run_command buildkite-agent artifact upload "$path" "${args[@]:-}"
   else
+    echo "Did not upload artifact: $path"
   fi
 }
 

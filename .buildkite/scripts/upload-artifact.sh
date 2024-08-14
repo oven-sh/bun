@@ -28,7 +28,7 @@ function upload_buildkite_artifact() {
   local split="0"
   local args=()
   while true; do
-    if [ -z "$1" ]; then
+    if [ -z "${1:-}" ]; then
       break
     fi
     case "$1" in

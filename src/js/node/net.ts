@@ -983,7 +983,7 @@ class Server extends EventEmitter {
       // That leads to all sorts of confusion.
       //
       // process.nextTick() is not sufficient because it will run before the IO queue.
-      setTimeout(emitListeningNextTick, 1, this, onListen.bind(this));
+      setTimeout(emitListeningNextTick, 1, this, onListen);
     } catch (err) {
       setTimeout(emitErrorNextTick, 1, this, err);
     }
@@ -1003,7 +1003,7 @@ function emitErrorAndCloseNextTick(self, error) {
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
     try {
-      onListen();
+      onListen.$call(self);
     } catch (err) {
       self.emit("error", err);
     }

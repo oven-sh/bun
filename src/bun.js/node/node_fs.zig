@@ -174,7 +174,7 @@ pub const Async = struct {
 
             pub usingnamespace bun.New(@This());
 
-            pub fn create(globalObject: *JSC.JSGlobalObject, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
+            pub fn create(globalObject: *JSC.JSGlobalObject, this: *JSC.Node.NodeJSFS, args: ArgumentType, vm: *JSC.VirtualMachine) JSC.JSValue {
                 var task = Task.new(.{
                     .promise = JSC.JSPromise.Strong.init(globalObject),
                     .args = args,
@@ -192,14 +192,13 @@ pub const Async = struct {
                 task.req.data = task;
                 switch (comptime FunctionEnum) {
                     .open => {
-                        var buf: bun.PathBuffer = undefined; // uv copies path so its okay to use stack memory for this
-                        var path = args.path.sliceZ(&buf);
-                        if (bun.strings.eqlComptime(path, "/dev/null")) path = "\\\\.\\NUL";
+                        const args_: Arguments.Open = task.args;
+                        const path = if (bun.strings.eqlComptime(args_.path.slice(), "/dev/null")) "\\\\.\\NUL" else args_.path.sliceZ(&this.node_fs.sync_error_buf);
 
-                        var flags: c_int = @intFromEnum(args.flags);
+                        var flags: c_int = @intFromEnum(args_.flags);
                         flags = uv.O.fromBunO(flags);
 
-                        var mode: c_int = args.mode;
+                        var mode: c_int = args_.mode;
                         if (mode == 0) mode = 0o644;
 
                         const rc = uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback);
@@ -212,7 +211,9 @@ pub const Async = struct {
 
                         if (fd == 1 or fd == 2) {
                             log("uv close({}) SKIPPED", .{fd});
-                            @panic("TODO");
+                            task.result = Maybe(Return.Close).success;
+                            task.globalObject.bunVM().eventLoop().enqueueTask(JSC.Task.init(task));
+                            return task.promise.value();
                         }
 
                         const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
@@ -347,6 +348,7 @@ pub const Async = struct {
 
             pub fn create(
                 globalObject: *JSC.JSGlobalObject,
+                _: *JSC.Node.NodeJSFS,
                 args: ArgumentType,
                 vm: *JSC.VirtualMachine,
             ) JSC.JSValue {
@@ -545,6 +547,7 @@ pub fn NewAsyncCpTask(comptime is_shell: bool) type {
 
         pub fn create(
             globalObject: *JSC.JSGlobalObject,
+            _: *JSC.Node.NodeJSFS,
             cp_args: Arguments.Cp,
             vm: *JSC.VirtualMachine,
             arena: bun.ArenaAllocator,

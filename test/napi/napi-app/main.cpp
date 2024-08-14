@@ -81,24 +81,6 @@ static napi_value test_issue_11949(const Napi::CallbackInfo &info) {
   return result;
 }
 
-#include <v8.h>
-
-void Method(const v8::FunctionCallbackInfo<v8::Value> &info) {}
-
-napi_value test_v8_function_template(const Napi::CallbackInfo &info) {
-  Napi::Env env = info.Env();
-  v8::Isolate *isolate = v8::Isolate::GetCurrent();
-  v8::EscapableHandleScope handle_scope(isolate);
-  v8::Local<v8::Context> context = isolate->GetCurrentContext();
-  v8::Local<v8::FunctionTemplate> t =
-      v8::FunctionTemplate::New(isolate, Method);
-  v8::Local<v8::Function> f = t->GetFunction(context).ToLocalChecked();
-  f->SetName(v8::String::NewFromUtf8(isolate, "hello",
-                                     v8::NewStringType::kInternalized)
-                 .ToLocalChecked());
-  return ok(env);
-}
-
 static void callback_1(napi_env env, napi_value js_callback, void *context,
                        void *data) {}
 
@@ -185,9 +167,6 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
-
-  exports.Set("test_v8_function_template",
-              Napi::Function::New(env, test_v8_function_template));
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));

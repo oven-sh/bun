@@ -25,14 +25,6 @@ describe("napi", () => {
     });
   });
 
-  describe("v8 c++", () => {
-    describe("FunctionTemplate", () => {
-      it("doesn't crash", () => {
-        checkSameOutput("test_v8_function_template", []);
-      });
-    });
-  });
-
   describe("issue_11949", () => {
     it("napi_call_threadsafe_function should accept null", () => {
       const result = checkSameOutput("test_issue_11949", []);

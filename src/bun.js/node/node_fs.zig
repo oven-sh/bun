@@ -191,7 +191,8 @@ pub const Async = struct {
                 switch (FunctionEnum) {
                     .open => {
                         var buf: bun.PathBuffer = undefined; // uv copies path so its okay to use stack memory for this
-                        const path = args.path.sliceZ(&buf);
+                        var path = args.path.sliceZ(&buf);
+                        if (bun.strings.eqlComptime(path, "/dev/null")) path = "\\\\.\\NUL";
 
                         var flags: c_int = @intFromEnum(args.flags);
                         flags = uv.O.fromBunO(flags);

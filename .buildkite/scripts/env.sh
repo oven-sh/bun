@@ -129,19 +129,17 @@ function export_environment() {
   else
     export USE_DEBUG_JSC="OFF"
   fi
-  if { [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ] || [ "$BUILDKITE_BRANCH" == "main" ]; }; then
+  if [ "$BUILDKITE_CLEAN_CHECKOUT" == "true" ] || [ "$BUILDKITE_BRANCH" == "main" ]; then
     # Attempt to delete the old directory
     rm -rf "$CCACHE_DIR" "$SCCACHE_DIR" "$ZIG_LOCAL_CACHE_DIR" "$ZIG_GLOBAL_CACHE_DIR" "$BUN_DEPS_CACHE_DIR"
     # Make sure to use a new temporary directory
-    local tempdir_to_use=$(mktemp -d 2>/dev/null || mktemp -d -t 'new')
-
-    CCACHE_DIR="$tempdir_to_use/ccache"
-    SCCACHE_DIR="$tempdir_to_use/sccache"
-    ZIG_LOCAL_CACHE_DIR="$tempdir_to_use/zig-local"
-    ZIG_GLOBAL_CACHE_DIR="$tempdir_to_use/zig-global"
-    BUN_DEPS_CACHE_DIR="$tempdir_to_use/bun-deps"
-
-    mkdir -p "$BUN_DEPS_CACHE_DIR $CCACHE_DIR $SCCACHE_DIR $ZIG_LOCAL_CACHE_DIR $ZIG_GLOBAL_CACHE_DIR"
+    local tmpdir=$(mktemp -d 2>/dev/null || mktemp -d -t 'new')
+    CCACHE_DIR="$tmpdir/ccache"
+    SCCACHE_DIR="$tmpdir/sccache"
+    ZIG_LOCAL_CACHE_DIR="$tmpdir/zig-local"
+    ZIG_GLOBAL_CACHE_DIR="$tmpdir/zig-global"
+    BUN_DEPS_CACHE_DIR="$tmpdir/bun-deps"
+    mkdir -p $BUN_DEPS_CACHE_DIR $CCACHE_DIR $SCCACHE_DIR $ZIG_LOCAL_CACHE_DIR $ZIG_GLOBAL_CACHE_DIR
     export CCACHE_RECACHE="1"
   fi
 }

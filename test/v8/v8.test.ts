@@ -13,6 +13,11 @@ if (process.platform == "darwin") {
   bunEnv.CXXFLAGS ??= "";
   bunEnv.CXXFLAGS += "-std=gnu++17";
 }
+// https://github.com/isaacs/node-tar/blob/bef7b1e4ffab822681fea2a9b22187192ed14717/lib/get-write-flag.js
+// prevent node-tar from using UV_FS_O_FILEMAP
+if (process.platform == "win32") {
+  bunEnv.__FAKE_PLATFORM__ = "linux";
+}
 
 describe("v8", () => {
   beforeAll(() => {
@@ -25,7 +30,7 @@ describe("v8", () => {
     // build code using bun
     // we install/build with separate commands so that we can use --bun to run node-gyp
     const bunInstall = spawnSync({
-      cmd: [bunExe(), "install", "--verbose", "--ignore-scripts"],
+      cmd: [bunExe(), "install", "--ignore-scripts"],
       cwd: join(__dirname, "v8-module"),
       env: bunEnv,
       stdin: "inherit",

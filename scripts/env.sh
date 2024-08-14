@@ -3,6 +3,7 @@
 set -euo pipefail
 
 export USE_LTO=${USE_LTO:-0}
+export FORCE_PIC=${FORCE_PIC:-}
 
 # Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then

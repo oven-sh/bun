@@ -1219,3 +1219,26 @@ export function fileDescriptorLeakChecker() {
     },
   };
 }
+
+export function requireCredentials(...envNames: any[]) {
+  const envs = envNames.slice(0, envNames.length - 1);
+  const testFn = envNames[envNames.length - 1];
+  const missing = envs.filter(envName => !process.env[envName]);
+  if (missing.length > 0) {
+    return function (label: string, fn: Function) {
+      return testFn(label, () => {
+        const err = new Error(
+          "Test is missing required credentials: " +
+            missing.map(envName => JSON.stringify(envName)).join(", ") +
+            "\n\nPlease set the following environment variables:\n" +
+            missing.map(envName => "- " + JSON.stringify(envName)).join("\n") +
+            "\n",
+        );
+        err.name = "MissingCredentialError";
+        throw err;
+      });
+    };
+  }
+
+  return testFn;
+}

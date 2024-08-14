@@ -1,9 +1,11 @@
 import { test, expect, describe } from "bun:test";
+import { requireCredentials } from "harness";
 import { MongoClient } from "mongodb";
 
 const CONNECTION_STRING = process.env.TLS_MONGODB_DATABASE_URL;
 
-const it = CONNECTION_STRING ? test : test.skip;
+// DO NOT SKIP IN CI.
+const it = requireCredentials("TLS_MONGODB_DATABASE_URL", test);
 
 describe("mongodb", () => {
   it("should connect and inpect", async () => {

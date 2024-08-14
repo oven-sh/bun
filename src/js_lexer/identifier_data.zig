@@ -14,8 +14,8 @@ const part_codepoints_including_ascii = [_]i32{ 'a', 'z', 'A', 'Z', '0', '9', '_
 const id_start_range: [2]i32 = brk: {
     var minmax = [2]i32{ std.math.maxInt(i32), 0 };
 
+    @setEvalBranchQuota(9999);
     for (start_codepoints_including_ascii) |c| {
-        @setEvalBranchQuota(9999);
         minmax[0] = if (c < minmax[0]) c else minmax[0];
         minmax[1] = if (c > minmax[1]) c else minmax[1];
     }
@@ -27,8 +27,8 @@ const id_start_count = id_start_range[1] - id_start_range[0] + 1;
 const id_end_range: [2]i32 = brk: {
     var minmax = [2]i32{ std.math.maxInt(i32), 0 };
 
+    @setEvalBranchQuota(9999);
     for (part_codepoints_including_ascii) |c| {
-        @setEvalBranchQuota(9999);
         minmax[0] = if (c < minmax[0]) c else minmax[0];
         minmax[1] = if (c > minmax[1]) c else minmax[1];
     }
@@ -40,38 +40,6 @@ const id_end_count = id_end_range[1] - id_end_range[0] + 1;
 
 pub const IDStartType = std.bit_set.StaticBitSet(id_start_count + 1);
 pub const IDContinueType = std.bit_set.StaticBitSet(id_end_count + 1);
-
-const id_start: IDStartType = brk: {
-    var bits: IDStartType = IDStartType.initEmpty();
-    var i: usize = 0;
-
-    @setEvalBranchQuota(999999);
-    while (i < start_codepoints_including_ascii.len) : (i += 2) {
-        var min = start_codepoints_including_ascii[i];
-        const max = start_codepoints_including_ascii[i + 1];
-        while (min <= max) : (min += 1) {
-            @setEvalBranchQuota(999999);
-            bits.set(id_start_range[1] - min);
-        }
-    }
-    break :brk bits;
-};
-
-const id_continue: IDContinueType = brk: {
-    var bits: IDContinueType = IDContinueType.initEmpty();
-    var i: usize = 0;
-
-    while (i < part_codepoints_including_ascii.len) : (i += 2) {
-        var min = part_codepoints_including_ascii[i];
-        const max = part_codepoints_including_ascii[i + 1];
-        @setEvalBranchQuota(999999);
-        while (min <= max) : (min += 1) {
-            @setEvalBranchQuota(999999);
-            bits.set(id_end_range[1] - min);
-        }
-    }
-    break :brk bits;
-};
 
 const Cache = @import("./identifier_cache.zig");
 
@@ -89,6 +57,19 @@ pub fn main() anyerror!void {
     {
         defer start_masks.close();
 
+        const id_start: IDStartType = brk: {
+            var bits: IDStartType = IDStartType.initEmpty();
+            var i: usize = 0;
+
+            while (i < start_codepoints_including_ascii.len) : (i += 2) {
+                var min = start_codepoints_including_ascii[i];
+                const max = start_codepoints_including_ascii[i + 1];
+                while (min <= max) : (min += 1) {
+                    bits.set(@intCast(id_start_range[1] - min));
+                }
+            }
+            break :brk bits;
+        };
         const id_start_data = std.mem.asBytes(&id_start.masks);
         try start_masks.writeAll(id_start_data);
     }
@@ -105,6 +86,19 @@ pub fn main() anyerror!void {
     {
         defer continue_blob.close();
 
+        const id_continue: IDContinueType = brk: {
+            var bits: IDContinueType = IDContinueType.initEmpty();
+            var i: usize = 0;
+
+            while (i < part_codepoints_including_ascii.len) : (i += 2) {
+                var min = part_codepoints_including_ascii[i];
+                const max = part_codepoints_including_ascii[i + 1];
+                while (min <= max) : (min += 1) {
+                    bits.set(@intCast(id_end_range[1] - min));
+                }
+            }
+            break :brk bits;
+        };
         const id_continue_data = std.mem.asBytes(&id_continue.masks);
         try continue_blob.writeAll(std.mem.asBytes(id_continue_data));
     }

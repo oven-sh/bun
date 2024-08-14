@@ -202,7 +202,8 @@ pub const Async = struct {
                         var mode: c_int = args.mode;
                         if (mode == 0) mode = 0o644;
 
-                        bun.debugAssert(uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_open(loop, &task.req, path.ptr, flags, mode, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv open({s}, {d}, {d}) = ~~", .{ path, flags, mode });
                     },
                     .close => {
@@ -214,7 +215,8 @@ pub const Async = struct {
                             @panic("TODO");
                         }
 
-                        bun.debugAssert(uv.uv_fs_close(loop, &task.req, fd, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_close(loop, &task.req, fd, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv close({d}) = ~~", .{fd});
                     },
                     .read => {
@@ -222,7 +224,8 @@ pub const Async = struct {
                         const B = uv.uv_buf_t.init;
                         const fd = args_.fd.impl().uv();
 
-                        bun.debugAssert(uv.uv_fs_read(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv read({d}) = ~~", .{fd});
                     },
                     .write => {
@@ -230,7 +233,8 @@ pub const Async = struct {
                         const B = uv.uv_buf_t.init;
                         const fd = args_.fd.impl().uv();
 
-                        bun.debugAssert(uv.uv_fs_write(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, &.{B(args_.buffer.slice()[args_.offset..])}, 1, args_.position orelse -1, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv write({d}) = ~~", .{fd});
                     },
                     .readv => {
@@ -242,7 +246,8 @@ pub const Async = struct {
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
-                        bun.debugAssert(uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_read(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv readv({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     .writev => {
@@ -254,7 +259,8 @@ pub const Async = struct {
                         var sum: u64 = 0;
                         for (bufs) |b| sum += b.slice().len;
 
-                        bun.debugAssert(uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback) == .zero);
+                        const rc = uv.uv_fs_write(loop, &task.req, fd, bufs.ptr, @intCast(bufs.len), pos, &uv_callback);
+                        bun.debugAssert(rc == .zero);
                         log("uv writev({d}, {*}, {d}, {d}, {d} total bytes) = ~~", .{ fd, bufs.ptr, bufs.len, pos, sum });
                     },
                     else => comptime unreachable,

@@ -61,13 +61,13 @@ const ArrayBuffer = JSC.MarkedArrayBuffer;
 const Buffer = JSC.Buffer;
 const FileSystemFlags = JSC.Node.FileSystemFlags;
 pub const Async = struct {
-    pub const access = NewAsyncFSTask(Return.Access, Arguments.Access, NodeFS.access);
+    pub const access = NewUVFSRequest(Return.Access, Arguments.Access, .access);
     pub const appendFile = NewAsyncFSTask(Return.AppendFile, Arguments.AppendFile, NodeFS.appendFile);
     pub const chmod = NewAsyncFSTask(Return.Chmod, Arguments.Chmod, NodeFS.chmod);
     pub const chown = NewAsyncFSTask(Return.Chown, Arguments.Chown, NodeFS.chown);
     pub const close = NewUVFSRequest(Return.Close, Arguments.Close, .close);
     pub const copyFile = NewAsyncFSTask(Return.CopyFile, Arguments.CopyFile, NodeFS.copyFile);
-    pub const exists = NewAsyncFSTask(Return.Exists, Arguments.Exists, NodeFS.exists);
+    pub const exists = NewUVFSRequest(Return.Exists, Arguments.Exists, .exists);
     pub const fchmod = NewAsyncFSTask(Return.Fchmod, Arguments.FChmod, NodeFS.fchmod);
     pub const fchown = NewAsyncFSTask(Return.Fchown, Arguments.Fchown, NodeFS.fchown);
     pub const fdatasync = NewAsyncFSTask(Return.Fdatasync, Arguments.FdataSync, NodeFS.fdatasync);
@@ -156,6 +156,8 @@ pub const Async = struct {
             .writev,
             .stat,
             .fstat,
+            .access,
+            .exists,
             => {},
             else => return NewAsyncFSTask(ReturnType, ArgumentType, @field(NodeFS, @tagName(FunctionEnum))),
         }
@@ -280,6 +282,24 @@ pub const Async = struct {
                         bun.debugAssert(rc == .zero);
                         log("uv fstat({d}) = ~~", .{fd});
                     },
+                    .access => {
+                        const args_: Arguments.Access = task.args;
+                        const path = args_.path.sliceZ(&this.node_fs.sync_error_buf);
+                        const mode = args_.mode;
+
+                        const rc = uv.uv_fs_access(loop, &task.req, path.ptr, @intFromEnum(mode), &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv stat({s}, {d}) = ~~", .{ path, mode });
+                    },
+                    .exists => {
+                        const args_: Arguments.Exists = task.args;
+                        const path = args_.path orelse return task.earlyResolve(.{ .result = false });
+                        const slice = path.sliceZ(&this.node_fs.sync_error_buf);
+
+                        const rc = uv.uv_fs_access(loop, &task.req, slice.ptr, std.posix.F_OK, &uv_callback);
+                        bun.debugAssert(rc == .zero);
+                        log("uv exists({s}) = ~~", .{slice});
+                    },
                     else => @compileError("unimplemented fire uv_" ++ @tagName(FunctionEnum)),
                 }
 
@@ -301,6 +321,8 @@ pub const Async = struct {
                     .writev => Maybe(Return.Writev){ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
                     .stat => if (!args.throw_if_no_entry and rc == uv.UV_ENOENT) .{ .result = .not_found } else .{ .err = .{ .errno = @intCast(-rc), .syscall = .stat, .path = args.path.slice() } },
                     .fstat => .{ .err = .{ .errno = @intCast(-rc), .syscall = .writev, .fd = args.fd } },
+                    .access => .{ .err = .{ .errno = @intCast(-rc), .syscall = .access, .path = args.path.slice() } },
+                    .exists => .{ .result = false },
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 } else switch (comptime FunctionEnum) {
                     .open => Maybe(Return.Open).initResult(FDImpl.decode(bun.toFD(@as(u32, @intCast(rc))))),
@@ -311,6 +333,8 @@ pub const Async = struct {
                     .writev => Maybe(Return.Writev).initResult(.{ .bytes_written = @intCast(rc) }),
                     .stat => Maybe(Return.Stat).initResult(.{ .stats = Stats.init(req.statbuf, args.big_int) }),
                     .fstat => Maybe(Return.Fstat).initResult(Stats.init(req.statbuf, false)),
+                    .access => Maybe(Return.Access).success,
+                    .exists => Maybe(Return.Exists).initResult(true),
                     else => @compileError("unimplemented callback uv_" ++ @tagName(FunctionEnum)),
                 };
 

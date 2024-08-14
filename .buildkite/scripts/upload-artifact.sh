@@ -26,7 +26,7 @@ function upload_buildkite_artifact() {
   local path="$1"
   shift
   local split="0"
-  local args=()
+  local args=() # Initialize args as an empty array
   while true; do
     if [ -z "${1:-}" ]; then
       break
@@ -49,9 +49,16 @@ function upload_buildkite_artifact() {
   if [ "$split" == "1" ]; then
     run_command rm -f "$path."*
     run_command split -b 50MB -d "$path" "$path."
-    run_command buildkite-agent artifact upload "$path.*" "${args[@]}"
+    if [ "${args[@]:-}" != "" ]; then
+      run_command buildkite-agent artifact upload "$path.*" "${args[@]}"
+    else
+      run_command buildkite-agent artifact upload "$path.*"
+    fi
   elif [ "${args[@]:-}" != "" ]; then
     run_command buildkite-agent artifact upload "$path" "${args[@]:-}"
+  else
+    echo "error: No arguments provided for artifact upload"
+    exit 1
   fi
 }
 

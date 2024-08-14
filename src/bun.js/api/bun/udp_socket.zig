@@ -496,20 +496,19 @@ pub const UDPSocket = struct {
         };
 
         const payload_arg = arguments.ptr[0];
-        var payload = brk: {
+        var payload_str = JSC.ZigString.Slice.empty;
+        defer payload_str.deinit();
+        const payload = brk: {
             if (payload_arg.asArrayBuffer(globalThis)) |array_buffer| {
-                break :brk bun.JSC.ZigString.Slice{
-                    .ptr = array_buffer.ptr,
-                    .len = array_buffer.len,
-                };
+                break :brk array_buffer.slice();
             } else if (payload_arg.isString()) {
-                break :brk payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                payload_str = payload_arg.asString().toSlice(globalThis, bun.default_allocator);
+                break :brk payload_str.slice();
             } else {
                 globalThis.throwInvalidArguments("Expected ArrayBufferView or string as first argument", .{});
                 return .zero;
             }
         };
-        defer payload.deinit();
 
         var addr: std.posix.sockaddr.storage = std.mem.zeroes(std.posix.sockaddr.storage);
         const addr_ptr = brk: {

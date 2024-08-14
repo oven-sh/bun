@@ -101,8 +101,6 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point: bun.resolver.Result = undefined;
-
         const path = brk: {
             const str = spec_slice.slice();
             if (parent.standalone_module_graph) |graph| {
@@ -120,13 +118,13 @@ pub const WebWorker = struct {
                 }
             }
 
-            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+            var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
                 const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
                 error_message.* = out;
                 return null;
             };
 
-            const entry_path = resolved_entry_point.path() orelse {
+            const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
                 error_message.* = bun.String.static("Worker entry point is missing");
                 return null;
             };

@@ -15,15 +15,15 @@ namespace WebCore {
 class MessagePortChannelProvider;
 class MessagePortChannelProviderImpl;
 
-class GlobalScope : public RefCounted<GlobalScope>, public EventTargetWithInlineData {
-    WTF_MAKE_ISO_ALLOCATED(GlobalScope);
+class WorkerGlobalScope : public RefCounted<WorkerGlobalScope>, public EventTargetWithInlineData {
+    WTF_MAKE_ISO_ALLOCATED(WorkerGlobalScope);
 
-    uint32_t m_messageEventCount{0};
+    uint32_t m_messageEventCount { 0 };
 
     static void onDidChangeListenerImpl(EventTarget&, const AtomString&, OnDidChangeListenerKind);
 
 public:
-    GlobalScope(ScriptExecutionContext* context)
+    WorkerGlobalScope(ScriptExecutionContext* context)
         : EventTargetWithInlineData()
         , m_context(context)
     {
@@ -33,12 +33,12 @@ public:
     using RefCounted::deref;
     using RefCounted::ref;
 
-    static Ref<GlobalScope> create(ScriptExecutionContext* context)
+    static Ref<WorkerGlobalScope> create(ScriptExecutionContext* context)
     {
-        return adoptRef(*new GlobalScope(context));
+        return adoptRef(*new WorkerGlobalScope(context));
     }
 
-    ~GlobalScope() = default;
+    ~WorkerGlobalScope() = default;
 
     EventTargetInterface eventTargetInterface() const final { return EventTargetInterface::DOMWindowEventTargetInterfaceType; }
     ScriptExecutionContext* scriptExecutionContext() const final { return m_context; }

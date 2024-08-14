@@ -891,6 +891,7 @@ pub fn WindowsBufferedWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        owns_fd: bool = true,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1003,6 +1004,7 @@ pub fn WindowsBufferedWriter(
             this.is_done = true;
             if (this.pending_payload_size == 0) {
                 // will auto close when pending stuff get written
+                if (!this.owns_fd) return;
                 this.close();
             }
         }
@@ -1131,6 +1133,9 @@ pub fn WindowsStreamingWriter(
 ) type {
     return struct {
         source: ?Source = null,
+        /// if the source of this writer is a file descriptor, calling end() will not close it.
+        /// if it is a path, then we claim ownership and the backing fd will be closed by end().
+        owns_fd: bool = true,
         parent: *Parent = undefined,
         is_done: bool = false,
         // we use only one write_req, any queued data in outgoing will be flushed after this ends
@@ -1382,6 +1387,7 @@ pub fn WindowsStreamingWriter(
             this.is_done = true;
             this.closed_without_reporting = false;
             if (this.hasPendingData()) _ = this.flush();
+            if (!this.owns_fd) return;
             this.close();
         }
     };

@@ -18,6 +18,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
         "BUN_DEBUG_jest": "1",
       },
@@ -34,7 +35,6 @@
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "1",
-        "BUN_DEBUG_FileReader": "1",
         "BUN_DEBUG_jest": "1",
       },
       "console": "internalConsole",
@@ -55,6 +55,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
@@ -69,6 +70,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "0",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -83,6 +85,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -97,6 +100,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -111,6 +115,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
@@ -131,6 +136,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
@@ -152,7 +158,6 @@
       "env": {
         "FORCE_COLOR": "0",
         "BUN_DEBUG_QUIET_LOGS": "1",
-        "BUN_DEBUG_EventLoop": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -264,6 +269,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -278,6 +284,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "0",
       },
       "console": "internalConsole",
@@ -291,7 +298,8 @@
       "cwd": "${workspaceFolder}/test",
       "env": {
         "FORCE_COLOR": "1",
-        "BUN_DEBUG_QUIET_LOGS": "0",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -306,6 +314,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -320,6 +329,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
       },
       "console": "internalConsole",
@@ -334,6 +344,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/?wait=1",
       },
@@ -354,6 +365,7 @@
       "env": {
         "FORCE_COLOR": "1",
         "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_DEBUG_jest": "1",
         "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
         "BUN_INSPECT": "ws://localhost:0/?break=1",
       },
@@ -449,6 +461,11 @@
       "program": "node",
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
+      "env": {
+        "FORCE_COLOR": "1",
+        "BUN_DEBUG_QUIET_LOGS": "1",
+        "BUN_GARBAGE_COLLECTOR_LEVEL": "2",
+      },
       "console": "internalConsole",
     },
     // Windows: bun test [file]
@@ -475,7 +492,6 @@
           "name": "BUN_DEBUG_jest",
           "value": "1",
         },
-
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "1",
@@ -502,19 +518,7 @@
           "value": "1",
         },
         {
-          "name": "BUN_DEBUG_EventLoop",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_uv",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_SYS",
-          "value": "1",
-        },
-        {
-          "name": "BUN_DEBUG_PipeWriter",
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -543,6 +547,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0",
         },
@@ -568,6 +576,10 @@
           "value": "0",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },
@@ -590,6 +602,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -624,6 +640,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -662,6 +682,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },
@@ -682,7 +706,10 @@
           "name": "FORCE_COLOR",
           "value": "1",
         },
-
+        {
+          "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0",
@@ -706,7 +733,7 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "0",
+          "value": "1",
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
@@ -803,6 +830,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },
@@ -825,6 +856,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -853,6 +888,10 @@
           "value": "0",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },
@@ -875,6 +914,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -903,6 +946,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "2",
         },
@@ -925,6 +972,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -959,6 +1010,10 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
           "value": "1",
         },
         {
@@ -1048,6 +1103,10 @@
           "value": "1",
         },
         {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
           "value": "0",
         },
@@ -1070,7 +1129,11 @@
         },
         {
           "name": "BUN_DEBUG_QUIET_LOGS",
-          "value": "0",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
         },
         {
           "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
@@ -1097,6 +1160,24 @@
       "program": "node",
       "args": ["test/runner.node.mjs"],
       "cwd": "${workspaceFolder}",
+      "environment": [
+        {
+          "name": "FORCE_COLOR",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_QUIET_LOGS",
+          "value": "1",
+        },
+        {
+          "name": "BUN_DEBUG_jest",
+          "value": "1",
+        },
+        {
+          "name": "BUN_GARBAGE_COLLECTOR_LEVEL",
+          "value": "2",
+        },
+      ],
       "console": "internalConsole",
     },
   ],

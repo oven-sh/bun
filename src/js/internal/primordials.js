@@ -211,6 +211,7 @@ export default {
   Int8Array,
   Int16Array,
   Int32Array,
+  Float16Array,
   Float32Array,
   Float64Array,
   BigUint64Array,

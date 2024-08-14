@@ -413,7 +413,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextDecoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextDecoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TextEncoder`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoder)
 
@@ -421,7 +421,7 @@ The table below lists all globals implemented by Node.js and Bun's current compa
 
 ### [`TextEncoderStream`](https://developer.mozilla.org/en-US/docs/Web/API/TextEncoderStream)
 
-🔴 Not implemented.
+🟢 Fully implemented.
 
 ### [`TransformStream`](https://developer.mozilla.org/en-US/docs/Web/API/TransformStream)
 

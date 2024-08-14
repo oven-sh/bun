@@ -1862,9 +1862,9 @@ it("Buffer can be mocked", () => {
 
 it("constants", () => {
   expect(BufferModule.constants.MAX_LENGTH).toBe(4294967296);
-  expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(536870888);
+  expect(BufferModule.constants.MAX_STRING_LENGTH).toBe(4294967295);
   expect(BufferModule.default.constants.MAX_LENGTH).toBe(4294967296);
-  expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(536870888);
+  expect(BufferModule.default.constants.MAX_STRING_LENGTH).toBe(4294967295);
 });
 
 it("File", () => {
@@ -2438,6 +2438,8 @@ it("Buffer.byteLength()", () => {
   expect(Buffer.byteLength(int32)).toBe(32);
   const uint32 = new Uint32Array(8);
   expect(Buffer.byteLength(uint32)).toBe(32);
+  const float16 = new Float16Array(8);
+  expect(Buffer.byteLength(float16)).toBe(16);
   const float32 = new Float32Array(8);
   expect(Buffer.byteLength(float32)).toBe(32);
   const float64 = new Float64Array(8);

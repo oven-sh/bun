@@ -3285,3 +3285,8 @@ it("promises.appendFile should accept a FileHandle", async () => {
   await fs.promises.appendFile(file, "data");
   expect(await Bun.file(x_path).text()).toBe("datadata");
 });
+
+it("chown should verify its arguments", () => {
+  expect(() => fs.chown("doesnt-matter.txt", "a", 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+});

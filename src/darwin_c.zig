@@ -363,7 +363,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOEXEC, "Exec format error");
         map.put(.ENOLCK, "No locks available");
         map.put(.ENOLINK, "Reserved");
-        map.put(.ENOMEM, "Cannot allocate memory");
+        map.put(.ENOMEM, "Out of memory");
         map.put(.ENOMSG, "No message of desired type");
         map.put(.ENOPOLICY, "No such policy registered");
         map.put(.ENOPROTOOPT, "Protocol not available");
@@ -553,8 +553,7 @@ pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
 pub fn getFreeMemory() u64 {
-    // NOT IMPLEMENTED YET
-    return 1024 * 1024;
+    return @extern(*const fn () callconv(.C) u64, .{ .name = "Bun__Os__getFreeMemory" })();
 }
 
 pub fn getTotalMemory() u64 {

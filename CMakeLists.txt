@@ -3,8 +3,8 @@ cmake_policy(SET CMP0091 NEW)
 cmake_policy(SET CMP0067 NEW)
 
 set(CMAKE_POLICY_DEFAULT_CMP0069 NEW)
-set(Bun_VERSION "1.1.22")
-set(WEBKIT_TAG a060f087c2232fb20d82c321d21e074e735d3261)
+set(Bun_VERSION "1.1.24")
+set(WEBKIT_TAG 1cdc5e606ad7d451853f75a068a320148385f397)
 
 set(BUN_WORKDIR "${CMAKE_CURRENT_BINARY_DIR}")
 message(STATUS "Configuring Bun ${Bun_VERSION} in ${BUN_WORKDIR}")
@@ -1031,7 +1031,6 @@ add_compile_definitions(
     "LIBUS_USE_BORINGSSL=1"
     "WITH_BORINGSSL=1"
     "STATICALLY_LINKED_WITH_JavaScriptCore=1"
-    "STATICALLY_LINKED_WITH_WTF=1"
     "STATICALLY_LINKED_WITH_BMALLOC=1"
     "BUILDING_WITH_CMAKE=1"
     "JSC_OBJC_API_ENABLED=0"
@@ -1269,6 +1268,9 @@ else()
         -fno-pic
         -fno-pie
         -faddrsig
+        -ffile-prefix-map="${CMAKE_CURRENT_SOURCE_DIR}"=.
+        -ffile-prefix-map="${BUN_DEPS_DIR}"=src/deps
+        -ffile-prefix-map="${BUN_DEPS_OUT_DIR}"=src/deps
     )
 endif()
 

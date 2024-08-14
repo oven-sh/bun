@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 
+set -euo pipefail
+
 # Hack for buildkite sometimes not having the right path
 if [[ "${CI:-}" == "1" || "${CI:-}" == "true" ]]; then
   if [ -f ~/.bashrc ]; then

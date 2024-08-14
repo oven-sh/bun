@@ -1,3 +1,7 @@
+#!/bin/bash
+
+set -euo pipefail
+
 function ensure_secret() {
   local name="$1"
   local value="$(buildkite-agent secret get $name)"

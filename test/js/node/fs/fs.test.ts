@@ -3296,6 +3296,10 @@ it("open flags verification", async () => {
   expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(() => fs.openSync(__filename, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "flags" is out of range. It must be an integer. Received 4294967298.5`),
+  );
 });
 
 it("open mode verification", async () => {
@@ -3303,4 +3307,8 @@ it("open mode verification", async () => {
   expect(() => fs.open(__filename, 0, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(() => fs.openSync(__filename, 0, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
   expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
+
+  expect(() => fs.open(__filename, 0, 4294967298.5, () => {})).toThrow(
+    RangeError(`The value of "mode" is out of range. It must be an integer. Received 4294967298.5`),
+  );
 });

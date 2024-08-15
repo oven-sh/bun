@@ -1134,7 +1134,7 @@ pub fn timeLikeFromJS(globalObject: *JSC.JSGlobalObject, value: JSC.JSValue, _: 
 pub fn modeFromJS(ctx: JSC.C.JSContextRef, value: JSC.JSValue, exception: JSC.C.ExceptionRef) ?Mode {
     const mode_int = if (value.isNumber()) brk: {
         if (!value.isUInt32AsAnyInt()) {
-            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.toUInt64NoTruncate()}).toJS().asObjectRef();
+            exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"mode\" is out of range. It must be an integer. Received {d}", .{value.asNumber()}).toJS().asObjectRef(); //
             return null;
         }
         break :brk @as(Mode, @truncate(value.to(Mode)));
@@ -1340,7 +1340,7 @@ pub const FileSystemFlags = enum(Mode) {
     pub fn fromJS(ctx: JSC.C.JSContextRef, val: JSC.JSValue, exception: JSC.C.ExceptionRef) ?FileSystemFlags {
         if (val.isNumber()) {
             if (!val.isInt32()) {
-                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.toInt64()}).toJS().asObjectRef();
+                exception.* = ctx.ERR_OUT_OF_RANGE("The value of \"flags\" is out of range. It must be an integer. Received {d}", .{val.asNumber()}).toJS().asObjectRef(); //
                 return null;
             }
             const number = val.coerce(i32, ctx);

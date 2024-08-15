@@ -7,6 +7,7 @@
 #include "JavaScriptCore/JSGlobalObject.h"
 #include "JavaScriptCore/SourceCode.h"
 #include "js_native_api_types.h"
+#include "v8/V8HandleScope.h"
 
 #include "helpers.h"
 #include <JavaScriptCore/JSObjectInlines.h>
@@ -341,6 +342,7 @@ public:
         NAPICallFrame frame(JSC::ArgList(args), function->m_dataPtr);
 
         auto scope = DECLARE_THROW_SCOPE(vm);
+        v8::HandleScope handleScope(v8::Isolate::fromGlobalObject(static_cast<Zig::GlobalObject*>(globalObject)));
 
         auto result = callback(env, NAPICallFrame::toNapiCallbackInfo(frame));
 
@@ -879,7 +881,7 @@ extern "C" void napi_module_register(napi_module* mod)
     JSC::VM& vm = globalObject->vm();
     auto keyStr = WTF::String::fromUTF8(mod->nm_modname);
     globalObject->napiModuleRegisterCallCount++;
-    JSValue pendingNapiModule = globalObject->pendingNapiModule;
+    JSValue pendingNapiModule = globalObject->m_pendingNapiModuleAndExports[0].get();
     JSObject* object = (pendingNapiModule && pendingNapiModule.isObject()) ? pendingNapiModule.getObject()
                                                                            : nullptr;
 
@@ -893,7 +895,6 @@ extern "C" void napi_module_register(napi_module* mod)
         object = Bun::JSCommonJSModule::create(globalObject, keyStr, exportsObject, false, jsUndefined());
         strongExportsObject = { vm, exportsObject };
     } else {
-        globalObject->pendingNapiModule = JSC::JSValue();
         JSValue exportsObject = object->getIfPropertyExists(globalObject, WebCore::builtinNames(vm).exportsPublicName());
         RETURN_IF_EXCEPTION(scope, void());
 
@@ -910,17 +911,13 @@ extern "C" void napi_module_register(napi_module* mod)
 
     if (resultValue.isEmpty()) {
         JSValue errorInstance = createError(globalObject, makeString("Node-API module \""_s, keyStr, "\" returned an error"_s));
-        globalObject->pendingNapiModule = errorInstance;
-        vm.writeBarrier(globalObject, errorInstance);
-        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
 
     if (!resultValue.isObject()) {
         JSValue errorInstance = createError(globalObject, makeString("Expected Node-API module \""_s, keyStr, "\" to return an exports object"_s));
-        globalObject->pendingNapiModule = errorInstance;
-        vm.writeBarrier(globalObject, errorInstance);
-        EnsureStillAliveScope ensureAlive(globalObject->pendingNapiModule);
+        globalObject->m_pendingNapiModuleAndExports[0].set(vm, globalObject, errorInstance);
         return;
     }
 
@@ -931,7 +928,7 @@ extern "C" void napi_module_register(napi_module* mod)
         strongObject->put(strongObject.get(), globalObject, WebCore::builtinNames(vm).exportsPublicName(), resultValue, slot);
     }
 
-    globalObject->pendingNapiModule = object;
+    globalObject->m_pendingNapiModuleAndExports[1].set(vm, globalObject, object);
 }
 
 extern "C" napi_status napi_wrap(napi_env env,

@@ -683,9 +683,10 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = false;
-        return;
+        return this;
       }
       socket.ref();
+      return this;
     }
 
     get remoteAddress() {
@@ -721,9 +722,10 @@ const Socket = (function (InternalSocket) {
       const socket = this[bunSocketInternal];
       if (!socket) {
         this.#unrefOnConnected = true;
-        return;
+        return this;
       }
       socket.unref();
+      return this;
     }
 
     _write(chunk, encoding, callback) {
@@ -1003,7 +1005,7 @@ function emitErrorAndCloseNextTick(self, error) {
 function emitListeningNextTick(self, onListen) {
   if (typeof onListen === "function") {
     try {
-      onListen();
+      onListen.$call(self);
     } catch (err) {
       self.emit("error", err);
     }

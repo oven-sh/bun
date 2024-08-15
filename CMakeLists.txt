@@ -29,7 +29,10 @@ cmake_path(APPEND LOCAL_ZIG_CACHE_DIR "local")
 cmake_path(APPEND GLOBAL_ZIG_CACHE_DIR "global")
 
 # Used in process.version, process.versions.node, napi, and elsewhere
-set(REPORTED_NODEJS_VERSION "22.3.0")
+set(REPORTED_NODEJS_VERSION "22.6.0")
+
+# Used in process.versions.modules and compared while loading V8 modules
+set(REPORTED_NODEJS_ABI_VERSION "127")
 
 # WebKit uses -std=gnu++20 on non-macOS non-Windows
 # If we do not set this, it will crash at startup on the first memory allocation.
@@ -664,6 +667,7 @@ file(GLOB BUN_CPP ${CONFIGURE_DEPENDS}
     "${BUN_SRC}/bun.js/bindings/sqlite/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*.cpp"
     "${BUN_SRC}/bun.js/bindings/webcrypto/*/*.cpp"
+    "${BUN_SRC}/bun.js/bindings/v8/*.cpp"
     "${BUN_SRC}/deps/picohttpparser/picohttpparser.c"
 )
 list(APPEND BUN_RAW_SOURCES ${BUN_CPP})
@@ -1040,6 +1044,7 @@ add_compile_definitions(
     "BUILDING_JSCONLY__"
     "BUN_DYNAMIC_JS_LOAD_PATH=\"${BUN_WORKDIR}/js\""
     "REPORTED_NODEJS_VERSION=\"${REPORTED_NODEJS_VERSION}\""
+    "REPORTED_NODEJS_ABI_VERSION=${REPORTED_NODEJS_ABI_VERSION}"
 )
 
 if(NOT ASSERT_ENABLED)
@@ -1627,12 +1632,14 @@ endif()
 
 if(BUN_TIDY_ONLY)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()
 
 if(BUN_TIDY_ONLY_EXTRA)
     find_program(CLANG_TIDY_EXE NAMES "clang-tidy")
-    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
+
+    # -clang-analyzer-optin.core.EnumCastOutOfRange is disabled because it's too noisy, e.g. for JavaScriptCore/Lookup.h
+    set(CLANG_TIDY_COMMAND "${CLANG_TIDY_EXE}" "-checks=-*,clang-analyzer-*,performance-*,-clang-analyzer-webkit.UncountedLambdaCapturesChecker,-clang-analyzer-optin.core.EnumCastOutOfRange" "--fix" "--fix-errors" "--format-style=webkit" "--warnings-as-errors=*")
     set_target_properties(${bun} PROPERTIES CXX_CLANG_TIDY "${CLANG_TIDY_COMMAND}")
 endif()

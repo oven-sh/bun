@@ -94,7 +94,7 @@ using namespace JSC;
     macro(fetch) \
     macro(fetchRequest) \
     macro(file) \
-    macro(filePath) \
+    macro(filename) \
     macro(fillFromJS) \
     macro(finishConsumingStream) \
     macro(flush) \
@@ -152,6 +152,7 @@ using namespace JSC;
     macro(password) \
     macro(patch) \
     macro(path) \
+    macro(paths) \
     macro(pathname) \
     macro(pause) \
     macro(pendingAbortRequest) \

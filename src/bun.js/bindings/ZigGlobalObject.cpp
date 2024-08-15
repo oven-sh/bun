@@ -148,6 +148,7 @@
 #include "Base64Helpers.h"
 #include "wtf/text/OrdinalNumber.h"
 #include "ErrorCode.h"
+#include "v8/V8GlobalInternals.h"
 
 #if ENABLE(REMOTE_INSPECTOR)
 #include "JavaScriptCore/RemoteInspectorServer.h"
@@ -2687,6 +2688,15 @@ void GlobalObject::finishCreation(VM& vm)
             init.set(WebCore::createJSSQLStatementStructure(init.owner));
         });
 
+    m_V8GlobalInternals.initLater(
+        [](const JSC::LazyProperty<JSC::JSGlobalObject, v8::GlobalInternals>::Initializer& init) {
+            init.set(
+                v8::GlobalInternals::create(
+                    init.vm,
+                    v8::GlobalInternals::createStructure(init.vm, init.owner),
+                    jsDynamicCast<Zig::GlobalObject*>(init.owner)));
+        });
+
     m_memoryFootprintStructure.initLater(
         [](const JSC::LazyProperty<JSC::JSGlobalObject, Structure>::Initializer& init) {
             init.set(
@@ -3532,6 +3542,9 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     visitor.append(thisObject->m_nextTickQueue);
     visitor.append(thisObject->m_errorConstructorPrepareStackTraceValue);
 
+    visitor.append(thisObject->m_pendingNapiModuleAndExports[0]);
+    visitor.append(thisObject->m_pendingNapiModuleAndExports[1]);
+
     thisObject->m_asyncBoundFunctionStructure.visit(visitor);
     thisObject->m_bunObject.visit(visitor);
     thisObject->m_cachedNodeVMGlobalObjectStructure.visit(visitor);
@@ -3559,6 +3572,7 @@ void GlobalObject::visitChildrenImpl(JSCell* cell, Visitor& visitor)
     thisObject->m_JSHTTPSResponseSinkClassStructure.visit(visitor);
     thisObject->m_JSSocketAddressStructure.visit(visitor);
     thisObject->m_JSSQLStatementStructure.visit(visitor);
+    thisObject->m_V8GlobalInternals.visit(visitor);
     thisObject->m_JSStringDecoderClassStructure.visit(visitor);
     thisObject->m_lazyPreloadTestModuleObject.visit(visitor);
     thisObject->m_lazyReadableStreamPrototypeMap.visit(visitor);

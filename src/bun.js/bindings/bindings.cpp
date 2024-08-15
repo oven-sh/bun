@@ -2,6 +2,7 @@
 
 #include "root.h"
 
+#include "JavaScriptCore/Exception.h"
 #include "ErrorCode+List.h"
 #include "ErrorCode.h"
 #include "JavaScriptCore/ThrowScope.h"
@@ -5069,8 +5070,19 @@ void JSC__VM__throwError(JSC__VM* vm_, JSC__JSGlobalObject* arg1, JSC__JSValue e
     JSValue value = JSValue::decode(encodedValue);
     scope.assertNoException(); // can't throw an exception when there's already one.
     ASSERT(!value.isEmpty()); // can't throw an empty value.
-    JSC::JSObject* error = value.getObject();
-    JSC::Exception* exception = JSC::Exception::create(vm, error);
+
+    // This case can happen if we did not call .toError() on a JSValue.
+    if (value.isCell()) {
+        JSC::JSCell* cell = value.asCell();
+        if (cell->type() == JSC::CellType && cell->inherits<JSC::Exception>()) {
+            scope.throwException(arg1, jsCast<JSC::Exception*>(value));
+            return;
+        }
+    }
+
+    // Do not call .getObject() on it.
+    // https://github.com/oven-sh/bun/issues/13311
+    JSC::Exception* exception = JSC::Exception::create(vm, value);
     scope.throwException(arg1, exception);
 }
 

@@ -1,7 +1,10 @@
 #include <node.h>
 
+#include <inttypes.h>
 #include <iostream>
 #include <napi.h>
+#include <stdarg.h>
+#include <stdio.h>
 
 #include <cassert>
 
@@ -9,6 +12,15 @@ napi_value fail(napi_env env, const char *msg) {
   napi_value result;
   napi_create_string_utf8(env, msg, NAPI_AUTO_LENGTH, &result);
   return result;
+}
+
+napi_value fail_fmt(napi_env env, const char *fmt, ...) {
+  char buf[1024];
+  va_list args;
+  va_start(args, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, args);
+  va_end(args);
+  return fail(env, buf);
 }
 
 napi_value ok(napi_env env) {
@@ -155,11 +167,9 @@ Napi::Object InitAll(Napi::Env env, Napi::Object exports1) {
 
   exports.Set("test_issue_7685", Napi::Function::New(env, test_issue_7685));
   exports.Set("test_issue_11949", Napi::Function::New(env, test_issue_11949));
-
   exports.Set(
       "test_napi_get_value_string_utf8_with_buffer",
       Napi::Function::New(env, test_napi_get_value_string_utf8_with_buffer));
-
   exports.Set(
       "test_napi_threadsafe_function_does_not_hang_after_finalize",
       Napi::Function::New(

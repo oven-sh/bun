@@ -4637,17 +4637,21 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since we're passing the `this` value to the cork function, we need to
+        // make sure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         const args = callframe.arguments(1);
+        this.this_value = this_value;
 
         if (args.len < 1) {
-            globalThis.throw("cork requires at least 1 argument", .{});
+            globalThis.throwNotEnoughArguments("cork", 1, 0);
             return .zero;
         }
+
         const callback = args.ptr[0];
         if (callback.isEmptyOrUndefinedOrNull() or !callback.isCallable(globalThis.vm())) {
-            globalThis.throw("cork requires a function", .{});
-            return .zero;
+            return globalThis.throwInvalidArgumentTypeValue("cork", "callback", callback);
         }
 
         if (this.isClosed()) {
@@ -4656,15 +4660,12 @@ pub const ServerWebSocket = struct {
 
         var corker = Corker{
             .globalObject = globalThis,
-            .this_value = this.this_value,
+            .this_value = this_value,
             .callback = callback,
         };
         this.websocket().cork(&corker, Corker.run);
 
         const result = corker.result;
-
-        if (result.isEmptyOrUndefinedOrNull())
-            return JSValue.jsUndefined();
 
         if (result.isAnyError()) {
             globalThis.throwValue(result);
@@ -5034,9 +5035,12 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since close() can lead to the close() callback being called, let's always ensure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         const args = callframe.arguments(2);
         log("close()", .{});
+        this.this_value = this_value;
 
         if (this.isClosed()) {
             return .undefined;
@@ -5078,11 +5082,15 @@ pub const ServerWebSocket = struct {
         this: *ServerWebSocket,
         globalThis: *JSC.JSGlobalObject,
         callframe: *JSC.CallFrame,
+        // Since terminate() can lead to close() being called, let's always ensure the `this` value is up to date.
+        this_value: JSC.JSValue,
     ) JSValue {
         _ = globalThis;
         const args = callframe.arguments(2);
         _ = args;
         log("terminate()", .{});
+
+        this.this_value = this_value;
 
         if (this.isClosed()) {
             return .undefined;

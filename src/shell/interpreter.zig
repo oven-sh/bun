@@ -1664,7 +1664,7 @@ pub const Interpreter = struct {
             this.exit_code = exit_code;
             if (this.this_jsvalue != .zero) {
                 if (JSC.Codegen.JSShellInterpreter.resolveGetCached(this.this_jsvalue)) |resolve| {
-                    _ = resolve.call(this.globalThis, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
+                    _ = resolve.call(this.globalThis, .undefined, &.{ JSValue.jsNumberFromU16(exit_code), this.getBufferedStdout(), this.getBufferedStderr() });
                     JSC.Codegen.JSShellInterpreter.resolveSetCached(this.this_jsvalue, this.globalThis, .undefined);
                     JSC.Codegen.JSShellInterpreter.rejectSetCached(this.this_jsvalue, this.globalThis, .undefined);
                 }
@@ -9241,7 +9241,7 @@ pub const Interpreter = struct {
                 root_is_absolute: bool,
 
                 error_signal: *std.atomic.Value(bool),
-                err_mutex: bun.Lock = bun.Lock.init(),
+                err_mutex: bun.Lock = .{},
                 err: ?Syscall.Error = null,
 
                 event_loop: JSC.EventLoopHandle,

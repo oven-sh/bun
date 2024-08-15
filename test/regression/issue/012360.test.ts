@@ -1,7 +1,7 @@
 // https://github.com/oven-sh/bun/issues/12360
 import { test, expect } from "bun:test";
 import { fileURLToPath, pathToFileURL } from "bun";
-import { tmpdirSync } from "harness";
+import { tmpdirSync, isWindows } from "harness";
 import { join } from "path";
 
 export async function validatePath(path: URL): Promise<URL | string> {
@@ -29,8 +29,8 @@ test("validate executable given in the config using `validatePath`: expected rea
   const editorPath: URL | string = pathToFileURL(join(dir, "./metaeditor64.exe"));
   const terminalPath: URL | string = pathToFileURL(join(dir, "./terminal64.exe"));
 
-  await Bun.write(editorPath.pathname, "im a editor");
-  await Bun.write(terminalPath.pathname, "im a terminal");
+  await Bun.write(isWindows ? editorPath.pathname.slice(1) : editorPath.pathname, "im a editor");
+  await Bun.write(isWindows ? terminalPath.pathname.slice(1) : terminalPath.pathname, "im a terminal");
 
   const newEditorPath = <URL>await validatePath(editorPath);
   const newTerminalPath = <URL>await validatePath(terminalPath);

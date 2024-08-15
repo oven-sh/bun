@@ -10,9 +10,10 @@ steps:
     blocked_state: "running"
 
   - label: ":pipeline:"
-    command: "buildkite-agent pipeline upload .buildkite/ci.yml"
     agents:
-      queue: "build-linux"
+      queue: "build-darwin"
+    command:
+      - ".buildkite/scripts/prepare-build.sh"
 
   - if: "build.branch == 'main' && !build.pull_request.repository.fork"
     label: ":github:"

@@ -103,11 +103,7 @@ pub const Mutex = struct {
 };
 
 pub const Lock = struct {
-    mutex: Mutex,
-
-    pub fn init() Lock {
-        return Lock{ .mutex = Mutex{} };
-    }
+    mutex: Mutex = .{},
 
     pub inline fn lock(this: *Lock) void {
         this.mutex.acquire();

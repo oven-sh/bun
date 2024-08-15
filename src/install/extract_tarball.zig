@@ -160,7 +160,13 @@ threadlocal var json_path_buf: bun.PathBuffer = undefined;
 fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractData {
     const tmpdir = this.temp_dir;
     var tmpname_buf: if (Environment.isWindows) bun.WPathBuffer else bun.PathBuffer = undefined;
-    const name = this.name.slice();
+    const name = if (this.name.slice().len > 0) this.name.slice() else brk: {
+        // Not sure where this case hits yet.
+        // BUN-2WQ
+        Output.warn("Extracting nameless packages is not supported yet. Please open an issue on GitHub with reproduction steps.", .{});
+        bun.debugAssert(false);
+        break :brk "unnamed-package";
+    };
     const basename = brk: {
         var tmp = name;
         if (tmp[0] == '@') {
@@ -173,10 +179,6 @@ fn extract(this: *const ExtractTarball, tgz_bytes: []const u8) !Install.ExtractD
             if (strings.lastIndexOfChar(tmp, ':')) |i| {
                 tmp = tmp[i + 1 ..];
             }
-        }
-
-        if (comptime Environment.allow_assert) {
-            bun.assert(tmp.len > 0);
         }
 
         break :brk tmp;

@@ -168,7 +168,7 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                 HTTP.FetchRedirect.follow,
             );
             async_http.client.progress_node = progress;
-            async_http.client.reject_unauthorized = env.getTLSRejectUnauthorized();
+            async_http.client.flags.reject_unauthorized = env.getTLSRejectUnauthorized();
 
             const response = try async_http.sendSync(true);
 
@@ -291,8 +291,10 @@ pub fn downloadToPath(this: *const CompileTarget, env: *bun.DotEnv.Loader, alloc
                             const dirname = bun.path.dirname(dest_z, .loose);
                             if (dirname.len > 0) {
                                 std.fs.cwd().makePath(dirname) catch {};
+                                continue;
                             }
-                            continue;
+
+                            // fallthrough, failed for another reason
                         }
                         node.end();
                         Output.err(err, "Failed to move cross-compiled bun binary into cache directory {}", .{bun.fmt.fmtPath(u8, dest_z, .{})});

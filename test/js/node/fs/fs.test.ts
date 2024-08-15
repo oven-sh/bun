@@ -3285,3 +3285,22 @@ it("promises.appendFile should accept a FileHandle", async () => {
   await fs.promises.appendFile(file, "data");
   expect(await Bun.file(x_path).text()).toBe("datadata");
 });
+
+it("chown should verify its arguments", () => {
+  expect(() => fs.chown("doesnt-matter.txt", "a", 0)).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+  expect(() => fs.chown("doesnt-matter.txt", 0, "a")).toThrowWithCode(TypeError, "ERR_INVALID_ARG_TYPE");
+});
+
+it("open flags verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, invalid)).toThrow(RangeError);
+});
+
+it("open mode verification", async () => {
+  const invalid = 4_294_967_296;
+  expect(() => fs.open(__filename, 0, invalid, () => {})).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(() => fs.openSync(__filename, 0, invalid)).toThrowWithCode(RangeError, "ERR_OUT_OF_RANGE");
+  expect(async () => await fs.promises.open(__filename, 0, invalid)).toThrow(RangeError);
+});

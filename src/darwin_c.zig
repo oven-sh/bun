@@ -298,11 +298,11 @@ pub const SystemErrno = enum(u8) {
         return @enumFromInt(code);
     }
 
-    pub fn label(this: SystemErrno) ?[]const u8 {
+    pub fn label(this: SystemErrno) ?[:0]const u8 {
         return labels.get(this) orelse null;
     }
 
-    const LabelMap = std.EnumMap(SystemErrno, []const u8);
+    const LabelMap = std.EnumMap(SystemErrno, [:0]const u8);
     pub const labels: LabelMap = brk: {
         var map: LabelMap = LabelMap.initFull("");
         map.put(.E2BIG, "Argument list too long");
@@ -363,7 +363,7 @@ pub const SystemErrno = enum(u8) {
         map.put(.ENOEXEC, "Exec format error");
         map.put(.ENOLCK, "No locks available");
         map.put(.ENOLINK, "Reserved");
-        map.put(.ENOMEM, "Cannot allocate memory");
+        map.put(.ENOMEM, "Out of memory");
         map.put(.ENOMSG, "No message of desired type");
         map.put(.ENOPOLICY, "No such policy registered");
         map.put(.ENOPROTOOPT, "Protocol not available");
@@ -414,6 +414,75 @@ pub const SystemErrno = enum(u8) {
         break :brk map;
     };
 };
+
+pub const UV_E2BIG: i32 = @intFromEnum(SystemErrno.E2BIG);
+pub const UV_EACCES: i32 = @intFromEnum(SystemErrno.EACCES);
+pub const UV_EADDRINUSE: i32 = @intFromEnum(SystemErrno.EADDRINUSE);
+pub const UV_EADDRNOTAVAIL: i32 = @intFromEnum(SystemErrno.EADDRNOTAVAIL);
+pub const UV_EAFNOSUPPORT: i32 = @intFromEnum(SystemErrno.EAFNOSUPPORT);
+pub const UV_EAGAIN: i32 = @intFromEnum(SystemErrno.EAGAIN);
+pub const UV_EALREADY: i32 = @intFromEnum(SystemErrno.EALREADY);
+pub const UV_EBADF: i32 = @intFromEnum(SystemErrno.EBADF);
+pub const UV_EBUSY: i32 = @intFromEnum(SystemErrno.EBUSY);
+pub const UV_ECANCELED: i32 = @intFromEnum(SystemErrno.ECANCELED);
+pub const UV_ECHARSET: i32 = -bun.windows.libuv.UV__ECHARSET;
+pub const UV_ECONNABORTED: i32 = @intFromEnum(SystemErrno.ECONNABORTED);
+pub const UV_ECONNREFUSED: i32 = @intFromEnum(SystemErrno.ECONNREFUSED);
+pub const UV_ECONNRESET: i32 = @intFromEnum(SystemErrno.ECONNRESET);
+pub const UV_EDESTADDRREQ: i32 = @intFromEnum(SystemErrno.EDESTADDRREQ);
+pub const UV_EEXIST: i32 = @intFromEnum(SystemErrno.EEXIST);
+pub const UV_EFAULT: i32 = @intFromEnum(SystemErrno.EFAULT);
+pub const UV_EHOSTUNREACH: i32 = @intFromEnum(SystemErrno.EHOSTUNREACH);
+pub const UV_EINTR: i32 = @intFromEnum(SystemErrno.EINTR);
+pub const UV_EINVAL: i32 = @intFromEnum(SystemErrno.EINVAL);
+pub const UV_EIO: i32 = @intFromEnum(SystemErrno.EIO);
+pub const UV_EISCONN: i32 = @intFromEnum(SystemErrno.EISCONN);
+pub const UV_EISDIR: i32 = @intFromEnum(SystemErrno.EISDIR);
+pub const UV_ELOOP: i32 = @intFromEnum(SystemErrno.ELOOP);
+pub const UV_EMFILE: i32 = @intFromEnum(SystemErrno.EMFILE);
+pub const UV_EMSGSIZE: i32 = @intFromEnum(SystemErrno.EMSGSIZE);
+pub const UV_ENAMETOOLONG: i32 = @intFromEnum(SystemErrno.ENAMETOOLONG);
+pub const UV_ENETDOWN: i32 = @intFromEnum(SystemErrno.ENETDOWN);
+pub const UV_ENETUNREACH: i32 = @intFromEnum(SystemErrno.ENETUNREACH);
+pub const UV_ENFILE: i32 = @intFromEnum(SystemErrno.ENFILE);
+pub const UV_ENOBUFS: i32 = @intFromEnum(SystemErrno.ENOBUFS);
+pub const UV_ENODEV: i32 = @intFromEnum(SystemErrno.ENODEV);
+pub const UV_ENOENT: i32 = @intFromEnum(SystemErrno.ENOENT);
+pub const UV_ENOMEM: i32 = @intFromEnum(SystemErrno.ENOMEM);
+pub const UV_ENONET: i32 = -bun.windows.libuv.UV_ENONET;
+pub const UV_ENOSPC: i32 = @intFromEnum(SystemErrno.ENOSPC);
+pub const UV_ENOSYS: i32 = @intFromEnum(SystemErrno.ENOSYS);
+pub const UV_ENOTCONN: i32 = @intFromEnum(SystemErrno.ENOTCONN);
+pub const UV_ENOTDIR: i32 = @intFromEnum(SystemErrno.ENOTDIR);
+pub const UV_ENOTEMPTY: i32 = @intFromEnum(SystemErrno.ENOTEMPTY);
+pub const UV_ENOTSOCK: i32 = @intFromEnum(SystemErrno.ENOTSOCK);
+pub const UV_ENOTSUP: i32 = @intFromEnum(SystemErrno.ENOTSUP);
+pub const UV_EPERM: i32 = @intFromEnum(SystemErrno.EPERM);
+pub const UV_EPIPE: i32 = @intFromEnum(SystemErrno.EPIPE);
+pub const UV_EPROTO: i32 = @intFromEnum(SystemErrno.EPROTO);
+pub const UV_EPROTONOSUPPORT: i32 = @intFromEnum(SystemErrno.EPROTONOSUPPORT);
+pub const UV_EPROTOTYPE: i32 = @intFromEnum(SystemErrno.EPROTOTYPE);
+pub const UV_EROFS: i32 = @intFromEnum(SystemErrno.EROFS);
+pub const UV_ESHUTDOWN: i32 = @intFromEnum(SystemErrno.ESHUTDOWN);
+pub const UV_ESPIPE: i32 = @intFromEnum(SystemErrno.ESPIPE);
+pub const UV_ESRCH: i32 = @intFromEnum(SystemErrno.ESRCH);
+pub const UV_ETIMEDOUT: i32 = @intFromEnum(SystemErrno.ETIMEDOUT);
+pub const UV_ETXTBSY: i32 = @intFromEnum(SystemErrno.ETXTBSY);
+pub const UV_EXDEV: i32 = @intFromEnum(SystemErrno.EXDEV);
+pub const UV_EFBIG: i32 = @intFromEnum(SystemErrno.EFBIG);
+pub const UV_ENOPROTOOPT: i32 = @intFromEnum(SystemErrno.ENOPROTOOPT);
+pub const UV_ERANGE: i32 = @intFromEnum(SystemErrno.ERANGE);
+pub const UV_ENXIO: i32 = @intFromEnum(SystemErrno.ENXIO);
+pub const UV_EMLINK: i32 = @intFromEnum(SystemErrno.EMLINK);
+pub const UV_EHOSTDOWN: i32 = @intFromEnum(SystemErrno.EHOSTDOWN);
+pub const UV_EREMOTEIO: i32 = -bun.windows.libuv.UV_EREMOTEIO;
+pub const UV_ENOTTY: i32 = @intFromEnum(SystemErrno.ENOTTY);
+pub const UV_EFTYPE: i32 = @intFromEnum(SystemErrno.EFTYPE);
+pub const UV_EILSEQ: i32 = @intFromEnum(SystemErrno.EILSEQ);
+pub const UV_EOVERFLOW: i32 = @intFromEnum(SystemErrno.EOVERFLOW);
+pub const UV_ESOCKTNOSUPPORT: i32 = @intFromEnum(SystemErrno.ESOCKTNOSUPPORT);
+pub const UV_ENODATA: i32 = @intFromEnum(SystemErrno.ENODATA);
+pub const UV_EUNATCH: i32 = -bun.windows.libuv.UV_EUNATCH;
 
 // Courtesy of https://github.com/nodejs/node/blob/master/deps/uv/src/unix/darwin-stub.h
 pub const struct_CFArrayCallBacks = opaque {};
@@ -484,8 +553,7 @@ pub const kFSEventStreamEventFlagUnmount: c_int = 128;
 pub const kFSEventStreamEventFlagUserDropped: c_int = 2;
 
 pub fn getFreeMemory() u64 {
-    // NOT IMPLEMENTED YET
-    return 1024 * 1024;
+    return @extern(*const fn () callconv(.C) u64, .{ .name = "Bun__Os__getFreeMemory" })();
 }
 
 pub fn getTotalMemory() u64 {

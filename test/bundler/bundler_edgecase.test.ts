@@ -674,7 +674,7 @@ describe("bundler", () => {
         const std = @import("std");
 
         pub fn main() void {
-          std.debug.print("Hello, world!\\n", .{});
+          std.log.info("Hello, world!\\n", .{});
         }
       `,
     },
@@ -684,7 +684,7 @@ describe("bundler", () => {
       "/exec.js": `
         import assert from 'node:assert';
         import the_path from './out/entry.js';
-        assert.strictEqual(the_path, './entry-6dhkdck1.zig');
+        assert.strictEqual(the_path, './entry-z5artd5z.zig');
       `,
     },
     run: {
@@ -1664,6 +1664,172 @@ describe("bundler", () => {
     run: {
       stdout: "123",
     },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  // this test checks that visit order doesnt matter (inline then use, above is use then inline)
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineClass2", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        class TestClass {
+          testMethod(name: TestEnum) {
+            return name === TestEnum.A;
+          }
+
+          constructor() {
+            console.log(JSON.stringify(TestEnum));
+          }
+        }
+
+        // This must use wrapper class
+        console.log(new TestClass());
+        // This must inline
+        console.log(TestClass.prototype.testMethod.toString().includes('TestEnum'));
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        TestClass {
+          testMethod: [Function: testMethod],
+        }
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/TsEnumTreeShakingUseAndInlineNamespace", {
+    files: {
+      "/entry.ts": `
+        import { TestEnum } from './enum';
+
+        namespace TestClass {
+          console.log(JSON.stringify(TestEnum));
+          console.log((() => TestEnum.A).toString().includes('TestEnum'));
+        }
+      `,
+      "/enum.ts": `
+        export enum TestEnum {
+          A,
+          B,
+        }
+      `,
+    },
+    dce: true,
+    run: {
+      stdout: `
+        {"0":"A","1":"B","A":0,"B":1}
+        false
+      `,
+    },
+  });
+  itBundled("edgecase/ImportMetaMain", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    capture: ["false", "false", "import.meta.main", "import.meta.main"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toContain("require");
+      api.expectFile("/out.js").not.toContain("module");
+    },
+  });
+  itBundled("edgecase/ImportMetaMainTargetNode", {
+    files: {
+      "/entry.ts": /* js */ `
+        import {other} from './other';
+        console.log(capture(import.meta.main), capture(require.main === module), ...other);
+      `,
+      "/other.ts": `
+        globalThis['ca' + 'pture'] = x => x;
+
+        export const other = [capture(require.main === module), capture(import.meta.main)];
+      `,
+    },
+    target: "node",
+    capture: ["false", "false", "__require.main == __require.module", "__require.main == __require.module"],
+    onAfterBundle(api) {
+      // This should not be marked as a CommonJS module
+      api.expectFile("/out.js").not.toMatch(/\brequire\b/); // __require is ok
+      api.expectFile("/out.js").not.toMatch(/[^\.:]module/); // `.module` and `node:module` are ok.
+    },
+  });
+  itBundled("edgecase/IdentifierInEnum#13081", {
+    files: {
+      "/entry.ts": `
+        let ZZZZZZZZZ = 1;
+        enum B {
+          C = ZZZZZZZZZ,
+        }
+        console.log(B.C);
+      `,
+    },
+    run: { stdout: "1" },
+  });
+  itBundled("edgecase/DoNotMoveTaggedTemplateLiterals", {
+    files: {
+      "/entry.ts": `
+        globalThis.z = () => console.log(2)
+        const y = await import('./second.ts');
+      `,
+      "/second.ts": `
+        console.log(1);
+        export const y = z\`zyx\`;
+      `,
+    },
+    run: { stdout: "1\n2" },
   });
 
   // TODO(@paperdave): test every case of this. I had already tested it manually, but it may break later

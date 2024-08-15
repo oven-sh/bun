@@ -44,7 +44,7 @@ pub const Run = struct {
 
     pub fn bootStandalone(ctx: Command.Context, entry_path: string, graph: bun.StandaloneModuleGraph) !void {
         JSC.markBinding(@src());
-        bun.JSC.initialize();
+        bun.JSC.initialize(false);
 
         const graph_ptr = try bun.default_allocator.create(bun.StandaloneModuleGraph);
         graph_ptr.* = graph;
@@ -88,6 +88,7 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -114,7 +115,7 @@ pub const Run = struct {
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -177,11 +178,12 @@ pub const Run = struct {
         // JSC initialization costs 1-3ms. We skip this if we know it's a shell script.
         if (strings.endsWithComptime(entry_path, ".sh")) {
             const exit_code = try bootBunShell(ctx, entry_path);
-            Global.exitWide(exit_code);
+            Global.exit(exit_code);
             return;
         }
 
-        bun.JSC.initialize();
+        bun.JSC.initialize(ctx.runtime_options.eval.eval_and_print);
+
         js_ast.Expr.Data.Store.create();
         js_ast.Stmt.Data.Store.create();
         var arena = try Arena.init();
@@ -232,6 +234,7 @@ pub const Run = struct {
 
         b.options.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.options.minify_whitespace = ctx.bundler_options.minify_whitespace;
+        b.options.ignore_dce_annotations = ctx.bundler_options.ignore_dce_annotations;
         b.resolver.opts.minify_identifiers = ctx.bundler_options.minify_identifiers;
         b.resolver.opts.minify_whitespace = ctx.bundler_options.minify_whitespace;
 
@@ -257,7 +260,7 @@ pub const Run = struct {
 
         AsyncHTTP.loadEnv(vm.allocator, vm.log, b.env);
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = true;
         JSC.VirtualMachine.is_main_thread_vm = true;
 
@@ -277,7 +280,7 @@ pub const Run = struct {
     }
 
     fn onUnhandledRejectionBeforeClose(this: *JSC.VirtualMachine, _: *JSC.JSGlobalObject, value: JSC.JSValue) void {
-        this.runErrorHandler(value, null);
+        this.runErrorHandler(value, this.onUnhandledRejectionExceptionList);
         run.any_unhandled = true;
     }
 
@@ -321,7 +324,7 @@ pub const Run = struct {
                             .{Global.unhandled_error_bun_version_string},
                         );
                     }
-                    Global.exit(1);
+                    vm.globalExit();
                 }
             }
 
@@ -354,7 +357,7 @@ pub const Run = struct {
                         .{Global.unhandled_error_bun_version_string},
                     );
                 }
-                Global.exit(1);
+                vm.globalExit();
             }
         }
 
@@ -448,6 +451,8 @@ pub const Run = struct {
 
         vm.onUnhandledRejection = &onUnhandledRejectionBeforeClose;
         vm.global.handleRejectedPromises();
+        vm.onExit();
+
         if (this.any_unhandled and this.vm.exit_handler.exit_code == 0) {
             this.vm.exit_handler.exit_code = 1;
 
@@ -458,12 +463,9 @@ pub const Run = struct {
                 .{Global.unhandled_error_bun_version_string},
             );
         }
-        const exit_code = this.vm.exit_handler.exit_code;
-
-        vm.onExit();
 
         if (!JSC.is_bindgen) JSC.napi.fixDeadCodeElimination();
-        Global.exit(exit_code);
+        vm.globalExit();
     }
 };
 

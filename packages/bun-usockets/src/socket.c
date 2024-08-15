@@ -21,6 +21,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <stdint.h>
+#include <stdio.h>
+#include <errno.h>
 
 #ifndef WIN32
 #include <fcntl.h>
@@ -113,6 +115,9 @@ void us_socket_flush(int ssl, struct us_socket_t *s) {
 }
 
 int us_socket_is_closed(int ssl, struct us_socket_t *s) {
+    if(ssl) {
+        return us_internal_ssl_socket_is_closed((struct us_internal_ssl_socket_t *) s);
+    }
     return s->prev == (struct us_socket_t *) s->context;
 }
 
@@ -125,9 +130,11 @@ int us_socket_is_established(int ssl, struct us_socket_t *s) {
     return us_internal_poll_type((struct us_poll_t *) s) != POLL_TYPE_SEMI_SOCKET;
 }
 
-void us_connecting_socket_free(struct us_connecting_socket_t *c) {
+void us_connecting_socket_free(int ssl, struct us_connecting_socket_t *c) {
     // we can't just free c immediately, as it may be enqueued in the dns_ready_head list
     // instead, we move it to a close list and free it after the iteration
+    us_internal_socket_context_unlink_connecting_socket(ssl, c->context, c);
+
     c->next = c->context->loop->data.closed_connecting_head;
     c->context->loop->data.closed_connecting_head = c;
 }
@@ -135,9 +142,9 @@ void us_connecting_socket_free(struct us_connecting_socket_t *c) {
 void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
     if (c->closed) return;
     c->closed = 1;
-
     for (struct us_socket_t *s = c->connecting_head; s; s = s->connect_next) {
-        us_internal_socket_context_unlink_socket(s->context, s);
+        us_internal_socket_context_unlink_socket(ssl, s->context, s);
+
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
         bsd_close_socket(us_poll_fd((struct us_poll_t *) s));
 
@@ -148,15 +155,26 @@ void us_connecting_socket_close(int ssl, struct us_connecting_socket_t *c) {
         /* Any socket with prev = context is marked as closed */
         s->prev = (struct us_socket_t *) s->context;
     }
-
+    if(!c->error) {
+        // if we have no error, we have to set that we were aborted aka we called close
+        c->error = ECONNABORTED;
+    }
+    c->context->on_connect_error(c, c->error);
+    if(c->addrinfo_req) {
+        Bun__addrinfo_freeRequest(c->addrinfo_req, c->error == ECONNREFUSED);
+        c->addrinfo_req = 0;
+    }
     // we can only schedule the socket to be freed if there is no pending callback
     // otherwise, the callback will see that the socket is closed and will free it
     if (!c->pending_resolve_callback) {
-        us_connecting_socket_free(c);
+        us_connecting_socket_free(ssl, c);
     }
 } 
 
 struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, void *reason) {
+    if(ssl) {
+        return (struct us_socket_t *)us_internal_ssl_socket_close((struct us_internal_ssl_socket_t *) s, code, reason);
+    }
     if (!us_socket_is_closed(0, s)) {
         if (s->low_prio_state == 1) {
             /* Unlink this socket from the low-priority queue */
@@ -168,8 +186,10 @@ struct us_socket_t *us_socket_close(int ssl, struct us_socket_t *s, int code, vo
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
-            us_internal_socket_context_unlink_socket(s->context, s);
+            us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
         #ifdef LIBUS_USE_KQUEUE
             // kqueue automatically removes the fd from the set on close
@@ -218,8 +238,10 @@ struct us_socket_t *us_socket_detach(int ssl, struct us_socket_t *s) {
             s->prev = 0;
             s->next = 0;
             s->low_prio_state = 0;
+            us_socket_context_unref(ssl, s->context);
+
         } else {
-            us_internal_socket_context_unlink_socket(s->context, s);
+            us_internal_socket_context_unlink_socket(ssl, s->context, s);
         }
         us_poll_stop((struct us_poll_t *) s, s->context->loop);
 

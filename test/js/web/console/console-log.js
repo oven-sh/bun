@@ -201,6 +201,8 @@ console.log({ "": "" });
   console.log(proxy.proxy);
 }
 
+console.log([[[[Array(1000).fill(4)]]]]);
+
 {
   // proxy custom inspect
   const proxy = new Proxy(
@@ -261,3 +263,6 @@ console.log("Hello %i %", [1, 2, 3, 4], 1);
 console.log("Hello %i %j", [1, 2, 3, 4], 1);
 console.log("Hello \\%i %i,", 5, 6);
 console.log("Hello %%i %i", 5, 6);
+
+// doesn't go out of bounds when printing
+console.log("%%d", 1);

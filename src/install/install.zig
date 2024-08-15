@@ -429,7 +429,7 @@ const NetworkTask = struct {
         this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_builder.content.ptr.?[0..header_builder.content.len], &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
 
         if (PackageManager.verbose_install) {
             this.http.client.verbose = .headers;
@@ -449,7 +449,7 @@ const NetworkTask = struct {
 
         // Incase the ETag causes invalidation, we fallback to the last modified date.
         if (last_modified.len != 0 and bun.getRuntimeFeatureFlag("BUN_FEATURE_FLAG_LAST_MODIFIED_PRETEND_304")) {
-            this.http.client.force_last_modified = true;
+            this.http.client.flags.force_last_modified = true;
             this.http.client.if_modified_since = last_modified;
         }
     }
@@ -513,7 +513,7 @@ const NetworkTask = struct {
         this.http = AsyncHTTP.init(allocator, .GET, url, header_builder.entries, header_buf, &this.response_buffer, "", this.getCompletionCallback(), HTTP.FetchRedirect.follow, .{
             .http_proxy = this.package_manager.httpProxy(url),
         });
-        this.http.client.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
+        this.http.client.flags.reject_unauthorized = this.package_manager.tlsRejectUnauthorized();
         if (PackageManager.verbose_install) {
             this.http.client.verbose = .headers;
         }
@@ -6167,19 +6167,21 @@ pub const PackageManager = struct {
                         }
                     }
 
-                    const response = task.http.response orelse {
+                    if (!has_network_error and task.http.response == null) {
+                        has_network_error = true;
+                        const min = manager.options.min_simultaneous_requests;
+                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        if (max > min) {
+                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                        }
+                    }
+
+                    // Handle retry-able errors.
+                    if (task.http.response == null or task.http.response.?.status_code > 499) {
                         const err = task.http.err orelse error.HTTPError;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            if (!has_network_error) {
-                                has_network_error = true;
-                                const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-                                if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
-                                }
-                            }
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {
@@ -6187,13 +6189,18 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "{s} downloading package manifest <b>{s}<r>",
-                                    .{ bun.span(@errorName(err)), name.slice() },
+                                    "{s} downloading package manifest <b>{s}<r>. Retry {d}/{d}...",
+                                    .{ bun.span(@errorName(err)), name.slice(), task.retried, manager.options.max_retry_count },
                                 ) catch unreachable;
                             }
 
                             continue;
                         }
+                    }
+
+                    const response = task.http.response orelse {
+                        // Handle non-retry-able errors.
+                        const err = task.http.err orelse error.HTTPError;
 
                         if (@TypeOf(callbacks.onPackageManifestError) != void) {
                             callbacks.onPackageManifestError(
@@ -6336,19 +6343,20 @@ pub const PackageManager = struct {
                     manager.task_batch.push(ThreadPool.Batch.from(manager.enqueueParseNPMPackage(task.task_id, name, task)));
                 },
                 .extract => |*extract| {
-                    const response = task.http.response orelse {
+                    if (!has_network_error and task.http.response == null) {
+                        has_network_error = true;
+                        const min = manager.options.min_simultaneous_requests;
+                        const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
+                        if (max > min) {
+                            AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
+                        }
+                    }
+
+                    if (task.http.response == null or task.http.response.?.status_code > 499) {
                         const err = task.http.err orelse error.TarballFailedToDownload;
 
                         if (task.retried < manager.options.max_retry_count) {
                             task.retried += 1;
-                            if (!has_network_error) {
-                                has_network_error = true;
-                                const min = manager.options.min_simultaneous_requests;
-                                const max = AsyncHTTP.max_simultaneous_requests.load(.monotonic);
-                                if (max > min) {
-                                    AsyncHTTP.max_simultaneous_requests.store(@max(min, max / 2), .monotonic);
-                                }
-                            }
                             manager.enqueueNetworkTask(task);
 
                             if (manager.options.log_level.isVerbose()) {
@@ -6356,17 +6364,23 @@ pub const PackageManager = struct {
                                     null,
                                     logger.Loc.Empty,
                                     manager.allocator,
-                                    "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>",
+                                    "<r><yellow>warn:<r> {s} downloading tarball <b>{s}@{s}<r>. Retrying {d}/{d}...",
                                     .{
                                         bun.span(@errorName(err)),
                                         extract.name.slice(),
                                         extract.resolution.fmt(manager.lockfile.buffers.string_bytes.items, .auto),
+                                        task.retried,
+                                        manager.options.max_retry_count,
                                     },
                                 ) catch unreachable;
                             }
 
                             continue;
                         }
+                    }
+
+                    const response = task.http.response orelse {
+                        const err = task.http.err orelse error.TarballFailedToDownload;
 
                         if (@TypeOf(callbacks.onPackageDownloadError) != void) {
                             const package_id = manager.lockfile.buffers.resolutions.items[extract.dependency_id];

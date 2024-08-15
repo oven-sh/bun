@@ -1537,6 +1537,16 @@ declare module "bun" {
           syntax?: boolean;
           identifiers?: boolean;
         };
+    /**
+     * Ignore dead code elimination/tree-shaking annotations such as @__PURE__ and package.json
+     * "sideEffects" fields. This should only be used as a temporary workaround for incorrect
+     * annotations in libraries.
+     */
+    ignoreDCEAnnotations?: boolean;
+    /**
+     * Force emitting @__PURE__ annotations even if minify.whitespace is true.
+     */
+    emitDCEAnnotations?: boolean;
     // treeshaking?: boolean;
 
     // jsx?:
@@ -3847,7 +3857,7 @@ declare module "bun" {
    */
   const isMainThread: boolean;
 
-  interface Socket<Data = undefined> {
+  interface Socket<Data = undefined> extends Disposable {
     /**
      * Write `data` to the socket
      *
@@ -4129,7 +4139,7 @@ declare module "bun" {
     setMaxSendFragment(size: number): boolean;
   }
 
-  interface SocketListener<Data = undefined> {
+  interface SocketListener<Data = undefined> extends Disposable {
     stop(closeActiveConnections?: boolean): void;
     ref(): void;
     unref(): void;

@@ -57,6 +57,7 @@ pub const TSConfigJSON = struct {
 
     emit_decorator_metadata: bool = false,
 
+    pub usingnamespace bun.New(@This());
     pub fn hasBaseURL(tsconfig: *const TSConfigJSON) bool {
         return tsconfig.base_url.len > 0;
     }
@@ -323,13 +324,7 @@ pub const TSConfigJSON = struct {
             assert(result.base_url.len > 0);
         }
 
-        const _result = allocator.create(TSConfigJSON) catch unreachable;
-        _result.* = result;
-
-        if (Environment.isDebug and has_base_url) {
-            assert(_result.base_url.len > 0);
-        }
-        return _result;
+        return TSConfigJSON.new(result);
     }
 
     pub fn isValidTSConfigPathPattern(text: string, log: *logger.Log, source: *const logger.Source, loc: logger.Loc, allocator: std.mem.Allocator) bool {

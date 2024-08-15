@@ -359,7 +359,7 @@ pub const JestPrettyFormat = struct {
 
             const Result = struct {
                 tag: Tag,
-                cell: JSValue.JSType = JSValue.JSType.Cell,
+                cell: JSValue.JSType = .Cell,
             };
 
             pub fn get(value: JSValue, globalThis: *JSGlobalObject) Result {
@@ -455,36 +455,37 @@ pub const JestPrettyFormat = struct {
 
                 return .{
                     .tag = switch (js_type) {
-                        JSValue.JSType.ErrorInstance => .Error,
-                        JSValue.JSType.NumberObject => .Double,
-                        JSValue.JSType.DerivedArray, JSValue.JSType.Array => .Array,
-                        JSValue.JSType.DerivedStringObject, JSValue.JSType.String, JSValue.JSType.StringObject => .String,
-                        JSValue.JSType.RegExpObject => .String,
-                        JSValue.JSType.Symbol => .Symbol,
-                        JSValue.JSType.BooleanObject => .Boolean,
-                        JSValue.JSType.JSFunction => .Function,
-                        JSValue.JSType.JSWeakMap, JSValue.JSType.JSMap => .Map,
-                        JSValue.JSType.JSWeakSet, JSValue.JSType.JSSet => .Set,
-                        JSValue.JSType.JSDate => .JSON,
-                        JSValue.JSType.JSPromise => .Promise,
-                        JSValue.JSType.Object,
-                        JSValue.JSType.FinalObject,
+                        .ErrorInstance => .Error,
+                        .NumberObject => .Double,
+                        .DerivedArray, .Array => .Array,
+                        .DerivedStringObject, .String, .StringObject => .String,
+                        .RegExpObject => .String,
+                        .Symbol => .Symbol,
+                        .BooleanObject => .Boolean,
+                        .JSFunction => .Function,
+                        .JSWeakMap, .JSMap => .Map,
+                        .JSWeakSet, .JSSet => .Set,
+                        .JSDate => .JSON,
+                        .JSPromise => .Promise,
+                        .Object,
+                        .FinalObject,
                         .ModuleNamespaceObject,
                         .GlobalObject,
                         => .Object,
 
                         .ArrayBuffer,
-                        JSValue.JSType.Int8Array,
-                        JSValue.JSType.Uint8Array,
-                        JSValue.JSType.Uint8ClampedArray,
-                        JSValue.JSType.Int16Array,
-                        JSValue.JSType.Uint16Array,
-                        JSValue.JSType.Int32Array,
-                        JSValue.JSType.Uint32Array,
-                        JSValue.JSType.Float32Array,
-                        JSValue.JSType.Float64Array,
-                        JSValue.JSType.BigInt64Array,
-                        JSValue.JSType.BigUint64Array,
+                        .Int8Array,
+                        .Uint8Array,
+                        .Uint8ClampedArray,
+                        .Int16Array,
+                        .Uint16Array,
+                        .Int32Array,
+                        .Uint32Array,
+                        .Float16Array,
+                        .Float32Array,
+                        .Float64Array,
+                        .BigInt64Array,
+                        .BigUint64Array,
                         .DataView,
                         => .TypedArray,
 
@@ -677,7 +678,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     const key = JSC.JSObject.getIndex(nextValue, globalObject, 0);
                     const value = JSC.JSObject.getIndex(nextValue, globalObject, 1);
@@ -712,7 +713,7 @@ pub const JestPrettyFormat = struct {
             return struct {
                 formatter: *JestPrettyFormat.Formatter,
                 writer: Writer,
-                pub fn forEach(_: [*c]JSC.VM, globalObject: [*c]JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
+                pub fn forEach(_: [*c]JSC.VM, globalObject: *JSGlobalObject, ctx: ?*anyopaque, nextValue: JSValue) callconv(.C) void {
                     var this: *@This() = bun.cast(*@This(), ctx orelse return);
                     this.formatter.writeIndent(Writer, this.writer) catch {};
                     const key_tag = Tag.get(nextValue, globalObject);
@@ -1243,7 +1244,7 @@ pub const JestPrettyFormat = struct {
                             .Object,
                             Writer,
                             writer_,
-                            toJSONFunction.callWithThis(this.globalThis, value, &.{}),
+                            toJSONFunction.call(this.globalThis, value, &.{}),
                             .Object,
                             enable_ansi_colors,
                         );
@@ -1371,7 +1372,7 @@ pub const JestPrettyFormat = struct {
 
                     value.jsonStringify(this.globalThis, this.indent, &str);
                     this.addForNewLine(str.length());
-                    if (jsType == JSValue.JSType.JSDate) {
+                    if (jsType == .JSDate) {
                         // in the code for printing dates, it never exceeds this amount
                         var iso_string_buf: [36]u8 = undefined;
                         var out_buf: []const u8 = std.fmt.bufPrint(&iso_string_buf, "{}", .{str}) catch "";
@@ -1860,6 +1861,16 @@ pub const JestPrettyFormat = struct {
                             },
                             .Uint32Array => {
                                 const slice_with_type: []align(std.meta.alignment([]u32)) u32 = @alignCast(std.mem.bytesAsSlice(u32, slice));
+                                this.indent += 1;
+                                defer this.indent -|= 1;
+                                for (slice_with_type) |el| {
+                                    writer.writeAll("\n");
+                                    this.writeIndent(Writer, writer_) catch {};
+                                    writer.print("{d},", .{el});
+                                }
+                            },
+                            .Float16Array => {
+                                const slice_with_type: []align(std.meta.alignment([]f16)) f16 = @alignCast(std.mem.bytesAsSlice(f16, slice));
                                 this.indent += 1;
                                 defer this.indent -|= 1;
                                 for (slice_with_type) |el| {

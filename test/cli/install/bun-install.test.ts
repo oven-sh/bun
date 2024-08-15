@@ -435,7 +435,7 @@ it("should handle @scoped authentication", async () => {
     }
     expect(await request.text()).toBeEmpty();
     urls.push(request.url);
-    return new Response("Feeling lucky?", { status: 555 });
+    return new Response("Feeling lucky?", { status: 422 });
   });
   // workaround against `writeFile(..., { flag: "a" })`
   await writeFile(
@@ -454,7 +454,7 @@ foo = { token = "bar" }
     env,
   });
   const err = await new Response(stderr).text();
-  expect(err.split(/\r?\n/)).toContain(`error: GET ${url} - 555`);
+  expect(err.split(/\r?\n/)).toContain(`error: GET ${url} - 422`);
   expect(await new Response(stdout).text()).toBeEmpty();
   expect(await exited).toBe(1);
   expect(urls.sort()).toEqual([url]);

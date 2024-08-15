@@ -23,7 +23,7 @@ pub const WebWorker = struct {
     /// Already resolved.
     specifier: []const u8 = "",
     store_fd: bool = false,
-    arena: bun.MimallocArena = undefined,
+    arena: ?bun.MimallocArena = null,
     name: [:0]const u8 = "Worker",
     cpp_worker: *anyopaque,
     mini: bool = false,
@@ -101,8 +101,6 @@ pub const WebWorker = struct {
         defer parent.bundler.setLog(prev_log);
         defer temp_log.deinit();
 
-        var resolved_entry_point: bun.resolver.Result = undefined;
-
         const path = brk: {
             const str = spec_slice.slice();
             if (parent.standalone_module_graph) |graph| {
@@ -120,13 +118,13 @@ pub const WebWorker = struct {
                 }
             }
 
-            resolved_entry_point = parent.bundler.resolveEntryPoint(str) catch {
+            var resolved_entry_point: bun.resolver.Result = parent.bundler.resolveEntryPoint(str) catch {
                 const out = temp_log.toJS(parent.global, bun.default_allocator, "Error resolving Worker entry point").toBunString(parent.global);
                 error_message.* = out;
                 return null;
             };
 
-            const entry_path = resolved_entry_point.path() orelse {
+            const entry_path: *bun.fs.Path = resolved_entry_point.path() orelse {
                 error_message.* = bun.String.static("Worker entry point is missing");
                 return null;
             };
@@ -177,7 +175,7 @@ pub const WebWorker = struct {
         }
 
         if (this.hasRequestedTerminate()) {
-            this.deinit();
+            this.exitAndDeinit();
             return;
         }
 
@@ -186,13 +184,13 @@ pub const WebWorker = struct {
 
         this.arena = try bun.MimallocArena.init();
         var vm = try JSC.VirtualMachine.initWorker(this, .{
-            .allocator = this.arena.allocator(),
+            .allocator = this.arena.?.allocator(),
             .args = this.parent.bundler.options.transform_options,
             .store_fd = this.store_fd,
             .graph = this.parent.standalone_module_graph,
         });
-        vm.allocator = this.arena.allocator();
-        vm.arena = &this.arena;
+        vm.allocator = this.arena.?.allocator();
+        vm.arena = &this.arena.?;
 
         var b = &vm.bundler;
 
@@ -217,7 +215,7 @@ pub const WebWorker = struct {
 
         vm.bundler.env = loader;
 
-        vm.loadExtraEnv();
+        vm.loadExtraEnvAndSourceCodePrinter();
         vm.is_main_thread = false;
         JSC.VirtualMachine.is_main_thread_vm = false;
         vm.onUnhandledRejection = onUnhandledRejection;
@@ -427,8 +425,9 @@ pub const WebWorker = struct {
         if (vm_to_deinit) |vm| {
             vm.deinit(); // NOTE: deinit here isn't implemented, so freeing workers will leak the vm.
         }
-
-        arena.deinit();
+        if (arena) |*arena_| {
+            arena_.deinit();
+        }
         bun.exitThread();
     }
 

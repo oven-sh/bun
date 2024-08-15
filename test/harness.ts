@@ -1,4 +1,4 @@
-import { gc as bunGC, unsafe, which } from "bun";
+import { gc as bunGC, spawnSync, unsafe, which } from "bun";
 import { describe, test, expect, afterAll, beforeAll } from "bun:test";
 import { readlink, readFile, writeFile } from "fs/promises";
 import { isAbsolute, join, dirname } from "path";
@@ -48,6 +48,12 @@ for (let key in bunEnv) {
 
 delete bunEnv.NODE_ENV;
 
+if (isDebug) {
+  // This makes debug build memory leak tests more reliable.
+  // The code for dumping out the debug build transpiled source code has leaks.
+  bunEnv.BUN_DEBUG_NO_DUMP = "1";
+}
+
 export function bunExe() {
   if (isWindows) return process.execPath.replaceAll("\\", "/");
   return process.execPath;
@@ -94,7 +100,7 @@ export async function expectMaxObjectTypeCount(
     await Bun.sleep(wait);
     gc();
   }
-  expect(heapStats().objectTypeCounts[type]).toBeLessThanOrEqual(count);
+  expect(heapStats().objectTypeCounts[type] || 0).toBeLessThanOrEqual(count);
 }
 
 // we must ensure that finalizers are run
@@ -142,9 +148,11 @@ export function tempDirWithFiles(basename: string, files: DirectoryTree): string
       const joined = join(base, name);
       if (name.includes("/")) {
         const dir = dirname(name);
-        fs.mkdirSync(join(base, dir), { recursive: true });
+        if (dir !== name && dir !== ".") {
+          fs.mkdirSync(join(base, dir), { recursive: true });
+        }
       }
-      if (typeof contents === "object" && contents && !Buffer.isBuffer(contents)) {
+      if (typeof contents === "object" && contents && typeof contents?.byteLength === "undefined") {
         fs.mkdirSync(joined);
         makeTree(joined, contents);
         continue;
@@ -288,6 +296,7 @@ const binaryTypes = {
   "int8array": Int8Array,
   "int16array": Int16Array,
   "int32array": Int32Array,
+  "float16array": Float16Array,
   "float32array": Float32Array,
   "float64array": Float64Array,
 } as const;
@@ -357,21 +366,21 @@ expect.extend({
       }
     }
   },
-  toRun(cmds: string[], optionalStdout?: string) {
+  toRun(cmds: string[], optionalStdout?: string, expectedCode: number = 0) {
     const result = Bun.spawnSync({
       cmd: [bunExe(), ...cmds],
       env: bunEnv,
       stdio: ["inherit", "pipe", "inherit"],
     });
 
-    if (result.exitCode !== 0) {
+    if (result.exitCode !== expectedCode) {
       return {
         pass: false,
         message: () => `Command ${cmds.join(" ")} failed:` + "\n" + result.stdout.toString("utf-8"),
       };
     }
 
-    if (optionalStdout) {
+    if (optionalStdout != null) {
       return {
         pass: result.stdout.toString("utf-8") === optionalStdout,
         message: () =>
@@ -383,6 +392,43 @@ expect.extend({
       pass: true,
       message: () => `Expected ${cmds.join(" ")} to fail`,
     };
+  },
+  toThrowWithCode(fn: CallableFunction, cls: CallableFunction, code: string) {
+    try {
+      fn();
+      return {
+        pass: false,
+        message: () => `Received function did not throw`,
+      };
+    } catch (e) {
+      // expect(e).toBeInstanceOf(cls);
+      if (!(e instanceof cls)) {
+        return {
+          pass: false,
+          message: () => `Expected error to be instanceof ${cls.name}; got ${e.__proto__.constructor.name}`,
+        };
+      }
+
+      // expect(e).toHaveProperty("code");
+      if (!("code" in e)) {
+        return {
+          pass: false,
+          message: () => `Expected error to have property 'code'; got ${e}`,
+        };
+      }
+
+      // expect(e.code).toEqual(code);
+      if (e.code !== code) {
+        return {
+          pass: false,
+          message: () => `Expected error to have code '${code}'; got ${e.code}`,
+        };
+      }
+
+      return {
+        pass: true,
+      };
+    }
   },
 });
 
@@ -1030,7 +1076,8 @@ interface BunHarnessTestMatchers {
   toBeUTF16String(): void;
   toHaveTestTimedOutAfter(expected: number): void;
   toBeBinaryType(expected: keyof typeof binaryTypes): void;
-  toRun(optionalStdout?: string): void;
+  toRun(optionalStdout?: string, expectedCode?: number): void;
+  toThrowWithCode(cls: CallableFunction, code: string): void;
 }
 
 declare module "bun:test" {
@@ -1126,4 +1173,94 @@ export function isMacOSVersionAtLeast(minVersion: number): boolean {
     return false;
   }
   return parseFloat(macOSVersion) >= minVersion;
+}
+
+export function readableStreamFromArray(array) {
+  return new ReadableStream({
+    pull(controller) {
+      for (let entry of array) {
+        controller.enqueue(entry);
+      }
+      controller.close();
+    },
+  });
+}
+
+let hasGuardMalloc = -1;
+export function forceGuardMalloc(env) {
+  if (process.platform !== "darwin") {
+    return;
+  }
+
+  if (hasGuardMalloc === -1) {
+    hasGuardMalloc = Number(fs.existsSync("/usr/lib/libgmalloc.dylib"));
+  }
+
+  if (hasGuardMalloc === 1) {
+    env.DYLD_INSERT_LIBRARIES = "/usr/lib/libgmalloc.dylib";
+    env.MALLOC_PROTECT_BEFORE = "1";
+    env.MallocScribble = "1";
+    env.MallocGuardEdges = "1";
+    env.MALLOC_FILL_SPACE = "1";
+    env.MALLOC_STRICT_SIZE = "1";
+  } else {
+    console.warn("Guard malloc is not available on this platform for some reason.");
+  }
+}
+
+export function fileDescriptorLeakChecker() {
+  const initial = getMaxFD();
+  return {
+    [Symbol.dispose]() {
+      const current = getMaxFD();
+      if (current > initial) {
+        throw new Error(`File descriptor leak detected: ${current} (current) > ${initial} (initial)`);
+      }
+    },
+  };
+}
+
+/**
+ * Gets a secret from the environment.
+ *
+ * In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+ * and are not available as an environment variable.
+ */
+export function getSecret(name: string): string | undefined {
+  let value = process.env[name]?.trim();
+
+  // When not running in CI, allow the secret to be missing.
+  if (!isCI) {
+    return value;
+  }
+
+  // In Buildkite, secrets must be retrieved using the `buildkite-agent secret get` command
+  if (!value && isBuildKite) {
+    const { exitCode, stdout } = spawnSync({
+      cmd: ["buildkite-agent", "secret", "get", name],
+      stdout: "pipe",
+      stderr: "inherit",
+    });
+    if (exitCode === 0) {
+      value = stdout.toString().trim();
+    }
+  }
+
+  // Throw an error if the secret is not found, so the test fails in CI.
+  if (!value) {
+    let hint;
+    if (isBuildKite) {
+      hint = `Create a secret with the name "${name}" in the Buildkite UI.
+https://buildkite.com/docs/pipelines/security/secrets/buildkite-secrets`;
+    } else {
+      hint = `Define an environment variable with the name "${name}".`;
+    }
+
+    throw new Error(`Secret not found: ${name}\n${hint}`);
+  }
+
+  // Set the secret in the environment so that it can be used in tests.
+  process.env[name] = value;
+
+  return value;
 }

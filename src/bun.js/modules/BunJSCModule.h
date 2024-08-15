@@ -29,6 +29,8 @@
 #include <JavaScriptCore/SamplingProfiler.h>
 #include <JavaScriptCore/TestRunnerUtils.h>
 #include <JavaScriptCore/VMTrapsInlines.h>
+#include <algorithm>
+#include <cstddef>
 #include <wtf/FileSystem.h>
 #include <wtf/MemoryFootprint.h>
 #include <wtf/text/WTFString.h>
@@ -44,6 +46,13 @@
 #include "mimalloc.h"
 
 #include <JavaScriptCore/ControlFlowProfiler.h>
+
+#if OS(DARWIN)
+#if BUN_DEBUG
+#include <malloc/malloc.h>
+#define IS_MALLOC_DEBUGGING_ENABLED 1
+#endif
+#endif
 
 using namespace JSC;
 using namespace WTF;
@@ -203,30 +212,142 @@ JSC_DEFINE_HOST_FUNCTION(functionMemoryUsageStatistics,
 
   auto &vm = globalObject->vm();
 
-  // this is a C API function
-  auto *stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
-
-  if (JSValue heapSizeValue =
-          stats->getDirect(vm, Identifier::fromString(vm, "heapSize"_s))) {
-    ASSERT(heapSizeValue.isNumber());
-    if (heapSizeValue.toInt32(globalObject) == 0) {
-      vm.heap.collectNow(Sync, CollectionScope::Full);
-      JSC::DisallowGC disallowGC;
-      stats = toJS(JSGetMemoryUsageStatistics(toRef(globalObject)));
-    }
+  if (vm.heap.size() == 0) {
+    vm.heap.collectNow(Sync, CollectionScope::Full);
+    JSC::DisallowGC disallowGC;
   }
 
-  // This is missing from the C API
-  JSC::JSObject *protectedCounts = constructEmptyObject(globalObject);
-  auto typeCounts = *vm.heap.protectedObjectTypeCounts();
-  for (auto &it : typeCounts)
-    protectedCounts->putDirect(vm, Identifier::fromLatin1(vm, it.key),
-                               jsNumber(it.value));
+  const auto createdSortedTypeCounts =
+      [&](JSC::TypeCountSet *typeCounts) -> JSC::JSValue {
+    WTF::Vector<std::pair<Identifier, unsigned>> counts;
+    counts.reserveInitialCapacity(typeCounts->size());
+    for (auto &it : *typeCounts) {
+      if (it.value > 0)
+        counts.append(
+            std::make_pair(Identifier::fromLatin1(vm, it.key), it.value));
+    }
 
-  stats->putDirect(vm,
-                   Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s),
-                   protectedCounts);
-  return JSValue::encode(stats);
+    // Sort by count first, then by name.
+    std::sort(counts.begin(), counts.end(),
+              [](const std::pair<Identifier, unsigned> &a,
+                 const std::pair<Identifier, unsigned> &b) {
+                if (a.second == b.second) {
+                  WTF::StringView left = a.first.string();
+                  WTF::StringView right = b.first.string();
+                  unsigned originalLeftLength = left.length();
+                  unsigned originalRightLength = right.length();
+                  unsigned size = std::min(left.length(), right.length());
+                  left = left.substring(0, size);
+                  right = right.substring(0, size);
+                  int result = WTF::codePointCompare(right, left);
+                  if (result == 0) {
+                    return originalLeftLength > originalRightLength;
+                  }
+
+                  return result > 0;
+                }
+
+                return a.second > b.second;
+              });
+
+    auto *objectTypeCounts = constructEmptyObject(globalObject);
+    for (auto &it : counts) {
+      objectTypeCounts->putDirect(vm, it.first, jsNumber(it.second));
+    }
+    return objectTypeCounts;
+  };
+
+  JSValue objectTypeCounts =
+      createdSortedTypeCounts(vm.heap.objectTypeCounts().get());
+  JSValue protectedCounts =
+      createdSortedTypeCounts(vm.heap.protectedObjectTypeCounts().get());
+
+  JSObject *object = constructEmptyObject(globalObject);
+  object->putDirect(vm, Identifier::fromString(vm, "objectTypeCounts"_s),
+                    objectTypeCounts);
+
+  object->putDirect(vm,
+                    Identifier::fromLatin1(vm, "protectedObjectTypeCounts"_s),
+                    protectedCounts);
+  object->putDirect(vm, Identifier::fromString(vm, "heapSize"_s),
+                    jsNumber(vm.heap.size()));
+  object->putDirect(vm, Identifier::fromString(vm, "heapCapacity"_s),
+                    jsNumber(vm.heap.capacity()));
+  object->putDirect(vm, Identifier::fromString(vm, "extraMemorySize"_s),
+                    jsNumber(vm.heap.extraMemorySize()));
+  object->putDirect(vm, Identifier::fromString(vm, "objectCount"_s),
+                    jsNumber(vm.heap.objectCount()));
+  object->putDirect(vm, Identifier::fromString(vm, "protectedObjectCount"_s),
+                    jsNumber(vm.heap.protectedObjectCount()));
+  object->putDirect(vm, Identifier::fromString(vm, "globalObjectCount"_s),
+                    jsNumber(vm.heap.globalObjectCount()));
+  object->putDirect(vm,
+                    Identifier::fromString(vm, "protectedGlobalObjectCount"_s),
+                    jsNumber(vm.heap.protectedGlobalObjectCount()));
+
+#if IS_MALLOC_DEBUGGING_ENABLED
+#if OS(DARWIN)
+  {
+    vm_address_t *zones;
+    unsigned count;
+
+    // Zero out the structures in case a zone is missing
+    malloc_statistics_t zone_stats;
+    zone_stats.blocks_in_use = 0;
+    zone_stats.size_in_use = 0;
+    zone_stats.max_size_in_use = 0;
+    zone_stats.size_allocated = 0;
+
+    malloc_zone_pressure_relief(nullptr, 0);
+    malloc_get_all_zones(mach_task_self(), 0, &zones, &count);
+    Vector<std::pair<Identifier, size_t>> zoneSizes;
+    zoneSizes.reserveInitialCapacity(count);
+    for (unsigned i = 0; i < count; i++) {
+      auto zone = reinterpret_cast<malloc_zone_t *>(zones[i]);
+      if (const char *name = malloc_get_zone_name(zone)) {
+        malloc_zone_statistics(reinterpret_cast<malloc_zone_t *>(zones[i]),
+                               &zone_stats);
+        zoneSizes.append(
+            std::make_pair(Identifier::fromString(vm, String::fromUTF8(name)),
+                           zone_stats.size_in_use));
+      }
+    }
+
+    std::sort(zoneSizes.begin(), zoneSizes.end(),
+              [](const std::pair<Identifier, size_t> &a,
+                 const std::pair<Identifier, size_t> &b) {
+                // Sort by name if the sizes are the same.
+                if (a.second == b.second) {
+                  WTF::StringView left = a.first.string();
+                  WTF::StringView right = b.first.string();
+                  unsigned originalLeftLength = left.length();
+                  unsigned originalRightLength = right.length();
+                  unsigned size = std::min(left.length(), right.length());
+                  left = left.substring(0, size);
+                  right = right.substring(0, size);
+                  int result = WTF::codePointCompare(right, left);
+                  if (result == 0) {
+                    return originalLeftLength > originalRightLength;
+                  }
+
+                  return result > 0;
+                }
+
+                return a.second > b.second;
+              });
+
+    auto *zoneSizesObject = constructEmptyObject(globalObject);
+    for (auto &it : zoneSizes) {
+      zoneSizesObject->putDirect(vm, it.first, jsDoubleNumber(it.second));
+    }
+
+    object->putDirect(vm, Identifier::fromString(vm, "zones"_s),
+                      zoneSizesObject);
+  }
+#endif
+#endif
+
+  return JSValue::encode(object);
 }
 
 JSC_DECLARE_HOST_FUNCTION(functionCreateMemoryFootprint);

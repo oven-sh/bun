@@ -277,6 +277,7 @@ const versions = existsSync(generated_versions_list);
 it("process.config", () => {
   expect(process.config).toEqual({
     variables: {
+      enable_lto: false,
       v8_enable_i8n_support: 1,
     },
     target_defaults: {},
